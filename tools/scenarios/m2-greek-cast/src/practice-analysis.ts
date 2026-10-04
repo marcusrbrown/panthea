@@ -522,6 +522,12 @@ interface ObligationRow {
   readonly deadline: number;
   /** What the digest says stops it being performed, when it says so. */
   readonly unperformable: string | undefined;
+  /** Whether this is a boon the god owes on a supplication its terms set up (the row says "your boon on its prayer"), not a term it must perform. */
+  readonly boon: boolean;
+  /** The prayer an owed boon answers, as the row names it. */
+  readonly petition: string | undefined;
+  /** The next step the row showed as an object to copy (a bless, a strike, or a hop), as the god would send it. */
+  readonly next: Readonly<Record<string, unknown>> | undefined;
 }
 
 /** The obligations a prompt's digest leads with. */
@@ -532,12 +538,34 @@ export function obligationRows(prompt: string): ObligationRow[] {
     const match = OBLIGATION_ROW.exec(line);
     if (match === null) continue;
     let unperformable: string | undefined;
+    let next: Record<string, unknown> | undefined;
     if (line.includes("UNPERFORMABLE now"))
       unperformable = "the term cannot be performed now";
-    for (let next = at + 1; next < lines.length; next += 1) {
-      const following = lines[next] ?? "";
+    // A compacted owed row says its step, or why there is none, on its own line.
+    const inlineStep = / Step: (\{"action":"[^}]*\})/.exec(line);
+    if (inlineStep !== null) {
+      try {
+        next = JSON.parse(inlineStep[1] as string) as Record<string, unknown>;
+      } catch {
+        // Parsed or ignored, never guessed at.
+      }
+    }
+    const inlineObstacle = / Cannot now: (.+?)\.?$/.exec(line);
+    if (inlineObstacle !== null) unperformable = inlineObstacle[1];
+    for (let following_ = at + 1; following_ < lines.length; following_ += 1) {
+      const following = lines[following_] ?? "";
       if (following.startsWith("- ") || !following.startsWith("  ")) break;
-      const found = /UNPERFORMABLE now: (.+?)\.?$/.exec(following.trim());
+      const object = /(\{"action":"[^}]*\})/.exec(following);
+      if (next === undefined && object !== null) {
+        try {
+          next = JSON.parse(object[1] as string) as Record<string, unknown>;
+        } catch {
+          // A line the row's author wrote is parsed or ignored, never guessed at.
+        }
+      }
+      const found =
+        /UNPERFORMABLE now: (.+?)\.?$/.exec(following.trim()) ??
+        /You cannot give it now: (.+?)\.?$/.exec(following.trim());
       if (found !== null) unperformable = found[1];
     }
     rows.push({
@@ -545,6 +573,11 @@ export function obligationRows(prompt: string): ObligationRow[] {
       other: match[2] as string,
       deadline: Number(match[4]),
       unperformable,
+      boon: (match[3] as string).startsWith("your boon on its prayer"),
+      petition: /^your boon on its prayer \[(evt-[^\]]+)\]/.exec(
+        match[3] as string,
+      )?.[1],
+      next,
     });
   }
   return rows;
@@ -604,7 +637,38 @@ export function classifyTurn(
   const term = thread?.term;
   const committed = outcome === "committed";
   const goes = kind === "move" || kind === "realm-transition";
-  if (term !== undefined) {
+  // A boon the god owes is performed by the exact step the row showed, and by nothing else that merely looks
+  // busy: the bless the row showed, naming the owed prayer; the strike the row showed, on its target; the hop the
+  // row gave. A row that showed no step (it named an obstacle) leaves nothing to perform, so no action counts and
+  // the digest's own rules apply: a wait the digest names, otherwise a risked breach. The world's own rule that
+  // an answer needs an operational building is why a strike on a named building is not enough by itself.
+  if (row.boon && committed) {
+    const shown = row.next;
+    if (
+      shown?.action === "bless" &&
+      kind === "bless" &&
+      fields.petition === shown.petition &&
+      fields.petition === row.petition
+    ) {
+      return { class: "performed", named: undefined, choice };
+    }
+    if (
+      shown?.action === "strike" &&
+      kind === "strike" &&
+      typeof fields.target === "string" &&
+      fields.target === shown.target
+    ) {
+      return { class: "performed", named: undefined, choice };
+    }
+    if (
+      goes &&
+      (shown?.action === "move" || shown?.action === "realm-transition") &&
+      fields.to === shown.to
+    ) {
+      return { class: "performed", named: undefined, choice };
+    }
+  }
+  if (term !== undefined && !row.boon) {
     switch (term.kind) {
       case "tell-legend":
         if (committed && (kind === "legend" || goes)) {
@@ -659,6 +723,13 @@ export function obligatedTurns(
 ): ObligatedTurns {
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   const proposals = new Map(input.proposals.map((p) => [p.proposalId, p]));
+  // The tick the world first saw each supplication's boon: from then on the god owes none.
+  const boonSeenAt = new Map<string, number>();
+  for (const event of input.events) {
+    if (event.kind === "practice-progressed" && event.step === "boon") {
+      boonSeenAt.set(String(event.threadId), Number(event.tick));
+    }
+  }
   const turns: ObligatedTurn[] = [];
   const unrecorded: UnrecordedTurn[] = [];
   for (const request of input.requests) {
@@ -676,7 +747,15 @@ export function obligatedTurns(
         thread.status === "open" ||
         thread.status === "countered" ||
         thread.acceptedTick === undefined ||
-        thread.term.party !== request.role ||
+        // The god owes what its term says it performs, and, on a supplication it set terms on, its boon until the world sees it.
+        !(
+          thread.term.party === request.role ||
+          // The prompt owes the row through the deadline tick and not after (`owedBoonOf`), so the gate expects it on the same terms.
+          (thread.practice === "supplication" &&
+            thread.demander === request.role &&
+            tick <= thread.term.deadline &&
+            tick <= (boonSeenAt.get(thread.id) ?? Number.POSITIVE_INFINITY) - 1)
+        ) ||
         Number.isNaN(tick) ||
         !(thread.acceptedTick < tick) ||
         (thread.ending !== undefined && thread.ending.tick < tick)

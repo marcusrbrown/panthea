@@ -318,7 +318,7 @@ test("a prayer the god cannot set terms on shows the help path and the choice to
   expect(after).toContain("help freely");
 });
 
-test("once a bargain is accepted the boon still owed shows in the digest, and the prayer still offers to help freely", () => {
+test("once a bargain is accepted the boon is the god's obligation in the digest, and the prayer reads as agreed, not as a favour to do freely", () => {
   const run = new Run();
   run.state = actorAt(run.state, "zeus", "altar");
   const petition = run.prays();
@@ -339,8 +339,10 @@ test("once a bargain is accepted the boon still owed shows in the digest, and th
     source: "routine",
   });
   const text = run.view("zeus").context.prompt;
-  expect(digestOf(text).join("\n")).toContain("Boon: still owed");
-  expect(prayersOf(text).join("\n")).toContain("help freely");
+  expect(digestOf(text).join("\n")).toContain("YOU OWE farmer");
+  expect(digestOf(text).join("\n")).toContain("your boon on its prayer");
+  expect(prayersOf(text).join("\n")).toContain("You agreed terms");
+  expect(prayersOf(text).join("\n")).not.toContain("help freely");
 });
 
 // --- Openings -------------------------------------------------------------------------------------

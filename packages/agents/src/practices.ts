@@ -22,6 +22,8 @@ import {
   type ServiceKind,
 } from "@panthea/contracts";
 import {
+  type ActorState,
+  blessability,
   canStillPerform,
   contestableActs,
   favourOf,
@@ -30,9 +32,13 @@ import {
   inAnswerWindow,
   isThreadOpen,
   type MemoryEntry,
+  nextHop,
   openPetitionsFor,
+  type Petition,
   type PracticeThread,
+  petitionBalanceOf,
   practiceBalanceOf,
+  routeLength,
   termObstacle,
   termTuple,
   validatePractice,
@@ -77,6 +83,50 @@ export type AnswerMove = "accept" | "counter" | "refuse" | "withdraw";
 /** Where a thread stands for this god: owed by it, awaiting its answer, or waiting on someone else. */
 export type Standing = "obligation" | "awaiting" | "other";
 
+/** The boon a god owes on an accepted supplication, and the next step toward giving it. */
+export interface OwedBoon {
+  readonly petition: EventId;
+  /** The mortal who prayed and agreed to the terms. */
+  readonly petitioner: EntityId;
+  /** Where the mortal stands now. */
+  readonly place: EntityId;
+  readonly placeName: string;
+  /** Whether the mortal's offering has been made. */
+  readonly offeringMade: boolean;
+  /**
+   * The next concrete step, as the object the god would send: the bless when it is with the mortal and the
+   * world would take it, else the next hop toward the mortal. Absent when there is none to show, and then
+   * `blocked` says why. Never an object the parser or the world would refuse.
+   */
+  readonly next?:
+    | {
+        readonly kind: "bless";
+        readonly intent: Readonly<Record<string, unknown>>;
+      }
+    | {
+        readonly kind: "strike";
+        readonly intent: Readonly<Record<string, unknown>>;
+      }
+    | {
+        readonly kind: "hop";
+        readonly intent: Readonly<Record<string, unknown>>;
+        readonly via: string;
+      };
+  readonly blocked?: string;
+  /**
+   * For a punish prayer, whose boon is a strike: the building the next step is about and where it stands. The
+   * step is a strike when the god is there, else the hop toward it.
+   */
+  readonly building?: {
+    readonly id: EntityId;
+    readonly name: string;
+    readonly place: EntityId;
+    readonly placeName: string;
+  };
+  /** Whether the boon is a strike (a punish prayer), so a god that cannot strike cannot give it. */
+  readonly strikes?: true;
+}
+
 /** One open thread the god is a party to, resolved for the prompt and the builder. */
 export interface ThreadView {
   readonly id: EventId;
@@ -101,6 +151,12 @@ export interface ThreadView {
     readonly boonGiven: boolean;
     readonly offeringMade: boolean;
   };
+  /**
+   * A supplication this god set terms on that the mortal accepted, whose boon the world has not yet seen: the
+   * god's own obligation, though the term's party is the mortal paying for it. Its view stands as an
+   * `obligation`, so the digest never cuts it and no new bargain is offered while it is owed.
+   */
+  readonly owedBoon?: OwedBoon;
   /** The answers this god may give now. */
   readonly moves: readonly AnswerMove[];
   /** Each of those answers written out in the intent the god would send, for the answers the world would take as written. A counter is the standing term with a different deadline. */
@@ -382,6 +438,219 @@ function causeAsKnown(
   return `${demander === self ? "you cite" : `${demander} cites`} an event; you hold no account of it`;
 }
 
+/**
+ * The boon `actorId` owes on `thread`, or `undefined` when it owes none: an open, accepted supplication this
+ * god set terms on, still inside its deadline, whose boon the world has not yet seen (a bless to the
+ * petitioner after the acceptance and by the deadline is what it counts, and it records it as it comes).
+ */
+function owedBoonOf(
+  state: WorldState,
+  actorId: EntityId,
+  thread: PracticeThread,
+): OwedBoon | undefined {
+  if (
+    thread.practice !== "supplication" ||
+    thread.status !== "accepted" ||
+    thread.petition === undefined ||
+    thread.demander !== actorId ||
+    thread.progress?.boon !== undefined ||
+    state.tick > thread.term.deadline
+  ) {
+    return undefined;
+  }
+  const god = getActor(state, actorId);
+  const petitioner = getActor(state, thread.obligated);
+  if (god === undefined || petitioner?.alive !== true) return undefined;
+  const place = state.locations.get(petitioner.locationId);
+  if (place === undefined) return undefined;
+  const base = {
+    petition: thread.petition,
+    petitioner: petitioner.id,
+    place: petitioner.locationId,
+    placeName: place.name,
+    offeringMade: thread.progress?.offering !== undefined,
+  };
+  const petition = state.petitions.get(thread.petition);
+  if (petition?.request.kind === "punish") {
+    return { ...owedStrikeOf(state, god, petition, base), strikes: true };
+  }
+  if (petition?.request.kind !== "help") {
+    return {
+      ...base,
+      blocked: "its prayer is not one a bless or a strike answers",
+    };
+  }
+  if (!blessability(state, thread.petition, actorId).ok) {
+    return { ...base, blocked: "its prayer is no longer open to an answer" };
+  }
+  if (god.locationId === petitioner.locationId) {
+    const cost = petitionBalanceOf(state.rules, "blessDivinityCost");
+    if ((god.inventory.get("divinity") ?? 0) < cost) {
+      return {
+        ...base,
+        blocked: `a bless costs ${cost} divinity and you hold less`,
+      };
+    }
+    return {
+      ...base,
+      next: {
+        kind: "bless",
+        intent: { action: "bless", petition: thread.petition },
+      },
+    };
+  }
+  const hop = nextHop(
+    state,
+    god.locationId,
+    petitioner.locationId,
+    god.capabilities,
+  );
+  const exit = hop === undefined ? undefined : state.locations.get(hop);
+  const from = state.locations.get(god.locationId);
+  if (hop === undefined || exit === undefined || from === undefined) {
+    return { ...base, blocked: "there is no way from where you stand to them" };
+  }
+  return {
+    ...base,
+    next: {
+      kind: "hop",
+      via: exit.name,
+      intent: {
+        action: exit.realm === from.realm ? "move" : "realm-transition",
+        to: hop,
+      },
+    },
+  };
+}
+
+/**
+ * `views` as a god that holds `strikeCap` power to strike with may be shown them: a punish boon is a strike, so for
+ * a god that cannot strike (no ability, or no divinity to spend) the row names why and shows no object, rather than
+ * a strike or a hop toward one the parser would refuse. `strikeCap` is what the prompt's own schema allows.
+ */
+export function withStrikeLegality(
+  views: readonly ThreadView[],
+  strikeCap: number,
+): readonly ThreadView[] {
+  if (strikeCap >= 1) return views;
+  return views.map((view) => {
+    const owed = view.owedBoon;
+    if (owed?.strikes !== true || owed.next === undefined) return view;
+    const { next: _next, building: _building, ...rest } = owed;
+    return {
+      ...view,
+      owedBoon: {
+        ...rest,
+        blocked: "you have no power to strike with",
+      },
+    };
+  });
+}
+
+/**
+ * The boon owed on a punish prayer, which the world counts as a strike by this god on a building the prayer names
+ * (`judgeAnswers`): the strike when the god stands where such a building does, else the hop toward the nearest one
+ * it can reach. A strike is shown at power 1, the least the world takes; whether the god's own ability allows it is
+ * settled where the prompt is built, which holds the profile. Otherwise the reason, and no object.
+ */
+function owedStrikeOf(
+  state: WorldState,
+  god: ActorState,
+  petition: Petition,
+  base: Omit<OwedBoon, "next" | "blocked" | "building">,
+): OwedBoon {
+  if (
+    petition.status !== "open" ||
+    !inAnswerWindow(state, petition, state.tick) ||
+    petition.request.kind !== "punish"
+  ) {
+    return { ...base, blocked: "its prayer is no longer open to an answer" };
+  }
+  const named = petition.request.buildings.flatMap((buildingId) => {
+    const building = state.buildings.get(buildingId);
+    return building === undefined ? [] : [building];
+  });
+  const strikable = named.filter(
+    (building) => building.status === "operational",
+  );
+  if (strikable.length === 0) {
+    return {
+      ...base,
+      blocked: `none of the buildings it names (${named.map((b) => b.id).join(", ")}) can be struck now`,
+    };
+  }
+  if ((god.inventory.get("divinity") ?? 0) < 1) {
+    return { ...base, blocked: "a strike costs divinity and you hold none" };
+  }
+  const where = (building: (typeof named)[number]) => ({
+    id: building.id,
+    name: building.name,
+    place: building.locationId,
+    placeName:
+      state.locations.get(building.locationId)?.name ?? building.locationId,
+  });
+  const here = strikable.find(
+    (building) => building.locationId === god.locationId,
+  );
+  if (here !== undefined) {
+    return {
+      ...base,
+      building: where(here),
+      next: {
+        kind: "strike",
+        intent: { action: "strike", target: here.id, power: 1 },
+      },
+    };
+  }
+  const nearest = strikable
+    .flatMap((building) => {
+      const length = routeLength(
+        state,
+        god.locationId,
+        building.locationId,
+        god.capabilities,
+      );
+      return length === undefined ? [] : [{ building, length }];
+    })
+    .sort(
+      (a, b) => a.length - b.length || (a.building.id < b.building.id ? -1 : 1),
+    )[0];
+  const hop =
+    nearest === undefined
+      ? undefined
+      : nextHop(
+          state,
+          god.locationId,
+          nearest.building.locationId,
+          god.capabilities,
+        );
+  const exit = hop === undefined ? undefined : state.locations.get(hop);
+  const from = state.locations.get(god.locationId);
+  if (
+    nearest === undefined ||
+    hop === undefined ||
+    exit === undefined ||
+    from === undefined
+  ) {
+    return {
+      ...base,
+      blocked: "there is no way from where you stand to a building it names",
+    };
+  }
+  return {
+    ...base,
+    building: where(nearest.building),
+    next: {
+      kind: "hop",
+      via: exit.name,
+      intent: {
+        action: exit.realm === from.realm ? "move" : "realm-transition",
+        to: hop,
+      },
+    },
+  };
+}
+
 /** The thread views of `actorId`, most urgent first, and the options its terms and demands draw on. */
 export function practiceBy(
   state: WorldState,
@@ -404,9 +673,10 @@ export function practiceBy(
     const otherAlive = getActor(state, other)?.alive === true;
     const who = (id: EntityId) => (id === actorId ? "you" : id);
     const status = thread.status as ThreadView["status"];
+    const owedBoon = owedBoonOf(state, actorId, thread);
     const standing: Standing =
       status === "accepted"
-        ? thread.term.party === actorId
+        ? thread.term.party === actorId || owedBoon !== undefined
           ? "obligation"
           : "other"
         : thread.offeredBy !== actorId
@@ -464,7 +734,9 @@ export function practiceBy(
             : `${who(thread.demander)} demanded`;
 
     const obstacle =
-      standing === "obligation" && !canStillPerform(state, thread)
+      standing === "obligation" &&
+      owedBoon === undefined &&
+      !canStillPerform(state, thread)
         ? termObstacle(state, thread.term, thread.term.deadline - state.tick)
         : undefined;
 
@@ -492,6 +764,7 @@ export function practiceBy(
             },
           }
         : {}),
+      ...(owedBoon === undefined ? {} : { owedBoon }),
       canSwear: moves.includes("accept") && thread.term.party === actorId,
       ...(refusal?.reason === "no-progress" && refusal.thread === thread.id
         ? { noProgress: refusal.text }
@@ -581,7 +854,9 @@ export function practiceBy(
     moreActs: 0,
     heldContests: [],
   };
-  const offerTerms = offerTermsFor(state, actorId, options);
+  // A boon owed is a bargain already struck: no new terms are written out beside the prayers while it is.
+  const owing = threads.some((view) => view.owedBoon !== undefined);
+  const offerTerms = owing ? {} : offerTermsFor(state, actorId, options);
   // A thread that needs this god's answer or performance leads the digest alone.
   const needed = threads.some((view) => view.standing !== "other");
   const demand = needed
@@ -996,6 +1271,37 @@ function answerLines(view: ThreadView): string[] {
   return lines;
 }
 
+/** The rows of a boon the god owes: who, which prayer, by when, and the next step as an object to copy. */
+function owedBoonRows(view: ThreadView, owed: OwedBoon, by: string): string[] {
+  const lines = [
+    `- [${view.id}] YOU OWE ${view.other}: your boon on its prayer [${owed.petition}], ${by}. ${view.lastMove}; its offering is ${owed.offeringMade ? "made" : "still to come"}. Cause: ${view.cause}.`,
+  ];
+  const building = owed.building;
+  if (owed.next?.kind === "bless") {
+    lines.push(
+      `  ${owed.petitioner} is here: give it now with ${json(owed.next.intent)}`,
+    );
+  } else if (owed.next?.kind === "strike" && building !== undefined) {
+    lines.push(
+      `  ${building.name} [${building.id}] is here: strike it now with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
+    );
+  } else if (owed.next?.kind === "hop" && building !== undefined) {
+    lines.push(
+      `  ${building.name} [${building.id}] stands at ${building.placeName} [${building.place}]: your next step is ${json(owed.next.intent)} (${owed.next.via}), turn by turn until you are there, then strike it.`,
+    );
+  } else if (owed.next?.kind === "hop") {
+    lines.push(
+      `  ${owed.petitioner} is not here (they are at ${owed.placeName} [${owed.place}]): your next step is ${json(owed.next.intent)} (${owed.next.via}), turn by turn until you are with them, then bless them naming the prayer.`,
+    );
+  } else if (owed.blocked !== undefined) {
+    lines.push(`  You cannot give it now: ${owed.blocked}.`);
+  }
+  lines.push(
+    "  If the deadline passes without it, the world records the bargain as expired with your boon unanswered.",
+  );
+  return lines;
+}
+
 /** One thread as a full row: its role, term and deadline, last move, cause, and exactly what the god may answer with. */
 function fullRow(view: ThreadView): string[] {
   const term = describeTerm(view.term, view.self);
@@ -1005,6 +1311,10 @@ function fullRow(view: ThreadView): string[] {
   const answerBy = `Answer by tick ${view.negotiationDeadline} (${ticksLeft(view.negotiationDeadline, view.tick)} ticks left).`;
   switch (view.standing) {
     case "obligation":
+      if (view.owedBoon !== undefined) {
+        lines.push(...owedBoonRows(view, view.owedBoon, by));
+        break;
+      }
       lines.push(
         `- [${view.id}] YOU OWE ${view.other}: ${term}, ${by}. ${view.lastMove}. Cause: ${view.cause}.`,
         "  Perform it before the deadline; if you do not, the world records a breach.",
@@ -1056,12 +1366,24 @@ function fullRow(view: ThreadView): string[] {
 }
 
 /** One thread squeezed to a single line: its id, its term, its deadline, and the answer it needs, nothing else. */
+/**
+ * What a compacted owed row keeps of its full one: the single step the god would send, as the object to copy, or the
+ * reason there is none. The budget may shorten a row; it may not leave the god (or the gate that reads its turn) with
+ * a debt and no way to pay it.
+ */
+function compactOwedStep(owed: OwedBoon): string {
+  if (owed.next !== undefined) return ` Step: ${json(owed.next.intent)}`;
+  return owed.blocked === undefined ? "" : ` Cannot now: ${owed.blocked}.`;
+}
+
 function compactRow(view: ThreadView): string {
   const term = describeTerm(view.term, view.self);
   const by = `by tick ${view.term.deadline}`;
   switch (view.standing) {
     case "obligation":
-      return `- [${view.id}] YOU OWE ${view.other}: ${term}, ${by}.${view.unperformable === undefined ? "" : " UNPERFORMABLE now."}`;
+      return view.owedBoon !== undefined
+        ? `- [${view.id}] YOU OWE ${view.other}: your boon on its prayer [${view.owedBoon.petition}], ${by}.${compactOwedStep(view.owedBoon)}`
+        : `- [${view.id}] YOU OWE ${view.other}: ${term}, ${by}.${view.unperformable === undefined ? "" : " UNPERFORMABLE now."}`;
     case "awaiting":
       return `- [${view.id}] AWAITING YOUR ANSWER: ${term}, ${by}. Answer by tick ${view.negotiationDeadline} with ${view.moves.map((move) => json(view.intents[move] ?? { action: "practice", move, thread: view.id })).join(" or ")}.`;
     case "other":

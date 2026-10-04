@@ -60,6 +60,7 @@ import {
   practiceProperties,
   refusalView,
   type ThreadView,
+  withStrikeLegality,
 } from "./practices";
 import type { IntentSchema, RouteContext } from "./router";
 
@@ -205,6 +206,8 @@ export interface PetitionView {
   readonly petitionerHere: boolean;
   /** The terms the god could offer on this prayer, written out in the intent it would send; absent when the world would take none. */
   readonly offer?: Readonly<Record<string, unknown>>;
+  /** The god set terms on this prayer and the mortal accepted: the boon is owed, and the prayer is no longer a favour to do freely. */
+  readonly agreed?: true;
 }
 
 /** A refusal of the god's last goal change, as the prompt tells it. */
@@ -517,11 +520,17 @@ export function rememberedBy(
           refused,
           new Set(shown.map((petition) => petition.id)),
         );
-  const prayers = shown.map((petition) =>
-    options.offerTerms[petition.id] === undefined
-      ? petition
-      : { ...petition, offer: options.offerTerms[petition.id] },
-  );
+  const prayers = shown.map((petition) => {
+    const agreed = threads.some(
+      (view) => view.owedBoon?.petition === petition.id,
+    );
+    const offer = options.offerTerms[petition.id];
+    return {
+      ...petition,
+      ...(offer === undefined ? {} : { offer }),
+      ...(agreed ? { agreed: true as const } : {}),
+    };
+  });
   const lock =
     state.rules.petitionBalance === undefined
       ? undefined
@@ -1349,6 +1358,11 @@ function targetIsHere(snapshot: PerceptionSnapshot, target: EntityId): boolean {
 function answerGuidance(petition: PetitionView): string[] {
   const { request } = petition;
   const send = (intent: Record<string, unknown>) => JSON.stringify(intent);
+  if (petition.agreed) {
+    return [
+      `  You agreed terms on this prayer, and ${petition.petitioner} accepted them: you owe the boon (the row for it is under "Your open practices").`,
+    ];
+  }
   const terms =
     petition.offer === undefined
       ? []
@@ -1657,7 +1671,10 @@ export function buildGodContext(
     ...describePetitions(remembered),
     ...describeContests(remembered.practice),
     ...describeDigest(
-      remembered.threads,
+      withStrikeLegality(
+        remembered.threads,
+        strikePowerCap(abilityFor(profile, "strike"), snapshot),
+      ),
       remembered.practiceRefusal,
       remembered.practice.openings,
     ),
