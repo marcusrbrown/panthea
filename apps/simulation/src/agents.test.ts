@@ -18,6 +18,7 @@ import {
 import { parseSyncFrame, type WorldEvent } from "@panthea/contracts";
 import {
   closeStore,
+  commitTick,
   listEvents,
   listExternalProposals,
   openStore,
@@ -64,6 +65,7 @@ import {
   createEventSource,
   createWorldProjectionReducers,
   loadGreekWorldState,
+  serializePrngState,
 } from "./world-store";
 
 const id = toEntityId;
@@ -94,12 +96,22 @@ const LEGEND = (god: string) =>
     assertion: `${god} speaks of what was seen.`,
   });
 
+const GOD_NAMES = [
+  "Athena",
+  "Hades",
+  "Hephaestus",
+  "Hera",
+  "Hermes",
+  "Poseidon",
+  "Zeus",
+];
+
+/** Which god a request is for: the persona line its system text carries. */
 function godOf(body: string): string {
-  return body.includes("You are Zeus")
-    ? "zeus"
-    : body.includes("You are Hera")
-      ? "hera"
-      : "unknown";
+  const name = GOD_NAMES.find((candidate) =>
+    body.includes(`You are ${candidate},`),
+  );
+  return name === undefined ? "unknown" : name.toLowerCase();
 }
 
 function startProvider(
@@ -525,6 +537,393 @@ describe("scheduling", () => {
   });
 });
 
+// --- Which god takes the turn ----------------------------------------------------------------------
+
+/**
+ * Commits one real tick over `fixtures` alone (no routines, no journal), so the
+ * threads they open are in the store and in the state the runner reads, and a
+ * later `tick(world)` extends the same log.
+ */
+function stage(world: World, ...fixtures: Record<string, unknown>[]) {
+  const proposals = fixtures.map((raw, index) => {
+    const submitted = submitProposal({
+      schemaVersion: 1,
+      targets: [],
+      expectedRevisions: [],
+      source: "fixture",
+      observationId: `obs-stage-${world.state.tick}-${index}`,
+      ...raw,
+    });
+    if (!submitted.ok) throw new Error(submitted.rejection.message);
+    return submitted.proposal;
+  });
+  const result = runTick(world.state, world.prng, proposals);
+  expect(result.rejected).toEqual([]);
+  world.wallMs += 1_000;
+  commitTick(world.store, world.reducers, {
+    events: result.events,
+    cursorWallMs: world.wallMs,
+    paused: false,
+    tick: result.state.tick,
+    simTimeMs: result.state.simTime,
+    prngState: serializePrngState(result.prng),
+  });
+  world.state = result.state;
+  world.prng = result.prng;
+  return result;
+}
+
+/** Commits hand-built world events (a spoiled stock, a prayer) the way a past tick would have left them. */
+function stageEvents(world: World, ...drafts: Record<string, unknown>[]) {
+  const events: WorldEvent[] = [];
+  let state = world.state;
+  for (const [index, draft] of drafts.entries()) {
+    const event = {
+      schemaVersion: 1,
+      id: `evt-${state.tick}-${800 + index + world.state.lastSequence}`,
+      sequence: state.lastSequence + 1,
+      simTime: state.simTime,
+      tick: state.tick,
+      correlationId: "fixture",
+      causationId: "fixture",
+      approximate: false,
+      ...draft,
+    } as unknown as WorldEvent;
+    state = applyEvent({ ...state, lastSequence: event.sequence }, event);
+    events.push(event);
+  }
+  world.wallMs += 1_000;
+  commitTick(world.store, world.reducers, {
+    events,
+    cursorWallMs: world.wallMs,
+    paused: false,
+    tick: state.tick,
+    simTimeMs: state.simTime,
+    prngState: serializePrngState(world.prng),
+  });
+  world.state = state;
+  return events;
+}
+
+const eventIdOf = (world: World, kind: string): string => {
+  const found = listEvents(world.store.db).find((e) => e.kind === kind);
+  if (!found) throw new Error(`no ${kind} event`);
+  return found.id;
+};
+
+/** `from` tells `to` something real; returns the report's id, the cause `to` may cite. */
+function tells(world: World, from: string, to: string): string {
+  const before = listEvents(world.store.db).length;
+  stage(world, {
+    actor: from,
+    kind: "report",
+    listener: to,
+    content: `${from} speaks to ${to}.`,
+  });
+  const report = listEvents(world.store.db)
+    .slice(before)
+    .find((e) => e.kind === "report-told");
+  if (!report) throw new Error("no report");
+  return report.id;
+}
+
+/** `from` demands a legend at the altar of `to`, over something `from` was told; returns the thread. */
+function demands(world: World, from: string, to: string, ticks = 400) {
+  const cause = tells(world, to, from);
+  stage(world, {
+    actor: from,
+    kind: "practice",
+    move: "demand",
+    counterparty: to,
+    cause,
+    term: {
+      kind: "tell-legend",
+      party: to,
+      place: "altar",
+      deadlineTicks: ticks,
+    },
+  });
+  const thread = [...world.state.threads.values()].at(-1);
+  if (!thread) throw new Error("no thread");
+  return thread;
+}
+
+/** `god` owes `other` a term: `other` demanded it and `god` accepted. */
+function owes(world: World, god: string, other: string, ticks = 400) {
+  const thread = demands(world, other, god, ticks);
+  stage(world, {
+    actor: god,
+    kind: "practice",
+    move: "accept",
+    thread: thread.id,
+  });
+  return thread;
+}
+
+/** `mortal` prays to `god` about spoiled food, `god` sets terms, and `mortal` accepts: the god owes the boon. */
+function owesBoon(world: World, god: string, mortal = "ferryman") {
+  const [spoiled] = stageEvents(world, {
+    kind: "stock-spoiled",
+    entityId: mortal,
+    resource: "food",
+    amount: 1,
+    cause: "director",
+  });
+  const [prayer] = stageEvents(world, {
+    kind: "petition-opened",
+    entityId: mortal,
+    god,
+    cause: spoiled?.id,
+    request: {
+      kind: "help",
+      need: { kind: "resource", resource: "food", amount: 1 },
+    },
+  });
+  stage(world, {
+    actor: god,
+    kind: "practice",
+    move: "offer",
+    petition: prayer?.id,
+    term: {
+      kind: "make-offering",
+      party: mortal,
+      to: god,
+      resource: "currency",
+      amount: 1,
+      deadlineTicks: 300,
+    },
+  });
+  const thread = [...world.state.threads.values()].at(-1);
+  if (!thread) throw new Error("no thread");
+  stage(world, {
+    actor: mortal,
+    kind: "practice",
+    move: "accept",
+    thread: thread.id,
+    source: "routine",
+  });
+  return thread;
+}
+
+/** Runs `turns` journaled turns, one at a time with a tick between so each god's proposal is consumed, and returns who was asked, in order. */
+async function turnsTaken(
+  runner: GodTurnRunner,
+  world: World,
+  provider: Provider,
+  turns: number,
+): Promise<string[]> {
+  const first = provider.requests.length;
+  for (let turn = 0; turn < turns; turn += 1) {
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    tick(world);
+  }
+  return provider.requests.slice(first).map((request) => request.god);
+}
+
+describe("which god takes the turn", () => {
+  test("a god that owes a term goes ahead of an idle god that is earlier in id order; with nothing owed the earlier one goes first", async () => {
+    const owing = newWorld();
+    owes(owing, "zeus", "hera");
+    const provider = startProvider();
+    const runner = runnerFor(owing, provider, ["hera", "zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["zeus"]);
+
+    // Control: the same two gods, with nothing owed, go in id order.
+    const quiet = newWorld();
+    const calm = startProvider();
+    const plain = runnerFor(quiet, calm, ["hera", "zeus"]);
+    expect(plain.dispatch()).toBe(true);
+    await plain.idle();
+    expect(calm.requests.map((r) => r.god)).toEqual(["hera"]);
+  });
+
+  test("a god that owes a boon goes ahead of an idle god earlier in id order, whatever the deadline", async () => {
+    const world = newWorld();
+    const thread = owesBoon(world, "zeus");
+    expect(thread.term.deadline - world.state.tick).toBeGreaterThan(200);
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera", "zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["zeus"]);
+  });
+
+  test("of two gods that owe, the earlier deadline goes first, though the other is earlier in id order", async () => {
+    const world = newWorld();
+    // Hera owes until a long way off; Zeus owes sooner. Hera is first in id order.
+    owes(world, "hera", "zeus", 400);
+    owes(world, "zeus", "hera", 150);
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera", "zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["zeus"]);
+  });
+
+  test("a god a thread is waiting on goes ahead of an idle god and after a god that owes: owing, then awaited, then idle", async () => {
+    const world = newWorld();
+    // Zeus owes Hera; Zeus has also asked something of Hera and waits for her answer. Athena has nothing.
+    owes(world, "zeus", "hera");
+    demands(world, "zeus", "hera");
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["athena", "hera", "zeus"]);
+    // No tick between turns: a god with a proposal waiting is not asked again, so each turn is the next in line.
+    for (let turn = 0; turn < 3; turn += 1) {
+      expect(runner.dispatch()).toBe(true);
+      await runner.idle();
+    }
+    expect(provider.requests.map((r) => r.god)).toEqual([
+      "zeus",
+      "hera",
+      "athena",
+    ]);
+  });
+
+  test("a prayer, however many, raises nothing: a god with prayers waiting goes in its turn in id order like any idle god", async () => {
+    const world = newWorld();
+    stageEvents(world, {
+      kind: "stock-spoiled",
+      entityId: "ferryman",
+      resource: "food",
+      amount: 1,
+      cause: "director",
+    });
+    stageEvents(world, {
+      kind: "petition-opened",
+      entityId: "ferryman",
+      god: "zeus",
+      cause: eventIdOf(world, "stock-spoiled"),
+      request: {
+        kind: "help",
+        need: { kind: "resource", resource: "food", amount: 1 },
+      },
+    });
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera", "zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["hera"]);
+  });
+
+  test("a starved idle god is served by its eighth chance at the latest, even with a god that owes always present", async () => {
+    const world = newWorld();
+    owes(world, "zeus", "hera", 450);
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera", "zeus"]);
+    const order = await turnsTaken(runner, world, provider, 16);
+    const firstHera = order.indexOf("hera");
+    expect(firstHera).toBeGreaterThanOrEqual(0);
+    // Passed over seven times, served on the eighth.
+    expect(firstHera + 1).toBeLessThanOrEqual(8);
+    expect(order.slice(0, 8)).toEqual([
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "hera",
+    ]);
+    // And it is the owing god that is served the most.
+    expect(order.filter((g) => g === "zeus").length).toBeGreaterThan(
+      order.filter((g) => g === "hera").length,
+    );
+  });
+
+  test("with nothing urgent the order is the old round-robin: id order from the god served last, wrapping", async () => {
+    const world = newWorld();
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hades", "hera", "zeus"]);
+    const order = await turnsTaken(runner, world, provider, 7);
+    expect(order).toEqual([
+      "hades",
+      "hera",
+      "zeus",
+      "hades",
+      "hera",
+      "zeus",
+      "hades",
+    ]);
+  });
+
+  test("a god with a pending proposal is never picked, however urgent; it is picked again once the tick consumes it", async () => {
+    const world = newWorld();
+    owes(world, "zeus", "hera");
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera", "zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    // Zeus owes, so Zeus went first; with its proposal waiting, Hera is the only god left, and then nobody.
+    expect(provider.requests.map((r) => r.god)).toEqual(["zeus", "hera"]);
+    expect(runner.dispatch()).toBe(false);
+    expect(provider.requests).toHaveLength(2);
+    // Consumed, and Zeus is urgent again.
+    tick(world);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.at(-1)?.god).toBe("zeus");
+  });
+
+  test("a restart resets the cursor and the skip counts: a new runner starts the rotation over without error", async () => {
+    const world = newWorld();
+    owes(world, "zeus", "hera", 450);
+    const provider = startProvider();
+    const first = runnerFor(world, provider, ["hera", "zeus"]);
+    // Three turns: Hera has now been passed over three times.
+    expect(await turnsTaken(first, world, provider, 3)).toEqual([
+      "zeus",
+      "zeus",
+      "zeus",
+    ]);
+
+    // Killed and restarted: the new process remembers nothing of the old one's cursor or counts.
+    restart(world);
+    const second = runnerFor(world, provider, ["hera", "zeus"]);
+    expect(await turnsTaken(second, world, provider, 8)).toEqual([
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "zeus",
+      "hera",
+    ]);
+    // Nothing was persisted for it: the store holds no rotation table.
+    const tables = world.store.db
+      .query("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as { name: string }[];
+    expect(
+      tables
+        .map((t) => t.name)
+        .filter((name) => /sched|rotation|skip/i.test(name)),
+    ).toEqual([]);
+  });
+
+  test("the lifecycle still gates it: nothing is picked during catch-up or pause, and a god that owes waits with the rest", async () => {
+    const world = newWorld();
+    owes(world, "zeus", "hera");
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera", "zeus"]);
+    world.flags.catchUpRunning = true;
+    expect(runner.dispatch()).toBe(false);
+    world.flags.catchUpRunning = false;
+    world.flags.paused = true;
+    expect(runner.dispatch()).toBe(false);
+    expect(provider.requests).toHaveLength(0);
+    world.flags.paused = false;
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["zeus"]);
+  });
+});
+
 // --- Restarts ---------------------------------------------------------------------------------------
 
 describe("a restart", () => {
@@ -821,6 +1220,50 @@ describe("a store fault", () => {
     expect(runner.dispatch()).toBe(true);
     await runner.idle();
     expect(provider.requests).toHaveLength(1);
+    expect(unhandled).toEqual([]);
+  });
+
+  test("while the scheduler reads what the gods are waiting on never throws into the tick: dispatch says no, logs it, and works again once the read does", async () => {
+    const world = newWorld();
+    owes(world, "zeus", "hera");
+    const provider = startProvider();
+    const logs: string[] = [];
+    // A state whose threads cannot be read: the signals are read from them.
+    const unreadableThreads = () => {
+      const threads = new Map(world.state.threads);
+      threads.values = () => {
+        throw new Error("injected thread read failure");
+      };
+      return threads;
+    };
+    let unreadable = true;
+    const runner = createGodTurnRunner({
+      ...deps(provider, ["hera", "zeus"]),
+      store: world.store,
+      getState: () =>
+        unreadable
+          ? {
+              ...world.state,
+              threads: unreadableThreads(),
+            }
+          : world.state,
+      lifecycle: world.lifecycle,
+      statusRef: world.statusRef,
+      onLog: (message) => logs.push(message),
+    });
+
+    expect(() => runner.dispatch()).not.toThrow();
+    expect(runner.dispatch()).toBe(false);
+    expect(runner.inFlight()).toBe(false);
+    expect(logs.join("\n")).toContain(
+      "god turn not started: injected thread read failure",
+    );
+    expect(provider.requests).toHaveLength(0);
+    // The failed read did not advance the rotation: nothing is lost by it.
+    unreadable = false;
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["zeus"]);
     expect(unhandled).toEqual([]);
   });
 

@@ -9,12 +9,25 @@
 // journal entry gets no new turn, so a restart needs no turn identity: a turn
 // killed before it journaled is simply asked again, and one killed after runs
 // once from the journal.
+//
+// Which god goes next is `pickGod`'s to say (packages/agents/src/scheduler.ts):
+// gods that owe an accepted obligation first, then gods a thread is waiting on,
+// then the rest in round-robin, with no god passed over more than a round. What
+// each god is waiting on is read from the world state the turn starts from, by
+// the rule the god's own prompt sorts its rows by. The cursor and the skip
+// counts live in this closure only: a restart starts them over, and the world
+// never reads them.
 
 import {
   type GodTurnDeps,
   type GodTurnResult,
   OWN_EVENT_WINDOW,
+  type Pick,
+  pickGod,
+  type Rotation,
   runGodTurn,
+  START_OF_ROTATION,
+  schedulingSignals,
 } from "@panthea/agents";
 import {
   type EntityId,
@@ -190,10 +203,11 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
   };
   let running: Promise<void> | undefined;
   let abort: AbortController | undefined;
-  /** The god served last: the next turn goes to the next eligible god after it. */
-  let lastServed: string | undefined;
+  /** The rotation's memory: who was served last and how many picks each god has been passed over. In this process only. */
+  let rotation: Rotation = START_OF_ROTATION;
 
-  function nextGod(state: WorldState): EntityId | undefined {
+  /** The god that takes the next turn, with the memory that follows the pick; nothing is kept until the turn starts. */
+  function nextGod(state: WorldState): Pick | undefined {
     const pending = actorsWithPendingProposals(deps.store);
     const eligible = [...state.actors.values()]
       .filter(
@@ -203,11 +217,15 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
           deps.profiles.has(actor.id) &&
           !pending.has(actor.id),
       )
-      .map((actor) => actor.id)
-      .sort();
-    return (
-      eligible.find((god) => lastServed === undefined || god > lastServed) ??
-      eligible[0]
+      .map((actor) => actor.id);
+    const signals = schedulingSignals(state, eligible);
+    return pickGod(
+      eligible.map((god) => ({
+        god,
+        obligationDeadline: signals.get(god)?.obligationDeadline,
+        awaited: signals.get(god)?.awaited ?? false,
+      })),
+      rotation,
     );
   }
 
@@ -291,7 +309,7 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
       // the store), state, or the journal must never throw into it. A failed
       // read is logged and no turn starts.
       let state: WorldState;
-      let god: EntityId | undefined;
+      let pick: Pick | undefined;
       try {
         if (
           !lifecycle.startupCatchUpComplete() ||
@@ -301,15 +319,16 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
           return false;
         }
         state = deps.getState();
-        god = nextGod(state);
+        pick = nextGod(state);
       } catch (error) {
         log(
           `god turn not started: ${error instanceof Error ? error.message : String(error)}`,
         );
         return false;
       }
-      if (god === undefined) return false;
-      lastServed = god;
+      if (pick === undefined) return false;
+      const { god } = pick;
+      rotation = pick.rotation;
       abort = new AbortController();
       running = turn(god, state, abort.signal).finally(() => {
         running = undefined;
