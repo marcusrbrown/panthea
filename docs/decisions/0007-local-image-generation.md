@@ -32,9 +32,28 @@ A hosted image adapter remains optional and explicitly configured, never a silen
 
 **Superseded by measurement (kept for history)**: no verified seconds-per-image figure existed for the M1 Pro 16 GB baseline at proposal time — confirmed now: 37.3 s/image p50 (sd.cpp Q8_0, 512×512, 12 steps) is the real number for this profile; higher resolutions/step counts were not measured and may push generation further into minutes-scale. Image jobs can take minutes; core simulation and input must never block on them (D15, technical-constraints.md) — confirmed by the placeholder-then-hot-swap pattern; whether a specific memory-sharing policy also keeps LLM/renderer performance unaffected while jobs run is now an open question (see Decision), not a settled fact. LoRA/model licensing must be checked before any asset ships in the content pack — confirmed checked for both the SD 1.5 checkpoint (creativeml-openrail-m) and the pixel-art LoRA (bespoke-lora-trained-license, non-commercial-oriented) recorded above.
 
+## Unit 1 measurement notes (2026-10-04)
+
+Draft generator: Z-Image-Turbo without a LoRA at 512x640, preferred for its tall, modern-looking output. SDXL + pixel-art-xl (with `--lora-apply-mode at_runtime`) stays as a measured comparison. Draft only, not canon; art-guide conformance, palette and alpha are not certified.
+
+The [art-local-2 probe](../../tools/probes/art-local-2/README.md) measured three newer arms on the same M1 Pro 16 GB host with `stable-diffusion.cpp` `master-929-3f8527a` (n=3 per cell variant, seed 20261003, 512x640 and 768x768, restart-based cancellation): SDXL base 1.0 + pixel-art-xl LoRA, FLUX.2 klein base 4B (Q4_0) + a spritesheet LoRA, and Z-Image-Turbo (Q3_K) without a LoRA. Z-Image with the approved benchmark-only Civitai LoRA is unavailable: the download needs authentication (HTTP 401) and was not retried or replaced. Compact values are in [evidence/unit1-measurements.json](../../tools/probes/art-local-2/evidence/unit1-measurements.json).
+
+- SDXL with LoRA, 512x640: p50/p95 104.82/104.87 s, sampled peak RSS 7,235,744 KiB. At 768x768: 203.09/203.35 s.
+- Z-Image-Turbo no-LoRA: 76.70/76.74 s at 512x640 and 148.97/149.07 s at 768x768, sampled peak RSS 8,760,400 KiB at 768x768.
+- FLUX with LoRA: 428.62/429.14 s at 512x640 and 687.14/690.35 s at 768x768. Its LoRA was trained on a 512x512 spritesheet layout that these cells do not match; the effect was not evaluated.
+- Restart-based cancellation to server ready: 1.2-2.0 s total across the three arms (abort to exit under 140 ms), consistent with the restart strategy recorded above.
+- SDXL with the default `--lora-apply-mode` aborted the server (SIGABRT in `LoraModel::apply`) in the with-LoRA smoke cell; `--lora-apply-mode at_runtime` completed it and is set in the SDXL configs. This is a measured workaround, not an established cause. M0 did not record trying that flag, and its f16 + LoRA crash on a different build is a related observation, not a shown cause.
+- At 768x768 with the LoRA, the server reported a Metal device-memory shortfall of about 42 MB during VAE decode and recovered by automatic spatial tiling (8 error and 16 warning log lines across four generations, all still producing valid images). The with-LoRA and control decode paths differ there, so that comparison is confounded. A separate explicit `--vae-tiling` pair (n=1) ran clean and produced different hashes; it is a separate experiment, not a substitute for the n=3 cells.
+
+These are timings from one job running alone. They do not measure studio coexistence, visual quality, or licence acceptance for canon or redistribution, and the 90-120 s figure remains a planning target rather than a pass claim: SDXL 512x640 p95 is 104.87 s, SDXL 768x768 p95 is 203.35 s. Z-Image-Turbo no-LoRA at 512x640 (p50/p95 76.70/76.74 s, euler, 8 steps, cfg 1) is the draft generator; the SDXL 512x640 with-LoRA route (p95 104.87 s) is the measured comparison.
+
+Four static 64x80 and 96x96 reductions (scale 8, center sampling `floor((d + 0.5) * 8)`, no crop, palette change or background removal) were derived from existing sample 0 outputs: SDXL and Z-Image no-LoRA at each size. They are not new generations and not conformance evidence. The derivatives and review sheets are gitignored and local; hashes and method are in the evidence JSON under `targetSizeReview`.
+
+Studio headroom is unmeasured: `apps/studio` and `tools/studio` do not exist, so there is no studio workload to run beside the generator. The headroom test belongs to Unit 7 verification (one heavy Z-Image 512x640 job beside the real studio).
+
 ## Evidence/links
 
-[inference-2026-09-26.md](../research/inference-2026-09-26.md) local image generation table; [technical-constraints.md](../product/technical-constraints.md) model and image adapters; [tools/probes/art-local/README.md](../../tools/probes/art-local/README.md); [tools/probes/coexistence/README.md](../../tools/probes/coexistence/README.md).
+[tools/probes/art-local-2/README.md](../../tools/probes/art-local-2/README.md), [tools/probes/art-local-2/evidence/unit1-measurements.json](../../tools/probes/art-local-2/evidence/unit1-measurements.json); [inference-2026-09-26.md](../research/inference-2026-09-26.md) local image generation table; [technical-constraints.md](../product/technical-constraints.md) model and image adapters; [tools/probes/art-local/README.md](../../tools/probes/art-local/README.md); [tools/probes/coexistence/README.md](../../tools/probes/coexistence/README.md).
 
 ## Requirement IDs
 

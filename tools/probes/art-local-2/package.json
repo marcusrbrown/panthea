@@ -1,0 +1,11 @@
+{
+  "name": "@panthea/tools-probes-art-local-2",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "bench": "bun run src/cli.ts"
+  }
+}

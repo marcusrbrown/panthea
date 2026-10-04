@@ -1,0 +1,1793 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Compact, sanitized measurements from the local image-generation comparison probe (tools/probes/art-local-2). Derived from the probe's results.json files and server logs; raw logs, crash reports, images and local paths are not included. Measurements only: no quality, canon, redistribution or acceptance claim.",
+  "recordedOn": "2026-10-04",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "24.6.0",
+    "cpuModel": "Apple M1 Pro",
+    "totalMemBytes": 17179869184,
+    "metalDevice": "Apple M1 Pro (MTL0)",
+    "metalRecommendedMaxWorkingSetMB": 11453.25,
+    "note": "The harness records metalVerified=false by design; Metal initialisation is evidenced by the server log lines."
+  },
+  "runtime": {
+    "id": "sd-cpp-master-929-3f8527a",
+    "sourceRelease": "leejet/stable-diffusion.cpp master-929-3f8527a (macOS arm64 build)",
+    "commit": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c",
+    "license": "MIT",
+    "archiveSizeBytes": 35049086,
+    "archiveSha256": "1c8ee6c8e413e3335b1223bbc657ea5d86dae1819f8426a98b84c265587eb192",
+    "sdServerSha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae"
+  },
+  "componentVerification": "All runtime and component bytes were re-hashed against components.json (size and SHA-256) before the matrix: every component matched, none missing or mismatched, except the Z-Image LoRA noted under arms.",
+  "units": {
+    "wallAndTimings": "milliseconds per generation (Ms) or seconds where named",
+    "residentSampledKiB": "KiB, sampled once per second from the process tree via ps; a lower bound, not a guaranteed maximum",
+    "diskAvailableGiB": "GiB of free disk from df -k (not memory)",
+    "memoryFreePercent": "memory_pressure -Q system-wide free percentage (not disk, not RSS)",
+    "swapUsedMB": "MB from vm.swapusage (not RSS)",
+    "monitorCadence": "about 10 s; separate from the 1 s RSS sampling"
+  },
+  "fullMatrix": {
+    "definition": "Per arm: cells 512x640 and 768x768, each with 1 warmup and 3 samples, with-LoRA and same-seed no-LoRA control, plus a restart-based cancellation probe. n=3 samples per cell variant, so p95 equals the sample maximum under the nearest-rank rule.",
+    "seed": 20261003,
+    "prompts": {
+      "note": "Same subject and negative prompt across arms. SDXL and Z-Image use 'pixel art, a bearded Greek god in a white toga holding a lightning bolt, ...'; FLUX uses 'A pixel art spritesheet of a bearded Greek god in a white toga holding a lightning bolt, ...' (as the spritesheet LoRA expects). Exact prompts are in arms/*.json.",
+      "negativePrompt": "blurry, antialiased, smooth gradients, photograph, 3d render, text, watermark"
+    },
+    "imageAccounting": {
+      "listedInResultsJson": 40,
+      "filesOnDisk": 40,
+      "uniqueByContent": 10,
+      "breakdown": "nolora 8 (2 warmup + 6 samples), SDXL 16 (4 + 12), FLUX 16 (4 + 12); repeats within a cell are byte-identical so unique images are 2 + 4 + 4; the Z-Image LoRA arm produced none. 40 files, not 56.",
+      "interruptedFluxAttempt": "A first FLUX run was killed by a tool timeout (not by the harness) after 4 with-LoRA 512x640 images; it has no results.json or logs and is excluded here. FLUX was rerun once from the start and only the rerun is recorded."
+    },
+    "arms": [
+      {
+        "arm": "z-image-turbo",
+        "command": "bun run src/cli.ts --config arms/z-image-turbo.json --out results/full",
+        "exitCode": 2,
+        "serverFlagsOfNote": ["--offload-to-cpu", "--diffusion-fa"],
+        "sampler": {
+          "sample_method": "euler",
+          "sample_steps": 8,
+          "guidance": {
+            "txt_cfg": 1
+          }
+        },
+        "seed": 20261003,
+        "lora": {
+          "id": "civitai-2454660-pixel-art-style-z-image-turbo",
+          "multiplier": 1
+        },
+        "config": {
+          "cells": ["512x640", "768x768"],
+          "warmupCount": 1,
+          "sampleCount": 3,
+          "perGenerationTimeoutMs": 1800000,
+          "serverMaxLifetimeMs": 7200000,
+          "cancelProbe": {
+            "afterMs": 15000,
+            "cell": "512x640"
+          },
+          "idle": {
+            "thresholdPercent": 5,
+            "timeoutMs": 60000
+          }
+        },
+        "components": [
+          {
+            "role": "diffusion-model",
+            "id": "z_image_turbo-Q3_K",
+            "sizeBytes": 3143559104,
+            "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980",
+            "license": "Apache-2.0",
+            "source": "leejet/Z-Image-Turbo-GGUF@c61c0e4 (Tongyi-MAI/Z-Image-Turbo)",
+            "quantization": "Q3_K"
+          },
+          {
+            "role": "text-encoder",
+            "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+            "sizeBytes": 2497281120,
+            "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+            "license": "Apache-2.0",
+            "source": "unsloth/Qwen3-4B-Instruct-2507-GGUF@a06e946 (Qwen/Qwen3-4B-Instruct-2507)",
+            "quantization": "Q4_K_M"
+          },
+          {
+            "role": "vae",
+            "id": "z-image-ae",
+            "sizeBytes": 335304388,
+            "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+            "license": "Apache-2.0",
+            "source": "Comfy-Org/z_image_turbo@6fc90a3"
+          },
+          {
+            "role": "lora",
+            "id": "civitai-2454660-pixel-art-style-z-image-turbo",
+            "sizeBytes": null,
+            "sha256": "09b1b45ceed0202929bca528e51b50208d0160f4e9d2ba0f42cb7e739a43577f",
+            "license": "Civitai custom terms; owner approved benchmark ONLY (model 1770073 / version 2454660 / file 2344890). Never canon, never publication.",
+            "source": "civitai model 1770073 version 2454660 file 2344890 (sha256 as reported by Civitai metadata)",
+            "benchmarkOnly": true
+          }
+        ],
+        "cells": [
+          {
+            "cellId": "512x640:lora",
+            "status": "unavailable",
+            "reason": "missing components: civitai-2454660-pixel-art-style-z-image-turbo"
+          },
+          {
+            "cellId": "512x640:control",
+            "status": "unavailable",
+            "reason": "missing components: civitai-2454660-pixel-art-style-z-image-turbo"
+          },
+          {
+            "cellId": "768x768:lora",
+            "status": "unavailable",
+            "reason": "missing components: civitai-2454660-pixel-art-style-z-image-turbo"
+          },
+          {
+            "cellId": "768x768:control",
+            "status": "unavailable",
+            "reason": "missing components: civitai-2454660-pixel-art-style-z-image-turbo"
+          }
+        ],
+        "pairings": [
+          {
+            "cellId": "512x640",
+            "comparable": false,
+            "reason": "both cells must be completed"
+          },
+          {
+            "cellId": "768x768",
+            "comparable": false,
+            "reason": "both cells must be completed"
+          }
+        ],
+        "cancelProbe": null,
+        "residentSampledPeakKiB": null,
+        "residentSampleIntervalMs": 1000,
+        "servers": [],
+        "images": [],
+        "headroomObserved": null
+      },
+      {
+        "arm": "z-image-turbo-nolora",
+        "command": "bun run src/cli.ts --config arms/z-image-turbo-nolora.json --out results/full",
+        "exitCode": 0,
+        "serverFlagsOfNote": ["--offload-to-cpu", "--diffusion-fa"],
+        "sampler": {
+          "sample_method": "euler",
+          "sample_steps": 8,
+          "guidance": {
+            "txt_cfg": 1
+          }
+        },
+        "seed": 20261003,
+        "lora": null,
+        "config": {
+          "cells": ["512x640", "768x768"],
+          "warmupCount": 1,
+          "sampleCount": 3,
+          "perGenerationTimeoutMs": 1800000,
+          "serverMaxLifetimeMs": 7200000,
+          "cancelProbe": {
+            "afterMs": 15000,
+            "cell": "512x640"
+          },
+          "idle": {
+            "thresholdPercent": 5,
+            "timeoutMs": 60000
+          }
+        },
+        "components": [
+          {
+            "role": "diffusion-model",
+            "id": "z_image_turbo-Q3_K",
+            "sizeBytes": 3143559104,
+            "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980",
+            "license": "Apache-2.0",
+            "source": "leejet/Z-Image-Turbo-GGUF@c61c0e4 (Tongyi-MAI/Z-Image-Turbo)",
+            "quantization": "Q3_K"
+          },
+          {
+            "role": "text-encoder",
+            "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+            "sizeBytes": 2497281120,
+            "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+            "license": "Apache-2.0",
+            "source": "unsloth/Qwen3-4B-Instruct-2507-GGUF@a06e946 (Qwen/Qwen3-4B-Instruct-2507)",
+            "quantization": "Q4_K_M"
+          },
+          {
+            "role": "vae",
+            "id": "z-image-ae",
+            "sizeBytes": 335304388,
+            "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+            "license": "Apache-2.0",
+            "source": "Comfy-Org/z_image_turbo@6fc90a3"
+          }
+        ],
+        "cells": [
+          {
+            "cellId": "512x640:none",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [85417],
+            "sampleMs": [76737, 76698, 76185],
+            "p50Ms": 76698,
+            "p95Ms": 76737,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 6399248,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+                "byteLength": 226078
+              },
+              {
+                "index": 1,
+                "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+                "byteLength": 226078
+              },
+              {
+                "index": 2,
+                "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+                "byteLength": 226078
+              }
+            ]
+          },
+          {
+            "cellId": "768x768:none",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [144753],
+            "sampleMs": [149065, 147959, 148968],
+            "p50Ms": 148968,
+            "p95Ms": 149065,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 8760400,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+                "byteLength": 469596
+              },
+              {
+                "index": 1,
+                "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+                "byteLength": 469596
+              },
+              {
+                "index": 2,
+                "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+                "byteLength": 469596
+              }
+            ]
+          }
+        ],
+        "pairings": [],
+        "cancelProbe": {
+          "status": "cancelled",
+          "reason": "cancelled before completion; no result recorded",
+          "abortToExitMs": 135.8,
+          "restartToReadyMs": 880.7,
+          "totalCancelToReadyMs": 1868,
+          "restartToIdleMs": 1732.2,
+          "idle": "below-threshold",
+          "idleThresholdPercent": 5,
+          "escalatedToKill": false
+        },
+        "residentSampledPeakKiB": 8760400,
+        "residentSampleIntervalMs": 1000,
+        "servers": [
+          {
+            "server": 1,
+            "startupStatus": "ready",
+            "readyMs": 1198,
+            "exit": {
+              "reason": "stopped",
+              "signalCode": "SIGTERM",
+              "exitCode": null
+            },
+            "logTruncated": false,
+            "bytes": 19473,
+            "error": 0,
+            "warn": 0,
+            "vaeOutOfMemoryRetry": 0,
+            "tiledDecodeGroups": 0,
+            "loraTensorsApplied": [],
+            "generateImageStarts": 9,
+            "generateImageCompleted": 8
+          },
+          {
+            "server": 2,
+            "startupStatus": "ready",
+            "readyMs": 881,
+            "exit": {
+              "reason": "stopped",
+              "signalCode": "SIGTERM",
+              "exitCode": null
+            },
+            "logTruncated": false,
+            "bytes": 4366,
+            "error": 0,
+            "warn": 0,
+            "vaeOutOfMemoryRetry": 0,
+            "tiledDecodeGroups": 0,
+            "loraTensorsApplied": [],
+            "generateImageStarts": 0,
+            "generateImageCompleted": 0
+          }
+        ],
+        "images": [
+          {
+            "cellId": "512x640",
+            "variant": "none",
+            "kind": "warmup",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+            "byteLength": 226078
+          },
+          {
+            "cellId": "512x640",
+            "variant": "none",
+            "kind": "sample",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+            "byteLength": 226078
+          },
+          {
+            "cellId": "512x640",
+            "variant": "none",
+            "kind": "sample",
+            "index": 1,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+            "byteLength": 226078
+          },
+          {
+            "cellId": "512x640",
+            "variant": "none",
+            "kind": "sample",
+            "index": 2,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+            "byteLength": 226078
+          },
+          {
+            "cellId": "768x768",
+            "variant": "none",
+            "kind": "warmup",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+            "byteLength": 469596
+          },
+          {
+            "cellId": "768x768",
+            "variant": "none",
+            "kind": "sample",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+            "byteLength": 469596
+          },
+          {
+            "cellId": "768x768",
+            "variant": "none",
+            "kind": "sample",
+            "index": 1,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+            "byteLength": 469596
+          },
+          {
+            "cellId": "768x768",
+            "variant": "none",
+            "kind": "sample",
+            "index": 2,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+            "byteLength": 469596
+          }
+        ],
+        "headroomObserved": {
+          "samples": 93,
+          "spanSeconds": 926,
+          "cadenceSecondsMean": 10.07,
+          "diskAvailableGiB": {
+            "min": 7.04,
+            "first": 8.07,
+            "last": 7.05,
+            "abortBelowGiB": 4
+          },
+          "memoryFreePercent": {
+            "min": 24,
+            "max": 79,
+            "samplesBelow10": 0,
+            "samplesBelow5": 0
+          },
+          "swapUsedMB": {
+            "min": 2761,
+            "max": 4720.62,
+            "first": 2761,
+            "last": 4685.75
+          }
+        }
+      },
+      {
+        "arm": "sdxl-pixel-art-xl",
+        "command": "bun run src/cli.ts --config arms/sdxl-pixel-art-xl.json --out results/full",
+        "exitCode": 0,
+        "serverFlagsOfNote": ["--lora-apply-mode at_runtime"],
+        "sampler": {
+          "sample_method": "euler_a",
+          "sample_steps": 20,
+          "guidance": {
+            "txt_cfg": 7
+          }
+        },
+        "seed": 20261003,
+        "lora": {
+          "id": "nerijs-pixel-art-xl",
+          "multiplier": 1.2
+        },
+        "config": {
+          "cells": ["512x640", "768x768"],
+          "warmupCount": 1,
+          "sampleCount": 3,
+          "perGenerationTimeoutMs": 1800000,
+          "serverMaxLifetimeMs": 7200000,
+          "cancelProbe": {
+            "afterMs": 15000,
+            "cell": "512x640"
+          },
+          "idle": {
+            "thresholdPercent": 5,
+            "timeoutMs": 60000
+          }
+        },
+        "components": [
+          {
+            "role": "diffusion-model",
+            "id": "sd_xl_base_1.0",
+            "sizeBytes": 6938078334,
+            "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+            "license": "CreativeML Open RAIL++-M",
+            "source": "stabilityai/stable-diffusion-xl-base-1.0@4621659 (single-file checkpoint)",
+            "quantization": "fp16 safetensors"
+          },
+          {
+            "role": "vae",
+            "id": "sdxl-vae-fp16-fix",
+            "sizeBytes": 334641162,
+            "sha256": "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1",
+            "license": "MIT",
+            "source": "madebyollin/sdxl-vae-fp16-fix@207b116"
+          },
+          {
+            "role": "lora",
+            "id": "nerijs-pixel-art-xl",
+            "sizeBytes": 170543052,
+            "sha256": "4234637cb80c998f41e348e6a6cb6bc20d8d038b2b0f256b6129b3b5e353eef7",
+            "license": "CreativeML Open RAIL-M",
+            "source": "nerijs/pixel-art-xl@8bf4a4d (SDXL base 1.0; trigger phrase 'pixel art')"
+          }
+        ],
+        "cells": [
+          {
+            "cellId": "512x640:lora",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [117702],
+            "sampleMs": [104817, 104744, 104867],
+            "p50Ms": 104817,
+            "p95Ms": 104867,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 7235744,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+                "byteLength": 350334
+              },
+              {
+                "index": 1,
+                "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+                "byteLength": 350334
+              },
+              {
+                "index": 2,
+                "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+                "byteLength": 350334
+              }
+            ]
+          },
+          {
+            "cellId": "512x640:control",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [58328],
+            "sampleMs": [49482, 49326, 49716],
+            "p50Ms": 49482,
+            "p95Ms": 49716,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 7385440,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+                "byteLength": 323505
+              },
+              {
+                "index": 1,
+                "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+                "byteLength": 323505
+              },
+              {
+                "index": 2,
+                "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+                "byteLength": 323505
+              }
+            ]
+          },
+          {
+            "cellId": "768x768:lora",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [202693],
+            "sampleMs": [203345, 203092, 198349],
+            "p50Ms": 203092,
+            "p95Ms": 203345,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 7008016,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+                "byteLength": 382165
+              },
+              {
+                "index": 1,
+                "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+                "byteLength": 382165
+              },
+              {
+                "index": 2,
+                "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+                "byteLength": 382165
+              }
+            ]
+          },
+          {
+            "cellId": "768x768:control",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [89078],
+            "sampleMs": [90674, 88997, 88133],
+            "p50Ms": 88997,
+            "p95Ms": 90674,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 6848352,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+                "byteLength": 407539
+              },
+              {
+                "index": 1,
+                "sha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+                "byteLength": 407539
+              },
+              {
+                "index": 2,
+                "sha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+                "byteLength": 407539
+              }
+            ]
+          }
+        ],
+        "pairings": [
+          {
+            "cellId": "512x640",
+            "comparable": true,
+            "identicalOutput": false,
+            "loraSha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+            "controlSha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f"
+          },
+          {
+            "cellId": "768x768",
+            "comparable": true,
+            "identicalOutput": false,
+            "loraSha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+            "controlSha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074"
+          }
+        ],
+        "cancelProbe": {
+          "status": "cancelled",
+          "reason": "cancelled before completion; no result recorded",
+          "abortToExitMs": 63.2,
+          "restartToReadyMs": 309.6,
+          "totalCancelToReadyMs": 1184.1,
+          "restartToIdleMs": 1120.8,
+          "idle": "below-threshold",
+          "idleThresholdPercent": 5,
+          "escalatedToKill": false
+        },
+        "residentSampledPeakKiB": 7385440,
+        "residentSampleIntervalMs": 1000,
+        "servers": [
+          {
+            "server": 1,
+            "startupStatus": "ready",
+            "readyMs": 156,
+            "exit": {
+              "reason": "stopped",
+              "signalCode": "SIGTERM",
+              "exitCode": null
+            },
+            "logTruncated": false,
+            "bytes": 65069,
+            "error": 8,
+            "warn": 16,
+            "vaeOutOfMemoryRetry": 4,
+            "tiledDecodeGroups": 4,
+            "loraTensorsApplied": [
+              "(2166 / 2166) LoRA tensors have been applied"
+            ],
+            "generateImageStarts": 17,
+            "generateImageCompleted": 16
+          },
+          {
+            "server": 2,
+            "startupStatus": "ready",
+            "readyMs": 310,
+            "exit": {
+              "reason": "stopped",
+              "signalCode": "SIGTERM",
+              "exitCode": null
+            },
+            "logTruncated": false,
+            "bytes": 4985,
+            "error": 0,
+            "warn": 0,
+            "vaeOutOfMemoryRetry": 0,
+            "tiledDecodeGroups": 0,
+            "loraTensorsApplied": [],
+            "generateImageStarts": 0,
+            "generateImageCompleted": 0
+          }
+        ],
+        "images": [
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "warmup",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+            "byteLength": 350334
+          },
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+            "byteLength": 350334
+          },
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 1,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+            "byteLength": 350334
+          },
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 2,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+            "byteLength": 350334
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "warmup",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+            "byteLength": 323505
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "sample",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+            "byteLength": 323505
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "sample",
+            "index": 1,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+            "byteLength": 323505
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "sample",
+            "index": 2,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+            "byteLength": 323505
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "warmup",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+            "byteLength": 382165
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+            "byteLength": 382165
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 1,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+            "byteLength": 382165
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 2,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+            "byteLength": 382165
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "warmup",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+            "byteLength": 407539
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "sample",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+            "byteLength": 407539
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "sample",
+            "index": 1,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+            "byteLength": 407539
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "sample",
+            "index": 2,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+            "byteLength": 407539
+          }
+        ],
+        "headroomObserved": {
+          "samples": 185,
+          "spanSeconds": 1848,
+          "cadenceSecondsMean": 10.04,
+          "diskAvailableGiB": {
+            "min": 8,
+            "first": 8.05,
+            "last": 8.06,
+            "abortBelowGiB": 4
+          },
+          "memoryFreePercent": {
+            "min": 8,
+            "max": 82,
+            "samplesBelow10": 4,
+            "samplesBelow5": 0
+          },
+          "swapUsedMB": {
+            "min": 1922.75,
+            "max": 3311.06,
+            "first": 3185.81,
+            "last": 3247.19
+          }
+        }
+      },
+      {
+        "arm": "flux2-klein-base-4b",
+        "command": "bun run src/cli.ts --config arms/flux2-klein-base-4b.json --out results/full",
+        "exitCode": 0,
+        "serverFlagsOfNote": ["--offload-to-cpu", "--diffusion-fa"],
+        "sampler": {
+          "sample_method": "euler",
+          "sample_steps": 20,
+          "guidance": {
+            "txt_cfg": 4
+          }
+        },
+        "seed": 20261003,
+        "lora": {
+          "id": "svntax-pixel-4walk-small-v1",
+          "multiplier": 1
+        },
+        "config": {
+          "cells": ["512x640", "768x768"],
+          "warmupCount": 1,
+          "sampleCount": 3,
+          "perGenerationTimeoutMs": 1800000,
+          "serverMaxLifetimeMs": 14400000,
+          "cancelProbe": {
+            "afterMs": 15000,
+            "cell": "512x640"
+          },
+          "idle": {
+            "thresholdPercent": 5,
+            "timeoutMs": 60000
+          }
+        },
+        "components": [
+          {
+            "role": "diffusion-model",
+            "id": "flux-2-klein-base-4b-Q4_0",
+            "sizeBytes": 2460378560,
+            "sha256": "c3a2854510677b7aa37dd7547d908c54889a76c6d6aa3ffe902fcaa092d1328b",
+            "license": "Apache-2.0",
+            "source": "leejet/FLUX.2-klein-base-4B-GGUF@d126711 (black-forest-labs/FLUX.2-klein-base-4B, base not distilled)",
+            "quantization": "Q4_0"
+          },
+          {
+            "role": "text-encoder",
+            "id": "Qwen3-4B-Q4_K_M",
+            "sizeBytes": 2497281312,
+            "sha256": "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a",
+            "license": "Apache-2.0",
+            "source": "unsloth/Qwen3-4B-GGUF@22c9fc8 (Qwen/Qwen3-4B)",
+            "quantization": "Q4_K_M"
+          },
+          {
+            "role": "vae",
+            "id": "flux2-vae",
+            "sizeBytes": 336211292,
+            "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+            "license": "Apache-2.0",
+            "source": "Comfy-Org/vae-text-encorder-for-flux-klein-4b@5f52667"
+          },
+          {
+            "role": "lora",
+            "id": "svntax-pixel-4walk-small-v1",
+            "sizeBytes": 92426736,
+            "sha256": "a968c042c2443bf6bfed41ce833a0e06bf5bbb7961ac40b88fb7257a940ae54e",
+            "license": "Apache-2.0",
+            "source": "svntax-dev/pixel_spritesheet_4walk_small_lora_v1@cb8bffe (Klein base-4B; 512x512 training layout)"
+          }
+        ],
+        "cells": [
+          {
+            "cellId": "512x640:lora",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [432544],
+            "sampleMs": [429142, 428617, 427819],
+            "p50Ms": 428617,
+            "p95Ms": 429142,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 5525072,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+                "byteLength": 343736
+              },
+              {
+                "index": 1,
+                "sha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+                "byteLength": 343736
+              },
+              {
+                "index": 2,
+                "sha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+                "byteLength": 343736
+              }
+            ]
+          },
+          {
+            "cellId": "512x640:control",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [288137],
+            "sampleMs": [282242, 281745, 282387],
+            "p50Ms": 282242,
+            "p95Ms": 282387,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 6942624,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3",
+                "byteLength": 306546
+              },
+              {
+                "index": 1,
+                "sha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3",
+                "byteLength": 306546
+              },
+              {
+                "index": 2,
+                "sha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3",
+                "byteLength": 306546
+              }
+            ]
+          },
+          {
+            "cellId": "768x768:lora",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [695340],
+            "sampleMs": [690347, 687144, 686863],
+            "p50Ms": 687144,
+            "p95Ms": 690347,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 7117376,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+                "byteLength": 569362
+              },
+              {
+                "index": 1,
+                "sha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+                "byteLength": 569362
+              },
+              {
+                "index": 2,
+                "sha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+                "byteLength": 569362
+              }
+            ]
+          },
+          {
+            "cellId": "768x768:control",
+            "status": "completed",
+            "warmupCount": 1,
+            "sampleCount": 3,
+            "warmupMs": [469278],
+            "sampleMs": [465207, 465107, 465284],
+            "p50Ms": 465207,
+            "p95Ms": 465284,
+            "percentileRule": "nearest-rank",
+            "p95IsSampleMax": true,
+            "peakResidentSampledKiB": 6961792,
+            "outputs": [
+              {
+                "index": 0,
+                "sha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50",
+                "byteLength": 399314
+              },
+              {
+                "index": 1,
+                "sha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50",
+                "byteLength": 399314
+              },
+              {
+                "index": 2,
+                "sha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50",
+                "byteLength": 399314
+              }
+            ]
+          }
+        ],
+        "pairings": [
+          {
+            "cellId": "512x640",
+            "comparable": true,
+            "identicalOutput": false,
+            "loraSha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+            "controlSha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3"
+          },
+          {
+            "cellId": "768x768",
+            "comparable": true,
+            "identicalOutput": false,
+            "loraSha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+            "controlSha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50"
+          }
+        ],
+        "cancelProbe": {
+          "status": "cancelled",
+          "reason": "cancelled before completion; no result recorded",
+          "abortToExitMs": 92.1,
+          "restartToReadyMs": 824.2,
+          "totalCancelToReadyMs": 2001.8,
+          "restartToIdleMs": 1909.7,
+          "idle": "below-threshold",
+          "idleThresholdPercent": 5,
+          "escalatedToKill": false
+        },
+        "residentSampledPeakKiB": 7145168,
+        "residentSampleIntervalMs": 1000,
+        "servers": [
+          {
+            "server": 1,
+            "startupStatus": "ready",
+            "readyMs": 781,
+            "exit": {
+              "reason": "stopped",
+              "signalCode": "SIGTERM",
+              "exitCode": null
+            },
+            "logTruncated": false,
+            "bytes": 49120,
+            "error": 0,
+            "warn": 0,
+            "vaeOutOfMemoryRetry": 0,
+            "tiledDecodeGroups": 0,
+            "loraTensorsApplied": [
+              "(160 / 160) LoRA tensors have been applied"
+            ],
+            "generateImageStarts": 17,
+            "generateImageCompleted": 16
+          },
+          {
+            "server": 2,
+            "startupStatus": "ready",
+            "readyMs": 824,
+            "exit": {
+              "reason": "stopped",
+              "signalCode": "SIGTERM",
+              "exitCode": null
+            },
+            "logTruncated": false,
+            "bytes": 4392,
+            "error": 0,
+            "warn": 0,
+            "vaeOutOfMemoryRetry": 0,
+            "tiledDecodeGroups": 0,
+            "loraTensorsApplied": [],
+            "generateImageStarts": 0,
+            "generateImageCompleted": 0
+          }
+        ],
+        "images": [
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "warmup",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+            "byteLength": 343736
+          },
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+            "byteLength": 343736
+          },
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 1,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+            "byteLength": 343736
+          },
+          {
+            "cellId": "512x640",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 2,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "d1e63af1d5c9913eacd38b56c83ab380f05ebbc95fc86d1daed4d0ac2eeb663a",
+            "byteLength": 343736
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "warmup",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3",
+            "byteLength": 306546
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "sample",
+            "index": 0,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3",
+            "byteLength": 306546
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "sample",
+            "index": 1,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3",
+            "byteLength": 306546
+          },
+          {
+            "cellId": "512x640",
+            "variant": "control",
+            "kind": "sample",
+            "index": 2,
+            "width": 512,
+            "height": 640,
+            "validPng": true,
+            "sha256": "e82a09c98bae322b26d1b750e6fad5a5f2bcf7548324a8da3964268cd4f87fb3",
+            "byteLength": 306546
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "warmup",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+            "byteLength": 569362
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+            "byteLength": 569362
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 1,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+            "byteLength": 569362
+          },
+          {
+            "cellId": "768x768",
+            "variant": "lora",
+            "kind": "sample",
+            "index": 2,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "e00288d24a888499ecd7f3ff23afccbcad1529e0c8c7d659a1490ff4573f4dbe",
+            "byteLength": 569362
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "warmup",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50",
+            "byteLength": 399314
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "sample",
+            "index": 0,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50",
+            "byteLength": 399314
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "sample",
+            "index": 1,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50",
+            "byteLength": 399314
+          },
+          {
+            "cellId": "768x768",
+            "variant": "control",
+            "kind": "sample",
+            "index": 2,
+            "width": 768,
+            "height": 768,
+            "validPng": true,
+            "sha256": "8149fc2634a2ba87b729a9b8f2c62515f58da3ecf9475001bdbdcf2257afcb50",
+            "byteLength": 399314
+          }
+        ],
+        "headroomObserved": {
+          "samples": 747,
+          "spanSeconds": 7497,
+          "cadenceSecondsMean": 10.05,
+          "diskAvailableGiB": {
+            "min": 7.35,
+            "first": 7.75,
+            "last": 7.55,
+            "abortBelowGiB": 4
+          },
+          "memoryFreePercent": {
+            "min": 25,
+            "max": 78,
+            "samplesBelow10": 0,
+            "samplesBelow5": 0
+          },
+          "swapUsedMB": {
+            "min": 2614.75,
+            "max": 3751.5,
+            "first": 2960.88,
+            "last": 3347
+          }
+        }
+      }
+    ]
+  },
+  "zImageLoraArm": {
+    "status": "unavailable",
+    "reason": "The approved Civitai benchmark-only LoRA (model 1770073 / version 2454660 / file 2344890) requires an authenticated download; the unauthenticated request returned HTTP 401. It was not retried, bypassed or replaced. All four cells report unavailable, no server started, exit code 2.",
+    "declaredSha256": "09b1b45ceed0202929bca528e51b50208d0160f4e9d2ba0f42cb7e739a43577f",
+    "license": "Civitai custom terms; owner approved benchmark ONLY (model 1770073 / version 2454660 / file 2344890). Never canon, never publication."
+  },
+  "experiments": {
+    "sdxlDefaultLoraApplyMode": {
+      "description": "First SDXL smoke (n=1, 512x640): control completed; the with-LoRA cell failed.",
+      "lora": {
+        "status": "failed",
+        "reason": "sample 0 failed: request failed: Unable to connect. Is the computer able to access the url? (server not reachable or timed out)"
+      },
+      "server": {
+        "exit": {
+          "reason": "exited",
+          "signalCode": "SIGABRT",
+          "exitCode": null
+        }
+      },
+      "peakResidentSampledKiBBeforeFailure": 6990016,
+      "control": {
+        "cellId": "512x640:control",
+        "status": "completed",
+        "warmupCount": 0,
+        "sampleCount": 1,
+        "warmupMs": [],
+        "sampleMs": [67456],
+        "p50Ms": 67456,
+        "p95Ms": 67456,
+        "percentileRule": "nearest-rank",
+        "p95IsSampleMax": true,
+        "peakResidentSampledKiB": 6919376,
+        "outputs": [
+          {
+            "index": 0,
+            "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+            "byteLength": 323505
+          }
+        ]
+      },
+      "observed": "The server aborted (SIGABRT) while applying the LoRA during the first sampling step; the backtrace passes through LoraModel::apply -> ggml_backend_sched_reserve_size -> ggml_abort. The abort message text was not captured (the log tail was 4,000 characters). Default --lora-apply-mode is auto, which the server documents as 'immediately' for non-quantised weights.",
+      "rootCause": "not established"
+    },
+    "sdxlLoraApplyModeAtRuntime": {
+      "description": "Same SDXL smoke with --lora-apply-mode at_runtime added (n=1, 512x640).",
+      "cells": [
+        {
+          "cellId": "512x640:lora",
+          "status": "completed",
+          "warmupCount": 0,
+          "sampleCount": 1,
+          "warmupMs": [],
+          "sampleMs": [115124],
+          "p50Ms": 115124,
+          "p95Ms": 115124,
+          "percentileRule": "nearest-rank",
+          "p95IsSampleMax": true,
+          "peakResidentSampledKiB": 7196352,
+          "outputs": [
+            {
+              "index": 0,
+              "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+              "byteLength": 350334
+            }
+          ]
+        },
+        {
+          "cellId": "512x640:control",
+          "status": "completed",
+          "warmupCount": 0,
+          "sampleCount": 1,
+          "warmupMs": [],
+          "sampleMs": [57777],
+          "p50Ms": 57777,
+          "p95Ms": 57777,
+          "percentileRule": "nearest-rank",
+          "p95IsSampleMax": true,
+          "peakResidentSampledKiB": 7383168,
+          "outputs": [
+            {
+              "index": 0,
+              "sha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f",
+              "byteLength": 323505
+            }
+          ]
+        }
+      ],
+      "pairing": {
+        "identicalOutput": false,
+        "loraSha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+        "controlSha256": "dcbfc74bd2a5eda327151c7a23925e60086208b5b0813d4a8bc8fb61967d102f"
+      },
+      "conclusion": "Both cells completed; the flag is a measured workaround, not a root-cause fix. It is set in the SDXL arm configs."
+    },
+    "sdxlExplicitVaeTiling768": {
+      "description": "Single 768x768 pair with --vae-tiling and --lora-apply-mode at_runtime added (n=1, no warmup). A separate experiment; it does not replace the n=3 full-matrix cells.",
+      "cells": [
+        {
+          "cellId": "768x768:lora",
+          "status": "completed",
+          "warmupCount": 0,
+          "sampleCount": 1,
+          "warmupMs": [],
+          "sampleMs": [214671],
+          "p50Ms": 214671,
+          "p95Ms": 214671,
+          "percentileRule": "nearest-rank",
+          "p95IsSampleMax": true,
+          "peakResidentSampledKiB": 7245632,
+          "outputs": [
+            {
+              "index": 0,
+              "sha256": "20c4b2ba51d8f2ed480047048ca94dc48f999face0665127fb91d7d0f694d174",
+              "byteLength": 382329
+            }
+          ]
+        },
+        {
+          "cellId": "768x768:control",
+          "status": "completed",
+          "warmupCount": 0,
+          "sampleCount": 1,
+          "warmupMs": [],
+          "sampleMs": [112247],
+          "p50Ms": 112247,
+          "p95Ms": 112247,
+          "percentileRule": "nearest-rank",
+          "p95IsSampleMax": true,
+          "peakResidentSampledKiB": 7218160,
+          "outputs": [
+            {
+              "index": 0,
+              "sha256": "46eacc49b0e7635b72e939d589fbdf968ddad0034e703d962051bb7d0773408f",
+              "byteLength": 379982
+            }
+          ]
+        }
+      ],
+      "pairing": {
+        "identicalOutput": false,
+        "loraSha256": "20c4b2ba51d8f2ed480047048ca94dc48f999face0665127fb91d7d0f694d174",
+        "controlSha256": "46eacc49b0e7635b72e939d589fbdf968ddad0034e703d962051bb7d0773408f"
+      },
+      "server": {
+        "startupStatus": "ready",
+        "exit": {
+          "reason": "stopped",
+          "signalCode": "SIGTERM",
+          "exitCode": null
+        },
+        "bytes": 23403,
+        "error": 0,
+        "warn": 0,
+        "vaeOutOfMemoryRetry": 0,
+        "tiledDecodeGroups": 2,
+        "loraTensorsApplied": ["(2166 / 2166) LoRA tensors have been applied"],
+        "generateImageStarts": 2,
+        "generateImageCompleted": 2
+      },
+      "images": [
+        {
+          "cellId": "768x768",
+          "variant": "lora",
+          "width": 768,
+          "height": 768,
+          "validPng": true,
+          "sha256": "20c4b2ba51d8f2ed480047048ca94dc48f999face0665127fb91d7d0f694d174",
+          "byteLength": 382329
+        },
+        {
+          "cellId": "768x768",
+          "variant": "control",
+          "width": 768,
+          "height": 768,
+          "validPng": true,
+          "sha256": "46eacc49b0e7635b72e939d589fbdf968ddad0034e703d962051bb7d0773408f",
+          "byteLength": 379982
+        }
+      ],
+      "comparedWithFullMatrix": {
+        "loraFullMatrixSha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+        "loraExplicitTilingSha256": "20c4b2ba51d8f2ed480047048ca94dc48f999face0665127fb91d7d0f694d174",
+        "controlFullMatrixSha256": "c9406084bdbe34df1581a96ab129a4faa68410a025fadb652a2fb8a1b03ba074",
+        "controlExplicitTilingSha256": "46eacc49b0e7635b72e939d589fbdf968ddad0034e703d962051bb7d0773408f",
+        "allDifferent": true
+      },
+      "headroomObserved": {
+        "samples": 36,
+        "spanSeconds": 352,
+        "cadenceSecondsMean": 10.06,
+        "diskAvailableGiB": {
+          "min": 7.43,
+          "first": 7.43,
+          "last": 8.42,
+          "abortBelowGiB": 4
+        },
+        "memoryFreePercent": {
+          "min": 24,
+          "max": 82,
+          "samplesBelow10": 0,
+          "samplesBelow5": 0
+        },
+        "swapUsedMB": {
+          "min": 1671.75,
+          "max": 3091,
+          "first": 3091,
+          "last": 1671.75
+        }
+      }
+    }
+  },
+  "sdxl768WithLoraMetalMemoryShortfall": {
+    "evidence": "In the full-matrix server log, each of the four 768x768 with-LoRA generations (warmup + 3 samples) logged a VAE decode memory warning group and recovered by automatic spatial tiling.",
+    "deviceMemoryMB": {
+      "reportedFree": 4214.31,
+      "total": 10922.67,
+      "trackedWeights": 6707.69,
+      "needDevice": 4256.14,
+      "needBudget": 3744.14,
+      "availableDevice": 4214.31,
+      "availableBudget": 3702.61,
+      "shortfallDevice": 41.83,
+      "shortfallBudget": 41.53
+    },
+    "autoRecovery": "Reducing VAE decode tiles from 768x768 to 256x256 image pixels; VAE decode ran out of memory; retrying with spatial tiling.",
+    "logLineCounts": {
+      "errorLines": 8,
+      "warnLines": 16,
+      "vaeOutOfMemoryRetryGroups": 4,
+      "tiledDecodeGroupsInLog": 4
+    },
+    "affectedCell": "768x768:lora, warmup and samples 0-2 (all four still produced valid PNGs)",
+    "decodeSecondsFromLog": {
+      "tiledLora": [23.64, 24.36, 23.36, 23.35],
+      "untiledControl768": [9.92, 10.12, 9.16, 9.23]
+    },
+    "caveats": [
+      "The 8 ERROR lines (4 repeated pairs: 'vae segment 1/1 (graph) failed during weight preparation' / 'vae decode compute failed') are in the stderr section; the harness stores stdout then stderr, so their position relative to the warnings is not recorded. That they are the failed first decode attempts is a hypothesis fitting the counts and messages, not proven.",
+      "The 768x768 control decodes ran untiled while the with-LoRA decodes ran tiled, so the 768x768 with-LoRA vs control comparison is confounded by decode path. The explicit-tiling experiment shows different pixels for both variants against the full matrix; why the automatic and explicit tiled with-LoRA outputs also differ is unknown.",
+      "The 42 MB figure is a Metal device-memory shortfall inside the server, not system free memory."
+    ]
+  },
+  "draftRoute": {
+    "status": "Candidate routes with their n=3 timings. The draft generator is Z-Image-Turbo no-LoRA (see draftDirection); SDXL is a measured comparison.",
+    "candidates": [
+      {
+        "route": "SDXL base 1.0 + pixel-art-xl LoRA, 512x640, --lora-apply-mode at_runtime (comparison)",
+        "p50Ms": 104817,
+        "p95Ms": 104867,
+        "note": "p95 104.87 s at n=3. 768x768 with-LoRA p95 is 203.35 s and carries the tiled-decode caveat above."
+      },
+      {
+        "route": "Z-Image-Turbo no-LoRA, 512x640 (draft generator)",
+        "p50Ms": 76698,
+        "p95Ms": 76737,
+        "note": "The LoRA arm of Z-Image is unavailable, so only the base model was measured."
+      },
+      {
+        "route": "FLUX.2 klein base 4B + svntax LoRA",
+        "p50Ms": 428617,
+        "p95Ms": 429142,
+        "note": "Slowest arm (768x768 with-LoRA p50 687.14 s). The LoRA's training layout is a 512x512 spritesheet layout, which the 512x640 and 768x768 cells do not match; the effect of that mismatch was not evaluated."
+      }
+    ],
+    "notMeasured": [
+      "art-guide conformance, palette and alpha checks",
+      "coexistence with the studio, simulation or renderer",
+      "visual quality of the 64x80 and 96x96 reductions (static derivatives exist, see targetSizeReview; no owner review or conformance check has been recorded)",
+      "licensing acceptance, canon use or output redistribution"
+    ]
+  },
+  "draftDirection": {
+    "scope": "Draft generator for the studio. Not canon; conformance, palette and alpha are not certified.",
+    "reason": "Preferred for its tall, modern-looking output.",
+    "primary": {
+      "arm": "z-image-turbo-nolora",
+      "route": "Z-Image-Turbo (Q3_K), no LoRA",
+      "cell": "512x640",
+      "loraApplied": false,
+      "sampler": {
+        "sample_method": "euler",
+        "sample_steps": 8,
+        "guidance": { "txt_cfg": 1 }
+      },
+      "serverFlags": ["--offload-to-cpu", "--diffusion-fa"],
+      "seed": 20261003,
+      "n": 3,
+      "sampleMs": [76737, 76698, 76185],
+      "p50Ms": 76698,
+      "p95Ms": 76737,
+      "p95IsSampleMax": true,
+      "outputSha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d"
+    },
+    "comparisonCandidate": {
+      "arm": "sdxl-pixel-art-xl",
+      "route": "SDXL base 1.0 + pixel-art-xl LoRA",
+      "cell": "512x640",
+      "serverFlags": ["--lora-apply-mode at_runtime"],
+      "n": 3,
+      "p50Ms": 104817,
+      "p95Ms": 104867,
+      "p95IsSampleMax": true,
+      "note": "Measured comparison; no fallback order is set."
+    },
+    "planningTargetNote": "Against the 90-120 s planning target: Z-Image 512x640 p95 is 76.74 s (below it); SDXL 512x640 p95 is 104.87 s (inside); SDXL 768x768 p95 is 203.35 s (outside, with the tiled-decode caveat)."
+  },
+  "targetSizeReview": {
+    "kind": "static derivation from existing full-matrix sample 0 outputs; no new generation, no model run",
+    "seed": 20261003,
+    "method": {
+      "transform": "Independent integer-axis reduction by center sampling: destination coordinate d on an axis with scale s samples source floor((d + 0.5) * s). Factor 8 on both axes (source offset +4). No crop, aspect change, normalization, palette change, background removal or generic resize.",
+      "factor": 8,
+      "inputPng": "8-bit non-interlaced RGB (color type 2), opaque; tEXt chunk present on every source",
+      "outputPng": "8-bit RGBA (color type 6), alpha 255; tEXt and profile chunks not preserved",
+      "reviewZoom": "8x nearest-neighbor integer replication"
+    },
+    "derivatives": [
+      {
+        "id": "sdxl-512x640",
+        "arm": "sdxl-pixel-art-xl",
+        "variant": "lora",
+        "sampler": {
+          "sample_method": "euler_a",
+          "sample_steps": 20,
+          "guidance": { "txt_cfg": 7 }
+        },
+        "source": {
+          "path": "results/full/sdxl-pixel-art-xl/images/512x640-lora-sample0-d520d8d0e215.png",
+          "sha256": "d520d8d0e215b0d5e8f8f795e53a37adec6e56023e281a1d24527313107aeeed",
+          "width": 512,
+          "height": 640
+        },
+        "output": {
+          "path": "results/target-size-review/sdxl-pixel-art-xl-64x80.png",
+          "sha256": "1ead97001437e190f38cb297d04b51615fbe5d1670f07fdc35d34cbc2ba71376",
+          "width": 64,
+          "height": 80
+        }
+      },
+      {
+        "id": "z-image-nolora-512x640",
+        "arm": "z-image-turbo-nolora",
+        "variant": "none",
+        "sampler": {
+          "sample_method": "euler",
+          "sample_steps": 8,
+          "guidance": { "txt_cfg": 1 }
+        },
+        "source": {
+          "path": "results/full/z-image-turbo-nolora/images/512x640-none-sample0-67b4e98ade48.png",
+          "sha256": "67b4e98ade48aa36ad71bb19cd58cf237042a73fdcab8538d62638a93d7ffb3d",
+          "width": 512,
+          "height": 640
+        },
+        "output": {
+          "path": "results/target-size-review/z-image-turbo-nolora-64x80.png",
+          "sha256": "a026885aee786def7d16d8d45df02cd60cbbdc0d7a3defe2efb1df8807c9e66b",
+          "width": 64,
+          "height": 80
+        }
+      },
+      {
+        "id": "sdxl-768x768",
+        "arm": "sdxl-pixel-art-xl",
+        "variant": "lora",
+        "sampler": {
+          "sample_method": "euler_a",
+          "sample_steps": 20,
+          "guidance": { "txt_cfg": 7 }
+        },
+        "source": {
+          "path": "results/full/sdxl-pixel-art-xl/images/768x768-lora-sample0-18cb98dddcc2.png",
+          "sha256": "18cb98dddcc23ebd9a279539ad1d37f9142cf3dcc10a943cdb9a74c658093216",
+          "width": 768,
+          "height": 768
+        },
+        "output": {
+          "path": "results/target-size-review/sdxl-pixel-art-xl-96x96.png",
+          "sha256": "73779dc04e91515d5586dda8e74906ebc0e8907efc9d600e4d722b891f9e1496",
+          "width": 96,
+          "height": 96
+        }
+      },
+      {
+        "id": "z-image-nolora-768x768",
+        "arm": "z-image-turbo-nolora",
+        "variant": "none",
+        "sampler": {
+          "sample_method": "euler",
+          "sample_steps": 8,
+          "guidance": { "txt_cfg": 1 }
+        },
+        "source": {
+          "path": "results/full/z-image-turbo-nolora/images/768x768-none-sample0-fe52976d306d.png",
+          "sha256": "fe52976d306dd8eee6ec18e437e6c7a3160eb7e26d5d479da4635680f92ec79e",
+          "width": 768,
+          "height": 768
+        },
+        "output": {
+          "path": "results/target-size-review/z-image-turbo-nolora-96x96.png",
+          "sha256": "244ff0b9d363ed5818f2354c4e2fab6d9f535df1ca8ea09ad9fb43fc44d0b7ce",
+          "width": 96,
+          "height": 96
+        }
+      }
+    ],
+    "reviewSheets": [
+      {
+        "path": "results/target-size-review/review-512x640-to-64x80.png",
+        "sha256": "5369a6d1b35ea2f5c1d36e7f3c676c10150b28766c80f027f69d4a0ff8ccfa2e",
+        "width": 1216,
+        "height": 1588
+      },
+      {
+        "path": "results/target-size-review/review-768x768-to-96x96.png",
+        "sha256": "0f3c3b6699572d441256d82e62138df13eb01e99e8b25774bf9fda72d8e83a79",
+        "width": 1760,
+        "height": 1844
+      }
+    ],
+    "storage": "Paths are relative to tools/probes/art-local-2. Everything under results/ is gitignored: the derivatives, review sheets, manifest and helper scripts are local and not durable."
+  },
+  "studioHeadroom": {
+    "status": "unmeasured",
+    "reason": "apps/studio and tools/studio do not exist, so there is no studio workload to run beside the generator.",
+    "plannedMeasurement": "Unit 7 verification: one heavy Z-Image 512x640 job beside the real studio, measuring generator and studio RSS, system memory pressure, swap, disk and responsiveness.",
+    "currentCoverage": "fullMatrix.arms[].headroomObserved is the only headroom data: one heavy job running alone."
+  }
+}

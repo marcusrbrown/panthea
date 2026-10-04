@@ -116,6 +116,10 @@
         "@panthea/tools-probes-shared": "workspace:*",
       },
     },
+    "tools/probes/art-local-2": {
+      "name": "@panthea/tools-probes-art-local-2",
+      "version": "0.1.0",
+    },
     "tools/probes/backend-lifecycle": {
       "name": "@panthea/tools-probes-backend-lifecycle",
       "version": "0.1.0",
@@ -368,6 +372,8 @@
     "@panthea/tools-probes": ["@panthea/tools-probes@workspace:tools/probes"],
 
     "@panthea/tools-probes-art-local": ["@panthea/tools-probes-art-local@workspace:tools/probes/art-local"],
+
+    "@panthea/tools-probes-art-local-2": ["@panthea/tools-probes-art-local-2@workspace:tools/probes/art-local-2"],
 
     "@panthea/tools-probes-backend-lifecycle": ["@panthea/tools-probes-backend-lifecycle@workspace:tools/probes/backend-lifecycle"],
 

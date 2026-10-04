@@ -1,0 +1,112 @@
+{
+  "arm": "sdxl-pixel-art-xl",
+  "server": {
+    "cmd": [
+      "bin/release/sd-server",
+      "--listen-ip",
+      "127.0.0.1",
+      "--listen-port",
+      "18443",
+      "--model",
+      "models/sd_xl_base_1.0.safetensors",
+      "--vae",
+      "models/sdxl_vae.safetensors",
+      "--lora-model-dir",
+      "models/loras",
+      "--lora-apply-mode",
+      "at_runtime"
+    ],
+    "baseUrl": "http://127.0.0.1:18443",
+    "readyTimeoutMs": 900000,
+    "maxLifetimeMs": 7200000,
+    "stopGraceMs": 15000,
+    "binary": {
+      "role": "binary",
+      "id": "sd-server-master-929-3f8527a",
+      "path": "bin/release/sd-server",
+      "declared": {
+        "sha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+        "license": "MIT",
+        "source": "leejet/stable-diffusion.cpp master-929-3f8527a commit 3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+      }
+    }
+  },
+  "components": [
+    {
+      "role": "diffusion-model",
+      "id": "sd_xl_base_1.0",
+      "path": "models/sd_xl_base_1.0.safetensors",
+      "declared": {
+        "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+        "license": "CreativeML Open RAIL++-M",
+        "source": "stabilityai/stable-diffusion-xl-base-1.0@4621659 (single-file checkpoint)",
+        "quantization": "fp16 safetensors"
+      }
+    },
+    {
+      "role": "vae",
+      "id": "sdxl-vae-fp16-fix",
+      "path": "models/sdxl_vae.safetensors",
+      "declared": {
+        "sha256": "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1",
+        "license": "MIT",
+        "source": "madebyollin/sdxl-vae-fp16-fix@207b116"
+      }
+    },
+    {
+      "role": "lora",
+      "id": "nerijs-pixel-art-xl",
+      "path": "models/loras/pixel-art-xl.safetensors",
+      "declared": {
+        "sha256": "4234637cb80c998f41e348e6a6cb6bc20d8d038b2b0f256b6129b3b5e353eef7",
+        "license": "CreativeML Open RAIL-M",
+        "source": "nerijs/pixel-art-xl@8bf4a4d (SDXL base 1.0; trigger phrase 'pixel art')"
+      }
+    }
+  ],
+  "prompt": "pixel art, a bearded Greek god in a white toga holding a lightning bolt, full body, front view, plain flat background, limited colour palette",
+  "negativePrompt": "blurry, antialiased, smooth gradients, photograph, 3d render, text, watermark",
+  "seed": 20261003,
+  "sampleParams": {
+    "sample_method": "euler_a",
+    "sample_steps": 20,
+    "guidance": {
+      "txt_cfg": 7
+    }
+  },
+  "lora": {
+    "id": "nerijs-pixel-art-xl",
+    "path": "pixel-art-xl.safetensors",
+    "multiplier": 1.2,
+    "isHighNoise": false
+  },
+  "stagingGuidance": "Run 'bun run src/stage.ts runtime' and 'bun run src/stage.ts sdxl-pixel-art-xl' in tools/probes/art-local-2, then re-run.",
+  "cells": [
+    {
+      "id": "512x640",
+      "width": 512,
+      "height": 640
+    },
+    {
+      "id": "768x768",
+      "width": 768,
+      "height": 768
+    }
+  ],
+  "warmupCount": 1,
+  "sampleCount": 3,
+  "timeoutMs": 1800000,
+  "rssIntervalMs": 1000,
+  "cancelProbe": {
+    "afterMs": 15000,
+    "cell": {
+      "id": "512x640",
+      "width": 512,
+      "height": 640
+    }
+  },
+  "idle": {
+    "thresholdPercent": 5,
+    "timeoutMs": 60000
+  }
+}
