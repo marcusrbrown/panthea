@@ -612,8 +612,6 @@ export function classifyTurn(
   prompt: string,
   proposal: RealProposal | undefined,
   moved: boolean,
-  /** The buildings an owed punish prayer names: a strike on one of them is the boon. */
-  punishTargets: readonly string[] = [],
 ): Pick<ObligatedTurn, "class" | "named" | "choice"> {
   const kind = proposal?.kind;
   const fields = proposal?.proposal ?? {};
@@ -628,22 +626,34 @@ export function classifyTurn(
   const term = thread?.term;
   const committed = outcome === "committed";
   const goes = kind === "move" || kind === "realm-transition";
-  // A boon the god owes is performed by the step the row showed, and by nothing else that merely looks busy: a
-  // bless that names the owed prayer, a strike on a building the owed punish prayer names, or the hop the row
-  // gave. A bless on another prayer, a strike elsewhere, or a move to another exit performs nothing.
+  // A boon the god owes is performed by the exact step the row showed, and by nothing else that merely looks
+  // busy: the bless the row showed, naming the owed prayer; the strike the row showed, on its target; the hop the
+  // row gave. A row that showed no step (it named an obstacle) leaves nothing to perform, so no action counts and
+  // the digest's own rules apply: a wait the digest names, otherwise a risked breach. The world's own rule that
+  // an answer needs an operational building is why a strike on a named building is not enough by itself.
   if (row.boon && committed) {
     const shown = row.next;
-    if (kind === "bless" && fields.petition === row.petition) {
-      return { class: "performed", named: undefined, choice };
-    }
     if (
-      kind === "strike" &&
-      typeof fields.target === "string" &&
-      (fields.target === shown?.target || punishTargets.includes(fields.target))
+      shown?.action === "bless" &&
+      kind === "bless" &&
+      fields.petition === shown.petition &&
+      fields.petition === row.petition
     ) {
       return { class: "performed", named: undefined, choice };
     }
-    if (goes && shown?.to !== undefined && fields.to === shown.to) {
+    if (
+      shown?.action === "strike" &&
+      kind === "strike" &&
+      typeof fields.target === "string" &&
+      fields.target === shown.target
+    ) {
+      return { class: "performed", named: undefined, choice };
+    }
+    if (
+      goes &&
+      (shown?.action === "move" || shown?.action === "realm-transition") &&
+      fields.to === shown.to
+    ) {
       return { class: "performed", named: undefined, choice };
     }
   }
@@ -709,20 +719,6 @@ export function obligatedTurns(
       boonSeenAt.set(String(event.threadId), Number(event.tick));
     }
   }
-  // The buildings each punish prayer names, from the log: a strike on one answers it.
-  const petitionBuildings = new Map<string, readonly string[]>();
-  for (const event of input.events) {
-    const request = event.request as
-      | { kind?: string; buildings?: readonly unknown[] }
-      | undefined;
-    if (
-      event.kind === "petition-opened" &&
-      request?.kind === "punish" &&
-      Array.isArray(request.buildings)
-    ) {
-      petitionBuildings.set(String(event.id), request.buildings.map(String));
-    }
-  }
   const turns: ObligatedTurn[] = [];
   const unrecorded: UnrecordedTurn[] = [];
   for (const request of input.requests) {
@@ -783,17 +779,7 @@ export function obligatedTurns(
         scene.at !== undefined &&
         thread?.term.kind === "tell-legend" &&
         scene.at !== thread.term.place;
-      const punish = petitionBuildings.get(
-        thread?.petition ?? row.petition ?? "",
-      );
-      const classified = classifyTurn(
-        thread,
-        row,
-        prompt,
-        proposal,
-        moved,
-        punish ?? [],
-      );
+      const classified = classifyTurn(thread, row, prompt, proposal, moved);
       turns.push({
         god: request.role,
         thread: row.thread,
