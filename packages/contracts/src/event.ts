@@ -403,6 +403,42 @@ export interface GoalEndedEvent extends EventEnvelope {
   readonly goalEventId: EventId;
 }
 
+/**
+ * A god declared where it is going: the world stored the journey and will walk
+ * it one hop a tick. Private to the god, like its goal; each hop is an
+ * ordinary `entity-moved` or `realm-transitioned` event.
+ */
+export interface JourneyStartedEvent extends EventEnvelope {
+  readonly kind: "journey-started";
+  readonly entityId: EntityId;
+  /** Where the god is going. */
+  readonly to: EntityId;
+}
+
+/** How a journey ends: the god arrived, a hop was refused (or found no route), or the god committed another proposal. */
+export const JOURNEY_ENDINGS = ["arrived", "refused", "replaced"] as const;
+export type JourneyEnding = (typeof JOURNEY_ENDINGS)[number];
+
+interface JourneyEndedBase extends EventEnvelope {
+  readonly kind: "journey-ended";
+  readonly entityId: EntityId;
+  /** The `journey-started` event it ends. */
+  readonly journeyEventId: EventId;
+}
+
+/** A journey ended without a refusal. */
+export interface JourneyCompletedEvent extends JourneyEndedBase {
+  readonly ending: "arrived" | "replaced";
+}
+
+/** A hop was refused, or no route remained; it moved nothing. `reason` is what the world answered. */
+export interface JourneyRefusedEvent extends JourneyEndedBase {
+  readonly ending: "refused";
+  readonly reason: RejectionReasonCode;
+}
+
+export type JourneyEndedEvent = JourneyCompletedEvent | JourneyRefusedEvent;
+
 /** What a practice thread is about: who did it and, when known, to whom or what. */
 export interface ThreadSubject {
   readonly agent: EntityId;
@@ -624,6 +660,8 @@ export const UNPLACED_EVENT_KINDS = [
   "relationship-changed",
   "goal-set",
   "goal-ended",
+  "journey-started",
+  "journey-ended",
   "unmet-need",
   "need-met",
   "loss-noticed",
@@ -757,6 +795,8 @@ export type WorldEvent =
   | RelationshipChangedEvent
   | GoalSetEvent
   | GoalEndedEvent
+  | JourneyStartedEvent
+  | JourneyEndedEvent
   | UnmetNeedEvent
   | NeedMetEvent
   | LossNoticedEvent
@@ -798,6 +838,8 @@ const EVENT_KIND_SET: Record<WorldEvent["kind"], true> = {
   "relationship-changed": true,
   "goal-set": true,
   "goal-ended": true,
+  "journey-started": true,
+  "journey-ended": true,
   "unmet-need": true,
   "need-met": true,
   "loss-noticed": true,
@@ -856,6 +898,8 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
         return [event.entityId, event.toward];
       case "goal-set":
         return [event.entityId, event.target];
+      case "journey-started":
+        return [event.entityId, event.to];
       case "loss-noticed":
         return [
           event.entityId,
@@ -899,6 +943,7 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
       case "stock-spoiled":
       case "goal-change-refused":
       case "goal-ended":
+      case "journey-ended":
       case "memory-recorded":
       case "resource-gathered":
       case "resource-produced":
@@ -938,6 +983,8 @@ export function eventCause(event: WorldEvent): EventId | undefined {
       return event.memoryEventId;
     case "goal-ended":
       return event.goalEventId;
+    case "journey-ended":
+      return event.journeyEventId;
     case "petition-opened":
       return event.cause;
     case "need-met":
@@ -1707,6 +1754,49 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
         text: text.value,
         target: target.value,
       });
+    }
+    case "journey-started": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const to = parseEntityId(input.to, "to");
+      if (!to.ok) return to;
+      return ok({
+        ...envelope,
+        kind: "journey-started",
+        entityId: entityId.value,
+        to: to.value,
+      });
+    }
+    case "journey-ended": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const journeyEventId = parseEventId(
+        input.journeyEventId,
+        "journeyEventId",
+      );
+      if (!journeyEventId.ok) return journeyEventId;
+      const ending = parseEnum(input.ending, "ending", JOURNEY_ENDINGS);
+      if (!ending.ok) return ending;
+      const shared = {
+        ...envelope,
+        kind: "journey-ended" as const,
+        entityId: entityId.value,
+        journeyEventId: journeyEventId.value,
+      };
+      // A refusal says why, and no other ending carries a reason.
+      if (ending.value === "refused") {
+        const reason = parseEnum(
+          input.reason,
+          "reason",
+          REJECTION_REASON_CODES,
+        );
+        if (!reason.ok) return reason;
+        return ok({ ...shared, ending: ending.value, reason: reason.value });
+      }
+      if (input.reason !== undefined) {
+        return fail("reason", "only a refused journey carries a reason");
+      }
+      return ok({ ...shared, ending: ending.value });
     }
     case "unmet-need": {
       const entityId = parseEntityId(input.entityId, "entityId");

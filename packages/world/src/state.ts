@@ -341,6 +341,12 @@ export interface ActiveGoal {
   readonly tick: number;
 }
 
+/** A god's one active journey: where it is going, and the `journey-started` event that recorded it. Changed only by journey events; the route is never stored, since every hop is worked out from where the god stands. */
+export interface ActiveJourney {
+  readonly destination: EntityId;
+  readonly eventId: EventId;
+}
+
 /** A mortal's routine needs `resource` and cannot get it, as recorded by the event `eventId` on `tick`. Open until a `need-met` event closes it. */
 export interface OpenNeed {
   readonly actor: EntityId;
@@ -528,6 +534,12 @@ export interface WorldState {
    * never bumps an actor's revision and never stales a delayed proposal.
    */
   readonly goals: ReadonlyMap<EntityId, ActiveGoal>;
+  /**
+   * Each travelling god's active journey, at most one apiece. Private to the
+   * god, like goals, and outside `ActorState` so declaring or ending one never
+   * bumps an actor's revision.
+   */
+  readonly journeys: ReadonlyMap<EntityId, ActiveJourney>;
   /** Each mortal's open unmet needs, keyed by `needKey`. */
   readonly needs: ReadonlyMap<string, OpenNeed>;
   /** Each mortal's most recent prayable causes (newest last, bounded), recorded as the events happen. A need is a cause too, held in `needs`. */
@@ -696,6 +708,7 @@ export function createInitialWorldState(pack: ContentPack): WorldState {
     memories: new Map(),
     relationships,
     goals: new Map(),
+    journeys: new Map(),
     needs: new Map(),
     causes: new Map(),
     petitions: new Map(),

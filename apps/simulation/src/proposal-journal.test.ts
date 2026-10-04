@@ -1283,4 +1283,81 @@ describe("a goal change on a journaled proposal", () => {
       ),
     ).toThrow(/event log/);
   });
+
+  test("an archive export and import rebuilds an active journey from the event log and the imported world walks it on; a forged journey is refused", async () => {
+    const source = openWorld(join(dir, "world.sqlite"));
+    startServer(source);
+    // Zeus in the great hall, headed for the tavern: four hops across two realms.
+    await post(source, envelope("zeus", { kind: "travel", to: "tavern" }));
+    tick(source);
+    tick(source);
+    const live = [...source.state.journeys];
+    expect(
+      live.map(([god, journey]) => [String(god), String(journey.destination)]),
+    ).toEqual([["zeus", "tavern"]]);
+    expect(String(source.state.actors.get("zeus" as never)?.locationId)).toBe(
+      "mountain-path",
+    );
+    const archivePath = join(dir, "snapshot.sqlite");
+    exportArchive(source.store, archivePath);
+    shutDown(source);
+
+    const slot = importWorldArchive(
+      archivePath,
+      join(dir, "slots"),
+      worldImportReducers,
+    );
+    const branch = openWorld(join(slot.slotPath, "world.sqlite"));
+    try {
+      expect([...branch.state.journeys]).toEqual(live);
+      // The branch carries on from where the journey stood.
+      tick(branch);
+      expect(String(branch.state.actors.get("zeus" as never)?.locationId)).toBe(
+        "town-square",
+      );
+      expect(branch.state.journeys.size).toBe(1);
+    } finally {
+      shutDown(branch);
+    }
+
+    // A forged archive: a journey no event started, with the hash recomputed.
+    const forgedPath = join(dir, "forged.sqlite");
+    copyFileSync(archivePath, forgedPath);
+    const db = new Database(forgedPath);
+    const row = db.query("SELECT data FROM projections WHERE id = 1").get() as {
+      data: string;
+    };
+    const encoded = JSON.parse(row.data);
+    encoded.journeys.push([
+      "hera",
+      { destination: "tavern", eventId: "evt-1-1" },
+    ]);
+    db.run("UPDATE projections SET data = ? WHERE id = 1", [
+      JSON.stringify(encoded),
+    ]);
+    const manifest = db.query("SELECT * FROM manifest WHERE id = 1").get() as {
+      format_version: number;
+      sqlite_schema_version: number;
+      payload_schema_version: number;
+      world_id: string;
+      event_sequence: number;
+    };
+    db.run("UPDATE manifest SET content_hash = ?", [
+      computeContentHash(db, {
+        formatVersion: manifest.format_version,
+        sqliteSchemaVersion: manifest.sqlite_schema_version,
+        payloadSchemaVersion: manifest.payload_schema_version,
+        worldId: manifest.world_id as never,
+        eventSequence: manifest.event_sequence,
+      }),
+    ]);
+    db.close();
+    expect(() =>
+      importWorldArchive(
+        forgedPath,
+        join(dir, "slots-forged"),
+        worldImportReducers,
+      ),
+    ).toThrow(/event log/);
+  });
 });

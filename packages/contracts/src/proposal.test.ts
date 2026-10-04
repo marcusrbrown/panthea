@@ -927,3 +927,33 @@ test("a contest move names the rival act it rests on and nothing else: the world
     expect(parseProposal(base(bad)).ok).toBe(false);
   }
 });
+
+test("a travel proposal names one destination, and no other field", () => {
+  expect(PROPOSAL_KINDS).toContain("travel");
+  const result = parseProposal(base({ kind: "travel", to: "tavern" }));
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value).toMatchObject({
+      kind: "travel",
+      to: "tavern",
+      actor: "npc-1",
+    });
+  }
+  for (const to of [undefined, "", 3]) {
+    expect(parseProposal(base({ kind: "travel", to })).ok).toBe(false);
+  }
+});
+
+test("a travel proposal may carry a goal change, like any action", () => {
+  const result = parseProposal(
+    base({
+      kind: "travel",
+      to: "tavern",
+      goal: { set: { text: "Find the farmer.", target: "farmer" } },
+    }),
+  );
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value.goal?.set?.text).toBe("Find the farmer.");
+  }
+});

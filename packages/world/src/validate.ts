@@ -30,6 +30,7 @@ import type {
   ResourceAmount,
   StrikeProposal,
   TradeProposal,
+  TravelProposal,
   WorshipProposal,
 } from "@panthea/contracts";
 import {
@@ -39,7 +40,13 @@ import {
   NEUTRAL_DRIVES,
 } from "./economy";
 import { igniteThresholdOf } from "./fire";
-import { ALTAR, crossesRealm, findEdge, isAdjacent } from "./geography";
+import {
+  ALTAR,
+  crossesRealm,
+  findEdge,
+  isAdjacent,
+  routeLength,
+} from "./geography";
 import { getMemories } from "./memory";
 import {
   blessability,
@@ -187,6 +194,37 @@ function handleRealmTransition(
       to: proposal.to,
       via: proposal.via,
     },
+  ]);
+}
+
+/**
+ * A journey is worth declaring only toward a known place the actor is not at
+ * and can reach: a route over the map's edges that enters no place whose
+ * capability the actor lacks. Whether each hop is then allowed (an authored
+ * crossing, a place still open) is judged by the tick as it walks.
+ */
+function handleTravel(
+  state: WorldState,
+  proposal: TravelProposal,
+): RuleOutcome {
+  const actor = getActor(state, proposal.actor);
+  if (actor === undefined || !getLocation(state, proposal.to)) {
+    return reject("malformed", `unknown travel destination: ${proposal.to}`);
+  }
+  if (actor.locationId === proposal.to) {
+    return reject("malformed", `the actor is already at ${proposal.to}`);
+  }
+  if (
+    routeLength(state, actor.locationId, proposal.to, actor.capabilities) ===
+    undefined
+  ) {
+    return reject(
+      "not-adjacent",
+      `no route from the actor's place to ${proposal.to}`,
+    );
+  }
+  return commit([
+    { kind: "journey-started", entityId: proposal.actor, to: proposal.to },
   ]);
 }
 
@@ -773,6 +811,8 @@ export function validateProposal(
       return handleMove(state, proposal);
     case "realm-transition":
       return handleRealmTransition(state, proposal);
+    case "travel":
+      return handleTravel(state, proposal);
     case "claim":
       return handleClaim(state, proposal);
     case "gather":

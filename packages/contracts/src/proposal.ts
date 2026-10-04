@@ -170,6 +170,16 @@ export interface RealmTransitionProposal extends ProposalBase {
   readonly via: EntityId;
 }
 
+/**
+ * A god declares where it is going. The world stores the journey and walks it
+ * one hop a tick: each hop is a validated move or realm-transition, so a god
+ * never names a route. Gods travel; mortal routines still move.
+ */
+export interface TravelProposal extends ProposalBase {
+  readonly kind: "travel";
+  readonly to: EntityId;
+}
+
 export interface GatherProposal extends ProposalBase {
   readonly kind: "gather";
   readonly resource: string;
@@ -318,6 +328,7 @@ export interface ReportProposal extends ProposalBase {
 export type Proposal =
   | MoveProposal
   | RealmTransitionProposal
+  | TravelProposal
   | GatherProposal
   | ProduceProposal
   | TradeProposal
@@ -341,6 +352,7 @@ export type ProposalKind = Proposal["kind"];
 const PROPOSAL_KIND_SET = {
   move: true,
   "realm-transition": true,
+  travel: true,
   gather: true,
   produce: true,
   trade: true,
@@ -471,6 +483,11 @@ export function parseProposal(input: unknown): ParseResult<Proposal> {
         to: to.value,
         via: via.value,
       });
+    }
+    case "travel": {
+      const to = parseEntityId(input.to, "to");
+      if (!to.ok) return to;
+      return ok({ ...base, kind: "travel", to: to.value });
     }
     case "gather": {
       const resource = parseString(input.resource, "resource");

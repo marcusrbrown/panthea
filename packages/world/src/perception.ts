@@ -211,6 +211,8 @@ function eventLocation(
     case "relationship-changed":
     case "goal-set":
     case "goal-ended":
+    case "journey-started":
+    case "journey-ended":
     case "unmet-need":
     case "petition-answered":
     case "petition-lapsed":

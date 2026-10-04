@@ -555,7 +555,7 @@ test("WORLD_EVENT_KINDS lists every kind parseEvent accepts", () => {
   expect(WORLD_EVENT_KINDS).toContain("memory-recorded");
   expect(WORLD_EVENT_KINDS).toContain("report-told");
   expect(WORLD_EVENT_KINDS).toContain("relationship-changed");
-  expect(WORLD_EVENT_KINDS).toHaveLength(39);
+  expect(WORLD_EVENT_KINDS).toHaveLength(41);
 });
 
 test("an unknown event kind is rejected with reason unknown-kind", () => {
@@ -987,7 +987,7 @@ test("only kinds someone can perceive are witnessable: a memory of a report, a m
   for (const eventKind of WITNESSED_EVENT_KINDS) {
     expect(parseEvent(envelope({ ...WITNESSED, eventKind })).ok).toBe(true);
   }
-  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 20);
+  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 22);
 });
 
 // --- Legend tellings: a claim and the recorded hearers ------------------------------------
@@ -2419,4 +2419,82 @@ test("a refused contest can be the thing a practice-refused event is about", () 
       }),
     ).ok,
   ).toBe(true);
+});
+
+// --- Journey events ------------------------------------------------------------------------
+
+test("a journey-started event names the god and its destination, and is private to the god", () => {
+  const started = parsedEvent({
+    kind: "journey-started",
+    entityId: "zeus",
+    to: "tavern",
+  });
+  expect(started.kind).toBe("journey-started");
+  expect(WORLD_EVENT_KINDS as readonly string[]).toContain("journey-started");
+  expect(UNPLACED_EVENT_KINDS as readonly string[]).toContain(
+    "journey-started",
+  );
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain(
+    "journey-started",
+  );
+  expect(subjectsOf(started)).toEqual(["zeus", "tavern"]);
+  expect(eventCause(started)).toBeUndefined();
+  for (const overrides of [{ to: undefined }, { entityId: undefined }]) {
+    expect(
+      parseEvent(
+        envelope({
+          kind: "journey-started",
+          entityId: "zeus",
+          to: "tavern",
+          ...overrides,
+        }),
+      ).ok,
+    ).toBe(false);
+  }
+});
+
+test("a journey-ended event names how the journey ended: arrived or replaced alone, refused with the world's reason; it follows the journey it ends and is private", () => {
+  for (const ending of ["arrived", "replaced"]) {
+    const ended = parsedEvent({
+      kind: "journey-ended",
+      entityId: "zeus",
+      journeyEventId: "evt-3",
+      ending,
+    });
+    expect(ended).toMatchObject({ kind: "journey-ended", ending });
+    expect(String(eventCause(ended))).toBe("evt-3");
+    expect(subjectsOf(ended)).toEqual(["zeus"]);
+  }
+  const refused = parsedEvent({
+    kind: "journey-ended",
+    entityId: "zeus",
+    journeyEventId: "evt-3",
+    ending: "refused",
+    reason: "restricted-realm",
+  });
+  expect(refused).toMatchObject({
+    ending: "refused",
+    reason: "restricted-realm",
+  });
+  expect(UNPLACED_EVENT_KINDS as readonly string[]).toContain("journey-ended");
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain(
+    "journey-ended",
+  );
+  const good = {
+    kind: "journey-ended",
+    entityId: "zeus",
+    journeyEventId: "evt-3",
+    ending: "arrived",
+  };
+  for (const overrides of [
+    { ending: "lost" },
+    { ending: undefined },
+    { journeyEventId: undefined },
+    // A refusal says why; no other ending carries a reason.
+    { ending: "refused" },
+    { ending: "refused", reason: "no-such-reason" },
+    { reason: "restricted-realm" },
+  ]) {
+    expect(parseEvent(envelope({ ...good, ...overrides })).ok).toBe(false);
+  }
 });

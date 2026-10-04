@@ -64,6 +64,7 @@ import {
 import { memoryBalanceOf } from "./memory";
 import {
   type ActiveGoal,
+  type ActiveJourney,
   type ActorState,
   BUILDING_STATUSES,
   type BuildingBase,
@@ -106,6 +107,7 @@ export interface EncodedWorldState {
   readonly memories: readonly (readonly [EntityId, readonly MemoryEntry[]])[];
   readonly relationships: readonly (readonly [string, RelationshipState])[];
   readonly goals: readonly (readonly [EntityId, ActiveGoal])[];
+  readonly journeys: readonly (readonly [EntityId, ActiveJourney])[];
   readonly needs: readonly (readonly [string, OpenNeed])[];
   readonly causes: readonly (readonly [EntityId, readonly PetitionCause[]])[];
   readonly petitions: readonly (readonly [EventId, Petition])[];
@@ -162,6 +164,7 @@ export function encode(state: WorldState): EncodedWorldState {
     memories: [...state.memories.entries()],
     relationships: [...state.relationships.entries()],
     goals: [...state.goals.entries()],
+    journeys: [...state.journeys.entries()],
     needs: [...state.needs.entries()],
     causes: [...state.causes.entries()],
     petitions: [...state.petitions.entries()],
@@ -943,6 +946,44 @@ function parseGoalEntry(
       sequence: sequence.value,
       tick: setTick.value,
     },
+  ] as const);
+}
+
+function parseJourneyEntry(
+  value: unknown,
+  path: string,
+  knownActorIds: ReadonlySet<EntityId>,
+  knownLocationIds: ReadonlySet<EntityId>,
+): ParseResult<readonly [EntityId, ActiveJourney]> {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return fail(path, "expected an [actor, journey] entry");
+  }
+  const owner = parseEntityId(value[0], `${path}[0]`);
+  if (!owner.ok) return owner;
+  if (!knownActorIds.has(owner.value)) {
+    return fail(
+      `${path}[0]`,
+      `journey belongs to unknown actor: ${owner.value}`,
+    );
+  }
+  const record = value[1];
+  if (!isRecord(record)) return fail(`${path}[1]`, "expected a journey");
+  const destination = parseEntityId(
+    record.destination,
+    `${path}[1].destination`,
+  );
+  if (!destination.ok) return destination;
+  if (!knownLocationIds.has(destination.value)) {
+    return fail(
+      `${path}[1].destination`,
+      `journey heads for unknown location: ${destination.value}`,
+    );
+  }
+  const eventId = parseEventId(record.eventId, `${path}[1].eventId`);
+  if (!eventId.ok) return eventId;
+  return ok([
+    owner.value,
+    { destination: destination.value, eventId: eventId.value },
   ] as const);
 }
 
@@ -1775,6 +1816,19 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
   }
   const goals = new Map(goalEntries.value);
 
+  const journeyEntries = parseArray(value.journeys, "journeys", (item, path) =>
+    parseJourneyEntry(item, path, knownActorIds, knownLocationIds),
+  );
+  if (!journeyEntries.ok) return journeyEntries;
+  const duplicateJourneyOwner = findDuplicateKey(journeyEntries.value);
+  if (duplicateJourneyOwner !== undefined) {
+    return fail(
+      "journeys",
+      `duplicate journey owner: ${duplicateJourneyOwner}`,
+    );
+  }
+  const journeys = new Map(journeyEntries.value);
+
   const needEntries = parseArray(value.needs, "needs", (item, path) =>
     parseNeedEntry(item, path, knownActorIds),
   );
@@ -1988,6 +2042,7 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
     memories,
     relationships,
     goals,
+    journeys,
     needs,
     causes,
     petitions,

@@ -54,6 +54,12 @@ import {
 } from "./fire";
 import { applyGoalEnded, applyGoalSet, planGoalEvents } from "./goals";
 import {
+  applyJourneyEnded,
+  applyJourneyStarted,
+  planHop,
+  planJourneyReplaced,
+} from "./journey";
+import {
   applyMemoryRecorded,
   applyRelationshipChanged,
   type DerivedDraft,
@@ -262,6 +268,12 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
       break;
     case "goal-ended":
       next = applyGoalEnded(state, event);
+      break;
+    case "journey-started":
+      next = applyJourneyStarted(state, event);
+      break;
+    case "journey-ended":
+      next = applyJourneyEnded(state, event);
       break;
     case "loss-noticed":
       next = applyLossNoticed(state, event);
@@ -689,9 +701,11 @@ export function runTick(
       continue;
     }
 
-    const actionEvents = outcome.events.map((draft) =>
-      completePrimary(draft, String(proposal.observationId)),
-    );
+    // A committed proposal is the god's next decision: a journey it was on ends first, so the log says so before what replaced it.
+    const actionEvents = [
+      ...planJourneyReplaced(working, proposal.actor),
+      ...outcome.events,
+    ].map((draft) => completePrimary(draft, String(proposal.observationId)));
     working = applyEvents(working, actionEvents);
     const events = [...actionEvents, ...commitGoalEvents(proposal)];
     committed.push({ proposal, events });
@@ -701,6 +715,39 @@ export function runTick(
   }
 
   const environmentCause = `tick-${working.tick}`;
+
+  // Every journey advances one hop, after the queue: a journey a proposal just stored takes its first hop this tick, and one whose god just committed something else is already over.
+  const journeyEvents: WorldEvent[] = [];
+  for (const [actorId, journey] of [...working.journeys]) {
+    const record = (draft: WorldEventDraft) => {
+      const completed = completePrimary(draft, String(journey.eventId));
+      working = applyEvent(working, completed);
+      journeyEvents.push(completed);
+    };
+    const arrived = () =>
+      working.actors.get(actorId)?.locationId === journey.destination;
+    const end = { entityId: actorId, journeyEventId: journey.eventId } as const;
+    if (arrived()) {
+      record({ kind: "journey-ended", ...end, ending: "arrived" });
+      continue;
+    }
+    // The hop goes through the same validators as any move; a refusal moves nothing and ends the journey, with no retry.
+    const hop = planHop(working, actorId, journey);
+    const outcome = hop.ok ? validateProposal(working, hop.proposal) : hop;
+    if (!outcome.ok) {
+      record({
+        kind: "journey-ended",
+        ...end,
+        ending: "refused",
+        reason: outcome.reason,
+      });
+      continue;
+    }
+    for (const draft of outcome.events) record(draft);
+    if (arrived()) {
+      record({ kind: "journey-ended", ...end, ending: "arrived" });
+    }
+  }
 
   const incomeEvents = planIncomeStep(working).map((draft) =>
     completePrimary(draft, environmentCause),
@@ -752,6 +799,7 @@ export function runTick(
     state,
     [
       ...proposalEvents,
+      ...journeyEvents,
       ...incomeEvents,
       ...fireEvents,
       ...needEvents,
@@ -792,6 +840,7 @@ export function runTick(
   working = applyEvents(working, standingEvents);
 
   const environmentEvents = [
+    ...journeyEvents,
     ...incomeEvents,
     ...fireEvents,
     ...needEvents,
