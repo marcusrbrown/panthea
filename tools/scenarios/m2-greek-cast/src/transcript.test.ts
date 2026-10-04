@@ -116,7 +116,7 @@ test("the transcript opens with the settings and an identity header per god from
 test("actions are listed in the order the world applied them, each with tick, god, action and target, backing, and the model's own words", () => {
   const actions = buildActions(story());
   expect(actions.map((a) => `${a.god}:${a.verb}`)).toEqual([
-    "zeus:move → olympus-gate",
+    "zeus:travel → olympus-gate",
     "hera:legend",
     "zeus:report → hera",
   ]);
@@ -135,7 +135,7 @@ test("actions are listed in the order the world applied them, each with tick, go
     text.indexOf("## What happened"),
     text.indexOf("## Repetition"),
   );
-  const order = ["move → olympus-gate", "legend", "report → hera"].map((s) =>
+  const order = ["travel → olympus-gate", "legend", "report → hera"].map((s) =>
     happened.indexOf(s),
   );
   expect(order.every((i) => i >= 0)).toBe(true);
@@ -154,7 +154,7 @@ test("each action lists the events it caused and the beliefs and feelings that f
   const text = renderTranscript(story());
   expect(text).toContain("hera → zeus: affinity -1");
   // The move caused no belief or feeling: nothing listed under it.
-  const move = buildActions(story()).find((a) => a.verb.startsWith("move"));
+  const move = buildActions(story()).find((a) => a.verb.startsWith("travel"));
   expect(move?.changes).toEqual([]);
 });
 
@@ -666,9 +666,9 @@ test("the repetition summary lists every distinct choice a god made, not the top
     .slice(text.indexOf("## Repetition"), text.indexOf("## Automated checks"))
     .split("\n")
     .find((line) => line.startsWith("- Zeus:"));
-  for (const to of targets) expect(zeus).toContain(`move:${to}`);
-  expect(zeus).toContain("move:a ×2");
-  expect(zeus).toContain("move:h ×1");
+  for (const to of targets) expect(zeus).toContain(`travel:${to}`);
+  expect(zeus).toContain("travel:a ×2");
+  expect(zeus).toContain("travel:h ×1");
   // Control: a god with one choice lists one.
   const hera = text.split("\n").find((line) => line.startsWith("- Hera:"));
   expect(hera).toContain("Choices: none");
@@ -714,12 +714,12 @@ test("goal-set and goal-ended lines are rendered in order, and each action sits 
         ?.trim(),
     ),
   ).toEqual([
-    "move → great-hall (context-backed)",
+    "travel → great-hall (context-backed)",
     "goal set → farmer (declaration)",
-    "move → town-square (context-backed)",
+    "travel → town-square (context-backed)",
     "report → farmer (context-backed)",
     "goal ended (achieved) (declaration)",
-    "move → tavern (context-backed)",
+    "travel → tavern (context-backed)",
   ]);
   expect(blocks[1]?.block).toContain('"Win the farmer\'s devotion."');
   expect(blocks[4]?.block).toContain('"Win the farmer\'s devotion."');
@@ -773,7 +773,7 @@ test("an action that carries a goal change is chosen under the old goal, and the
   );
   expect(lines).toEqual([
     "goal set → hera (declaration)",
-    "move → olympus-gate (context-backed)",
+    "travel → olympus-gate (context-backed)",
     "goal ended (abandoned) (declaration)",
     "goal set → farmer (declaration)",
   ]);
@@ -1158,7 +1158,7 @@ function dispositionRecord(index = 1): EpisodeRecord {
       outcome: "rejected",
     }),
   ];
-  const apart = act("zeus", { kind: "move", to: "tavern" }, 8, {
+  const apart = act("zeus", { kind: "travel", to: "tavern" }, 8, {
     outcome: "rejected",
   });
   const rejections = [...refused, apart];
@@ -1193,10 +1193,10 @@ function dispositionRecord(index = 1): EpisodeRecord {
 test("the transcript lists every god proposal with the action and what the world did with it, rejections and their reason codes included", () => {
   const text = renderTranscript(dispositionRecord());
   expect(text).toContain("## What the world did with every proposal");
-  expect(text).toMatch(/Zeus: move → olympus-gate — committed: entity-moved/);
+  expect(text).toMatch(/Zeus: travel → olympus-gate — committed: entity-moved/);
   expect(text).toMatch(/Hera: bless → pet-1 — rejected: stale-target/);
   expect(text).toMatch(/Hera: bless → pet-2 — rejected: stale-target/);
-  expect(text).toMatch(/Zeus: move → tavern — rejected: not-adjacent/);
+  expect(text).toMatch(/Zeus: travel → tavern — rejected: not-adjacent/);
   expect(text).toContain("- dispositions: bless 2 × stale-target");
   // The committed-actions list still holds only what committed.
   const committedSection = text.split("## What happened")[1]?.split("##")[0];
@@ -1215,7 +1215,7 @@ test("the summary adds one line counting dispositions by action kind and outcome
     files: ["episode-1.md", "episode-2.md"],
   });
   expect(text).toContain(
-    "- dispositions: bless 4 × stale-target, move 2 × committed, move 2 × not-adjacent",
+    "- dispositions: bless 4 × stale-target, travel 2 × committed, travel 2 × not-adjacent",
   );
 });
 

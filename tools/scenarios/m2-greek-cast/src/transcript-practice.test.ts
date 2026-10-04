@@ -131,7 +131,7 @@ test("each turn an obligated god took while its obligation was open shows what i
   // An acceptance binds: renegotiating belongs to an open thread, so it is not a class of obligated turn.
   expect(turns).not.toContain("renegotiated");
   expect(turns).toContain(
-    `| zeus | 22 | ${ids.successor} | 50 | move | performed |  |`,
+    `| zeus | 22 | ${ids.successor} | 50 | travel | performed |  |`,
   );
   expect(turns).toContain(
     `| zeus | 30 | ${ids.successor} | 50 | waited | waited for a named event | a mortal to arrive at altar |`,
@@ -143,7 +143,7 @@ test("each turn an obligated god took while its obligation was open shows what i
   const lost: RealInput = {
     ...input,
     proposals: input.proposals.filter(
-      (p) => !(p.actor === "zeus" && p.kind === "move"),
+      (p) => !(p.actor === "zeus" && p.kind === "travel"),
     ),
   };
   expect(

@@ -459,21 +459,21 @@ export async function stepSuccessor(
         "Hera's affinity toward Zeus rises, from her memory of his keeping his word",
         "no relationship-changed",
       );
-      // Every move he made while obligated was made with the obligation leading his prompt.
-      const moves = story.provider.requests.filter(
+      // Every journey he set out on while obligated was begun with the obligation leading his prompt.
+      const trips = story.provider.requests.filter(
         (r) =>
           r.god === "zeus" &&
           r.n >= mark &&
-          /"action":\s*"(move|realm-transition)"/.test(r.reply ?? ""),
+          /"action":\s*"travel"/.test(r.reply ?? ""),
       );
       check(
-        moves.length > 0 &&
-          moves.every((r) => r.prompt.includes(`[${thread.id}] YOU OWE hera`)),
-        "every move he made on the way was made with the obligation leading his prompt",
-        `${moves.length} moves`,
+        trips.length > 0 &&
+          trips.every((r) => r.prompt.includes(`[${thread.id}] YOU OWE hera`)),
+        "every journey he set out on was begun with the obligation leading his prompt",
+        `${trips.length} journeys`,
       );
       step.done(
-        `zeus's newer account ${reportId} let hera open successor ${thread.id} (succeeds ${refusal.threadId}); his report naming the subject was rejected no-progress (${refused?.id}) and moved nothing, a report naming hera was told; he accepted (${accepted.proposalId}), walked ${moves.length} moves to the square, and ${ended?.id} cites ${arrival?.id}; standing ${standing?.id}, hera warmed by ${warmed?.id}`,
+        `zeus's newer account ${reportId} let hera open successor ${thread.id} (succeeds ${refusal.threadId}); his report naming the subject was rejected no-progress (${refused?.id}) and moved nothing, a report naming hera was told; he accepted (${accepted.proposalId}), set out ${trips.length} time(s) for the square, and ${ended?.id} cites ${arrival?.id}; standing ${standing?.id}, hera warmed by ${warmed?.id}`,
       );
       return { threadId: thread.id };
     },

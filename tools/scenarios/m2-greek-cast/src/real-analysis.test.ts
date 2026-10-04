@@ -82,7 +82,7 @@ test("namedIds collects every id a proposal names, and none it does not", () => 
       linkedEventId: "evt-4-2",
     }).sort(),
   ).toEqual(["evt-4-2", "hera", "the-tavern", "zeus"]);
-  expect(namedIds({ kind: "move", to: "town-square" })).toEqual([
+  expect(namedIds({ kind: "travel", to: "town-square" })).toEqual([
     "town-square",
   ]);
   expect(namedIds({ kind: "legend", assertion: "nothing named" })).toEqual([]);
@@ -223,7 +223,7 @@ test("perception compliance fails, naming the proposal, when its matching reques
 
 test("valid actions: god actions that were not rejected as malformed", () => {
   const good = base({
-    proposals: [proposal("p1", "zeus", { kind: "move", to: "x" })],
+    proposals: [proposal("p1", "zeus", { kind: "travel", to: "x" })],
   });
   expect(property(good, "valid actions")?.ok).toBe(true);
   // A stale proposal is a race, not an invalid action.
@@ -234,7 +234,7 @@ test("valid actions: god actions that were not rejected as malformed", () => {
           proposal(
             "p1",
             "zeus",
-            { kind: "move", to: "x" },
+            { kind: "travel", to: "x" },
             "rejected",
             "stale-target",
           ),
@@ -260,7 +260,7 @@ test("valid actions: god actions that were not rejected as malformed", () => {
           proposal(
             "p1",
             "zeus",
-            { kind: "move", to: "x" },
+            { kind: "travel", to: "x" },
             "rejected",
             "malformed",
           ),
@@ -344,7 +344,7 @@ test("a changed next action: a god's first action after forming a belief differs
       ["evt-3-1", "obs-p2"],
     ]),
     proposals: [
-      proposal("p1", "hera", { kind: "move", to: "b" }),
+      proposal("p1", "hera", { kind: "travel", to: "b" }),
       proposal("p2", "hera", { kind: "legend", assertion: "x" }),
     ].map((p, index) => ({ ...p, observationId: `obs-p${index + 1}` })),
   });

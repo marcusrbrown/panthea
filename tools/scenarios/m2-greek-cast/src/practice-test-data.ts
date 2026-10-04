@@ -389,7 +389,7 @@ export function episode(): Episode {
     tick,
     ...(unperformable === undefined ? {} : { unperformable }),
   });
-  const walk = propose("zeus", { kind: "move", to: "altar" }, "committed");
+  const walk = propose("zeus", { kind: "travel", to: "altar" }, "committed");
   log.add(
     "entity-moved",
     23,

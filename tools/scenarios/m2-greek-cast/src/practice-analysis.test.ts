@@ -166,7 +166,7 @@ test("every turn an obligated god takes while its obligation is open is classifi
     ],
     ["zeus", ids.successor, 40, "knowingly risked breach", undefined],
   ]);
-  expect(obligated.turns[0]?.choice).toBe("move");
+  expect(obligated.turns[0]?.choice).toBe("travel");
   expect(obligated.turns[2]?.choice).toBe("report");
 });
 
@@ -240,7 +240,7 @@ test("each class follows its rule: performing is the action the term calls for; 
   );
   // Performed: the legend itself; going toward the place; and not for a refused attempt.
   expect(cls(proposal("legend", { assertion: "x" }))).toBe("performed");
-  expect(cls(proposal("move", { to: "altar" }))).toBe("performed");
+  expect(cls(proposal("travel", { to: "altar" }))).toBe("performed");
   expect(
     cls(proposal("legend", { assertion: "x" }, "rejected", "malformed")),
   ).toBe("knowingly risked breach");
@@ -284,7 +284,7 @@ test("each class follows its rule: performing is the action the term calls for; 
     "performed",
   );
   expect(
-    classifyTurn(stay, row, text, proposal("move", { to: "tavern" }), false)
+    classifyTurn(stay, row, text, proposal("travel", { to: "tavern" }), false)
       .class,
   ).toBe("knowingly risked breach");
 });
@@ -531,8 +531,8 @@ test("a consequence changes a later choice: the god's next action differs and it
     ...input,
     proposals: input.proposals.map((p) => ({
       ...p,
-      kind: "move",
-      proposal: { actor: p.actor, kind: "move", to: "altar" },
+      kind: "travel",
+      proposal: { actor: p.actor, kind: "travel", to: "altar" },
     })),
   };
   expect(
@@ -553,7 +553,7 @@ test("obligated turns recorded: each turn has its classification; a turn whose p
   const lost: RealInput = {
     ...input,
     proposals: input.proposals.filter(
-      (p) => !(p.actor === "zeus" && p.kind === "move"),
+      (p) => !(p.actor === "zeus" && p.kind === "travel"),
     ),
   };
   const failed = property(lost, "obligated turns recorded");
@@ -611,7 +611,7 @@ const owedBoonPrompt = (
   `You are ${god}.\n${[
     "Your open practices:",
     `- [${thread}] YOU OWE ${mortal}: your boon on its prayer [${petition}], by tick ${deadline} (${deadline - tick} ticks left). ${mortal} agreed at tick 73; its offering is still to come. Cause: unmet-need (${mortal}).`,
-    `  ${mortal} is not here (they are at The Altar [altar]): your next step is {"action":"move","to":"altar"} (The Altar), turn by turn until you are with them, then bless them naming the prayer.`,
+    `  ${mortal} is not here (they are at The Altar [altar]): your next step is {"action":"travel","to":"altar"} (The Altar), turn by turn until you are with them, then bless them naming the prayer.`,
     ...extra,
     "  If the deadline passes without it, the world records the bargain as expired with your boon unanswered.",
     `You are at great-hall [great-hall] in the mortal realm, tick ${tick}.`,
@@ -725,7 +725,7 @@ test("the digest's owed-boon row is read as an obligation row: who is owed, and 
       unperformable: undefined,
       boon: true,
       petition: "evt-71-1",
-      next: { action: "move", to: "altar" },
+      next: { action: "travel", to: "altar" },
     },
   ]);
   const blocked = obligationRows(
@@ -753,7 +753,7 @@ test("the digest's owed-boon row is read as an obligation row: who is owed, and 
 
 test("a turn a god takes while it owes a boon is classified: performed when it blessed or moved toward the mortal, waited when its digest names what stops it, and knowingly risked breach otherwise", () => {
   const { input } = withOwedTurns([
-    { tick: 74, proposal: { kind: "move", fields: { to: "altar" } } },
+    { tick: 74, proposal: { kind: "travel", fields: { to: "altar" } } },
     {
       tick: 75,
       prompt: owedStepPrompt(75, "$THREAD", "$PETITION", {
@@ -769,7 +769,7 @@ test("a turn a god takes while it owes a boon is classified: performed when it b
     {
       tick: 75,
       proposal: {
-        kind: "move",
+        kind: "travel",
         fields: { to: "altar" },
         outcome: "rejected",
         reason: "unreachable",
@@ -807,7 +807,7 @@ test("a turn a god takes while it owes a boon is classified: performed when it b
 
 test("a compacted owed row is read like a whole one: its step or its obstacle is on its own line, and a move along that step is performed", () => {
   const step = obligationRows(
-    'Your open practices:\n- [evt-72-1] YOU OWE woodcutter: your boon on its prayer [evt-71-1], by tick 100. Step: {"action":"move","to":"altar"}\nYou are at great-hall [great-hall] in the mortal realm, tick 80.',
+    'Your open practices:\n- [evt-72-1] YOU OWE woodcutter: your boon on its prayer [evt-71-1], by tick 100. Step: {"action":"travel","to":"altar"}\nYou are at great-hall [great-hall] in the mortal realm, tick 80.',
   );
   expect(step).toEqual([
     {
@@ -817,7 +817,7 @@ test("a compacted owed row is read like a whole one: its step or its obstacle is
       unperformable: undefined,
       boon: true,
       petition: "evt-71-1",
-      next: { action: "move", to: "altar" },
+      next: { action: "travel", to: "altar" },
     },
   ]);
   const stuck = obligationRows(
@@ -831,9 +831,9 @@ test("a compacted owed row is read like a whole one: its step or its obstacle is
   const proposal = (to: string) => ({
     proposalId: "p",
     actor: "zeus",
-    kind: "move",
+    kind: "travel",
     observationId: "o",
-    proposal: { actor: "zeus", kind: "move", to },
+    proposal: { actor: "zeus", kind: "travel", to },
     outcome: "committed" as const,
   });
   expect(
@@ -862,12 +862,12 @@ test("a turn counts as performing the owed boon only when it is the step the row
   expect(
     classes([
       // The way the row showed: the exit to altar.
-      { tick: 74, proposal: { kind: "move", fields: { to: "altar" } } },
+      { tick: 74, proposal: { kind: "travel", fields: { to: "altar" } } },
       // A different exit.
-      { tick: 75, proposal: { kind: "move", fields: { to: "tavern" } } },
+      { tick: 75, proposal: { kind: "travel", fields: { to: "tavern" } } },
       {
         tick: 76,
-        proposal: { kind: "realm-transition", fields: { to: "olympus-gate" } },
+        proposal: { kind: "travel", fields: { to: "olympus-gate" } },
       },
       // A bless naming the owed prayer, when the row showed a hop and no bless, is not the step the row gave.
       {
@@ -923,7 +923,7 @@ test("a turn counts as performing the owed boon only when it is the step the row
       {
         tick: 74,
         proposal: {
-          kind: "move",
+          kind: "travel",
           fields: { to: "altar" },
           outcome: "rejected",
           reason: "not-adjacent",
@@ -990,9 +990,9 @@ test("a strike performs an owed punish boon only when the row showed that strike
   // The row showed no step, only an obstacle: no strike counts, whatever it hit; the digest's own wait rule applies.
   expect(cls(rowWith(undefined), "woodshed")).toBe("waited for a named event");
   // A row that showed a hop is not satisfied by a strike, nor one that showed a strike by a bless.
-  expect(cls(rowWith({ action: "move", to: "town-square" }), "woodshed")).toBe(
-    "knowingly risked breach",
-  );
+  expect(
+    cls(rowWith({ action: "travel", to: "town-square" }), "woodshed"),
+  ).toBe("knowingly risked breach");
 });
 
 test("the gate applies the prompt's own deadline rule: the owed row is expected through the deadline tick and not after, so a correct prompt at deadline+1 is not flagged", () => {

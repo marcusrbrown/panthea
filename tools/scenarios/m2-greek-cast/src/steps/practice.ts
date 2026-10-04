@@ -6,7 +6,6 @@
 // events read from the store.
 
 import {
-  nextHop,
   type PracticeThread,
   toEntityId,
   type WorldState,
@@ -224,29 +223,16 @@ export const feeling = (state: WorldState, from: string, toward: string) =>
 
 // --- Getting about ---------------------------------------------------------------------------
 
-/** Walks `god` to `to`, one scripted turn a hop, the way the story's earlier steps do. */
+/** Sends `god` to `to` with one scripted travel turn, unless it is already there; the world walks the way. */
 export async function walkTo(
   story: Story,
   god: God,
   to: string,
 ): Promise<void> {
-  for (let hops = 0; hops < 10; hops += 1) {
-    const state = await stateOf(story);
-    const actor = state.actors.get(id(god));
-    if (actor === undefined) throw new Error(`no actor ${god}`);
-    if (actor.locationId === to) return;
-    const next = nextHop(state, actor.locationId, id(to), actor.capabilities);
-    check(
-      next !== undefined,
-      `${god} has a way to ${to}`,
-      `from ${actor.locationId}`,
-    );
-    const crosses =
-      state.locations.get(next)?.realm !==
-      state.locations.get(actor.locationId)?.realm;
-    await walk(story, god, crosses ? "realm-transition" : "move", next);
-  }
-  throw new Error(`${god} did not reach ${to} in ten hops`);
+  const actor = (await stateOf(story)).actors.get(id(god));
+  if (actor === undefined) throw new Error(`no actor ${god}`);
+  if (actor.locationId === to) return;
+  await walk(story, god, to);
 }
 
 /** Brings both gods to the place `god` stands in, so a report between them can be told. */

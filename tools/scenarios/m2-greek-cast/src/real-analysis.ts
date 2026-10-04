@@ -104,8 +104,7 @@ export interface RealAnalysis {
 export const MAX_REFUSALS = 12;
 
 export const GOD_ACTIONS: ReadonlySet<string> = new Set([
-  "move",
-  "realm-transition",
+  "travel",
   "strike",
   "legend",
   "report",

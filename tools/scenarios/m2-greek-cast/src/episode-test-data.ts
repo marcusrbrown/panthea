@@ -122,7 +122,7 @@ export function input(
 }
 
 export const move = (actor: string, to: string, sequence: number) =>
-  act(actor, { kind: "move", to }, sequence);
+  act(actor, { kind: "travel", to }, sequence);
 
 export const memoryEvent = (
   id: string,
