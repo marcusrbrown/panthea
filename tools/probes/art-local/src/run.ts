@@ -228,7 +228,8 @@ function resolveDefaultSdCppModel(loraDescriptor: string | undefined): string {
   } catch {
     entries = [];
   }
-  if (entries.length === 0) {
+  const [checkpoint] = entries;
+  if (checkpoint === undefined) {
     throw new Error(
       `--model was not given and no checkpoint (${CHECKPOINT_EXTENSIONS.join("/")}) was found directly under ${MODELS_DIR} — download one (see README "How to run") or pass --model explicitly.`,
     );
@@ -238,7 +239,7 @@ function resolveDefaultSdCppModel(loraDescriptor: string | undefined): string {
       `--model was not given and ${entries.length} checkpoints were found under ${MODELS_DIR}: ${entries.join(", ")} — pass --model explicitly to disambiguate.`,
     );
   }
-  const stem = entries[0]!.replace(/\.(gguf|safetensors|ckpt)$/, "");
+  const stem = checkpoint.replace(/\.(gguf|safetensors|ckpt)$/, "");
   return loraDescriptor ? `${stem} + ${loraDescriptor}` : stem;
 }
 
