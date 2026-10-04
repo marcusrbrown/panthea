@@ -14,7 +14,7 @@ import type {
   Proposal,
   RejectionReasonCode,
 } from "@panthea/contracts";
-import { crossesRealm, nextHop } from "./geography";
+import { crossesRealm, nextHop, whyNoRoute } from "./geography";
 import {
   type ActiveJourney,
   getActor,
@@ -98,10 +98,13 @@ export function planHop(
     actor === undefined || from === undefined
       ? undefined
       : nextHop(state, from, journey.destination, actor.capabilities);
-  if (from === undefined || next === undefined) {
+  if (actor === undefined || from === undefined || next === undefined) {
     return {
       ok: false,
-      reason: "not-adjacent",
+      reason:
+        actor === undefined || from === undefined
+          ? "malformed"
+          : whyNoRoute(state, from, journey.destination, actor.capabilities),
       message: `no route from ${String(from)} to ${journey.destination}`,
     };
   }

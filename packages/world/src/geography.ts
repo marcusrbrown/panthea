@@ -117,6 +117,58 @@ export function routeLength(
   return length;
 }
 
+/**
+ * The steps from `from` to every place a route reaches for a traveler with
+ * `capabilities`, nearest first, in one pass: the same search `nextHop` makes,
+ * so each length is what `routeLength` answers. `from` itself is not in it.
+ */
+export function routeLengths(
+  state: WorldState,
+  from: EntityId,
+  capabilities: readonly string[],
+): ReadonlyMap<EntityId, number> {
+  const lengths = new Map<EntityId, number>();
+  if (!getLocation(state, from)) return lengths;
+  const queue: EntityId[] = [from];
+  const seen = new Set<EntityId>([from]);
+  for (let head = 0; head < queue.length; head += 1) {
+    const here = queue[head] as EntityId;
+    for (const edge of outgoingEdges(state, here)) {
+      const next = toEntityId(edge.to);
+      const there = getLocation(state, next);
+      if (!there || seen.has(next)) continue;
+      if (!hasCapability(capabilities, there.requiredCapability)) continue;
+      seen.add(next);
+      lengths.set(
+        next,
+        (here === from ? 0 : (lengths.get(here) as number)) + 1,
+      );
+      queue.push(next);
+    }
+  }
+  return lengths;
+}
+
+/**
+ * Why no route reaches `to` from `from` for a traveler with `capabilities`:
+ * `restricted-realm` when a route exists for one holding every capability the
+ * map asks for (a place on the way is closed to this traveler), otherwise
+ * `not-adjacent` (no edges lead there at all).
+ */
+export function whyNoRoute(
+  state: WorldState,
+  from: EntityId,
+  to: EntityId,
+  capabilities: readonly string[],
+): "restricted-realm" | "not-adjacent" {
+  const asked = [...state.locations.values()].flatMap((place) =>
+    place.requiredCapability === undefined ? [] : [place.requiredCapability],
+  );
+  return routeLength(state, from, to, [...capabilities, ...asked]) === undefined
+    ? "not-adjacent"
+    : "restricted-realm";
+}
+
 export function crossesRealm(
   state: WorldState,
   fromId: EntityId,

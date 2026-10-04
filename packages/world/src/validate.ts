@@ -46,6 +46,7 @@ import {
   findEdge,
   isAdjacent,
   routeLength,
+  whyNoRoute,
 } from "./geography";
 import { getMemories } from "./memory";
 import {
@@ -219,7 +220,7 @@ function handleTravel(
     undefined
   ) {
     return reject(
-      "not-adjacent",
+      whyNoRoute(state, actor.locationId, proposal.to, actor.capabilities),
       `no route from the actor's place to ${proposal.to}`,
     );
   }

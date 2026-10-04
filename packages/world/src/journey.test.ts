@@ -250,9 +250,10 @@ test("a god that loses the capability a place on its route needs is refused at t
   const stripped = withActor(first.state, "zeus", { capabilities: [] });
   const next = tick(stripped);
   expect(kinds(next.events)).toEqual(["journey-ended"]);
+  // The map has a way there; this god may not take it.
   expect(next.events[0]).toMatchObject({
     ending: "refused",
-    reason: "not-adjacent",
+    reason: "restricted-realm",
   });
   expect(where(next.state, "zeus")).toBe("square");
   expect(getJourney(next.state, id("zeus"))).toBeUndefined();
@@ -260,9 +261,10 @@ test("a god that loses the capability a place on its route needs is refused at t
   expect(tick(next.state).events).toEqual([]);
 });
 
-test("a travel proposal to a place with no route, an unknown place, or the place the god is at is refused at validation and stores nothing", () => {
+test("a travel proposal to a place the god may not reach, an unknown place, or the place the god is at is refused at validation and stores nothing", () => {
   for (const [to, reason] of [
-    ["sanctum", "not-adjacent"],
+    // A place only an initiate may enter: the god lacks the capability, so no route is open to it.
+    ["sanctum", "restricted-realm"],
     ["nowhere", "malformed"],
     ["tavern", "malformed"],
   ] as const) {
@@ -418,4 +420,16 @@ test("decode refuses a journey held by someone who is not an actor, or toward a 
       ],
     }),
   ).toThrow(/duplicate/);
+});
+
+test("a place no edge leads to is refused as not-adjacent, as opposed to one the god may not enter", () => {
+  const state = createInitialWorldState({
+    ...pack(),
+    locations: [
+      ...pack().locations,
+      { id: "island", realm: "mortal", name: "The Island", edges: [] },
+    ],
+  });
+  const result = tick(state, travel("zeus", "island"));
+  expect(result.rejected.map((r) => r.reason)).toEqual(["not-adjacent"]);
 });
