@@ -247,13 +247,18 @@ export async function stepSupplication(
       // A supplication is two halves, the god's boon and the mortal's offering, and the world
       // fulfils it when the second lands: the ending cites whichever came last. A mortal of the
       // town may have made its offering before the god got to it, so the ending may cite the boon.
+      // The offering is the worship that carried what the term asked for: a mortal who
+      // worships its god plainly, with nothing offered, has not made the offering, and a
+      // check that took the first worship of the god at all would take that one.
       const offering = eventsOfKind(
         story,
         "worship-performed",
         (e) =>
           e.entityId === first.petitioner &&
           e.deity === first.god &&
-          Number(e.tick) >= keptThread.openedTick,
+          Number(e.tick) >= keptThread.openedTick &&
+          (e.offering as { resource?: string } | undefined)?.resource ===
+            (keptThread.term as { resource?: string }).resource,
       )[0];
       const completing = storedEvents(story).find(
         (e) => e.id === keptEnd?.performedBy,
