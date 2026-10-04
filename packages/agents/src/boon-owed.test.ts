@@ -573,3 +573,111 @@ test("control: a punish boon the world would not take shows its reason and no ob
   noObject(closed.row);
   expect(closed.row).toContain("no longer open");
 });
+
+// --- A compact owed row keeps its step -------------------------------------------------------------------
+
+/** Four help supplications Zeus set terms on, each accepted: four boons owed at once. */
+function fourOwed() {
+  const run = new Run();
+  const mortals = [...run.state.actors.values()]
+    .filter(
+      (actor) =>
+        actor.alive &&
+        !actor.isDeity &&
+        (actor.inventory.get("currency") ?? 0) >= 1 &&
+        actor.locationId !== getActor(run.state, id("zeus"))?.locationId,
+    )
+    .slice(0, 4)
+    .map((actor) => String(actor.id));
+  expect(mortals).toHaveLength(4);
+  const threads = mortals.map((mortal) => {
+    const petition = run.prays(mortal, "zeus");
+    return { mortal, petition, thread: run.agreed(petition, mortal) };
+  });
+  return { run, threads };
+}
+
+test("with four boons owed, every owed row carries its one step or its obstacle, whether the digest shows it whole or compacts it, and the step parses", () => {
+  const { run, threads } = fourOwed();
+  const { context, schema, remembered } = run.view("zeus");
+  const check = (digest: readonly string[], compacted: boolean) => {
+    const rows: string[] = [];
+    for (const [at, line] of digest.entries()) {
+      if (!line.includes("YOU OWE")) continue;
+      let end = at + 1;
+      while (end < digest.length && (digest[end] ?? "").startsWith("  "))
+        end += 1;
+      rows.push(digest.slice(at, end).join("\n"));
+    }
+    expect(rows).toHaveLength(4);
+    // A compacted row is one line, with no cause text.
+    expect(rows.some((row) => !row.includes("\n"))).toBe(compacted);
+    expect(rows.some((row) => row.includes("\n"))).toBe(true);
+    for (const [n, row] of rows.entries()) {
+      expect(row).toContain(
+        `your boon on its prayer [${threads[n]?.petition}]`,
+      );
+      const step = /(\{"action":"[^}]*\})/.exec(row);
+      const obstacle = /Cannot now: |You cannot give it now: /.test(row);
+      expect(step !== null || obstacle).toBe(true);
+      if (step !== null) {
+        expect(schema.parse(JSON.parse(step[1] as string)).ok).toBe(true);
+      }
+    }
+  };
+  // The default budget, as the prompt builds it: it already holds two whole rows and compacts the other two.
+  check(digestOf(context.prompt), true);
+  // A tighter one that cannot hold four whole rows: the rows compact and keep their step.
+  check(describeDigest(remembered.threads, undefined, [], 700), true);
+  expect(context.prompt).not.toContain("see the practice row");
+});
+
+test("a compact owed row keeps its obstacle when there is no step", () => {
+  const { run, threads } = fourOwed();
+  // The second prayer has been answered by other means: its boon can no longer be given.
+  const closed = threads[1];
+  if (!closed) throw new Error("fixture");
+  const prayer = run.state.petitions.get(closed.petition);
+  if (!prayer) throw new Error("prayer");
+  run.state = {
+    ...run.state,
+    petitions: new Map(run.state.petitions).set(prayer.id, {
+      ...prayer,
+      status: "answered",
+    }),
+  };
+  const { remembered } = run.view("zeus");
+  const lines = describeDigest(remembered.threads, undefined, [], 0);
+  const line = lines.find((l) => l.includes(`[${closed.petition}]`));
+  expect(line).toBeDefined();
+  expect(line).not.toContain("\n");
+  expect(line).toContain("YOU OWE");
+  expect(line).toContain("no longer open");
+  expect(line).not.toMatch(/\{"action"/);
+});
+
+test("owed rows are never cut: with a budget too small for even their compact form, every owed row is still shown and the other threads go first", () => {
+  const { run, threads } = fourOwed();
+  const { remembered } = run.view("zeus");
+  const lines = describeDigest(remembered.threads, undefined, [], 0);
+  const text = lines.join("\n");
+  for (const { petition } of threads) {
+    expect(text).toContain(`your boon on its prayer [${petition}]`);
+  }
+  expect(lines.filter((l) => l.includes("YOU OWE"))).toHaveLength(4);
+  for (const line of lines.filter((l) => l.includes("YOU OWE"))) {
+    expect(/\{"action":"[^}]*\}|annot/.test(line)).toBe(true);
+  }
+});
+
+test("prompt size with four owed boons against one", () => {
+  const one = new Run();
+  const p = one.prays();
+  one.agreed(p);
+  const { run } = fourOwed();
+  const size = (c: { instructions?: string; prompt: string }) =>
+    (c.instructions?.length ?? 0) + c.prompt.length;
+  console.log(
+    `BOON_OWED_FOUR one ${size(one.view("zeus").context)} four ${size(run.view("zeus").context)} digest one ${digestOf(one.view("zeus").context.prompt).join("\n").length} four ${digestOf(run.view("zeus").context.prompt).join("\n").length}`,
+  );
+});

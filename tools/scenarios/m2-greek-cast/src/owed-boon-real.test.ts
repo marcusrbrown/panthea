@@ -257,3 +257,69 @@ test("control: a strike the row showed, with the building operational, is perfor
     "performed",
   );
 });
+
+test("a correct move along a compacted row's hop is performed: four boons owed, a digest too tight to show them whole, and the step is still read from the compact row", () => {
+  const world = new World();
+  const mortals = [...world.state.actors.values()]
+    .filter(
+      (actor) =>
+        actor.alive &&
+        !actor.isDeity &&
+        (actor.inventory.get("currency") ?? 0) >= 1 &&
+        actor.locationId !== getActor(world.state, id("zeus"))?.locationId,
+    )
+    .slice(0, 4)
+    .map((actor) => String(actor.id));
+  expect(mortals).toHaveLength(4);
+  for (const mortal of mortals) {
+    const spoiled = world.apply({
+      kind: "stock-spoiled",
+      entityId: mortal,
+      resource: "food",
+      amount: 1,
+      cause: "director",
+    });
+    const petition = world.apply({
+      kind: "petition-opened",
+      entityId: mortal,
+      god: "zeus",
+      cause: spoiled.id,
+      request: {
+        kind: "help",
+        need: { kind: "resource", resource: "food", amount: 1 },
+      },
+    });
+    world.tick({
+      actor: "zeus",
+      kind: "practice",
+      move: "offer",
+      petition: petition.id,
+      term: {
+        kind: "make-offering",
+        party: mortal,
+        to: "zeus",
+        resource: "currency",
+        amount: 1,
+        deadlineTicks: 80,
+      },
+    });
+    const thread = [...world.state.threads.values()].at(-1);
+    if (!thread) throw new Error("no thread");
+    world.tick({
+      actor: mortal,
+      kind: "practice",
+      move: "accept",
+      thread: thread.id,
+      source: "routine",
+    });
+  }
+  // Every owed row, however the digest budget treated it, gives its step or its obstacle.
+  const shown = world.promptFor("zeus");
+  const rows = obligationRows(shown.prompt);
+  expect(rows).toHaveLength(4);
+  for (const row of rows) {
+    expect(row.next !== undefined || row.unperformable !== undefined).toBe(
+      true,
+    );
+  }
+});

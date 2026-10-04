@@ -541,6 +541,17 @@ export function obligationRows(prompt: string): ObligationRow[] {
     let next: Record<string, unknown> | undefined;
     if (line.includes("UNPERFORMABLE now"))
       unperformable = "the term cannot be performed now";
+    // A compacted owed row says its step, or why there is none, on its own line.
+    const inlineStep = / Step: (\{"action":"[^}]*\})/.exec(line);
+    if (inlineStep !== null) {
+      try {
+        next = JSON.parse(inlineStep[1] as string) as Record<string, unknown>;
+      } catch {
+        // Parsed or ignored, never guessed at.
+      }
+    }
+    const inlineObstacle = / Cannot now: (.+?)\.?$/.exec(line);
+    if (inlineObstacle !== null) unperformable = inlineObstacle[1];
     for (let following_ = at + 1; following_ < lines.length; following_ += 1) {
       const following = lines[following_] ?? "";
       if (following.startsWith("- ") || !following.startsWith("  ")) break;

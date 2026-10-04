@@ -805,6 +805,51 @@ test("a turn a god takes while it owes a boon is classified: performed when it b
   expect(owed[5]?.named).toContain("a bless costs 1 divinity");
 });
 
+test("a compacted owed row is read like a whole one: its step or its obstacle is on its own line, and a move along that step is performed", () => {
+  const step = obligationRows(
+    'Your open practices:\n- [evt-72-1] YOU OWE woodcutter: your boon on its prayer [evt-71-1], by tick 100. Step: {"action":"move","to":"altar"}\nYou are at great-hall [great-hall] in the mortal realm, tick 80.',
+  );
+  expect(step).toEqual([
+    {
+      thread: "evt-72-1",
+      other: "woodcutter",
+      deadline: 100,
+      unperformable: undefined,
+      boon: true,
+      petition: "evt-71-1",
+      next: { action: "move", to: "altar" },
+    },
+  ]);
+  const stuck = obligationRows(
+    "Your open practices:\n- [evt-72-1] YOU OWE woodcutter: your boon on its prayer [evt-71-1], by tick 100. Cannot now: its prayer is no longer open to an answer.\nYou are at great-hall [great-hall] in the mortal realm, tick 80.",
+  );
+  expect(stuck[0]).toMatchObject({
+    boon: true,
+    next: undefined,
+    unperformable: "its prayer is no longer open to an answer",
+  });
+  const proposal = (to: string) => ({
+    proposalId: "p",
+    actor: "zeus",
+    kind: "move",
+    observationId: "o",
+    proposal: { actor: "zeus", kind: "move", to },
+    outcome: "committed" as const,
+  });
+  expect(
+    classifyTurn(undefined, step[0] as never, "", proposal("altar"), false)
+      .class,
+  ).toBe("performed");
+  expect(
+    classifyTurn(undefined, step[0] as never, "", proposal("tavern"), false)
+      .class,
+  ).toBe("knowingly risked breach");
+  expect(
+    classifyTurn(undefined, stuck[0] as never, "", proposal("altar"), false)
+      .class,
+  ).toBe("waited for a named event");
+});
+
 test("a turn counts as performing the owed boon only when it is the step the row showed: a bless on a different prayer, a move to a different exit, and an unrelated strike are not performed", () => {
   const classes = (
     turns: Parameters<typeof withOwedTurns>[0],

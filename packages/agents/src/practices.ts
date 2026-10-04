@@ -1366,13 +1366,23 @@ function fullRow(view: ThreadView): string[] {
 }
 
 /** One thread squeezed to a single line: its id, its term, its deadline, and the answer it needs, nothing else. */
+/**
+ * What a compacted owed row keeps of its full one: the single step the god would send, as the object to copy, or the
+ * reason there is none. The budget may shorten a row; it may not leave the god (or the gate that reads its turn) with
+ * a debt and no way to pay it.
+ */
+function compactOwedStep(owed: OwedBoon): string {
+  if (owed.next !== undefined) return ` Step: ${json(owed.next.intent)}`;
+  return owed.blocked === undefined ? "" : ` Cannot now: ${owed.blocked}.`;
+}
+
 function compactRow(view: ThreadView): string {
   const term = describeTerm(view.term, view.self);
   const by = `by tick ${view.term.deadline}`;
   switch (view.standing) {
     case "obligation":
       return view.owedBoon !== undefined
-        ? `- [${view.id}] YOU OWE ${view.other}: your boon on its prayer [${view.owedBoon.petition}], ${by}.`
+        ? `- [${view.id}] YOU OWE ${view.other}: your boon on its prayer [${view.owedBoon.petition}], ${by}.${compactOwedStep(view.owedBoon)}`
         : `- [${view.id}] YOU OWE ${view.other}: ${term}, ${by}.${view.unperformable === undefined ? "" : " UNPERFORMABLE now."}`;
     case "awaiting":
       return `- [${view.id}] AWAITING YOUR ANSWER: ${term}, ${by}. Answer by tick ${view.negotiationDeadline} with ${view.moves.map((move) => json(view.intents[move] ?? { action: "practice", move, thread: view.id })).join(" or ")}.`;
