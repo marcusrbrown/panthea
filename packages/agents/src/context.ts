@@ -1355,7 +1355,57 @@ function targetIsHere(snapshot: PerceptionSnapshot, target: EntityId): boolean {
  * Every action is written out as the object to send, since a model copies what
  * it is shown whole and leaves out fields it is only told about.
  */
-function answerGuidance(petition: PetitionView): string[] {
+/**
+ * Whether the strike a punish prayer's line would offer on `target` is one the parser and the world would take:
+ * the god has the ability and divinity to spend (the schema's own cap), and the building can be struck and
+ * would count as the answer (operational). Not ok, it carries the reason, and the line shows no object.
+ */
+type StrikeCheck = (
+  target: EntityId,
+) =>
+  | { readonly ok: true; readonly cap: number }
+  | { readonly ok: false; readonly why: string };
+
+/** The check for sizing a prayer before the profile is known: the longer of a shown strike and a long reason, so the budget holds either way. */
+const SIZING_CHECKS: readonly StrikeCheck[] = [
+  () => ({ ok: true, cap: 99 }),
+  () => ({
+    ok: false,
+    why: "a strike costs divinity and you hold none, or it is destroyed",
+  }),
+];
+
+/** The strike check of a god whose profile gives `ability` (absent when it has none), standing among `snapshot`'s buildings. */
+function strikeCheckFor(
+  ability: GodAbility | undefined,
+  snapshot: PerceptionSnapshot,
+): StrikeCheck {
+  const cap = strikePowerCap(ability, snapshot);
+  return (target) => {
+    if (ability === undefined) {
+      return { ok: false, why: "you have no power to strike with" };
+    }
+    if (cap < 1) {
+      return { ok: false, why: "a strike costs divinity and you hold none" };
+    }
+    const building = snapshot.buildings.find((b) => b.id === target);
+    if (building === undefined) {
+      return { ok: false, why: `${target} is not in your view` };
+    }
+    if (building.status !== "operational") {
+      return {
+        ok: false,
+        why: `${target} is ${building.status}, and a strike on it would answer nothing`,
+      };
+    }
+    return { ok: true, cap };
+  };
+}
+
+function answerGuidance(
+  petition: PetitionView,
+  strike: StrikeCheck = SIZING_CHECKS[0] as StrikeCheck,
+): string[] {
   const { request } = petition;
   const send = (intent: Record<string, unknown>) => JSON.stringify(intent);
   if (petition.agreed) {
@@ -1402,8 +1452,12 @@ function answerGuidance(petition: PetitionView): string[] {
   const target = (entry: { who: readonly EntityId[] }) =>
     entry.who.find((id) => buildings.includes(id));
   if (here !== undefined) {
+    const aim = target(here) as EntityId;
+    const check = strike(aim);
     return free([
-      `  - punish freely: ${target(here)} is here: ${send({ action: "strike", target: target(here) })} (with a power, from 1 to your limit).`,
+      check.ok
+        ? `  - punish freely: ${aim} is here: ${send({ action: "strike", target: aim, power: 1 })} (a power from 1 to ${check.cap}; 1 is shown).`
+        : `  - punish freely: ${aim} is here, but you cannot strike it now: ${check.why}.`,
     ]);
   }
   const away = petition.whereabouts.find(
@@ -1423,7 +1477,10 @@ function answerGuidance(petition: PetitionView): string[] {
 export const PRAYERS_HEADING = "Prayers to you:";
 
 /** The lines one prayer takes in the prompt: who asked, for what, about what, where each place is from here, and the ways to answer. */
-function describePrayer(petition: PetitionView): string[] {
+function describePrayer(
+  petition: PetitionView,
+  strike?: StrikeCheck,
+): string[] {
   const request = petition.request;
   const ask =
     request.kind === "punish"
@@ -1445,7 +1502,7 @@ function describePrayer(petition: PetitionView): string[] {
       }.`,
     );
   }
-  lines.push(...answerGuidance(petition));
+  lines.push(...answerGuidance(petition, strike));
   return lines;
 }
 
@@ -1486,8 +1543,16 @@ function choosePrayers(
     ...views.filter((view) => live.has(view.id)).sort(newest),
     ...views.filter((view) => !live.has(view.id)).sort(newest),
   ];
+  // The profile is not known here: size each prayer as the longer of its two ways of being said.
   const size = (view: PetitionView) =>
-    describePrayer(view).reduce((sum, line) => sum + line.length + 1, 0);
+    Math.max(
+      ...SIZING_CHECKS.map((check) =>
+        describePrayer(view, check).reduce(
+          (sum, line) => sum + line.length + 1,
+          0,
+        ),
+      ),
+    );
   let used = PRAYERS_HEADING.length + 1;
   const reserve = morePrayersLine(ordered.length).length + 1;
   const shown: PetitionView[] = [];
@@ -1502,11 +1567,14 @@ function choosePrayers(
 }
 
 /** The prayers addressed to the god that its prompt shows, and a line for those it does not. */
-function describePetitions(remembered: Remembered): string[] {
+function describePetitions(
+  remembered: Remembered,
+  strike: StrikeCheck,
+): string[] {
   if (remembered.petitions.length === 0) return [];
   const lines = [PRAYERS_HEADING];
   for (const petition of remembered.petitions) {
-    lines.push(...describePrayer(petition));
+    lines.push(...describePrayer(petition, strike));
   }
   if (remembered.morePrayers > 0) {
     lines.push(morePrayersLine(remembered.morePrayers));
@@ -1668,7 +1736,10 @@ export function buildGodContext(
           (exit) =>
             `- ${exit.name} [${exit.to}], ${exit.realm} realm, by ${exit.transport}`,
         )),
-    ...describePetitions(remembered),
+    ...describePetitions(
+      remembered,
+      strikeCheckFor(abilityFor(profile, "strike"), snapshot),
+    ),
     ...describeContests(remembered.practice),
     ...describeDigest(
       withStrikeLegality(

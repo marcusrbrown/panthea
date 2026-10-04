@@ -801,7 +801,7 @@ test("a punish prayer offers striking the offender's building as a choice: go to
   run.state = actorAt(run.state, god, "town-square");
   const near = prayersOf(run.prompt(god));
   expect(near).toContain(
-    'punish freely: woodshed is here: {"action":"strike","target":"woodshed"}',
+    'punish freely: woodshed is here: {"action":"strike","target":"woodshed","power":1}',
   );
 });
 

@@ -266,7 +266,7 @@ test("a punish prayer is a choice too: strike freely where the offender's buildi
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
   expect(prayers).toContain("punish freely");
   expect(prayers).toContain(
-    'punish freely: woodshed is here: {"action":"strike","target":"woodshed"}',
+    'punish freely: woodshed is here: {"action":"strike","target":"woodshed","power":1}',
   );
   expect(prayers).toContain("set terms");
   expect(prayers).not.toContain("to answer it");
