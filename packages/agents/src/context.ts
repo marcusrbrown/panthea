@@ -17,9 +17,12 @@ import {
   GOAL_OUTCOMES,
   type GoalChange,
   type GoalChangeRefusedEvent,
+  type JourneyEndedEvent,
+  type JourneyEnding,
   MAX_GOAL_LENGTH,
   MAX_REPORT_LENGTH,
   type PracticeRefusedEvent,
+  type RejectionReasonCode,
   type WorldEvent,
 } from "@panthea/contracts";
 import {
@@ -27,17 +30,16 @@ import {
   type ActorState,
   getActor,
   getMemories,
-  hasCapability,
   isThreadOpen,
   type MemoryEntry,
-  nextHop,
   openPetitionsFor,
   type PerceivedEvent,
-  type PerceivedExit,
   type PerceptionSnapshot,
   type Petition,
   petitionBalanceOf,
   type RelationshipState,
+  routeLength,
+  routeLengths,
   type WorldState,
 } from "@panthea/world";
 import type { ParseResult } from "./config";
@@ -66,8 +68,7 @@ import type { IntentSchema, RouteContext } from "./router";
 
 /** World actions a god intent can carry today. An ability naming any other action is not offered to the model yet. */
 export const GOD_INTENT_ACTIONS = [
-  "move",
-  "realm-transition",
+  "travel",
   "strike",
   "legend",
   "report",
@@ -84,8 +85,8 @@ export type GodIntent = GodAction & {
 };
 
 type GodAction =
-  | { readonly action: "move"; readonly to: EntityId }
-  | { readonly action: "realm-transition"; readonly to: EntityId }
+  /** Go to any place a route reaches: the world walks the god there, a step a tick. */
+  | { readonly action: "travel"; readonly to: EntityId }
   | {
       readonly action: "strike";
       readonly target: EntityId;
@@ -176,18 +177,13 @@ export type GoalHistoryEntry =
       readonly event: WorldEvent;
     };
 
-/** One place a petition names, with where it is and the first step toward it. */
+/** One place a petition names, and whether the god is there or can travel there. */
 export interface PetitionPlace {
   readonly id: EntityId;
   readonly name: string;
-  /** The exit to take from where the god is, or `undefined` when it is already there or no route exists. */
-  readonly hop?: {
-    readonly id: EntityId;
-    readonly name: string;
-    /** The action that reaches it: a move within a realm, a realm-transition across one (the world refuses a plain move across realms). */
-    readonly action: "move" | "realm-transition";
-  };
   readonly here: boolean;
+  /** A route reaches it from where the god stands (always so when it is already there). */
+  readonly reachable: boolean;
 }
 
 /** An open petition addressed to this god, resolved for the prompt: read from world state (the divine sense), whatever the god can perceive. */
@@ -218,6 +214,21 @@ export interface RefusalView {
   readonly ticksLeft: number;
 }
 
+/** A god's active journey, as the prompt tells it. */
+export interface JourneyView {
+  readonly destination: EntityId;
+  readonly name: string;
+  /** Steps left from where the god stands, or `undefined` when no route reaches the place from here. */
+  readonly steps: number | undefined;
+}
+
+/** How the god's last journey ended, as the prompt tells it. */
+export interface JourneyEndingView {
+  readonly ending: JourneyEnding;
+  /** What the world answered, for a refused hop. */
+  readonly reason?: RejectionReasonCode;
+}
+
 /** What a god carries into a turn from its own memory and record: bounded, and nothing but what it holds or did. */
 export interface Remembered {
   /** Oldest first. */
@@ -243,6 +254,10 @@ export interface Remembered {
   readonly blessCost: number;
   /** The god's latest goal-change refusal since it set its goal, if any. */
   readonly refusal: RefusalView | undefined;
+  /** The journey the god is on, if any. */
+  readonly journey: JourneyView | undefined;
+  /** How its last journey ended, while that is still news: it is on none, and has done nothing of its own since. */
+  readonly journeyEnding: JourneyEndingView | undefined;
   /** Every open practice thread the god is a party to, most urgent first (none is hidden): what the digest shows and a move on one pins. */
   readonly threads: readonly ThreadView[];
   /** What a practice term may name, and the causes a demand may rest on. */
@@ -313,7 +328,7 @@ function goalInstruction(remembered: Remembered): string {
   const shape =
     'add "goal" to your reply, {"set": {"text": your aim in your own words, "target": one id you were shown}} and/or {"end": {"outcome": "achieved", "failed", or "abandoned"}}.';
   if (remembered.goalLockTicks === undefined) {
-    return `You may keep one goal across turns: ${shape} ${finite} A new goal ends your old one. A goal change goes with any action in the same turn (a move, a strike, a bless, a report); it never needs a turn of its own.`;
+    return `You may keep one goal across turns: ${shape} ${finite} A new goal ends your old one. A goal change goes with any action in the same turn (a trip, a strike, a bless, a report); it never needs a turn of its own.`;
   }
   return `You may keep one goal across turns: ${shape} ${finite} A goal holds: you may end it as achieved or failed any time, but you may replace or abandon it only after ${remembered.goalLockTicks} ticks, or once news of its target or a prayer to you gives you cause. A goal change goes with any action in the same turn; it never needs a turn of its own.`;
 }
@@ -322,7 +337,7 @@ function goalInstruction(remembered: Remembered): string {
 function prayerInstructions(remembered: Remembered): string[] {
   if (remembered.petitions.length === 0) return [];
   return [
-    `Mortals pray to you, and you hear them wherever you are. Answering a prayer is how you are worshipped: strike the offender's building (action "strike") where it stands, or, for a petitioner who is here, bless them (action "bless", naming the petition, at a cost of ${remembered.blessCost} divinity). If the petitioner or the building is elsewhere, move toward it first; each prayer below says the next step.`,
+    `Mortals pray to you, and you hear them wherever you are. Answering a prayer is how you are worshipped: strike the offender's building (action "strike") where it stands, or, for a petitioner who is here, bless them (action "bless", naming the petition, at a cost of ${remembered.blessCost} divinity). If the petitioner or the building is elsewhere, travel there first; each prayer below says how.`,
   ];
 }
 
@@ -347,7 +362,7 @@ function describeCause(petition: Petition): string {
   }
 }
 
-/** A place as the god sees it: its name, whether the god is there, and the exit to take first. */
+/** A place as the god sees it: its name, whether the god is there, and whether it can travel there. */
 function placeFor(
   state: WorldState,
   god: ActorState,
@@ -355,25 +370,14 @@ function placeFor(
 ): PetitionPlace | undefined {
   const location = state.locations.get(place);
   if (!location) return undefined;
-  if (god.locationId === place) {
-    return { id: place, name: location.name, here: true };
-  }
-  const hop = nextHop(state, god.locationId, place, god.capabilities);
-  const exit = hop === undefined ? undefined : state.locations.get(hop);
-  const from = state.locations.get(god.locationId);
+  const here = god.locationId === place;
   return {
     id: place,
     name: location.name,
-    here: false,
-    ...(hop === undefined || !exit || !from
-      ? {}
-      : {
-          hop: {
-            id: hop,
-            name: exit.name,
-            action: exit.realm === from.realm ? "move" : "realm-transition",
-          },
-        }),
+    here,
+    reachable:
+      here ||
+      routeLength(state, god.locationId, place, god.capabilities) !== undefined,
   };
 }
 
@@ -441,6 +445,7 @@ export function rememberedBy(
   ownEvents: readonly WorldEvent[] = [],
   refusal?: GoalChangeRefusedEvent,
   practiceRefusal?: PracticeRefusedEvent,
+  journeyEnded?: JourneyEndedEvent,
 ): Remembered {
   const own = ownEvents
     .filter((event) => authoredAction(event, actorId))
@@ -531,6 +536,32 @@ export function rememberedBy(
       ...(agreed ? { agreed: true as const } : {}),
     };
   });
+  const active = state.journeys.get(actorId);
+  const journey: JourneyView | undefined =
+    active === undefined || self === undefined
+      ? undefined
+      : {
+          destination: active.destination,
+          name:
+            state.locations.get(active.destination)?.name ??
+            String(active.destination),
+          steps: routeLengths(state, self.locationId, self.capabilities).get(
+            active.destination,
+          ),
+        };
+  // An ending is news until the god is on another journey or has done something of its own since.
+  const journeyEnding: JourneyEndingView | undefined =
+    journeyEnded !== undefined &&
+    journeyEnded.entityId === actorId &&
+    active === undefined &&
+    own.every((event) => event.sequence < journeyEnded.sequence)
+      ? {
+          ending: journeyEnded.ending,
+          ...(journeyEnded.ending === "refused"
+            ? { reason: journeyEnded.reason }
+            : {}),
+        }
+      : undefined;
   const lock =
     state.rules.petitionBalance === undefined
       ? undefined
@@ -560,6 +591,8 @@ export function rememberedBy(
             ),
           }
         : undefined,
+    journey,
+    journeyEnding,
     threads,
     practice: options,
     practiceRefusal: refused,
@@ -578,6 +611,8 @@ export const NOTHING_REMEMBERED: Remembered = {
   goalLockTicks: undefined,
   blessCost: 0,
   refusal: undefined,
+  journey: undefined,
+  journeyEnding: undefined,
   threads: [],
   practice: NO_PRACTICE,
   practiceRefusal: undefined,
@@ -597,7 +632,7 @@ export function shownIds(
   const ids = new Set<EntityId>([
     ...snapshot.actors.map((actor) => actor.id),
     ...snapshot.buildings.map((building) => building.id),
-    ...snapshot.exits.map((exit) => exit.to),
+    ...snapshot.destinations.map((place) => place.id),
     snapshot.location.id,
   ]);
   for (const memory of remembered.memories) {
@@ -639,30 +674,6 @@ function abilityFor(
   return profile.abilities.find((ability) => ability.action === action);
 }
 
-/** Exits the god can actually take: the world refuses a move or transition to a place whose required capability the actor lacks (`hasCapability`, the rule validate.ts applies). */
-function usableExits(snapshot: PerceptionSnapshot): readonly PerceivedExit[] {
-  return snapshot.exits.filter((exit) =>
-    hasCapability(snapshot.self.capabilities, exit.requiredCapability),
-  );
-}
-
-/** Destinations of an ordinary move: usable exits within the observer's own realm. */
-function moveTargets(snapshot: PerceptionSnapshot): readonly EntityId[] {
-  return usableExits(snapshot)
-    .filter((exit) => exit.realm === snapshot.location.realm)
-    .map((exit) => exit.to);
-}
-
-/** Destinations of a realm transition: exits over a transport that lead to another realm. */
-function transitionTargets(snapshot: PerceptionSnapshot): readonly EntityId[] {
-  return usableExits(snapshot)
-    .filter(
-      (exit) =>
-        exit.transport !== "path" && exit.realm !== snapshot.location.realm,
-    )
-    .map((exit) => exit.to);
-}
-
 /** The most power a strike can carry: the ability's authored power, and never more than the divinity held. `0` means a strike is not possible. */
 function strikePowerCap(
   ability: GodAbility | undefined,
@@ -675,8 +686,8 @@ function strikePowerCap(
 
 /** Everything one intent action needs to be offered: what its target fields may hold. */
 interface Offer {
-  readonly moves: readonly EntityId[];
-  readonly transitions: readonly EntityId[];
+  /** Every place a route reaches from where the god stands: where `travel` may go. */
+  readonly destinations: readonly EntityId[];
   readonly strikeTargets: readonly EntityId[];
   readonly strikeCap: number;
   readonly canLegend: boolean;
@@ -727,8 +738,7 @@ function offerFor(
   const strikeTargets =
     strikeCap >= 1 ? snapshot.buildings.map((building) => building.id) : [];
   return {
-    moves: moveTargets(snapshot),
-    transitions: transitionTargets(snapshot),
+    destinations: snapshot.destinations.map((place) => place.id),
     strikeTargets,
     strikeCap: strikeTargets.length > 0 ? strikeCap : 0,
     canLegend: abilityFor(profile, "legend") !== undefined,
@@ -757,8 +767,7 @@ function offerFor(
 
 function availableActions(offer: Offer): readonly GodIntentAction[] {
   const actions: GodIntentAction[] = [];
-  if (offer.moves.length > 0) actions.push("move");
-  if (offer.transitions.length > 0) actions.push("realm-transition");
+  if (offer.destinations.length > 0) actions.push("travel");
   if (offer.strikeCap >= 1) actions.push("strike");
   if (offer.canLegend) actions.push("legend");
   if (offer.listeners.length > 0) actions.push("report");
@@ -783,8 +792,7 @@ export function godAvailableActions(
     availableActions(offerFor(profile, snapshot, remembered)),
   );
   const order = [
-    "move",
-    "realm-transition",
+    "travel",
     ...profile.abilities.map((ability) => ability.action),
     "report",
     "bless",
@@ -906,26 +914,12 @@ function parseAction(
   if (!action.ok) return action;
 
   switch (action.value) {
-    case "move":
-    case "realm-transition": {
-      // The schema offers one list of destinations, so the destination, not the
-      // word the model paired with it, says which it is: a step within the
-      // realm, or a crossing. The world still validates the proposal either way.
-      const to = parseMember(
-        fields.to,
-        "to",
-        [...new Set([...offer.moves, ...offer.transitions])],
-        "to",
-      );
+    case "travel": {
+      const to = parseMember(fields.to, "to", offer.destinations, "to");
       if (!to.ok) return to;
-      const destination = to.value as EntityId;
-      const crossing = offer.transitions.includes(destination);
       return {
         ok: true,
-        value: {
-          action: crossing ? "realm-transition" : "move",
-          to: destination,
-        },
+        value: { action: "travel", to: to.value as EntityId },
       };
     }
     case "strike": {
@@ -1131,13 +1125,12 @@ export function godIntentSchema(
   const properties: Record<string, unknown> = {
     action: { type: "string", enum: [...actions] },
   };
-  const to = [...new Set([...offer.moves, ...offer.transitions])];
-  if (to.length > 0) {
+  if (offer.destinations.length > 0) {
     properties.to = {
       type: "string",
-      enum: to,
+      enum: [...offer.destinations],
       description:
-        'Where to go: one of your ways out, for the action "move" or "realm-transition" (name it here, not in "target").',
+        'Where to go: any place you can reach, for the action "travel" (name it here, not in "target"). The world walks you there a step at a time.',
     };
   }
   if (offer.strikeCap >= 1) {
@@ -1433,14 +1426,14 @@ function answerGuidance(
         `  - help freely: ${petition.petitioner} is here: ${send(bless)}`,
       ]);
     }
-    const hop = petition.whereabouts.find((entry) =>
+    const place = petition.whereabouts.find((entry) =>
       entry.who.includes(petition.petitioner),
-    )?.place.hop;
+    )?.place;
     return free(
-      hop === undefined
+      place === undefined || !place.reachable
         ? []
         : [
-            `  - help freely: ${petition.petitioner} is not here; if you choose this, go toward them ${send({ action: hop.action, to: hop.id })} (${hop.name}) turn by turn until you are with them, then bless them ${send(bless)}.`,
+            `  - help freely: ${petition.petitioner} is not here; if you choose this, travel to them ${send({ action: "travel", to: place.id })} (${place.name}); the world walks you there, and once you are with them, bless them ${send(bless)}.`,
           ],
     );
   }
@@ -1461,17 +1454,19 @@ function answerGuidance(
     ]);
   }
   const away = petition.whereabouts.find(
-    (entry) => entry.place.hop !== undefined && target(entry) !== undefined,
+    (entry) => entry.place.reachable && target(entry) !== undefined,
   );
-  const hop = away?.place.hop;
   return free(
-    away === undefined || hop === undefined
+    away === undefined
       ? []
       : [
-          `  - punish freely: if you choose this, go toward ${away.place.name} ${send({ action: hop.action, to: hop.id })} (${hop.name}) turn by turn until you are there, then strike ${target(away)}.`,
+          `  - punish freely: if you choose this, travel to ${away.place.name} ${send({ action: "travel", to: away.place.id })}; the world walks you there, and once you are there, strike ${target(away)}.`,
         ],
   );
 }
+
+/** The heading of the scene's list of places the god may travel to, with the steps each is away. */
+export const DESTINATIONS_HEADING = "Places you can travel to (steps away):";
 
 /** The heading of the prayers section: the one place the divine sense delivers petitions, found by it (with the indented and dashed lines under it) wherever a prompt is checked for another god's prayers. */
 export const PRAYERS_HEADING = "Prayers to you:";
@@ -1496,9 +1491,9 @@ function describePrayer(
       `  ${who.join(", ")} at ${place.name} [${place.id}]${
         place.here
           ? " (here)"
-          : place.hop === undefined
+          : !place.reachable
             ? ": no way there"
-            : `: take ${place.hop.name} [${place.hop.id}] toward ${place.name} (action "${place.hop.action}", to "${place.hop.id}")`
+            : `: you can travel there (action "travel", to "${place.id}")`
       }.`,
     );
   }
@@ -1582,6 +1577,53 @@ function describePetitions(
   return lines;
 }
 
+/**
+ * Where the god may travel, nearest first, on one line of ids and steps: the
+ * list can run to every place on the map, and the prompt has a budget, so it
+ * names no more than the schema's own enum does.
+ */
+function describeDestinations(snapshot: PerceptionSnapshot): string {
+  return snapshot.destinations.length === 0
+    ? `${DESTINATIONS_HEADING} none.`
+    : `${DESTINATIONS_HEADING} ${snapshot.destinations.map((place) => `${place.id} ${place.steps}`).join(", ")}.`;
+}
+
+/** What the world answered to a refused step, in the god's words. */
+function describeJourneyRefusal(reason: RejectionReasonCode): string {
+  switch (reason) {
+    case "restricted-realm":
+      return "a step on the way was closed to you";
+    case "not-adjacent":
+      return "no route was left from where you stood";
+    default:
+      return "the world refused a step";
+  }
+}
+
+/** The journey the god is on, or how its last one ended. */
+function describeJourney(remembered: Remembered): string[] {
+  const { journey, journeyEnding } = remembered;
+  if (journey !== undefined) {
+    return [
+      journey.steps === undefined
+        ? `You are on a journey to ${journey.name} [${journey.destination}], but no route reaches it from here: the world will end it at its next step. Waiting leaves it running; anything else you do ends it.`
+        : `You are on a journey to ${journey.name} [${journey.destination}], ${journey.steps} ${journey.steps === 1 ? "step" : "steps"} to go. Waiting leaves it running; anything else you do ends it.`,
+    ];
+  }
+  switch (journeyEnding?.ending) {
+    case "arrived":
+      return ["Your last journey ended: you arrived."];
+    case "refused":
+      return [
+        `Your last journey ended early: ${describeJourneyRefusal(journeyEnding.reason ?? "malformed")} (${journeyEnding.reason}), and the world took you no further.`,
+      ];
+    case "replaced":
+      return ["Your last journey ended when you chose to do something else."];
+    default:
+      return [];
+  }
+}
+
 /** The god's own recent actions, and its goal with what has happened with its target since. */
 function describeSelf(
   snapshot: PerceptionSnapshot,
@@ -1594,6 +1636,7 @@ function describeSelf(
       ...remembered.ownActions.map((event) => `- ${describeOwnAction(event)}`),
     );
   }
+  lines.push(...describeJourney(remembered));
   const { goal } = remembered;
   if (goal === undefined) {
     lines.push("You have no goal. You may set one.");
@@ -1663,7 +1706,7 @@ export function buildGodContext(
   const instructions = [
     // Every god, every tick: how to decide, how to act, how to speak, how to reply.
     "Decide what you do next, in character, using only what you are shown as perceived. You know nothing else about the world, and you may only name ids listed in the scene.",
-    'You may also move to a neighboring place (action "move"), or cross to another realm where a passage leads (action "realm-transition").',
+    'You may also travel to any place you can reach (action "travel", naming it): the world walks you there, one step a tick.',
     "Speak your report and legend words in the first person, to those who hear them, without using your own name.",
     `Keep a legend assertion (at most ${MAX_ASSERTION_LENGTH} characters) and report content (at most ${MAX_REPORT_LENGTH} characters) to one or two short sentences.`,
     goalInstruction(remembered),
@@ -1729,13 +1772,7 @@ export function buildGodContext(
     ...(snapshot.events.length === 0
       ? ["- none"]
       : snapshot.events.map(describeEvent)),
-    "Ways out:",
-    ...(usableExits(snapshot).length === 0
-      ? ["- none"]
-      : usableExits(snapshot).map(
-          (exit) =>
-            `- ${exit.name} [${exit.to}], ${exit.realm} realm, by ${exit.transport}`,
-        )),
+    describeDestinations(snapshot),
     ...describePetitions(
       remembered,
       strikeCheckFor(abilityFor(profile, "strike"), snapshot),

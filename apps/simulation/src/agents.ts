@@ -12,7 +12,8 @@
 //
 // Which god goes next is `pickGod`'s to say (packages/agents/src/scheduler.ts):
 // gods that owe an accepted obligation first, then gods a thread is waiting on,
-// then the rest in round-robin, with no god passed over more than a round. What
+// then the rest in round-robin, with no god passed over more than a round. A god
+// on a journey is not offered at all until it ends, unless a thread awaits it. What
 // each god is waiting on is read from the world state the turn starts from, by
 // the rule the god's own prompt sorts its rows by. The cursor and the skip
 // counts live in this closure only: a restart starts them over, and the world
@@ -32,6 +33,7 @@ import {
 import {
   type EntityId,
   type GoalChangeRefusedEvent,
+  type JourneyEndedEvent,
   type PracticeRefusedEvent,
   UNPLACED_EVENT_KINDS,
   type WorldEvent,
@@ -147,6 +149,31 @@ export function readLatestRefusal(
 }
 
 /**
+ * The god's latest journey ending up to `toSequence`, if any. Whether it is
+ * still news (the god is on no journey and has done nothing of its own since)
+ * is the prompt's to say, from the state and the god's own events. Read inside
+ * the turn's handled path with the other store reads.
+ */
+export function readLatestJourneyEnding(
+  db: Store["db"],
+  god: EntityId,
+  toSequence: number,
+): JourneyEndedEvent | undefined {
+  const row = db
+    .query(
+      `SELECT payload FROM events
+       WHERE sequence <= ? AND kind = 'journey-ended'
+         AND json_extract(payload, '$.entityId') = ?
+       ORDER BY sequence DESC
+       LIMIT 1`,
+    )
+    .get(toSequence, god) as { payload: string } | null;
+  return row === null
+    ? undefined
+    : (JSON.parse(row.payload) as JourneyEndedEvent);
+}
+
+/**
  * The god's latest refused practice move (or talk around an open thread) up to
  * `toSequence`, if no practice move of its own has committed since. A refusal
  * is private world state like the goal refusal: committed with the rejected
@@ -209,7 +236,7 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
   /** The god that takes the next turn, with the memory that follows the pick; nothing is kept until the turn starts. */
   function nextGod(state: WorldState): Pick | undefined {
     const pending = actorsWithPendingProposals(deps.store);
-    const eligible = [...state.actors.values()]
+    const candidates = [...state.actors.values()]
       .filter(
         (actor) =>
           actor.isDeity === true &&
@@ -218,7 +245,11 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
           !pending.has(actor.id),
       )
       .map((actor) => actor.id);
-    const signals = schedulingSignals(state, eligible);
+    const signals = schedulingSignals(state, candidates);
+    // A god on a journey takes no turn until it arrives or the journey ends, unless a thread waits on its answer: owing alone does not call it back. A god kept out is not offered, so it is not passed over either.
+    const eligible = candidates.filter(
+      (god) => !state.journeys.has(god) || signals.get(god)?.awaited === true,
+    );
     return pickGod(
       eligible.map((god) => ({
         god,
@@ -284,6 +315,11 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
         god,
         state.lastSequence,
       );
+      const journeyEnding = readLatestJourneyEnding(
+        deps.store.db,
+        god,
+        state.lastSequence,
+      );
       const result = await runGodTurn(deps, {
         state,
         actorId: god,
@@ -291,6 +327,7 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
         ownEvents,
         ...(refusal === undefined ? {} : { refusal }),
         ...(practiceRefusal === undefined ? {} : { practiceRefusal }),
+        ...(journeyEnding === undefined ? {} : { journeyEnding }),
         signal,
       });
       if (result && !signal.aborted) conclude(result);

@@ -162,23 +162,21 @@ test("an action outside the god's abilities fails, and the schema never offers i
   ).toBe(false);
 });
 
-test("the schema offers exactly the god's ability actions that can be used here plus the movement actions that apply", () => {
+test("the schema offers exactly the god's ability actions that can be used here plus travel", () => {
   expect(properties(godIntentSchema(zeus, atTavern())).action?.enum).toEqual([
-    "move",
+    "travel",
     "strike",
     "legend",
     "wait",
   ]);
   const atMountain = snapshotOf("zeus", "mountain-path");
   expect(properties(godIntentSchema(zeus, atMountain)).action?.enum).toEqual([
-    "move",
-    "realm-transition",
+    "travel",
     "legend",
     "wait",
   ]);
   expect(godAvailableActions(zeus, atMountain)).toEqual([
-    "move",
-    "realm-transition",
+    "travel",
     "legend",
     "wait",
   ]);
@@ -240,35 +238,29 @@ test("a non-integer, zero, or missing strike power fails", () => {
   }
 });
 
-test("moves are limited to the exits of the current location", () => {
+test("travel names any place a route reaches from where the god stands, across realms; not where it stands, and not a place off the map", () => {
   const square = godIntentSchema(zeus, atSquare());
-  expect(square.parse({ action: "move", to: "tavern" }).ok).toBe(true);
-  const refused = square.parse({ action: "move", to: "great-hall" });
-  expect(refused.ok).toBe(false);
-  if (!refused.ok) expect(refused.path).toBe("to");
-
-  // A realm transition is offered only where a transport leads to another realm.
+  expect(square.parse({ action: "travel", to: "tavern" }).ok).toBe(true);
+  // No longer limited to the exits: the great hall is a journey away.
   expect(
-    square.parse({ action: "realm-transition", to: "olympus-gate" }).ok,
-  ).toBe(false);
+    square.parse({ action: "travel", to: "great-hall" }) as unknown,
+  ).toEqual({ ok: true, value: { action: "travel", to: "great-hall" } });
+  for (const to of ["town-square", "atlantis"]) {
+    const refused = square.parse({ action: "travel", to });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.path).toBe("to");
+  }
   const mountain = godIntentSchema(zeus, snapshotOf("zeus", "mountain-path"));
   expect(
-    mountain.parse({
-      action: "realm-transition",
-      to: "olympus-gate",
-    }) as unknown,
+    mountain.parse({ action: "travel", to: "olympus-gate" }) as unknown,
   ).toEqual({
     ok: true,
-    value: { action: "realm-transition", to: "olympus-gate" },
+    value: { action: "travel", to: "olympus-gate" },
   });
-  // The destination decides the kind: a `move` naming the crossing's destination is the crossing, not a refusal (the gate runs exhausted on that pairing).
-  expect(
-    mountain.parse({ action: "move", to: "olympus-gate" }) as unknown,
-  ).toEqual({
-    ok: true,
-    value: { action: "realm-transition", to: "olympus-gate" },
-  });
-  expect(mountain.parse({ action: "move", to: "altar" }).ok).toBe(false);
+  // A god no longer names a step or a crossing.
+  for (const action of ["move", "realm-transition"]) {
+    expect(mountain.parse({ action, to: "olympus-gate" }).ok).toBe(false);
+  }
 });
 
 test("non-object, unknown, and empty-assertion candidates fail", () => {
@@ -478,56 +470,43 @@ test("the authored deities hold `divine`; the authored mortals do not", () => {
   expect(capabilities("farmer")).toEqual([]);
 });
 
-test("with the authored pack alone, Zeus is offered olympus-gate and judgment-hall", () => {
+test("with the authored pack alone, Zeus may travel to olympus-gate and judgment-hall", () => {
   const mountain = godIntentSchema(zeus, snapshotOf("zeus", "mountain-path"));
-  expect(properties(mountain).action?.enum).toContain("realm-transition");
-  expect(
-    mountain.parse({ action: "realm-transition", to: "olympus-gate" }).ok,
-  ).toBe(true);
+  expect(properties(mountain).action?.enum).toContain("travel");
+  expect(mountain.parse({ action: "travel", to: "olympus-gate" }).ok).toBe(
+    true,
+  );
 
   const hall = godIntentSchema(zeus, snapshotOf("zeus", "great-hall"));
-  expect(hall.parse({ action: "move", to: "olympus-gate" }).ok).toBe(true);
+  expect(hall.parse({ action: "travel", to: "olympus-gate" }).ok).toBe(true);
+  expect(hall.parse({ action: "travel", to: "judgment-hall" }).ok).toBe(true);
 
   const meadow = godIntentSchema(zeus, snapshotOf("zeus", "asphodel-meadow"));
-  expect(meadow.parse({ action: "move", to: "judgment-hall" }).ok).toBe(true);
+  expect(meadow.parse({ action: "travel", to: "judgment-hall" }).ok).toBe(true);
 });
 
-test("a deity without the required capability is not offered the restricted exits; positive control: the authored Zeus is", () => {
+test("a deity without the required capability is not offered the restricted places; positive control: the authored Zeus is", () => {
   const plain = snapshotOf("zeus", "mountain-path", [], undivine);
   const withoutDivine = godIntentSchema(zeus, plain);
-  expect(properties(withoutDivine).action?.enum).not.toContain(
-    "realm-transition",
-  );
-  expect(godAvailableActions(zeus, plain)).not.toContain("realm-transition");
   expect(properties(withoutDivine).to?.enum ?? []).not.toContain(
     "olympus-gate",
   );
-  expect(
-    withoutDivine.parse({ action: "realm-transition", to: "olympus-gate" }).ok,
-  ).toBe(false);
+  expect(properties(withoutDivine).to?.enum ?? []).not.toContain("great-hall");
+  expect(withoutDivine.parse({ action: "travel", to: "olympus-gate" }).ok).toBe(
+    false,
+  );
+  expect(withoutDivine.parse({ action: "travel", to: "great-hall" }).ok).toBe(
+    false,
+  );
 
   const divine = snapshotOf("zeus", "mountain-path");
   const withDivine = godIntentSchema(zeus, divine);
-  expect(properties(withDivine).action?.enum).toContain("realm-transition");
-  expect(godAvailableActions(zeus, divine)).toContain("realm-transition");
+  expect(godAvailableActions(zeus, divine)).toContain("travel");
   expect(properties(withDivine).to?.enum).toContain("olympus-gate");
+  expect(properties(withDivine).to?.enum).toContain("great-hall");
 });
 
-test("a plain move to a restricted place is not offered to a deity without the capability either, since the world would refuse it", () => {
-  const without = godIntentSchema(
-    zeus,
-    snapshotOf("zeus", "great-hall", [], undivine),
-  );
-  expect(without.parse({ action: "move", to: "olympus-gate" }).ok).toBe(false);
-  expect(
-    godIntentSchema(zeus, snapshotOf("zeus", "great-hall")).parse({
-      action: "move",
-      to: "olympus-gate",
-    }).ok,
-  ).toBe(true);
-});
-
-test("the prompt does not list ways out the god cannot take", () => {
+test("the prompt does not list places the god cannot reach", () => {
   const plain = buildGodContext(
     zeus,
     snapshotOf("zeus", "mountain-path", [], undivine),

@@ -189,7 +189,7 @@ const prayerEntry = (prompt: string, petition: string) => {
   return [lines[at], ...rest.slice(0, end < 0 ? rest.length : end)].join("\n");
 };
 
-test("an accepted remote supplication puts YOU OWE first, naming the mortal, the prayer, and the deadline, with the first hop toward the mortal as an object to copy", () => {
+test("an accepted remote supplication puts YOU OWE first, naming the mortal, the prayer, and the deadline, with travel to the mortal as an object to copy", () => {
   const run = new Run();
   const petition = run.prays();
   const thread = run.agreed(petition);
@@ -197,14 +197,6 @@ test("an accepted remote supplication puts YOU OWE first, naming the mortal, the
   const farmer = getActor(run.state, id("farmer"));
   if (!zeus || !farmer) throw new Error("actors");
   expect(zeus.locationId).not.toBe(farmer.locationId);
-  const hop = nextHop(
-    run.state,
-    zeus.locationId,
-    farmer.locationId,
-    zeus.capabilities,
-  );
-  if (hop === undefined) throw new Error("no route");
-
   const { context } = run.view("zeus");
   const digest = digestOf(context.prompt);
   // The owed boon leads the digest.
@@ -214,7 +206,9 @@ test("an accepted remote supplication puts YOU OWE first, naming the mortal, the
   expect(digest[1]).toContain(`by tick ${thread.term.deadline}`);
   const row = digest.join("\n");
   expect(row).toContain("is not here");
-  expect(row).toContain(`{"action":"move","to":"${hop}"}`);
+  // One action, to where the mortal stands: the world walks the way.
+  expect(row).toContain(`{"action":"travel","to":"${farmer.locationId}"}`);
+  expect(row).not.toContain('"action":"move"');
   // Not a bless object yet: it would be refused until the god is with the mortal.
   expect(row).not.toContain('"action":"bless"');
   // Not the old wording, which said it was the mortal's thread.
@@ -222,12 +216,12 @@ test("an accepted remote supplication puts YOU OWE first, naming the mortal, the
   expect(row).not.toContain("still owed (answer the prayer");
 });
 
-test("the hop shown parses against the schema and commits in the world: a first step the world takes", () => {
+test("the travel shown parses against the schema and commits in the world: the journey starts and the world takes its first step", () => {
   const run = new Run();
   const petition = run.prays();
   run.agreed(petition);
   const { context, schema, snapshot, remembered } = run.view("zeus");
-  const shown = /\{"action":"(move|realm-transition)","to":"([^"]+)"\}/.exec(
+  const shown = /\{"action":"(travel)","to":"([^"]+)"\}/.exec(
     digestOf(context.prompt).join("\n"),
   );
   expect(shown).not.toBeNull();
@@ -242,11 +236,18 @@ test("the hop shown parses against the schema and commits in the world: a first 
     remembered,
   );
   if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+  const before = getActor(run.state, id("zeus"));
   const ran = run.tick(built.proposal as never);
   expect(ran.rejected).toEqual([]);
-  expect(String(getActor(run.state, id("zeus"))?.locationId)).toBe(
-    String(shown?.[2]),
-  );
+  // The god is on its way to the mortal, one step along (or there, when it was one step).
+  const after = getActor(run.state, id("zeus"));
+  expect(after?.locationId).not.toBe(before?.locationId);
+  const journey = run.state.journeys.get(id("zeus"));
+  expect(
+    journey === undefined
+      ? String(after?.locationId)
+      : String(journey.destination),
+  ).toBe(String(shown?.[2]));
 });
 
 test("a co-located one shows the bless object, and it parses, builds, and commits: the boon is given and the thread sees it", () => {
@@ -430,7 +431,7 @@ test("prompt size for a god that owes one boon, against the same god with the te
 
 // --- A punish prayer's boon is a strike ---------------------------------------------------------------
 
-test("an accepted punish supplication with the god away from the building shows the hop toward it, as an object that parses and commits; no bless is shown for a prayer a bless does not answer", () => {
+test("an accepted punish supplication with the god away from the building shows travel to it, as an object that parses and commits; no bless is shown for a prayer a bless does not answer", () => {
   const run = new Run();
   const petition = run.prayPunish();
   const thread = run.agreed(petition);
@@ -452,12 +453,12 @@ test("an accepted punish supplication with the god away from the building shows 
   expect(digest[1]).toContain(`your boon on its prayer [${petition}]`);
   const row = digest.join("\n");
   expect(row).toContain("woodshed");
-  expect(row).toContain(`{"action":"move","to":"${hop}"}`);
+  expect(row).toContain(`{"action":"travel","to":"${shed.locationId}"}`);
   expect(row).not.toContain('"action":"bless"');
   expect(row).not.toContain("answered as it asks");
   expect(row).not.toContain("You cannot give it now");
 
-  const parsed = schema.parse({ action: "move", to: hop });
+  const parsed = schema.parse({ action: "travel", to: shed.locationId });
   expect(parsed.ok).toBe(true);
   if (!parsed.ok) return;
   const built = buildModelProposal(
@@ -468,7 +469,11 @@ test("an accepted punish supplication with the god away from the building shows 
   );
   if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
   expect(run.tick(built.proposal as never).rejected).toEqual([]);
+  // The journey is under way: the world took the first step of the way.
   expect(String(getActor(run.state, id("zeus"))?.locationId)).toBe(String(hop));
+  expect(String(run.state.journeys.get(id("zeus"))?.destination)).toBe(
+    String(shed.locationId),
+  );
 });
 
 test("with the god at the building the row shows the strike, whole: it parses, builds, and commits, and the world sees the boon", () => {
@@ -527,7 +532,7 @@ test("control: a punish boon the world would not take shows its reason and no ob
   const noObject = (row: string) => {
     expect(row).toContain("YOU OWE farmer");
     expect(row).not.toContain('"action":"strike"');
-    expect(row).not.toContain('"action":"move"');
+    expect(row).not.toContain('"action":"travel"');
     expect(row).toContain("You cannot give it now");
   };
 

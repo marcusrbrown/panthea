@@ -356,7 +356,8 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
   }
   // The world kept prayers the prompt could not hold, so the cap was exercised.
   expect(crowded).toBeGreaterThan(0);
-  // At about 3.3 characters a token (measured on qwen3-8b-4k) this is under 2.6K tokens of a 4K context
-  // that Ollama truncates silently past about 4,090.
-  expect(worst.chars).toBeLessThanOrEqual(8500);
+  // At about 3.3 characters a token (measured on qwen3-8b-4k) this is under 2.7K tokens of a 4K context
+  // that Ollama truncates silently past about 4,090. The bound was 8,500 before a god's way out became a
+  // line naming every place it can travel to (ids and steps, about 250 characters for the authored map).
+  expect(worst.chars).toBeLessThanOrEqual(8700);
 });

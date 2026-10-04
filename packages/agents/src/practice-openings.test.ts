@@ -230,11 +230,11 @@ test("from afar the travel hint belongs to the choice of helping, said as a cond
   const run = new Run();
   const petition = run.prays();
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
-  // The way toward the petitioner is still listed, and the help path says it is for one who chooses to help.
-  expect(prayers).toContain("take ");
+  // Travelling to the petitioner is still listed, and the help path says it is for one who chooses to help.
+  expect(prayers).toContain('"action":"travel"');
   expect(prayers).toMatch(/help freely: .*if you choose this/);
   expect(prayers).toContain(
-    `then bless them {"action":"bless","petition":"${petition}"}`,
+    `bless them {"action":"bless","petition":"${petition}"}`,
   );
   expect(prayers).not.toContain("bless them now");
   expect(prayers).not.toContain("keep going each turn");

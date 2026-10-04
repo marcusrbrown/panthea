@@ -849,10 +849,10 @@ function boonOwed() {
   return { run, petition };
 }
 
-test("a move that names a building and no destination, as the gate's Zeus sent it, is still refused: it is not a place to go, and the refusal names the ways out", () => {
+test("a travel that names a building and no destination, as the gate's Zeus sent a move, is still refused: it is not a place to go, and the refusal names the places to travel to", () => {
   const { run } = boonOwed();
   for (const target of ["woodshed", "old-oak"]) {
-    const refused = parses(run, "zeus", { action: "move", target });
+    const refused = parses(run, "zeus", { action: "travel", target });
     expect(refused.ok).toBe(false);
     if (refused.ok) continue;
     expect(refused.path).toBe("to");
@@ -860,13 +860,13 @@ test("a move that names a building and no destination, as the gate's Zeus sent i
   }
 });
 
-test("the way to the petitioner is an object to copy, in the form the parser takes: the owed boon's first hop in the digest, and a bless once the petitioner is here", () => {
+test("the way to the petitioner is an object to copy, in the form the parser takes: the owed boon's travel in the digest, and a bless once the petitioner is here", () => {
   const { run } = boonOwed();
   const owed = digestOf(run.view("zeus").context.prompt).join("\n");
-  expect(owed).toContain('{"action":"move","to":"altar"}');
+  expect(owed).toContain('{"action":"travel","to":"altar"}');
   // Not a bless object until the god is with the mortal: the parser would refuse it.
   expect(owed).not.toContain('"action":"bless"');
-  expect(parses(run, "zeus", { action: "move", to: "altar" })).toMatchObject({
+  expect(parses(run, "zeus", { action: "travel", to: "altar" })).toMatchObject({
     ok: true,
   });
   // With the petitioner here, the bless is the object shown and it parses.
@@ -879,14 +879,13 @@ test("the way to the petitioner is an object to copy, in the form the parser tak
   expect(parses(here, "zeus", { action: "bless", petition: p }).ok).toBe(true);
 });
 
-test("the crossing a prayer's way names is written with the action that reaches it", () => {
+test("a prayer's way is one travel to where the petitioner is, from across a realm as from beside it", () => {
   const run = new Run();
   run.state = actorAt(run.state, "zeus", "olympus-gate");
   run.prays("farmer", "zeus");
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
-  expect(prayers).toContain(
-    '{"action":"realm-transition","to":"mountain-path"}',
-  );
+  expect(prayers).toContain('{"action":"travel","to":"town-square"}');
+  expect(prayers).not.toContain("realm-transition");
 });
 
 test("the schema says what `to` and `target` are for, so a destination is not named in `target`", () => {
@@ -896,7 +895,7 @@ test("the schema says what `to` and `target` are for, so a destination is not na
       properties: Record<string, { description?: string }>;
     }
   ).properties;
-  expect(props.to?.description).toContain("ways out");
+  expect(props.to?.description).toContain("travel");
   expect(props.target?.description).toContain("strike");
 });
 

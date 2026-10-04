@@ -204,12 +204,12 @@ test("a god without the power to strike is told why and given no object: no abil
   expect(damaged.entry).toContain("destroyed");
 });
 
-test("the hop toward the building stays as it was: a god that is away is shown the way, and no strike object until it is there", () => {
+test("a god that is away is shown travel to the building's place, and no strike object until it is there", () => {
   const run = new Run();
   const petition = run.prayPunish("zeus");
   const entry = entryOf(run.view("zeus").context.prompt, petition);
-  expect(entry).toContain("punish freely: if you choose this, go toward");
-  expect(entry).toContain("then strike woodshed");
-  expect(entry).toMatch(/\{"action":"(move|realm-transition)","to":"[^"]+"\}/);
+  expect(entry).toContain("punish freely: if you choose this, travel to");
+  expect(entry).toContain("once you are there, strike woodshed");
+  expect(entry).toMatch(/\{"action":"travel","to":"[^"]+"\}/);
   expect(entry).not.toMatch(/\{"action":"strike"/);
 });

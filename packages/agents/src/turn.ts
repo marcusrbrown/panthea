@@ -9,6 +9,7 @@ import type { GodProfile } from "@panthea/content";
 import type {
   EntityId,
   GoalChangeRefusedEvent,
+  JourneyEndedEvent,
   ObservationRecord,
   PracticeRefusedEvent,
   Proposal,
@@ -82,6 +83,8 @@ export async function runGodTurn(
     readonly refusal?: GoalChangeRefusedEvent;
     /** The god's latest refused practice move, if no move of its own has committed since: what its digest says about it. */
     readonly practiceRefusal?: PracticeRefusedEvent;
+    /** The god's latest journey ending, if any: what its prompt says about how its last journey ended. */
+    readonly journeyEnding?: JourneyEndedEvent;
     readonly signal?: AbortSignal;
   },
 ): Promise<GodTurnResult | undefined> {
@@ -95,6 +98,7 @@ export async function runGodTurn(
     turn.ownEvents,
     turn.refusal,
     turn.practiceRefusal,
+    turn.journeyEnding,
   );
   const context = buildGodContext(profile, snapshot, remembered);
   const prompt = `${context.instructions}\n\n${context.prompt}`;

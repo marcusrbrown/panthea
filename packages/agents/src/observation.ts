@@ -60,7 +60,7 @@ export function snapshotFacts(
     `actor:${snapshot.self.id}.location`,
     `location:${snapshot.location.id}`,
   ]);
-  for (const exit of snapshot.exits) facts.add(`location:${exit.to}`);
+  for (const place of snapshot.destinations) facts.add(`location:${place.id}`);
   for (const actor of snapshot.actors) facts.add(`actor:${actor.id}.location`);
   for (const building of snapshot.buildings) {
     facts.add(`building:${building.id}.status`);
@@ -91,7 +91,7 @@ function goalTargetFact(
   }
   if (
     snapshot.location.id === target ||
-    snapshot.exits.some((e) => e.to === target)
+    snapshot.destinations.some((place) => place.id === target)
   ) {
     return `location:${target}`;
   }
@@ -146,13 +146,12 @@ export function buildModelProposal(
     factsRead.push(goalTargetFact(snapshot, remembered, goalTarget));
   }
   // Only the actions that stand on what they saw pin anything: strike pins the
-  // god, its location, and the building; realm-transition the god and its
-  // location. Report, move, legend, and bless pin nothing. A revision goes up on
+  // god, its location, and the building. Report, travel, legend, and bless pin nothing. A revision goes up on
   // any change, so a pin refused them for changes they do not depend on (a
   // bystander arriving or leaving raises the location's, a mortal's worship
   // raises the god's), while the validator already judges at commit time
   // everything those pins would protect: the god alive, its current location and
-  // access to the destination (move), its presence with the listener and what
+  // access to the destination (travel), its presence with the listener and what
   // it cites (report), and the audience at its place (legend).
   const expectedRevisions: EntityRevision[] = [];
   const selfPin: EntityRevision = {
@@ -188,27 +187,13 @@ export function buildModelProposal(
       };
       break;
     }
-    case "move": {
-      if (!snapshot.exits.some((exit) => exit.to === intent.to)) {
-        return refuse(`${intent.to} is not an exit in the snapshot`);
+    case "travel": {
+      if (!snapshot.destinations.some((place) => place.id === intent.to)) {
+        return refuse(`${intent.to} is not a destination in the snapshot`);
       }
       factsRead.push(`location:${intent.to}`);
-      proposal = { ...base, targets: [], kind: "move", to: intent.to };
-      break;
-    }
-    case "realm-transition": {
-      if (!snapshot.exits.some((exit) => exit.to === intent.to)) {
-        return refuse(`${intent.to} is not an exit in the snapshot`);
-      }
-      factsRead.push(`location:${intent.to}`);
-      expectedRevisions.push(selfPin, locationPin);
-      proposal = {
-        ...base,
-        targets: [],
-        kind: "realm-transition",
-        to: intent.to,
-        via: snapshot.location.id,
-      };
+      // A journey pins nothing: the world works the route out from wherever the god stands when it commits, and judges every hop as it walks.
+      proposal = { ...base, targets: [], kind: "travel", to: intent.to };
       break;
     }
     case "strike": {

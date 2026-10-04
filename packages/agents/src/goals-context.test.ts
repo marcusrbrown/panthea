@@ -384,7 +384,7 @@ test("an intent may carry a goal set, with text and a target the god was shown; 
   }
   expect(
     withGoal.parse({
-      action: "move",
+      action: "travel",
       to: "town-square",
       goal: {
         end: { outcome: "failed" },
