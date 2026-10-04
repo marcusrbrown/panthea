@@ -49,6 +49,7 @@ export type {
   DemandCause,
   PracticeIntent,
   PracticeOptions,
+  SchedulingSignals,
   Standing,
   ThreadView,
 } from "./practices";
@@ -61,6 +62,7 @@ export {
   describeTerm,
   PRACTICES_HEADING,
   PRAYERS_BUDGET_CHARS,
+  schedulingSignals,
 } from "./practices";
 export type { EndpointModelArgs } from "./providers";
 export { createEndpointModel, RedirectRefusedError } from "./providers";
@@ -77,6 +79,8 @@ export type {
   StepMetadata,
 } from "./router";
 export { createRouter, DEFAULT_ROUTE_LIMITS } from "./router";
+export type { GodSignals, Pick, Rotation } from "./scheduler";
+export { pickGod, SKIP_CAP, START_OF_ROTATION } from "./scheduler";
 export type { EndpointStatus, RouteOutcome } from "./status";
 export { initialEndpointStatus, recordRouteOutcome } from "./status";
 export type {

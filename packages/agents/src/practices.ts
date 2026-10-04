@@ -651,6 +651,77 @@ function owedStrikeOf(
   };
 }
 
+/**
+ * Where an open thread stands for `actorId`, the one rule both the prompt and
+ * the scheduler read. An accepted thread is the god's to perform when the term
+ * is its own, or when it owes the boon on a prayer it set terms on
+ * (`owedBoon`, from `owedBoonOf`): an obligation, whatever its deadline. A
+ * thread still being bargained over is waiting on the god when the standing
+ * offer is the other god's: awaiting its answer. Anything else is the other
+ * party's to do, and the god need only know of it.
+ */
+function standingOf(
+  actorId: EntityId,
+  thread: PracticeThread,
+  owedBoon: OwedBoon | undefined,
+): Standing {
+  if (thread.status === "accepted") {
+    return thread.term.party === actorId || owedBoon !== undefined
+      ? "obligation"
+      : "other";
+  }
+  return thread.offeredBy !== actorId ? "awaiting" : "other";
+}
+
+/** What the world says a god is waiting on, for deciding whose turn is next. */
+export interface SchedulingSignals {
+  /** The earliest deadline among the accepted obligations the god must perform (terms of its own, boons it owes), or `undefined` when it owes nothing. */
+  readonly obligationDeadline: number | undefined;
+  /** A thread being bargained over is waiting on this god's answer. */
+  readonly awaited: boolean;
+}
+
+/**
+ * The scheduling signals of each of `gods`, read from world state alone, in one
+ * pass over the threads. It applies `standingOf`, the rule the practice digest
+ * sorts its rows by, so a god the scheduler calls owing is one whose prompt
+ * leads with a YOU OWE row, and one it calls awaited is one whose prompt shows
+ * AWAITING YOUR ANSWER. Prayers, contests, and the clock are not inputs; the
+ * deadline is the term's, in world ticks, as the digest orders obligations.
+ */
+export function schedulingSignals(
+  state: WorldState,
+  gods: Iterable<EntityId>,
+): Map<EntityId, SchedulingSignals> {
+  const found = new Map<
+    EntityId,
+    { obligationDeadline: number | undefined; awaited: boolean }
+  >();
+  for (const god of gods) {
+    found.set(god, { obligationDeadline: undefined, awaited: false });
+  }
+  for (const thread of state.threads.values()) {
+    if (!isThreadOpen(thread)) continue;
+    for (const party of [thread.demander, thread.obligated]) {
+      const signals = found.get(party);
+      if (signals === undefined) continue;
+      const standing = standingOf(
+        party,
+        thread,
+        owedBoonOf(state, party, thread),
+      );
+      if (standing === "awaiting") signals.awaited = true;
+      if (standing === "obligation") {
+        signals.obligationDeadline = Math.min(
+          signals.obligationDeadline ?? Number.POSITIVE_INFINITY,
+          thread.term.deadline,
+        );
+      }
+    }
+  }
+  return found;
+}
+
 /** The thread views of `actorId`, most urgent first, and the options its terms and demands draw on. */
 export function practiceBy(
   state: WorldState,
@@ -674,14 +745,7 @@ export function practiceBy(
     const who = (id: EntityId) => (id === actorId ? "you" : id);
     const status = thread.status as ThreadView["status"];
     const owedBoon = owedBoonOf(state, actorId, thread);
-    const standing: Standing =
-      status === "accepted"
-        ? thread.term.party === actorId || owedBoon !== undefined
-          ? "obligation"
-          : "other"
-        : thread.offeredBy !== actorId
-          ? "awaiting"
-          : "other";
+    const standing = standingOf(actorId, thread, owedBoon);
 
     const moves: AnswerMove[] = [];
     if (status !== "accepted") {
