@@ -528,6 +528,8 @@ Status (2026-10-03): the scenario and harness are done (34159f4). The gate ran t
 
 **Verification:** tests pass; seven-god scripted scenario keeps routines at cadence.
 
+Status (2026-10-04): Unit 9 is split into two PRs, by owner decision. PR 1 is the scheduler: `packages/agents/src/scheduler.ts` (the pure picker), `schedulingSignals` beside `practiceBy` in `packages/agents/src/practices.ts` (the signal reader, sharing the prompt digest's standing rule), and `apps/simulation/src/agents.ts` calling them. PR 2 is travel journeys (the `travel` proposal, journey state and events, the codec and archive, and the context and observation changes). The checkbox stays unticked until both land. The owner's scheduler rules differ from the Approach text above in two places, which this note records and does not erase: the first tier is any accepted obligation, a boon owed included, whatever its deadline (not one "near its deadline"), earliest deadline first; and the fairness bound is a hard skip cap of 7 (one full round of seven), kept for every god at once. Prayers and contests raise nothing. The cursor and skip counts are in the service's memory and start over on a restart. Queue wait, generation time, and time to commit are not recorded by PR 1: the gate transcript's per-request timing table (#109) already lists when each god was asked, when its proposal was applied, and its latency.
+
 - [ ] **Unit 10: Seven-god scenario and evidence**
 
 **Goal:** the full cast plays every practice in one scripted run, ready for Unit 13 of the M2 plan.
