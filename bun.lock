@@ -141,6 +141,17 @@
         "@panthea/tools-probes-shared": "workspace:*",
       },
     },
+    "tools/probes/god-latency": {
+      "name": "@panthea/tools-probes-god-latency",
+      "version": "0.1.0",
+      "dependencies": {
+        "@panthea/agents": "workspace:*",
+        "@panthea/content": "workspace:*",
+        "@panthea/contracts": "workspace:*",
+        "@panthea/tools-probes-shared": "workspace:*",
+        "@panthea/world": "workspace:*",
+      },
+    },
     "tools/probes/inference-baseline": {
       "name": "@panthea/tools-probes-inference-baseline",
       "version": "0.1.0",
@@ -363,6 +374,8 @@
     "@panthea/tools-probes-catchup-bench": ["@panthea/tools-probes-catchup-bench@workspace:tools/probes/catchup-bench"],
 
     "@panthea/tools-probes-coexistence": ["@panthea/tools-probes-coexistence@workspace:tools/probes/coexistence"],
+
+    "@panthea/tools-probes-god-latency": ["@panthea/tools-probes-god-latency@workspace:tools/probes/god-latency"],
 
     "@panthea/tools-probes-inference-baseline": ["@panthea/tools-probes-inference-baseline@workspace:tools/probes/inference-baseline"],
 

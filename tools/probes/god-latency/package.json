@@ -1,0 +1,19 @@
+{
+  "name": "@panthea/tools-probes-god-latency",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "capture": "bun run src/capture.ts",
+    "measure": "bun run src/measure.ts"
+  },
+  "dependencies": {
+    "@panthea/agents": "workspace:*",
+    "@panthea/content": "workspace:*",
+    "@panthea/contracts": "workspace:*",
+    "@panthea/tools-probes-shared": "workspace:*",
+    "@panthea/world": "workspace:*"
+  }
+}

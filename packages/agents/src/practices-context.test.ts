@@ -192,12 +192,19 @@ function obligation(run = new Run()) {
 
 // --- The digest ------------------------------------------------------------------------------
 
-test("with an accepted obligation, the digest leads the prompt and its first row is that obligation with its deadline", () => {
+test("with an accepted obligation, the digest is the last section before the question and its first row is that obligation with its deadline", () => {
   const { run, thread } = obligation();
   const { context } = run.view("zeus");
   const lines = context.prompt.split("\n");
-  // First in the prompt: before where the god is and what it holds.
-  expect(lines[0]).toBe(PRACTICES_HEADING);
+  // Per-tick state last (the order of a request runs from what never changes to what changes every tick): after where the god is and what it holds, and just before the question.
+  expect(lines.indexOf(PRACTICES_HEADING)).toBeGreaterThan(
+    lines.findIndex((l) => l.startsWith("You are at ")),
+  );
+  expect(lines.at(-1)).toBe("What do you do?");
+  const rest = lines.slice(lines.indexOf(PRACTICES_HEADING) + 1);
+  expect(rest.find((l) => !l.startsWith("- ") && !l.startsWith("  "))).toBe(
+    "What do you do?",
+  );
   const digest = digestOf(context.prompt);
   const [first] = rowsOf(digest);
   expect(first).toContain(`[${thread.id}]`);
@@ -1398,8 +1405,9 @@ test("a repeated demand the world refused is told to the god in its next digest:
   const { run, refusal } = refusedRun();
   const { context } = withRefusal(run, "hera", refusal);
   const digest = digestOf(context.prompt);
-  // Hera has no open thread, yet the digest exists, leads the prompt, and says why.
-  expect(context.prompt.split("\n")[0]).toBe(PRACTICES_HEADING);
+  // Hera has no open thread, yet the digest exists, is the last section before the question, and says why.
+  expect(context.prompt.split("\n").at(-1)).toBe("What do you do?");
+  expect(context.prompt.split("\n")).toContain(PRACTICES_HEADING);
   expect(digest.join("\n")).toContain("Your last demand was refused");
   expect(digest.join("\n")).toContain(
     "that was already answered: zeus refused it",

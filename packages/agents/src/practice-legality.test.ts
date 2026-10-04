@@ -860,11 +860,12 @@ test("a move that names a building and no destination, as the gate's Zeus sent i
   }
 });
 
-test("the prayer's way to the petitioner is an object to copy, in the form the parser takes, and its bless is too", () => {
-  const { run, petition } = boonOwed();
-  const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
-  expect(prayers).toContain('{"action":"move","to":"altar"}');
-  expect(prayers).toContain(`{"action":"bless","petition":"${petition}"}`);
+test("the way to the petitioner is an object to copy, in the form the parser takes: the owed boon's first hop in the digest, and a bless once the petitioner is here", () => {
+  const { run } = boonOwed();
+  const owed = digestOf(run.view("zeus").context.prompt).join("\n");
+  expect(owed).toContain('{"action":"move","to":"altar"}');
+  // Not a bless object until the god is with the mortal: the parser would refuse it.
+  expect(owed).not.toContain('"action":"bless"');
   expect(parses(run, "zeus", { action: "move", to: "altar" })).toMatchObject({
     ok: true,
   });

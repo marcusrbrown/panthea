@@ -7,6 +7,7 @@ import {
 import { createEndpointModel } from "./providers";
 import {
   createRouter,
+  DEFAULT_ROUTE_LIMITS,
   type IntentSchema,
   type RouteLimits,
   type RouterOptions,
@@ -1192,5 +1193,35 @@ describe("redirects", () => {
     }
     expect(redirecting.seen).toHaveLength(1);
     expect(target.seen).toHaveLength(0);
+  });
+});
+
+// --- The default limits come from a measurement --------------------------------------------------
+
+describe("default route limits", () => {
+  // tools/probes/god-latency measured what one god request costs a local qwen3
+  // 8B at a 4K context on Ollama: the first request after a model load took
+  // 23-28 s, a request with nothing cached 14-23 s (p95 about 30 s on a loaded
+  // machine, worst 32 s), and a request that reused a cached start 3-16 s. The
+  // attempt limit is the cold p95 with half again on top; 15 s cut off more
+  // than half of the answers the model was about to give.
+  const COLD_P95_MS = 30_000;
+
+  test("one attempt is given the measured cold p95 with a margin, not the 15 s that timed out most gods' turns", () => {
+    expect(DEFAULT_ROUTE_LIMITS.attemptTimeoutMs).toBe(45_000);
+    expect(DEFAULT_ROUTE_LIMITS.attemptTimeoutMs).toBeGreaterThanOrEqual(
+      COLD_P95_MS * 1.5,
+    );
+  });
+
+  test("the whole chain has room for a full attempt and a retry's backoff, and no other limit moved", () => {
+    expect(DEFAULT_ROUTE_LIMITS.totalTimeoutMs).toBe(60_000);
+    expect(DEFAULT_ROUTE_LIMITS.totalTimeoutMs).toBeGreaterThanOrEqual(
+      DEFAULT_ROUTE_LIMITS.attemptTimeoutMs + DEFAULT_ROUTE_LIMITS.backoffMaxMs,
+    );
+    // The retry and backoff behaviour is as it was.
+    expect(DEFAULT_ROUTE_LIMITS.maxAttempts).toBe(2);
+    expect(DEFAULT_ROUTE_LIMITS.backoffBaseMs).toBe(250);
+    expect(DEFAULT_ROUTE_LIMITS.backoffMaxMs).toBe(2_000);
   });
 });

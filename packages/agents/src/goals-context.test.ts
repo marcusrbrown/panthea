@@ -117,7 +117,7 @@ test("a god with an active goal is shown its words, its target, whether the targ
   run.tick({ actor: "zeus", kind: "strike", target: "the-tavern", power: 3 });
 
   const text = run.text("zeus");
-  const goal = section(text, "Your goal", "Ways out");
+  const goal = section(text, "Your goal", "You are at");
   expect(goal).toContain('"Punish the farmer for his insolence."');
   expect(goal).toContain("farmer");
   expect(goal).toMatch(/farmer[^\n]*here/);
@@ -162,7 +162,7 @@ test("goal history shows only what the god itself saw, was told, or did, since i
   // The farmer's tavern burns before Zeus has any goal: not "since" it.
   run.tick({ actor: "zeus", kind: "strike", target: "the-tavern", power: 3 });
   run.tick({ actor: "zeus", kind: "goal", goal: GOAL });
-  const before = section(run.text("zeus"), "Your goal", "Ways out");
+  const before = section(run.text("zeus"), "Your goal", "You are at");
   expect(before).not.toContain("building-ignited");
   expect(before).not.toContain("you struck");
 
@@ -175,7 +175,7 @@ test("goal history shows only what the god itself saw, was told, or did, since i
       content: `Word number ${i}.`,
     });
   }
-  const history = section(run.text("zeus"), "Since you set it", "Ways out");
+  const history = section(run.text("zeus"), "Since you set it", "You are at");
   const lines = history.split("\n").filter((l) => l.startsWith("- "));
   expect(lines).toHaveLength(MAX_GOAL_HISTORY);
   expect(history).toContain(`Word number ${MAX_GOAL_HISTORY + 3}.`);
@@ -220,7 +220,11 @@ test("a god is shown its own last report with its words and claim, and its last 
     claim: { effect: "harm", agent: "hera", target: "zeus" },
   });
   run.tick({ actor: "zeus", kind: "move", to: "tavern" });
-  const recent = section(run.text("zeus"), "What you did recently", "Ways out");
+  const recent = section(
+    run.text("zeus"),
+    "What you did recently",
+    "You are at",
+  );
   expect(recent).toContain('you told hera: "You will answer for this."');
   expect(recent).toContain("claiming hera harmed zeus");
   expect(recent).toContain("you moved to tavern");
@@ -243,7 +247,7 @@ test("own actions over the cap show only the newest, oldest first; with a few, a
   for (const to of places) run.tick({ actor: "zeus", kind: "move", to });
   expect(run.own("zeus")).toHaveLength(places.length);
   expect(run.remembered("zeus").ownActions).toHaveLength(MAX_OWN_ACTIONS);
-  const shown = section(run.text("zeus"), "What you did recently", "Ways out")
+  const shown = section(run.text("zeus"), "What you did recently", "You are at")
     .split("\n")
     .filter((l) => l.startsWith("- you moved"));
   expect(shown).toHaveLength(MAX_OWN_ACTIONS);
@@ -696,11 +700,11 @@ test("the goal guidance asks for a goal the god can finish or fail within a few 
 
 test("a god with an active goal is told to judge it each turn and end it if achieved or failed; one without is not, and ending is still offered and parsed as before", () => {
   const run = tavernRun();
-  const without = section(run.text("zeus"), "You have no goal", "Ways out");
+  const without = section(run.text("zeus"), "You have no goal", "You are at");
   expect(without).not.toContain("achieved or failed");
 
   run.tick({ actor: "zeus", kind: "goal", goal: GOAL });
-  const goal = section(run.text("zeus"), "Your goal", "Ways out");
+  const goal = section(run.text("zeus"), "Your goal", "You are at");
   expect(goal).toContain("achieved or failed");
   expect(goal).toContain("end it");
 

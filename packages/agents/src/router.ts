@@ -52,9 +52,19 @@ export interface RouteLimits {
   readonly backoffMaxMs: number;
 }
 
+/**
+ * The attempt limit is measured, not guessed (tools/probes/god-latency): on a
+ * local qwen3 8B at a 4K context, one god request takes 3-16 s at the median
+ * when the server can reuse the start of the last one (up to 20 s at the p95),
+ * 14-23 s with nothing cached (p95 about 30 s on a machine under other load,
+ * worst 32 s), and 23-28 s for the first request after the model loads. 15 s cut off most of them with the answer a
+ * few seconds away, and a timed-out request wastes all of its time; 45 s is the
+ * cold p95 with half again on top. The chain limit leaves room for one such
+ * attempt and a retry's backoff. A request that fails fast is still retried.
+ */
 export const DEFAULT_ROUTE_LIMITS: RouteLimits = {
-  attemptTimeoutMs: 15_000,
-  totalTimeoutMs: 30_000,
+  attemptTimeoutMs: 45_000,
+  totalTimeoutMs: 60_000,
   maxAttempts: 2,
   backoffBaseMs: 250,
   backoffMaxMs: 2_000,

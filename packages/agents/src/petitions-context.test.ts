@@ -718,7 +718,7 @@ test("control: a witnessed damage keeps its attribution in a help prayer", () =>
   expect(prayers).toContain("zeus");
 });
 
-test("prayers come before what the god remembers and what happened here: the first thing in the scene after where it stands", () => {
+test("prayers are per-tick state, so they come after what the god remembers and after what is happening here, with the prayers just before the question", () => {
   const run = greek();
   const opened = run.prayAboutTheft("farmer", "woodcutter");
   // Hera also remembers being told something, and has a feeling about it.
@@ -735,9 +735,11 @@ test("prayers come before what the god remembers and what happened here: the fir
   const text = run.prompt(String(opened.god));
   const prayers = text.indexOf("Prayers to you");
   expect(prayers).toBeGreaterThan(-1);
-  expect(text.indexOf("You remember")).toBeGreaterThan(prayers);
-  expect(text.indexOf("Here with you")).toBeGreaterThan(prayers);
-  expect(text.indexOf("Recent events here")).toBeGreaterThan(prayers);
+  // What the god remembers changes slowly and leads; the scene changes every tick; the prayers, which can change with it, are the last section.
+  expect(text.indexOf("You remember")).toBeLessThan(prayers);
+  expect(text.indexOf("Here with you")).toBeLessThan(prayers);
+  expect(text.indexOf("Recent events here")).toBeLessThan(prayers);
+  expect(text.indexOf("What do you do?")).toBeGreaterThan(prayers);
 });
 
 test("a help prayer from afar offers the way to help as a choice: take the next hop toward the petitioner if you choose to help, and bless once there", () => {
@@ -799,7 +801,7 @@ test("a punish prayer offers striking the offender's building as a choice: go to
   run.state = actorAt(run.state, god, "town-square");
   const near = prayersOf(run.prompt(god));
   expect(near).toContain(
-    'punish freely: woodshed is here: {"action":"strike","target":"woodshed"}',
+    'punish freely: woodshed is here: {"action":"strike","target":"woodshed","power":1}',
   );
 });
 

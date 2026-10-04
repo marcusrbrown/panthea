@@ -266,7 +266,7 @@ test("a punish prayer is a choice too: strike freely where the offender's buildi
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
   expect(prayers).toContain("punish freely");
   expect(prayers).toContain(
-    'punish freely: woodshed is here: {"action":"strike","target":"woodshed"}',
+    'punish freely: woodshed is here: {"action":"strike","target":"woodshed","power":1}',
   );
   expect(prayers).toContain("set terms");
   expect(prayers).not.toContain("to answer it");
@@ -318,7 +318,7 @@ test("a prayer the god cannot set terms on shows the help path and the choice to
   expect(after).toContain("help freely");
 });
 
-test("once a bargain is accepted the boon still owed shows in the digest, and the prayer still offers to help freely", () => {
+test("once a bargain is accepted the boon is the god's obligation in the digest, and the prayer reads as agreed, not as a favour to do freely", () => {
   const run = new Run();
   run.state = actorAt(run.state, "zeus", "altar");
   const petition = run.prays();
@@ -339,8 +339,10 @@ test("once a bargain is accepted the boon still owed shows in the digest, and th
     source: "routine",
   });
   const text = run.view("zeus").context.prompt;
-  expect(digestOf(text).join("\n")).toContain("Boon: still owed");
-  expect(prayersOf(text).join("\n")).toContain("help freely");
+  expect(digestOf(text).join("\n")).toContain("YOU OWE farmer");
+  expect(digestOf(text).join("\n")).toContain("your boon on its prayer");
+  expect(prayersOf(text).join("\n")).toContain("You agreed terms");
+  expect(prayersOf(text).join("\n")).not.toContain("help freely");
 });
 
 // --- Openings -------------------------------------------------------------------------------------
@@ -351,7 +353,12 @@ test("with Hera's accusation in Zeus's memory, the digest shows a full demand op
   const { context } = run.view("zeus");
   const digest = digestOf(context.prompt);
   expect(digest[0]).toBe(PRACTICES_HEADING);
-  expect(context.prompt.split("\n")[0]).toBe(PRACTICES_HEADING);
+  // The digest is the last section of the user text, just before the question: per-tick state last.
+  const promptLines = context.prompt.split("\n");
+  expect(promptLines.at(-1)).toBe("What do you do?");
+  expect(promptLines.indexOf(PRACTICES_HEADING)).toBeGreaterThan(
+    promptLines.findIndex((l) => l.startsWith("You are at ")),
+  );
   const text = digest.join("\n");
   expect(text).toContain("You may begin a bargain");
   expect(text).toContain("demand of hera");

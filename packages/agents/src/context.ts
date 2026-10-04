@@ -60,6 +60,7 @@ import {
   practiceProperties,
   refusalView,
   type ThreadView,
+  withStrikeLegality,
 } from "./practices";
 import type { IntentSchema, RouteContext } from "./router";
 
@@ -205,6 +206,8 @@ export interface PetitionView {
   readonly petitionerHere: boolean;
   /** The terms the god could offer on this prayer, written out in the intent it would send; absent when the world would take none. */
   readonly offer?: Readonly<Record<string, unknown>>;
+  /** The god set terms on this prayer and the mortal accepted: the boon is owed, and the prayer is no longer a favour to do freely. */
+  readonly agreed?: true;
 }
 
 /** A refusal of the god's last goal change, as the prompt tells it. */
@@ -517,11 +520,17 @@ export function rememberedBy(
           refused,
           new Set(shown.map((petition) => petition.id)),
         );
-  const prayers = shown.map((petition) =>
-    options.offerTerms[petition.id] === undefined
-      ? petition
-      : { ...petition, offer: options.offerTerms[petition.id] },
-  );
+  const prayers = shown.map((petition) => {
+    const agreed = threads.some(
+      (view) => view.owedBoon?.petition === petition.id,
+    );
+    const offer = options.offerTerms[petition.id];
+    return {
+      ...petition,
+      ...(offer === undefined ? {} : { offer }),
+      ...(agreed ? { agreed: true as const } : {}),
+    };
+  });
   const lock =
     state.rules.petitionBalance === undefined
       ? undefined
@@ -1346,9 +1355,64 @@ function targetIsHere(snapshot: PerceptionSnapshot, target: EntityId): boolean {
  * Every action is written out as the object to send, since a model copies what
  * it is shown whole and leaves out fields it is only told about.
  */
-function answerGuidance(petition: PetitionView): string[] {
+/**
+ * Whether the strike a punish prayer's line would offer on `target` is one the parser and the world would take:
+ * the god has the ability and divinity to spend (the schema's own cap), and the building can be struck and
+ * would count as the answer (operational). Not ok, it carries the reason, and the line shows no object.
+ */
+type StrikeCheck = (
+  target: EntityId,
+) =>
+  | { readonly ok: true; readonly cap: number }
+  | { readonly ok: false; readonly why: string };
+
+/** The check for sizing a prayer before the profile is known: the longer of a shown strike and a long reason, so the budget holds either way. */
+const SIZING_CHECKS: readonly StrikeCheck[] = [
+  () => ({ ok: true, cap: 99 }),
+  () => ({
+    ok: false,
+    why: "a strike costs divinity and you hold none, or it is destroyed",
+  }),
+];
+
+/** The strike check of a god whose profile gives `ability` (absent when it has none), standing among `snapshot`'s buildings. */
+function strikeCheckFor(
+  ability: GodAbility | undefined,
+  snapshot: PerceptionSnapshot,
+): StrikeCheck {
+  const cap = strikePowerCap(ability, snapshot);
+  return (target) => {
+    if (ability === undefined) {
+      return { ok: false, why: "you have no power to strike with" };
+    }
+    if (cap < 1) {
+      return { ok: false, why: "a strike costs divinity and you hold none" };
+    }
+    const building = snapshot.buildings.find((b) => b.id === target);
+    if (building === undefined) {
+      return { ok: false, why: `${target} is not in your view` };
+    }
+    if (building.status !== "operational") {
+      return {
+        ok: false,
+        why: `${target} is ${building.status}, and a strike on it would answer nothing`,
+      };
+    }
+    return { ok: true, cap };
+  };
+}
+
+function answerGuidance(
+  petition: PetitionView,
+  strike: StrikeCheck = SIZING_CHECKS[0] as StrikeCheck,
+): string[] {
   const { request } = petition;
   const send = (intent: Record<string, unknown>) => JSON.stringify(intent);
+  if (petition.agreed) {
+    return [
+      `  You agreed terms on this prayer, and ${petition.petitioner} accepted them: you owe the boon (the row for it is under "Your open practices").`,
+    ];
+  }
   const terms =
     petition.offer === undefined
       ? []
@@ -1388,8 +1452,12 @@ function answerGuidance(petition: PetitionView): string[] {
   const target = (entry: { who: readonly EntityId[] }) =>
     entry.who.find((id) => buildings.includes(id));
   if (here !== undefined) {
+    const aim = target(here) as EntityId;
+    const check = strike(aim);
     return free([
-      `  - punish freely: ${target(here)} is here: ${send({ action: "strike", target: target(here) })} (with a power, from 1 to your limit).`,
+      check.ok
+        ? `  - punish freely: ${aim} is here: ${send({ action: "strike", target: aim, power: 1 })} (a power from 1 to ${check.cap}; 1 is shown).`
+        : `  - punish freely: ${aim} is here, but you cannot strike it now: ${check.why}.`,
     ]);
   }
   const away = petition.whereabouts.find(
@@ -1409,7 +1477,10 @@ function answerGuidance(petition: PetitionView): string[] {
 export const PRAYERS_HEADING = "Prayers to you:";
 
 /** The lines one prayer takes in the prompt: who asked, for what, about what, where each place is from here, and the ways to answer. */
-function describePrayer(petition: PetitionView): string[] {
+function describePrayer(
+  petition: PetitionView,
+  strike?: StrikeCheck,
+): string[] {
   const request = petition.request;
   const ask =
     request.kind === "punish"
@@ -1431,7 +1502,7 @@ function describePrayer(petition: PetitionView): string[] {
       }.`,
     );
   }
-  lines.push(...answerGuidance(petition));
+  lines.push(...answerGuidance(petition, strike));
   return lines;
 }
 
@@ -1472,8 +1543,16 @@ function choosePrayers(
     ...views.filter((view) => live.has(view.id)).sort(newest),
     ...views.filter((view) => !live.has(view.id)).sort(newest),
   ];
+  // The profile is not known here: size each prayer as the longer of its two ways of being said.
   const size = (view: PetitionView) =>
-    describePrayer(view).reduce((sum, line) => sum + line.length + 1, 0);
+    Math.max(
+      ...SIZING_CHECKS.map((check) =>
+        describePrayer(view, check).reduce(
+          (sum, line) => sum + line.length + 1,
+          0,
+        ),
+      ),
+    );
   let used = PRAYERS_HEADING.length + 1;
   const reserve = morePrayersLine(ordered.length).length + 1;
   const shown: PetitionView[] = [];
@@ -1488,11 +1567,14 @@ function choosePrayers(
 }
 
 /** The prayers addressed to the god that its prompt shows, and a line for those it does not. */
-function describePetitions(remembered: Remembered): string[] {
+function describePetitions(
+  remembered: Remembered,
+  strike: StrikeCheck,
+): string[] {
   if (remembered.petitions.length === 0) return [];
   const lines = [PRAYERS_HEADING];
   for (const petition of remembered.petitions) {
-    lines.push(...describePrayer(petition));
+    lines.push(...describePrayer(petition, strike));
   }
   if (remembered.morePrayers > 0) {
     lines.push(morePrayersLine(remembered.morePrayers));
@@ -1573,9 +1655,22 @@ export function buildGodContext(
       `- ${relationship.target} (${relationship.kind}), disposition ${relationship.disposition.toFixed(2)} on a scale from -1 to 1${relationship.note === undefined ? "" : `: ${relationship.note}`}`,
   );
 
+  // The order of a request is the order of how long its text stays the same. A
+  // model server reuses the longest start a new request shares with the last one
+  // it read, so what is first is read least often: what every god is told alike,
+  // then what this god is, then what changes with the tick. The lines are the
+  // same lines a god has always been shown; only where each one sits changed.
   const instructions = [
-    `You are ${profile.name}, a Greek god of ${profile.domains.join(", ")}.`,
+    // Every god, every tick: how to decide, how to act, how to speak, how to reply.
     "Decide what you do next, in character, using only what you are shown as perceived. You know nothing else about the world, and you may only name ids listed in the scene.",
+    'You may also move to a neighboring place (action "move"), or cross to another realm where a passage leads (action "realm-transition").',
+    "Speak your report and legend words in the first person, to those who hear them, without using your own name.",
+    `Keep a legend assertion (at most ${MAX_ASSERTION_LENGTH} characters) and report content (at most ${MAX_REPORT_LENGTH} characters) to one or two short sentences.`,
+    goalInstruction(remembered),
+    'You may also choose to wait (action "wait") and do nothing this turn; waiting is always allowed.',
+    "Reply with one JSON object naming your action.",
+    // This god, fixed: who it is, what is told of it, whom it holds close, what it can do.
+    `You are ${profile.name}, a Greek god of ${profile.domains.join(", ")}.`,
     `Your drives, from 0 to 1: ${drives}.`,
     "What is told of you:",
     ...profile.lore.map((line) => `- ${line.statement}`),
@@ -1584,7 +1679,7 @@ export function buildGodContext(
       : []),
     "Your powers:",
     ...abilities,
-    'You may also move to a neighboring place (action "move"), or cross to another realm where a passage leads (action "realm-transition").',
+    // What this turn's scene and prayers add to the guidance: last, since it can change with every tick.
     ...(snapshot.actors.length > 0
       ? [
           'You may also tell someone here something (action "report", naming the listener, your words, and optionally a claim of who harmed or did a kindness to whom, and an event you saw). It is your own account, told as you choose.',
@@ -1599,15 +1694,10 @@ export function buildGodContext(
             : `A legend is heard by everyone here now: ${snapshot.actors.map((actor) => actor.id).join(", ")}.`,
           citationGuidance("legend", offer.eventIds),
         ]),
-    "Speak your report and legend words in the first person, to those who hear them, without using your own name.",
-    `Keep a legend assertion (at most ${MAX_ASSERTION_LENGTH} characters) and report content (at most ${MAX_REPORT_LENGTH} characters) to one or two short sentences.`,
-    goalInstruction(remembered),
     ...prayerInstructions(remembered),
     ...(offer.practice === undefined
       ? []
       : describePracticeInstructions(remembered.threads, remembered.practice)),
-    'You may also choose to wait (action "wait") and do nothing this turn; waiting is always allowed.',
-    "Reply with one JSON object naming your action.",
   ].join("\n");
 
   const held =
@@ -1616,16 +1706,12 @@ export function buildGodContext(
       : snapshot.self.inventory
           .map((item) => `${item.resource} ${item.amount}`)
           .join(", ");
+  // The user text goes the same way: what the god remembers and has resolved first, since it changes when something happens to it; the scene next, in the order a tick changes it; the open prayers, practices, and contests last, just before the question.
   const prompt = [
-    ...describeDigest(
-      remembered.threads,
-      remembered.practiceRefusal,
-      remembered.practice.openings,
-    ),
-    ...describeContests(remembered.practice),
+    ...describeRemembered(remembered),
+    ...describeSelf(snapshot, remembered),
     `You are at ${snapshot.location.name} [${snapshot.location.id}] in the ${snapshot.location.realm} realm, tick ${snapshot.tick}.`,
     `You hold: ${held}.`,
-    ...describePetitions(remembered),
     "Here with you:",
     ...(snapshot.actors.length === 0
       ? ["- no one else"]
@@ -1643,8 +1729,6 @@ export function buildGodContext(
     ...(snapshot.events.length === 0
       ? ["- none"]
       : snapshot.events.map(describeEvent)),
-    ...describeRemembered(remembered),
-    ...describeSelf(snapshot, remembered),
     "Ways out:",
     ...(usableExits(snapshot).length === 0
       ? ["- none"]
@@ -1652,6 +1736,19 @@ export function buildGodContext(
           (exit) =>
             `- ${exit.name} [${exit.to}], ${exit.realm} realm, by ${exit.transport}`,
         )),
+    ...describePetitions(
+      remembered,
+      strikeCheckFor(abilityFor(profile, "strike"), snapshot),
+    ),
+    ...describeContests(remembered.practice),
+    ...describeDigest(
+      withStrikeLegality(
+        remembered.threads,
+        strikePowerCap(abilityFor(profile, "strike"), snapshot),
+      ),
+      remembered.practiceRefusal,
+      remembered.practice.openings,
+    ),
     "What do you do?",
   ].join("\n");
 

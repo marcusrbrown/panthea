@@ -463,10 +463,10 @@ test("an offered thread shows its god what it offered, to whom, and what is due;
     source: "routine",
   });
   const accepted = digestOf(run.view("zeus").context.prompt).join("\n");
-  expect(accepted).toContain("farmer ACCEPTED your terms");
-  expect(accepted).toContain("Boon: still owed");
-  expect(accepted).toContain("Offering: still owed");
-  expect(accepted).toContain('action "bless"');
+  // The boon is now the god's obligation: it owes the farmer, and the offering is the farmer's to come.
+  expect(accepted).toContain(`[${thread.id}] YOU OWE farmer`);
+  expect(accepted).toContain(`your boon on its prayer [${petition}]`);
+  expect(accepted).toContain("its offering is still to come");
 
   // The boon is given, then the offering: each half shows as done.
   run.state = {
