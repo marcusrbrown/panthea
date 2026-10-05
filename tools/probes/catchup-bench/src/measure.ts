@@ -20,7 +20,6 @@ import {
   eventStreamDigest,
   fileBytes,
   HOUR_MS,
-  HOUR_TICKS,
   type OpenWorld,
   projectionDigest,
   subtractCounts,
@@ -92,7 +91,8 @@ export async function runBare(world: OpenWorld): Promise<number> {
 }
 
 /**
- * One hour of the real `runCatchUp`.
+ * One hour of the real `runCatchUp` (or `gapMs`, a whole number of chunks; the
+ * tests use a few minutes, the manual `bench:hour` check the full hour).
  *
  * Every commit boundary is stamped, by wrapping the `commitTick` that `TickDeps`
  * already lets a caller inject. The production `onChunkCommitted` callback
@@ -102,7 +102,10 @@ export async function runBare(world: OpenWorld): Promise<number> {
  * commit for a whole hour), the chunk intervals and the ending commit tile the
  * run exactly. The callback is kept only to sample the WAL between chunks.
  */
-export async function runEndToEnd(world: OpenWorld): Promise<RunResult> {
+export async function runEndToEnd(
+  world: OpenWorld,
+  gapMs = HOUR_MS,
+): Promise<RunResult> {
   const db = world.store.db;
   const before = countRows(db);
   const startSequence = before.events === 0 ? 0 : lastSequence(db);
@@ -121,7 +124,7 @@ export async function runEndToEnd(world: OpenWorld): Promise<RunResult> {
   };
   const start = performance.now();
   const result = await runCatchUp(world.state, world.prng, deps, {
-    nowWallMs: clock.cursorWallMs + HOUR_MS,
+    nowWallMs: clock.cursorWallMs + gapMs,
     onChunkCommitted: () => {
       walPeak = Math.max(walPeak, walBytes(world.path));
       return false;
@@ -131,7 +134,7 @@ export async function runEndToEnd(world: OpenWorld): Promise<RunResult> {
   if (result.degraded) {
     throw new Error(`catch-up degraded: ${result.degraded.message}`);
   }
-  const chunks = HOUR_TICKS / (world.state.rules.catchUpChunkMs / 1000);
+  const chunks = gapMs / world.state.rules.catchUpChunkMs;
   if (stamps.length !== chunks + 1) {
     throw new Error(
       `expected ${chunks} chunk commits and the ending commit, saw ${stamps.length} commits`,
@@ -167,8 +170,11 @@ export interface PhaseRun extends RunResult {
   readonly chunkHeldMs: readonly number[];
 }
 
-/** One hour through the mirror loop, with the database, reducers, and large JSON timed. */
-export async function runPhases(world: OpenWorld): Promise<PhaseRun> {
+/** One hour (or `gapMs`, a whole number of chunks) through the mirror loop, with the database, reducers, and large JSON timed. */
+export async function runPhases(
+  world: OpenWorld,
+  gapMs = HOUR_MS,
+): Promise<PhaseRun> {
   const phases = new Phases();
   const rawDb = world.store.db;
   const before = countRows(rawDb);
@@ -204,7 +210,7 @@ export async function runPhases(world: OpenWorld): Promise<PhaseRun> {
       world.state,
       world.prng,
       deps as never,
-      HOUR_TICKS,
+      gapMs / 1000,
       Math.floor(world.state.rules.catchUpChunkMs / 1000),
       phases,
     );

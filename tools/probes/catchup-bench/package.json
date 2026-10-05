@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "bench": "bun run src/run.ts",
+    "bench:hour": "bun run src/hour-check.ts",
     "bench:profile": "bun run src/profile.ts"
   },
   "dependencies": {
