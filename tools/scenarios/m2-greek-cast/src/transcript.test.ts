@@ -1301,3 +1301,121 @@ test("the world section lists each half of a supplication's bargain as the world
     "farmer's offering to hera was seen made [evt-5-2] (evt-14-3)",
   );
 });
+
+// --- Journeys: read from the run's own events ---------------------------------------
+
+/** Zeus's journey to the mountain path, as the world's log holds it, and Hera's refused one. */
+function journeyEvents(): Record<string, unknown>[] {
+  const envelope = (
+    id: string,
+    sequence: number,
+    tick: number,
+    correlationId: string,
+  ) => ({
+    schemaVersion: 1,
+    id,
+    sequence,
+    simTime: tick * 1000,
+    tick,
+    correlationId,
+    causationId: correlationId,
+    approximate: false,
+  });
+  return [
+    {
+      ...envelope("evt-5-100", 100, 5, "obs-travel"),
+      kind: "journey-started",
+      entityId: "zeus",
+      to: "mountain-path",
+    },
+    {
+      ...envelope("evt-5-101", 101, 5, "evt-5-100"),
+      kind: "entity-moved",
+      entityId: "zeus",
+      to: "olympus-gate",
+    },
+    {
+      ...envelope("evt-6-102", 102, 6, "evt-5-100"),
+      kind: "realm-transitioned",
+      entityId: "zeus",
+      to: "mountain-path",
+      via: "olympus-gate",
+    },
+    {
+      ...envelope("evt-6-103", 103, 6, "evt-5-100"),
+      kind: "journey-ended",
+      entityId: "zeus",
+      journeyEventId: "evt-5-100",
+      ending: "arrived",
+    },
+    {
+      ...envelope("evt-9-104", 104, 9, "obs-pit"),
+      kind: "journey-started",
+      entityId: "hera",
+      to: "pit",
+    },
+    {
+      ...envelope("evt-9-105", 105, 9, "evt-9-104"),
+      kind: "journey-ended",
+      entityId: "hera",
+      journeyEventId: "evt-9-104",
+      ending: "refused",
+      reason: "restricted-realm",
+    },
+  ];
+}
+
+function journeyRecord(): EpisodeRecord {
+  const base = record([], journeyEvents());
+  const input = {
+    ...base.input,
+    timing: {
+      gods: ["zeus", "hera"],
+      endedAtMs: 0,
+      endTick: 300,
+      startLocations: { zeus: "great-hall", hera: "great-hall" },
+    },
+  };
+  return { ...base, input };
+}
+
+test("the transcript shows each journey from the run's own events: the god, where it started and went, when, each hop, and how it ended", () => {
+  const text = renderTranscript(journeyRecord());
+  const section = text.split("## Journeys")[1]?.split("\n## ")[0] ?? "";
+  expect(section).toContain(
+    "- journeys: 2 started: 1 arrived, 1 refused (restricted-realm), 0 replaced, 0 still travelling",
+  );
+  expect(section).toContain(
+    "1. Zeus: great-hall → mountain-path, set out at tick 5, 2 hops, arrived at tick 6",
+  );
+  expect(section).toContain("   - tick 5: moved to olympus-gate");
+  expect(section).toContain(
+    "   - tick 6: crossed from olympus-gate to mountain-path",
+  );
+  expect(section).toContain(
+    "2. Hera: great-hall → pit, set out at tick 9, 0 hops, refused at tick 9 (restricted-realm)",
+  );
+});
+
+test("an episode in which no god travelled says so, and no check reads journeys", () => {
+  const text = renderTranscript(record([move("zeus", "olympus-gate", 2)]));
+  expect(text.split("## Journeys")[1]?.split("\n## ")[0]).toContain(
+    "No god set out on a journey.",
+  );
+  // The checks table is unchanged by journeys: a refused journey fails nothing.
+  const checks = (r: EpisodeRecord) =>
+    r.episode.gods.flatMap((g) => g.checks.map((c) => [c.name, c.ok]));
+  const plain = record([], []);
+  expect(checks(journeyRecord())).toEqual(checks(plain));
+});
+
+test("the summary adds one line counting journeys started and how they ended across all episodes", () => {
+  const text = renderSummary([journeyRecord(), journeyRecord()], {
+    seconds: 300,
+    model: "m",
+    files: ["episode-1.md", "episode-2.md"],
+  });
+  expect(text).toContain(
+    "- journeys: 4 started: 2 arrived, 2 refused (restricted-realm ×2), 0 replaced, 0 still travelling",
+  );
+});

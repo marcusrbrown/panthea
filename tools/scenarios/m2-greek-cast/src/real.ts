@@ -238,6 +238,13 @@ export async function collectRun(
     const deadline = Date.now() + options.durationMs;
     let ticks = 0;
     let gods: string[] = [];
+    // Where the world placed each god, before any turn could move one.
+    const startLocations: Record<string, string> = {};
+    for (const actor of (await readFrame(sidecar)).state.actors.values()) {
+      if (actor.isDeity === true) {
+        startLocations[String(actor.id)] = String(actor.locationId);
+      }
+    }
     while (Date.now() < deadline) {
       await Bun.sleep(2000);
       const { frame, state } = await readFrame(sidecar);
@@ -272,7 +279,7 @@ export async function collectRun(
       proposals,
       events: readStoredEvents(path),
       polls,
-      timing: { gods, endedAtMs, endTick: ticks },
+      timing: { gods, endedAtMs, endTick: ticks, startLocations },
     };
     const run: CollectedRun = {
       record: {
