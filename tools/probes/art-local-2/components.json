@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "note": "Immutable pins (repository commit in every Hugging Face URL, never a branch). sha256 is the Hugging Face LFS OID and is re-verified against the downloaded bytes by src/stage.ts. Dispositions come from the exact-ref provenance research recorded in the Unit 1 plan; licences are declared by each source's model card, not inferred from a model family.",
+  "runtime": {
+    "id": "sd-cpp-master-929-3f8527a",
+    "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-Darwin-macOS-26.6.2-arm64.zip",
+    "file": "bin/sd-release.zip",
+    "sizeBytes": 35049086,
+    "sha256": "1c8ee6c8e413e3335b1223bbc657ea5d86dae1819f8426a98b84c265587eb192",
+    "license": "MIT",
+    "commit": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+  },
+  "arms": {
+    "flux2-klein-base-4b": {
+      "components": [
+        {
+          "role": "diffusion-model",
+          "id": "flux-2-klein-base-4b-Q4_0",
+          "url": "https://huggingface.co/leejet/FLUX.2-klein-base-4B-GGUF/resolve/d12671125306ca6b5f6db1b33ed4c80c8511a53f/flux-2-klein-base-4b-Q4_0.gguf",
+          "file": "models/flux-2-klein-base-4b-Q4_0.gguf",
+          "sizeBytes": 2460378560,
+          "sha256": "c3a2854510677b7aa37dd7547d908c54889a76c6d6aa3ffe902fcaa092d1328b",
+          "license": "Apache-2.0",
+          "source": "leejet/FLUX.2-klein-base-4B-GGUF@d126711 (black-forest-labs/FLUX.2-klein-base-4B, base not distilled)",
+          "quantization": "Q4_0"
+        },
+        {
+          "role": "text-encoder",
+          "id": "Qwen3-4B-Q4_K_M",
+          "url": "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/22c9fc8a8c7700b76a1789366280a6a5a1ad1120/Qwen3-4B-Q4_K_M.gguf",
+          "file": "models/Qwen3-4B-Q4_K_M.gguf",
+          "sizeBytes": 2497281312,
+          "sha256": "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a",
+          "license": "Apache-2.0",
+          "source": "unsloth/Qwen3-4B-GGUF@22c9fc8 (Qwen/Qwen3-4B)",
+          "quantization": "Q4_K_M"
+        },
+        {
+          "role": "vae",
+          "id": "flux2-vae",
+          "url": "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-4b/resolve/5f526678002e43af5551dadb73ce2e8c91b43afe/split_files/vae/flux2-vae.safetensors",
+          "file": "models/flux2-vae.safetensors",
+          "sizeBytes": 336211292,
+          "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+          "license": "Apache-2.0",
+          "source": "Comfy-Org/vae-text-encorder-for-flux-klein-4b@5f52667"
+        },
+        {
+          "role": "lora",
+          "id": "svntax-pixel-4walk-small-v1",
+          "url": "https://huggingface.co/svntax-dev/pixel_spritesheet_4walk_small_lora_v1/resolve/cb8bffe5b9b92e656e31e7f940ec4a38047d6a88/pixel_4walk_small_flux2_klein_base_4b_v1.safetensors",
+          "file": "models/loras/pixel_4walk_small_flux2_klein_base_4b_v1.safetensors",
+          "sizeBytes": 92426736,
+          "sha256": "a968c042c2443bf6bfed41ce833a0e06bf5bbb7961ac40b88fb7257a940ae54e",
+          "license": "Apache-2.0",
+          "source": "svntax-dev/pixel_spritesheet_4walk_small_lora_v1@cb8bffe (Klein base-4B; 512x512 training layout)"
+        }
+      ]
+    },
+    "z-image-turbo": {
+      "components": [
+        {
+          "role": "diffusion-model",
+          "id": "z_image_turbo-Q3_K",
+          "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/c61c0e422dc8b541b7548cf33a4ef8302b0f8085/z_image_turbo-Q3_K.gguf",
+          "file": "models/z_image_turbo-Q3_K.gguf",
+          "sizeBytes": 3143559104,
+          "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980",
+          "license": "Apache-2.0",
+          "source": "leejet/Z-Image-Turbo-GGUF@c61c0e4 (Tongyi-MAI/Z-Image-Turbo)",
+          "quantization": "Q3_K"
+        },
+        {
+          "role": "text-encoder",
+          "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+          "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "file": "models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "sizeBytes": 2497281120,
+          "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+          "license": "Apache-2.0",
+          "source": "unsloth/Qwen3-4B-Instruct-2507-GGUF@a06e946 (Qwen/Qwen3-4B-Instruct-2507)",
+          "quantization": "Q4_K_M"
+        },
+        {
+          "role": "vae",
+          "id": "z-image-ae",
+          "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/6fc90a3b1b653e935a0d175e260736de25b84df5/split_files/vae/ae.safetensors",
+          "file": "models/ae.safetensors",
+          "sizeBytes": 335304388,
+          "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+          "license": "Apache-2.0",
+          "source": "Comfy-Org/z_image_turbo@6fc90a3"
+        },
+        {
+          "role": "lora",
+          "id": "civitai-2454660-pixel-art-style-z-image-turbo",
+          "url": "https://civitai.com/api/download/models/2454660?fileId=2344890",
+          "file": "models/loras/pixel_art_style_z_image_turbo.safetensors",
+          "sizeBytes": null,
+          "sha256": "09b1b45ceed0202929bca528e51b50208d0160f4e9d2ba0f42cb7e739a43577f",
+          "license": "Civitai custom terms; owner approved benchmark ONLY (model 1770073 / version 2454660 / file 2344890). Never canon, never publication.",
+          "source": "civitai model 1770073 version 2454660 file 2344890 (sha256 as reported by Civitai metadata)",
+          "benchmarkOnly": true
+        }
+      ]
+    },
+    "sdxl-pixel-art-xl": {
+      "components": [
+        {
+          "role": "diffusion-model",
+          "id": "sd_xl_base_1.0",
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/462165984030d82259a11f4367a4eed129e94a7b/sd_xl_base_1.0.safetensors",
+          "file": "models/sd_xl_base_1.0.safetensors",
+          "sizeBytes": 6938078334,
+          "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
+          "license": "CreativeML Open RAIL++-M",
+          "source": "stabilityai/stable-diffusion-xl-base-1.0@4621659 (single-file checkpoint)",
+          "quantization": "fp16 safetensors"
+        },
+        {
+          "role": "vae",
+          "id": "sdxl-vae-fp16-fix",
+          "url": "https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/207b116dae70ace3637169f1ddd2434b91b3a8cd/sdxl_vae.safetensors",
+          "file": "models/sdxl_vae.safetensors",
+          "sizeBytes": 334641162,
+          "sha256": "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1",
+          "license": "MIT",
+          "source": "madebyollin/sdxl-vae-fp16-fix@207b116"
+        },
+        {
+          "role": "lora",
+          "id": "nerijs-pixel-art-xl",
+          "url": "https://huggingface.co/nerijs/pixel-art-xl/resolve/8bf4a4d9ea283e00a51fafda8e0539f8248ea037/pixel-art-xl.safetensors",
+          "file": "models/loras/pixel-art-xl.safetensors",
+          "sizeBytes": 170543052,
+          "sha256": "4234637cb80c998f41e348e6a6cb6bc20d8d038b2b0f256b6129b3b5e353eef7",
+          "license": "CreativeML Open RAIL-M",
+          "source": "nerijs/pixel-art-xl@8bf4a4d (SDXL base 1.0; trigger phrase 'pixel art')"
+        }
+      ]
+    }
+  }
+}

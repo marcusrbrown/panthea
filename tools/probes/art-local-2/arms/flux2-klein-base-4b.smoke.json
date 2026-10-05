@@ -1,0 +1,108 @@
+{
+  "arm": "flux2-klein-base-4b",
+  "server": {
+    "cmd": [
+      "bin/release/sd-server",
+      "--listen-ip",
+      "127.0.0.1",
+      "--listen-port",
+      "18441",
+      "--diffusion-model",
+      "models/flux-2-klein-base-4b-Q4_0.gguf",
+      "--llm",
+      "models/Qwen3-4B-Q4_K_M.gguf",
+      "--vae",
+      "models/flux2-vae.safetensors",
+      "--offload-to-cpu",
+      "--diffusion-fa",
+      "--lora-model-dir",
+      "models/loras"
+    ],
+    "baseUrl": "http://127.0.0.1:18441",
+    "readyTimeoutMs": 900000,
+    "maxLifetimeMs": 7200000,
+    "stopGraceMs": 15000,
+    "binary": {
+      "role": "binary",
+      "id": "sd-server-master-929-3f8527a",
+      "path": "bin/release/sd-server",
+      "declared": {
+        "sha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+        "license": "MIT",
+        "source": "leejet/stable-diffusion.cpp master-929-3f8527a commit 3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+      }
+    }
+  },
+  "components": [
+    {
+      "role": "diffusion-model",
+      "id": "flux-2-klein-base-4b-Q4_0",
+      "path": "models/flux-2-klein-base-4b-Q4_0.gguf",
+      "declared": {
+        "sha256": "c3a2854510677b7aa37dd7547d908c54889a76c6d6aa3ffe902fcaa092d1328b",
+        "license": "Apache-2.0",
+        "source": "leejet/FLUX.2-klein-base-4B-GGUF@d126711 (black-forest-labs/FLUX.2-klein-base-4B, base not distilled)",
+        "quantization": "Q4_0"
+      }
+    },
+    {
+      "role": "text-encoder",
+      "id": "Qwen3-4B-Q4_K_M",
+      "path": "models/Qwen3-4B-Q4_K_M.gguf",
+      "declared": {
+        "sha256": "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a",
+        "license": "Apache-2.0",
+        "source": "unsloth/Qwen3-4B-GGUF@22c9fc8 (Qwen/Qwen3-4B)",
+        "quantization": "Q4_K_M"
+      }
+    },
+    {
+      "role": "vae",
+      "id": "flux2-vae",
+      "path": "models/flux2-vae.safetensors",
+      "declared": {
+        "sha256": "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3",
+        "license": "Apache-2.0",
+        "source": "Comfy-Org/vae-text-encorder-for-flux-klein-4b@5f52667"
+      }
+    },
+    {
+      "role": "lora",
+      "id": "svntax-pixel-4walk-small-v1",
+      "path": "models/loras/pixel_4walk_small_flux2_klein_base_4b_v1.safetensors",
+      "declared": {
+        "sha256": "a968c042c2443bf6bfed41ce833a0e06bf5bbb7961ac40b88fb7257a940ae54e",
+        "license": "Apache-2.0",
+        "source": "svntax-dev/pixel_spritesheet_4walk_small_lora_v1@cb8bffe (Klein base-4B; 512x512 training layout)"
+      }
+    }
+  ],
+  "prompt": "A pixel art spritesheet of a bearded Greek god in a white toga holding a lightning bolt, full body, front view, plain flat background, limited colour palette",
+  "negativePrompt": "blurry, antialiased, smooth gradients, photograph, 3d render, text, watermark",
+  "seed": 20261003,
+  "sampleParams": {
+    "sample_method": "euler",
+    "sample_steps": 20,
+    "guidance": {
+      "txt_cfg": 4
+    }
+  },
+  "lora": {
+    "id": "svntax-pixel-4walk-small-v1",
+    "path": "pixel_4walk_small_flux2_klein_base_4b_v1.safetensors",
+    "multiplier": 1,
+    "isHighNoise": false
+  },
+  "stagingGuidance": "Run 'bun run src/stage.ts runtime' and 'bun run src/stage.ts flux2-klein-base-4b' in tools/probes/art-local-2, then re-run.",
+  "cells": [
+    {
+      "id": "512x640",
+      "width": 512,
+      "height": 640
+    }
+  ],
+  "warmupCount": 0,
+  "sampleCount": 1,
+  "timeoutMs": 1800000,
+  "rssIntervalMs": 1000
+}

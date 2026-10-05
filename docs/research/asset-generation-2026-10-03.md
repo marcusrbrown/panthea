@@ -1,20 +1,20 @@
 # Asset generation research: sprites, tiles, effects, sound, editors
 
-Reviewed 2026-10-03 from vendor documentation, model cards, and repositories (three parallel research passes). Documentation review, not hands-on tests; every timing below is someone else's hardware unless a probe link says otherwise. This informs the asset-studio requirements (`docs/brainstorms/2026-10-03-asset-studio-requirements.md`) and does not change owner decisions or ADRs.
+Reviewed 2026-10-03 from vendor documentation, model cards, and repositories. Documentation review, not hands-on tests; every timing below is someone else's hardware unless a probe link says otherwise. This informs the asset-studio requirements (`docs/brainstorms/2026-10-03-asset-studio-requirements.md`) and does not change owner decisions or ADRs.
 
 ## Bottom line
 
 - No open-weights, 16 GB-friendly tool turns one approved sprite into a consistent walk cycle plus eight directions. The products that do (PixelLab, Retro Diffusion) are hosted. Locally the honest pipeline is: keyframe from diffusion → deterministic pixel-grid recovery and palette lock → hand finish → procedural derivation for the rest.
-- The M0 chain (SD 1.5 + PixelArtRedmond LoRA) has a non-commercial-oriented LoRA licence. An all-Apache chain now exists on stable-diffusion.cpp: FLUX.2-klein-4B or Z-Image-Turbo plus Apache-licensed pixel LoRAs. It needs a new probe for M1 Pro timings.
+- The M0 chain (SD 1.5 + PixelArtRedmond LoRA) has a non-commercial-oriented LoRA licence. A candidate Apache-2.0 chain exists on stable-diffusion.cpp: FLUX.2-klein-base-4B plus the svntax LoRA (both Apache-2.0 per their model cards). Z-Image-Turbo is Apache-2.0 as a model, but its Civitai pixel LoRA carries custom permission flags rather than a named Apache licence, so it is gated on an owner decision before any acquisition. Quantization, 16 GB fit, and M1 Pro timings are all unmeasured and need a new probe.
 - No open model emits edge-consistent isometric tilesets. Procedural stamping (seamless base texture → masked 16- or 47-tile sets) is deterministic and standard; Tiled TMJ with `orientation: isometric` and `wangsets` is the map format. LDtk will not do isometric.
 - Sound is cheapest of all: zzfx/jsfxr parameter sets (MIT / Unlicense, <1 KB) rendered offline, with Stable Audio 3 Small-SFX (1.6 GB on MLX) for organic layers, and MIDI → SoundFont for chiptune loops.
 - Aseprite is fully scriptable headless (`aseprite -b --script`, `--sheet`, `--data`); it stays a user-installed external tool.
 
-## Correction to a research pass
+## Runtime and derivation constraints
 
-One pass claimed stable-diffusion.cpp has "no HTTP server, `sd-cli` only". The M0 probe ran `sd-server` with `/sdcpp/v1/...` and A1111-compatible `/sdapi/v1/...` routes ([tools/probes/art-local/README.md](../../tools/probes/art-local/README.md)); the repository's `examples/server` documents it. Treat `sd-server` as available. The same pass claimed precompiled macOS releases lack Metal; the M0 probe used the release binary `master-921-168f7b8` and measured Metal speedups from `--diffusion-fa` (the f16 crash trace names an `MTL0` buffer), so the release did ship Metal. Verify the current release before assuming a source build is required.
-
-A third pass claimed walk cycles could be derived from bob/offset rules; they cannot (legs do not move). Derivation is limited to mirroring, palette swaps, overlays, and idle bob; walk and act frames are hand-drawn or generated and repaired.
+- `sd-server` is available. The M0 probe ran it with `/sdcpp/v1/...` and A1111-compatible `/sdapi/v1/...` routes ([tools/probes/art-local/README.md](../../tools/probes/art-local/README.md)), and the repository's `examples/server` documents it.
+- The M0 probe used the release binary `master-921-168f7b8` and measured Metal speedups from `--diffusion-fa` (the f16 crash trace names an `MTL0` buffer). Verify the current release on the actual host before deciding whether a source build is required.
+- Procedural derivation is limited to mirroring, palette swaps, overlays, and idle bob. Bob/offset rules cannot produce walk cycles (legs do not move), so walk and act frames are hand-drawn or generated and repaired.
 
 ## Local image generation on 16 GB
 
@@ -22,8 +22,8 @@ stable-diffusion.cpp (MIT, Metal) now loads SD1.x/2.x/SDXL, SD3/3.5, FLUX.1/FLUX
 
 | Chain | Licence | Fit in 16 GB | Notes |
 | --- | --- | --- | --- |
-| FLUX.2-klein-4B (+ Qwen3-4B encoder) + `svntax-dev/pixel_spritesheet_4walk_small_lora_v1` | Apache-2.0 end to end | Q4/Q5 GGUF should fit; no published M1 Pro timing | The only open one-shot sprite-sheet LoRA on an Apache base: 4×4 sheet of 32×32 characters (walk ×3 per direction, jump, prone) at 512², downscale ×4. Author warns of cut hair and weak back views. Multi-reference edit built in. <https://huggingface.co/black-forest-labs/FLUX.2-klein-4B>, <https://huggingface.co/svntax-dev/pixel_spritesheet_4walk_small_lora_v1> |
-| Z-Image-Turbo (6B) + "Pixel Art Style LoRA" | Apache-2.0 | Runs at Q3–Q8; "functional but tight" on 16 GB Macs; ~160 s per 1024² reported on M1 Max 32 GB | Good txt2img pixel art; weak at img2img restyling (too few steps). <https://civitai.com/models/1770073/pixel-art-style-lora> |
+| FLUX.2-klein-base-4B (+ Qwen3-4B encoder) + `svntax-dev/pixel_spritesheet_4walk_small_lora_v1` | Base model and LoRA both Apache-2.0 per their cards (Qwen3-4B encoder and FLUX.2 VAE also Apache-2.0, as declared by their source cards and recorded in `components.json`) | Unmeasured: quantization choice and 16 GB fit must be established by a probe; no published M1 Pro timing | The only open one-shot sprite-sheet LoRA found on an Apache base: 4×4 sheet of 32×32 characters (walk ×3 per direction, jump, prone), trained at 512×512 and downscaled ×4. The LoRA README specifies the base (`FLUX.2-klein-base-4B`) as its `base_model`; the author says the distilled klein-4B is technically compatible but ruins pixels and consistency. Author warns of cut hair and weak back views. Larger single-cell or portrait workloads (for example 512×640 or 768×768 with 8× downscale) differ from the training layout and are unmeasured style/workload mismatches. Multi-reference edit built in. <https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B>, <https://huggingface.co/svntax-dev/pixel_spritesheet_4walk_small_lora_v1>, <https://huggingface.co/svntax-dev/pixel_spritesheet_4walk_small_lora_v1/raw/main/README.md> |
+| Z-Image-Turbo (6B) + "Pixel Art Style LoRA" (Civitai model 1770073, creator `tarn59`, version 2454660, file 2344890) | Z-Image-Turbo model: Apache-2.0. LoRA: no licence text; custom Civitai permission flags (commercial use: Image, RentCivit, Rent, Sell, SellMerge; no-credit, derivatives, and different-licence all allowed), not a named Apache-2.0 licence. Owner gate required before acquisition; not eligible as a canonical default on assumed Apache terms | Runs at Q3–Q8; "functional but tight" on 16 GB Macs; ~160 s per 1024² reported on M1 Max 32 GB | Good txt2img pixel art; weak at img2img restyling (too few steps). Permission flags read from the Civitai API (`GET https://civitai.com/api/v1/models/1770073`); download URL `https://civitai.com/api/download/models/2454660?fileId=2344890` (listed SHA256 `09B1B45CEED0202929BCA528E51B50208D0160F4E9D2BA0F42CB7E739A43577F`, API metadata only, not download-verified). <https://civitai.com/models/1770073/pixel-art-style-lora> |
 | SDXL (or Illustrious) + `nerijs/pixel-art-xl` | CreativeML Open RAIL-M (use restrictions, outputs free) | ~7.5 GB fp16, comfortable | Only tier with IP-Adapter reference conditioning in sd.cpp; still no SDXL ControlNet there. <https://huggingface.co/nerijs/pixel-art-xl> |
 | SD 1.5 + pixel LoRAs | RAIL-M; PixelArtRedmond LoRA is non-commercial-oriented | 4–5 GB, fastest, M0 measured 37.3 s/image at 512² Q8_0 | Only tier with ControlNet OpenPose in sd.cpp. Keep for pose-locked frames; do not use the Redmond LoRA for canon assets. |
 | Qwen-Image / Qwen-Image-Edit + `fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA` | Apache-2.0 | 24 GB+ even at Q4 | The most principled open "rotate this character" tool (azimuth in 45° steps). Documented, not built. <https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA> |
@@ -102,6 +102,7 @@ Post-processing: ffmpeg `loudnorm` two-pass for music, true-peak (−1 dBTP) for
 
 ## Licence flags for an MIT repository
 
+- Owner gate before acquisition: the Civitai "Pixel Art Style LoRA" (model 1770073) has custom permission flags and no licence text, so it is not treated as Apache-2.0.
 - Weights that cannot be vendored: every model above; ship download steps with recorded hashes and licences (the M0 probe already does this).
 - Non-commercial or research-only: FLUX.1-dev and FLUX.2-klein-9B families, PixelArtRedmond LoRA (non-commercial-oriented), RMBG-2.0 and bria-rmbg, AudioGen, MusicGen, MAGNeT, Woosh, TangoFlux, the MIDI-LLM chiptune LoRA (trained on copyrighted soundtracks).
 - Copyleft kept out of process: ComfyUI and its nodes, Draw Things community code, Furnace, `@imgly/background-removal`, libimagequant (inside unfake.js).

@@ -1,0 +1,11 @@
+# Downloaded sd-server release binary and model weights/LoRAs: staging
+# prerequisites recorded by tag/size/sha256 in the README, never committed.
+# No trailing slash: these are symlinks into the main checkout when the
+# worktree shares assets (standing asset-preservation rule).
+bin
+models
+
+# Raw per-run output, generated images and logs (README is the durable record).
+results/*
+!results/.gitkeep
+scratch

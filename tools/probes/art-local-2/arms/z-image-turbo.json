@@ -1,0 +1,125 @@
+{
+  "arm": "z-image-turbo",
+  "server": {
+    "cmd": [
+      "bin/release/sd-server",
+      "--listen-ip",
+      "127.0.0.1",
+      "--listen-port",
+      "18442",
+      "--diffusion-model",
+      "models/z_image_turbo-Q3_K.gguf",
+      "--llm",
+      "models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "--vae",
+      "models/ae.safetensors",
+      "--offload-to-cpu",
+      "--diffusion-fa",
+      "--lora-model-dir",
+      "models/loras"
+    ],
+    "baseUrl": "http://127.0.0.1:18442",
+    "readyTimeoutMs": 900000,
+    "maxLifetimeMs": 7200000,
+    "stopGraceMs": 15000,
+    "binary": {
+      "role": "binary",
+      "id": "sd-server-master-929-3f8527a",
+      "path": "bin/release/sd-server",
+      "declared": {
+        "sha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+        "license": "MIT",
+        "source": "leejet/stable-diffusion.cpp master-929-3f8527a commit 3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+      }
+    }
+  },
+  "components": [
+    {
+      "role": "diffusion-model",
+      "id": "z_image_turbo-Q3_K",
+      "path": "models/z_image_turbo-Q3_K.gguf",
+      "declared": {
+        "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980",
+        "license": "Apache-2.0",
+        "source": "leejet/Z-Image-Turbo-GGUF@c61c0e4 (Tongyi-MAI/Z-Image-Turbo)",
+        "quantization": "Q3_K"
+      }
+    },
+    {
+      "role": "text-encoder",
+      "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+      "path": "models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "declared": {
+        "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+        "license": "Apache-2.0",
+        "source": "unsloth/Qwen3-4B-Instruct-2507-GGUF@a06e946 (Qwen/Qwen3-4B-Instruct-2507)",
+        "quantization": "Q4_K_M"
+      }
+    },
+    {
+      "role": "vae",
+      "id": "z-image-ae",
+      "path": "models/ae.safetensors",
+      "declared": {
+        "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+        "license": "Apache-2.0",
+        "source": "Comfy-Org/z_image_turbo@6fc90a3"
+      }
+    },
+    {
+      "role": "lora",
+      "id": "civitai-2454660-pixel-art-style-z-image-turbo",
+      "path": "models/loras/pixel_art_style_z_image_turbo.safetensors",
+      "declared": {
+        "sha256": "09b1b45ceed0202929bca528e51b50208d0160f4e9d2ba0f42cb7e739a43577f",
+        "license": "Civitai custom terms; owner approved benchmark ONLY (model 1770073 / version 2454660 / file 2344890). Never canon, never publication.",
+        "source": "civitai model 1770073 version 2454660 file 2344890 (sha256 as reported by Civitai metadata)"
+      }
+    }
+  ],
+  "prompt": "pixel art, a bearded Greek god in a white toga holding a lightning bolt, full body, front view, plain flat background, limited colour palette",
+  "negativePrompt": "blurry, antialiased, smooth gradients, photograph, 3d render, text, watermark",
+  "seed": 20261003,
+  "sampleParams": {
+    "sample_method": "euler",
+    "sample_steps": 8,
+    "guidance": {
+      "txt_cfg": 1
+    }
+  },
+  "lora": {
+    "id": "civitai-2454660-pixel-art-style-z-image-turbo",
+    "path": "pixel_art_style_z_image_turbo.safetensors",
+    "multiplier": 1,
+    "isHighNoise": false
+  },
+  "stagingGuidance": "Run 'bun run src/stage.ts runtime' and 'bun run src/stage.ts z-image-turbo' in tools/probes/art-local-2, then re-run.",
+  "cells": [
+    {
+      "id": "512x640",
+      "width": 512,
+      "height": 640
+    },
+    {
+      "id": "768x768",
+      "width": 768,
+      "height": 768
+    }
+  ],
+  "warmupCount": 1,
+  "sampleCount": 3,
+  "timeoutMs": 1800000,
+  "rssIntervalMs": 1000,
+  "cancelProbe": {
+    "afterMs": 15000,
+    "cell": {
+      "id": "512x640",
+      "width": 512,
+      "height": 640
+    }
+  },
+  "idle": {
+    "thresholdPercent": 5,
+    "timeoutMs": 60000
+  }
+}
