@@ -42,19 +42,52 @@ export interface RunSummary {
 const HOW_TO_RUN = `\`\`\`sh
 bun run --cwd tools/scenarios scenario:m2                                    # build the sidecar, run the scripted story
 bun run --cwd tools/scenarios scenario:m2 --skip-build                       # reuse the built sidecar
-bun run --cwd tools/scenarios scenario:m2 --positive-control=<name>          # must exit non-zero; names below
+bun run --cwd tools/scenarios scenario:m2 --positive-control=<name>          # a process control; must exit non-zero; names below
 bun run --cwd tools/scenarios scenario:m2 --real [--seconds=180]             # both gods through local Ollama; asserts properties, writes real-run.json
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --reasoning-effort=none   # the experience gate on the local baseline, qwen3-8b-4k (set up once: ollama create qwen3-8b-4k -f tools/probes/inference-baseline/Modelfile.qwen3-8b-4k)
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --model=<model> --base-url=https://<host>/v1 [--key-ref=<keyRef>]   # the gate against a hosted endpoint; the key is read once from the Keychain
-bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # story, then every control four at a time (--jobs=N), rewrites this file from a fresh run and real-run.json
+bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # story (with the practice controls in-process), then each process control four at a time (--jobs=N), rewrites this file from a fresh run and real-run.json
 \`\`\`
 
-Controls: \`kill-journal\`, \`kill-inference\`, \`chain\`, \`isolation\`, \`trace\`,
-\`stale\`, \`catch-up-inference\`, \`restore-memory\`, \`petition-privacy\`, and, for the
-practice steps and the practice properties of the real run, \`thread-reopened\`,
-\`no-progress-advances\`, \`thread-no-ending\`, \`obligated-turn-unrecorded\`,
-\`ending-no-consequence\`, \`practices-missing\`, \`consequence-no-effect\`,
-\`contest-no-standing\`, \`alliance-unsealed\`, \`god-silent\`, \`practice-absent\`.
+Controls come in two kinds. A **process control** reruns the whole story in a
+child process with one check broken mid-flight, and that run must exit non-zero:
+\`chain\`, \`isolation\`, \`trace\`, and \`petition-privacy\`. A **practice control**
+breaks a copy of the data the one story run collected, in-process, at the end of
+S20, and the practice property it targets must fail on the copy; none reruns the
+story, so \`--positive-control\` does not take them and every story run applies
+all of them: \`thread-reopened\`, \`no-progress-advances\`, \`thread-no-ending\`,
+\`obligated-turn-unrecorded\`, \`ending-no-consequence\`, \`practices-missing\`,
+\`consequence-no-effect\`, \`contest-no-standing\`, \`alliance-unsealed\`,
+\`god-silent\`, and \`practice-absent\`. (2026-10-05: these eleven moved
+in-process; \`alliance-unsealed\` had been a mid-story rewrite in S18 and is now the
+same data mutation as the rest.)
+
+Controls dropped on 2026-10-05, each one a whole story rerun to re-prove a property
+that a test of the service already proves in-process. The story steps that inject the
+same faults stay (S2, S3, S9, S10, S11); only the sabotaged reruns are gone:
+
+- \`kill-journal\` (the pending proposal deleted from the journal after the kill) is
+  covered by \`apps/simulation/src/agents.test.ts\`, "a restart > after a kill that
+  followed journaling: the proposal runs once, and the god gets no second turn while
+  it is pending".
+- \`kill-inference\` (two legends for the re-asked turn) is covered by "a restart >
+  after a kill during inference: the god reasons afresh and exactly one proposal
+  commits", same file.
+- \`catch-up-inference\` (a provider request inside the catch-up window) is covered by
+  "the lifecycle seam > through a real catch-up run no turn starts, on every chunk it
+  commits; with the gate removed the same probe sees one start", same file, which
+  carries its own proof that the probe can fail.
+- \`stale\` (the fixture that moves Hera skipped) is covered by "a god's turn > is
+  revalidated at admission: the world moved while the model was thinking, so the
+  proposal is rejected stale-target", same file.
+- \`restore-memory\` (Hera's memory dropped from the archive to be restored, hash
+  recomputed) is covered by \`packages/persistence/src/archive.test.ts\`,
+  "importArchive: the projection must be what the event log makes > error path: a
+  rehashed archive whose live projection no event produced is rejected as corrupt; no
+  slot is created", with "a rehashed archive whose events were edited after export no
+  longer matches its projection" beside it. S11 also still sends the hostile archive
+  (Hera's memory dropped, hash recomputed) through the compiled binary and asserts the
+  refusal.
 
 Practice steps (settlement, supplication, contest, and alliance; scripted gods, the world's real
 rules; each reply is a function of the prompt its god was shown, so it names
@@ -93,10 +126,10 @@ only what that god could name):
   made at least one practice move, and every practice appeared (a settlement, a
   supplication with terms, a contest, a breach with transformation, a sealed
   alliance, and travel). The result lists each god's practices and thread
-  endings. A practice control breaks the data first and the property it targets
-  must fail (\`god-silent\` silences the god that opened the first thread;
-  \`practice-absent\` deletes the contest); \`src/practice-analysis.test.ts\`
-  holds the same controls as unit tests.
+  endings. Then each practice control breaks a copy of that data in-process and the
+  property it targets must fail (\`god-silent\` silences the god that opened the first
+  thread; \`practice-absent\` deletes the contest); \`src/practice-analysis.test.ts\`
+  holds the same controls as unit tests on a fixture.
 
 The transcript (\`src/transcript.ts\`) shows each thread's cause, participants,
 moves, ending, and recorded changes, each god's distinct practices and thread
@@ -160,8 +193,10 @@ const NOT_COVERED = `- **Reasoning quality.** The scripted run proves the causal
 - **The catch-up window's edge.** The harness reads the sidecar's
   catch-up-started and catch-up-finished lines through a pipe; a request within
   25 ms before the finish line is not judged. A live tick after a catch-up cannot
-  land that close in practice, and the \`catch-up-inference\` control shows a
-  request inside the window is caught.
+  land that close in practice. The harness's own bracket check is no longer
+  sabotaged by a control (\`catch-up-inference\` was dropped); the service's refusal
+  to start a turn inside a catch-up is proved, with a probe that can fail, in
+  \`apps/simulation/src/agents.test.ts\`.
 - **Power loss.** \`SIGKILL\` stops the process; it does not drop unsynced pages.
 - **One turn at a time, two gods.** Scheduling, fairness, and cooldowns are
   Unit 10, not measured here.

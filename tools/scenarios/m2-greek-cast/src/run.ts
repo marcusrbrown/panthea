@@ -42,24 +42,14 @@ import {
 import { CONTROL_NAMES, type ControlName, runStory } from "./story";
 
 const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
-  "kill-journal":
-    "After the kill, the harness deletes the pending proposal from the journal, as if the service had kept a turn's proposal only in memory, so nothing runs it after the restart.",
-  "kill-inference":
-    "The provider answers the re-asked turn with two legends instead of one, so two proposals commit where exactly one is required.",
   chain:
     "Zeus's report carries no claim, so Hera's belief has no consequence and her relationship toward Zeus does not change.",
   isolation:
     "The harness adds the strike's ignition to the last prompt Hera was shown before the check, as if the event had leaked into her context.",
   trace:
     "The harness follows the farmer's fixture move instead of the tavern's destruction, an event no strike caused, so the chain has no model request.",
-  stale:
-    "The harness skips the fixture that moves Hera while her turn is in flight, so the world is unchanged and the proposal commits instead of being rejected.",
-  "catch-up-inference":
-    "The harness sends the provider a request inside the restart's catch-up window, as a god's turn would.",
   "petition-privacy":
     "The harness injects a petition addressed to Hera into the last prompt Zeus was shown, as if the divine sense leaked to the other god.",
-  "restore-memory":
-    "The harness drops Hera's memory and feeling from the export it is about to restore and recomputes its hash. Import rebuilds the world from the archive's event log and requires it to equal the archived projection, so the archive is refused at the import step, before any comparison of the restored branch.",
 };
 
 /** Runs the story again in a child process with a control enabled, and reports how it ended. */

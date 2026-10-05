@@ -11,26 +11,12 @@ import type { ScriptedProvider } from "../provider";
  * broken mid-flight. The practice controls are not among them: they break the
  * data one story run collected, in-process (see `practice-controls.ts`).
  */
-export type ControlName =
-  | "kill-journal"
-  | "kill-inference"
-  | "chain"
-  | "isolation"
-  | "trace"
-  | "stale"
-  | "catch-up-inference"
-  | "restore-memory"
-  | "petition-privacy";
+export type ControlName = "chain" | "isolation" | "trace" | "petition-privacy";
 
 export const CONTROL_NAMES: readonly ControlName[] = [
-  "kill-journal",
-  "kill-inference",
   "chain",
   "isolation",
   "trace",
-  "stale",
-  "catch-up-inference",
-  "restore-memory",
   "petition-privacy",
 ];
 

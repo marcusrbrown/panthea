@@ -48,16 +48,6 @@ export async function stepCatchUp(
             .find((line) => line.text.endsWith("catch-up started")),
         { timeoutMs: 20_000, intervalMs: 5 },
       );
-      if (story.options.control === "catch-up-inference") {
-        // Positive control: a provider call lands inside the catch-up.
-        await fetch(`${story.provider.baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            messages: [{ role: "system", content: "You are Zeus, a god." }],
-          }),
-        });
-      }
       await waitForLog(
         restarted,
         "catch-up finished",

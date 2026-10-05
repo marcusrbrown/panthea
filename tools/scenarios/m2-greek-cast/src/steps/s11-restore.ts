@@ -71,10 +71,6 @@ export async function stepRestore(
       const hostilePath = join(story.root, "m2-export-hostile.sqlite");
       copyFileSync(exportPath, hostilePath);
       rewriteArchiveProjection(hostilePath, dropHera);
-      if (story.options.control === "restore-memory") {
-        // Positive control: the archive being restored has lost Hera's memory.
-        rewriteArchiveProjection(exportPath, dropHera);
-      }
 
       const imported = await story.sidecar.request("POST", "/import", {
         archivePath: exportPath,
