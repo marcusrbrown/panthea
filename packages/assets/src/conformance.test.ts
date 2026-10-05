@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type AssetAction,
+  type AssetRecord,
   newCandidate,
   parseConformanceReport,
   type Sha256,
@@ -17,7 +19,7 @@ import {
   type RgbaImage,
   recoverGrid,
 } from "./conformance";
-import { committedVocabulary, spriteFixture } from "./fixtures";
+import { committedVocabulary, paletteFixture, spriteFixture } from "./fixtures";
 import {
   COLOURS_71,
   cloneImage,
@@ -1203,6 +1205,7 @@ describe("conformance feeding the registry", () => {
       record,
       new Map([[hash, bytes]]),
       vocabulary,
+      paletteFixture().palette,
     );
     expect(published.ok).toBe(true);
     const loaded = loadRegistry(dir, vocabulary);
@@ -1225,6 +1228,108 @@ describe("conformance feeding the registry", () => {
     if (!record.ok) return;
     const approve = transitionAsset(record.value, { type: "approve" });
     expect(approve.ok).toBe(false);
+  });
+});
+
+describe("a hand edit against the master palette", () => {
+  const master = paletteFixture().palette;
+  const OFF: Rgb = [1, 2, 3];
+  const edited = () => {
+    const img = cloneImage(figure5());
+    img.rgba.set([...OFF, 255], (20 * 64 + 20) * 4);
+    return img;
+  };
+  const report = () => {
+    const source = edited();
+    const snapshot = Uint8Array.from(source.rgba);
+    const given = input({
+      ...source,
+      mode: "report-only",
+      paletteRgb: master.colours,
+    });
+    return { given, snapshot, result: done(given) };
+  };
+
+  it("reports the off-palette pixel and proposes a replacement without touching the bytes", () => {
+    const { given, snapshot, result } = report();
+    expect(result.report.status).toBe("fail");
+    expect(check(result, "palette")).toMatchObject({ status: "fail" });
+    expect(check(result, "palette")?.message).toContain("#010203");
+    expect(result.image.rgba).toEqual(snapshot);
+    expect(given.rgba).toEqual(snapshot);
+
+    const [r, g, b] = pixelAt(result.proposal, 20, 20);
+    expect(master.colours).toContainEqual([r, g, b] as Rgb);
+    expect(result.diff).toContainEqual({
+      x: 20,
+      y: 20,
+      before: hex(OFF),
+      after: hex([r, g, b]),
+    });
+    expect(result.diff).toHaveLength(1);
+  });
+
+  it("drops the report on a finished edit, and approval then needs a reasoned owner exception", () => {
+    const { result } = report();
+    const base = spriteFixture().manifest;
+    const manifest: SpriteManifest = {
+      ...base,
+      provenance: {
+        ...base.provenance,
+        handEdits: [
+          ...base.provenance.handEdits,
+          { description: "repainted one pixel" },
+        ],
+      },
+    };
+    const step = (record: AssetRecord, action: AssetAction) => {
+      const next = transitionAsset(record, action);
+      if (!next.ok) throw new Error(next.message);
+      return next.value;
+    };
+    let record = newCandidate(base, result.report);
+    record = step(record, { type: "pick" });
+    record = step(record, { type: "start-edit" });
+    record = step(record, { type: "finish-edit", manifest });
+    expect(record).toMatchObject({ state: "draft" });
+    expect("report" in record).toBe(false);
+
+    for (const action of [
+      { type: "approve" },
+      { type: "approve", report: result.report },
+      { type: "approve", report: result.report, exception: { reason: "  " } },
+    ] as const) {
+      const refused = transitionAsset(record, action);
+      expect(refused).toMatchObject({ ok: false, code: "conformance-failed" });
+    }
+    const approved = step(record, {
+      type: "approve",
+      report: result.report,
+      exception: { reason: "owner keeps the off-palette highlight" },
+    });
+    expect(approved).toMatchObject({
+      state: "approved",
+      basis: {
+        type: "owner-exception",
+        reason: "owner keeps the off-palette highlight",
+      },
+    });
+    expect(approved.manifest.provenance.ownerException).toEqual({
+      reason: "owner keeps the off-palette highlight",
+    });
+    expect(approved.manifest.atlas).toEqual(manifest.atlas);
+
+    // The exception does not approve the palette: a draft palette still blocks canon.
+    const dir = join(mkdtempSync(join(tmpdir(), "conformance-")), "registry");
+    const published = publishAsset(
+      dir,
+      approved,
+      spriteFixture().blobs,
+      committedVocabulary(),
+      paletteFixture("draft").palette,
+    );
+    expect(published).toMatchObject({ ok: false, code: "not-approved" });
+    rmSync(join(dir, ".."), { recursive: true, force: true });
   });
 });
 

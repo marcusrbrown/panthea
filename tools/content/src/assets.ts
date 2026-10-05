@@ -5,13 +5,14 @@
 //   <root>/assets/vocabulary.json          versioned vocabulary
 //   <root>/assets/subjects/*.json          visual profiles, joined by god id
 //   <root>/assets/registry/                index.json, manifests/, blobs/
+//   <root>/palette/                        palette.json, master.gpl, master.hex
 //
 // A published manifest is validated from plain files alone: its provenance
 // carries the job refs and licences it needs, so no authoring ledger is read.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadRegistry } from "@panthea/assets/registry";
+import { loadRegistry, paletteRefusal } from "@panthea/assets/registry";
 import {
   type GodProfile,
   type GodVisualProfile,
@@ -24,6 +25,7 @@ import {
   parseAssetId,
   parseAssetVocabulary,
 } from "@panthea/contracts";
+import { readPalette } from "./palette";
 
 export interface AssetDiagnostic {
   /** Path relative to the content root. */
@@ -93,6 +95,11 @@ export function validateAssets(contentRoot: string): AssetValidation {
     return done();
   }
   const vocabulary: AssetVocabulary = parsedVocabulary.value;
+
+  // Master palette: canon needs it approved and named by every manifest.
+  const paletteRead = readPalette(contentRoot, vocabulary.paletteFamilies);
+  if (!paletteRead.ok) diagnostics.push(...paletteRead.diagnostics);
+  const palette = paletteRead.ok ? paletteRead.palette : undefined;
 
   // Gods: parsed read-only, for stable sprite ids and ability ids.
   const gods: GodProfile[] = [];
@@ -168,6 +175,9 @@ export function validateAssets(contentRoot: string): AssetValidation {
   for (const entry of registry.snapshot.entries.values()) {
     const { manifest } = entry;
     const file = `assets/registry/manifests/${entry.revision}.json`;
+    const refusal =
+      palette === undefined ? undefined : paletteRefusal(manifest, palette);
+    if (refusal !== undefined) report(file, refusal);
     const owner = spriteOwners.get(entry.assetId);
     if (owner !== undefined && manifest.kind !== "sprite") {
       report(
