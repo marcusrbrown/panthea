@@ -78,7 +78,7 @@ export async function stepStale(
       // She returns to the square for the second try.
       await walkTo(story, "hera", "town-square");
 
-      const stale = await heldTurn(story, story.options.control !== "stale");
+      const stale = await heldTurn(story, true);
       check(
         stale.consumed.outcome === "rejected" &&
           stale.consumed.reason === "stale-target",

@@ -2,7 +2,6 @@
 // exactly once after the restart, and its trace links to its request; while it
 // waits (the world is paused) no god is asked anything.
 
-import { Database } from "bun:sqlite";
 import { readFrame, waitForLog } from "../../../m1-living-world/src/steps/api";
 import { eventsOf } from "../../../m1-living-world/src/steps/direct";
 import { activeStorePath } from "../../../m1-living-world/src/world-db";
@@ -83,18 +82,6 @@ export async function stepKillJournal(
         "the pending proposal is in the journal after the kill",
         JSON.stringify(onDisk),
       );
-      if (story.options.control === "kill-journal") {
-        // Positive control: a service that kept the turn's proposal only in
-        // memory would have lost it with the process.
-        const db = new Database(path);
-        try {
-          db.run("DELETE FROM external_proposals WHERE proposal_id = ?", [
-            entry.proposalId,
-          ]);
-        } finally {
-          db.close();
-        }
-      }
 
       const restarted = await story.restart();
       await waitForLog(

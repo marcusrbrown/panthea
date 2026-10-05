@@ -1195,6 +1195,26 @@ test("each practice control breaks exactly the property it is for: on the full-c
   }
 });
 
+test("the controls run in-process over one run's data: each gives the FAIL line its property fails with, and a control that breaks nothing fails the run", async () => {
+  const { CONTROLLED_PROPERTY, PRACTICE_CONTROLS, runPracticeControls } =
+    await import("./practice-controls");
+  const { input } = fullCast();
+  const runs = runPracticeControls(input, CAST);
+  expect(runs.map((r) => r.control)).toEqual([...PRACTICE_CONTROLS]);
+  for (const run of runs) {
+    expect(run.property).toBe(CONTROLLED_PROPERTY[run.control]);
+    expect(run.failure).toStartWith(
+      `FAIL invariant violated: ${run.property} holds -- `,
+    );
+  }
+  // The data is not edited in place: the same input still passes every property.
+  expect(analyzeCast(input).properties.every((p) => p.ok)).toBe(true);
+  // A run without the full cast's alliance, contest, and the rest gives some control nothing to break, so its property holds and the control fails the run.
+  expect(() => runPracticeControls(episode().input, CAST)).toThrow(
+    /positive control .* trips /,
+  );
+});
+
 // --- The full cast: every god acts, every practice appears, an alliance comes only from a seal -----------
 
 test("each god's practices are read from the log: the moves it made, in the practices it made them in", () => {

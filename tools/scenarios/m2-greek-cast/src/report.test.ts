@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { EnvironmentInfo } from "@panthea/tools-probes-shared";
 import type { StepResult } from "../../m1-living-world/src/helpers";
+import { PRACTICE_CONTROLS } from "./practice-controls";
 import { buildReportInput, type RunSummary } from "./report";
 import { CONTROL_NAMES } from "./steps/context";
 
@@ -26,10 +27,17 @@ const summary: RunSummary = {
   steps: [step],
   controls: [
     {
+      via: "process",
       name: "chain",
       sabotage: "Drops the claim.",
       exitCode: 1,
       failure: "FAIL invariant violated: x",
+    },
+    {
+      via: "in-process",
+      name: "god-silent",
+      sabotage: "Deletes a god's moves.",
+      failure: "FAIL invariant violated: every god practiced holds -- y",
     },
   ],
   environment,
@@ -46,7 +54,18 @@ test("the report carries each step, its notes, and each control's failure, with 
   expect(input.metrics).toEqual([
     { name: "S4 prompts checked", unit: "prompts", samples: [3] },
   ]);
-  expect(input.bottomLine).toContain("All 1 positive controls exited non-zero");
+  expect(input.findings.join("\n")).toContain(
+    "Positive control `god-silent` (in-process)",
+  );
+  expect(input.findings.join("\n")).toContain(
+    "The run exited 1 with: FAIL invariant violated: x",
+  );
+  expect(input.bottomLine).toContain(
+    "All 2 positive controls tripped the assertion they target",
+  );
+  expect(input.bottomLine).toContain(
+    "1 by a rerun of the story in a child process that exited non-zero, 1 by breaking a copy",
+  );
   expect(input.caveat).toContain("Not covered");
 });
 
@@ -93,9 +112,25 @@ test("a real run adds its numbers, its properties, and its limits; without one t
   expect(text).toContain("does not show");
 });
 
-test("the how-to-run text names every positive control the runner has, so a new control cannot be left out of the README", () => {
+test("a control that did not trip is not counted among those that did", () => {
+  const input = buildReportInput({
+    ...summary,
+    controls: [
+      {
+        via: "process",
+        name: "chain",
+        sabotage: "x",
+        exitCode: 0,
+        failure: "",
+      },
+    ],
+  });
+  expect(input.bottomLine).not.toContain("positive controls tripped");
+});
+
+test("the how-to-run text names every positive control the runner has, process and in-process, so a new control cannot be left out of the README", () => {
   const input = buildReportInput(summary);
-  for (const name of CONTROL_NAMES) {
+  for (const name of [...CONTROL_NAMES, ...PRACTICE_CONTROLS]) {
     expect(input.howToRun).toContain(`\`${name}\``);
   }
 });

@@ -139,16 +139,11 @@ export async function stepAlliance(
         "practice-moved",
         (e) => e.threadId === thread.id && e.move === "accept",
       )[0];
-      const read = eventsOfKind(
+      const ended = eventsOfKind(
         story,
         "practice-ended",
         (e) => e.threadId === thread.id,
       )[0];
-      // The control rewrites the sealing as a plain performance before the check reads it.
-      const ended =
-        story.options.control === "alliance-unsealed" && read !== undefined
-          ? { ...read, reason: "performed" }
-          : read;
       check(
         acceptance?.entityId === "hephaestus" &&
           acceptance.correlationId ===

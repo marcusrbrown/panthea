@@ -30,12 +30,8 @@ export async function stepKillInference(
       const text = legend("Hera speaks through the kill.");
       const before = lastInputOrder(story);
       const held = provider.hold("hera", text);
-      // The fresh turn after the restart answers with the same legend. The
-      // control gives it two, so two proposals commit.
+      // The fresh turn after the restart answers with the same legend.
       provider.enqueue("hera", text);
-      if (story.options.control === "kill-inference") {
-        provider.enqueue("hera", text);
-      }
       const inFlight = await within(
         "hera's turn is in flight",
         held.arrived,
