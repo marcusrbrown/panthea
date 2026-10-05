@@ -9,14 +9,26 @@ import type {
 import type { StepResult } from "../../m1-living-world/src/helpers";
 import type { RealRecord } from "./real";
 
-export interface ControlResult {
+/**
+ * One positive control and how it was proved. A process control reran the story
+ * in a child process and must have exited non-zero; an in-process control broke
+ * a copy of the story's own collected data and must have failed its property.
+ */
+export type ControlResult = {
   readonly name: string;
   /** What the control breaks on purpose, in one sentence. */
   readonly sabotage: string;
-  readonly exitCode: number;
-  /** The `FAIL` line the control run printed. */
+  /** The `FAIL` line the control produced. */
   readonly failure: string;
-}
+} & (
+  | { readonly via: "process"; readonly exitCode: number }
+  | { readonly via: "in-process" }
+);
+
+export type ProcessControlResult = Extract<ControlResult, { via: "process" }>;
+
+const tripped = (control: ControlResult): boolean =>
+  control.via === "in-process" || control.exitCode !== 0;
 
 export interface RunSummary {
   readonly steps: readonly StepResult[];
@@ -201,16 +213,18 @@ export function buildReportInput(summary: RunSummary): ReportInput {
   const noteFindings = summary.steps.flatMap((step) =>
     step.notes.map((note) => `**${step.id} note.** ${note}`),
   );
-  const controlFindings = summary.controls.map(
-    (control) =>
-      `**Positive control \`${control.name}\`.** ${control.sabotage} The run exited ${control.exitCode} with: ${control.failure}`,
+  const controlFindings = summary.controls.map((control) =>
+    control.via === "process"
+      ? `**Positive control \`${control.name}\`.** ${control.sabotage} The run exited ${control.exitCode} with: ${control.failure}`
+      : `**Positive control \`${control.name}\` (in-process).** ${control.sabotage} Applied to a copy of the story's own data, the property it targets failed with: ${control.failure}`,
   );
-  const allNonZero = summary.controls.every(
-    (control) => control.exitCode !== 0,
-  );
+  const allTripped = summary.controls.every(tripped);
+  const inProcess = summary.controls.filter(
+    (control) => control.via === "in-process",
+  ).length;
   const bottomLine = `All ${summary.steps.length} scripted steps held on the tree this README was committed with. The story ran in ${(summary.steps.reduce((sum, step) => sum + step.elapsedMs, 0) / 1000).toFixed(0)} s; the whole evidence run, with every control, took ${(summary.totalMs / 1000).toFixed(0)} s. ${
-    allNonZero && summary.controls.length > 0
-      ? `All ${summary.controls.length} positive controls exited non-zero, so the assertions they target are live. `
+    allTripped && summary.controls.length > 0
+      ? `All ${summary.controls.length} positive controls tripped the assertion they target, so those assertions are live: ${summary.controls.length - inProcess} by a rerun of the story in a child process that exited non-zero, ${inProcess} by breaking a copy of the story's own data in-process. `
       : ""
   }The compiled sidecar binary was ${kib(summary.binaryBytes)}.`;
 

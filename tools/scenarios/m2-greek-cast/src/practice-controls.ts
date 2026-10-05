@@ -1,9 +1,12 @@
 // The positive controls for the practice properties: each takes the run's data
 // and breaks one thing a property must catch, the way a bug would. The scripted
-// story runs its properties over the data it collected; with a control named,
-// they run over the sabotaged data and the run must fail. Pure functions, so
-// each has a unit test that the property it targets fails on it.
+// story collects its data once, runs its properties over it, then applies every
+// control to a copy in-process (`runPracticeControls`): the property each one
+// targets must fail on the sabotaged copy. No control reruns the story, because
+// a sabotage is a pure function of the data the one story run already produced.
+// Each also has a unit test that the property it targets fails on it.
 
+import { ScenarioFailure } from "../../m1-living-world/src/helpers";
 import { analyzePractices } from "./practice-analysis";
 import type { RealInput } from "./real-analysis";
 
@@ -245,4 +248,46 @@ export function sabotage(
       };
     }
   }
+}
+
+/** What applying one control to the run's data produced. */
+export interface PracticeControlRun {
+  readonly control: PracticeControl;
+  /** The property the control is meant to trip. */
+  readonly property: string;
+  /** The `FAIL` line the failed property gives, worded as a story run would print it. */
+  readonly failure: string;
+}
+
+/**
+ * Applies every practice control, each to its own copy of `input` (the data one
+ * story run collected), and checks that the property it targets then fails.
+ * Throws a `ScenarioFailure` for the first control that leaves its property
+ * standing, so a check that stopped catching its bug fails the run.
+ */
+export function runPracticeControls(
+  input: RealInput,
+  cast: readonly string[],
+): PracticeControlRun[] {
+  return PRACTICE_CONTROLS.map((control) => {
+    const name = CONTROLLED_PROPERTY[control];
+    const property = analyzePractices(
+      sabotage(control, input),
+      cast,
+    ).properties.find((p) => p.name === name);
+    if (property === undefined) {
+      throw new ScenarioFailure(
+        `positive control ${control} targets ${name}`,
+        "no such property",
+      );
+    }
+    if (property.ok) {
+      throw new ScenarioFailure(
+        `positive control ${control} trips ${name}`,
+        `${name} still holds with the control applied: ${property.detail}`,
+      );
+    }
+    const failure = new ScenarioFailure(`${name} holds`, property.detail);
+    return { control, property: name, failure: `FAIL ${failure.message}` };
+  });
 }

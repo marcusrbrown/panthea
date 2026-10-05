@@ -4,9 +4,13 @@
 
 import type { StepRecorder } from "../../../m1-living-world/src/helpers";
 import type { Sidecar } from "../../../m1-living-world/src/sidecar";
-import { PRACTICE_CONTROLS, type PracticeControl } from "../practice-controls";
 import type { ScriptedProvider } from "../provider";
 
+/**
+ * The controls that rerun the whole story in a child process with one thing
+ * broken mid-flight. The practice controls are not among them: they break the
+ * data one story run collected, in-process (see `practice-controls.ts`).
+ */
 export type ControlName =
   | "kill-journal"
   | "kill-inference"
@@ -16,8 +20,7 @@ export type ControlName =
   | "stale"
   | "catch-up-inference"
   | "restore-memory"
-  | "petition-privacy"
-  | PracticeControl;
+  | "petition-privacy";
 
 export const CONTROL_NAMES: readonly ControlName[] = [
   "kill-journal",
@@ -29,7 +32,6 @@ export const CONTROL_NAMES: readonly ControlName[] = [
   "catch-up-inference",
   "restore-memory",
   "petition-privacy",
-  ...PRACTICE_CONTROLS,
 ];
 
 export interface StoryOptions {

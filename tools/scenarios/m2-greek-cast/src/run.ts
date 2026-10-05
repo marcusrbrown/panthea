@@ -4,8 +4,9 @@
 //
 //   bun run scenario:m2                              run the scripted story
 //   bun run scenario:m2 --skip-build                 reuse the existing sidecar binary
-//   bun run scenario:m2 --positive-control=<name>    break one check on purpose; must fail
-//   bun run scenario:m2 --write-readme [--jobs=4]    run the story, then every control four at a time, rewrite README.md (uses real-run.json)
+//   bun run scenario:m2 --positive-control=<name>    break one check on purpose; must fail (the process-level controls; the practice controls
+//                                                    always run in-process, at the end of every story run)
+//   bun run scenario:m2 --write-readme [--jobs=4]    run the story, then each process-level control four at a time, rewrite README.md (uses real-run.json)
 //   bun run scenario:m2 --real [--seconds=N]         both gods through local Ollama, unscripted; asserts properties, writes real-run.json
 //                                                    (rebuilds the sidecar first, unless --skip-build)
 //   bun run scenario:m2 --episodes=N --model=M --base-url=https://host/v1 [--key-ref=NAME]
@@ -33,7 +34,11 @@ import {
   type RealRecord,
   runReal,
 } from "./real";
-import { buildReportInput, type ControlResult } from "./report";
+import {
+  buildReportInput,
+  type ControlResult,
+  type ProcessControlResult,
+} from "./report";
 import { CONTROL_NAMES, type ControlName, runStory } from "./story";
 
 const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
@@ -55,11 +60,10 @@ const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
     "The harness injects a petition addressed to Hera into the last prompt Zeus was shown, as if the divine sense leaked to the other god.",
   "restore-memory":
     "The harness drops Hera's memory and feeling from the export it is about to restore and recomputes its hash. Import rebuilds the world from the archive's event log and requires it to equal the archived projection, so the archive is refused at the import step, before any comparison of the restored branch.",
-  ...SABOTAGE,
 };
 
 /** Runs the story again in a child process with a control enabled, and reports how it ended. */
-async function runControl(name: ControlName): Promise<ControlResult> {
+async function runControl(name: ControlName): Promise<ProcessControlResult> {
   const child = Bun.spawn(
     [
       "bun",
@@ -78,7 +82,13 @@ async function runControl(name: ControlName): Promise<ControlResult> {
   const failure =
     `${out}\n${err}`.split("\n").find((line) => line.startsWith("FAIL")) ??
     "(no FAIL line)";
-  return { name, sabotage: CONTROL_SABOTAGE[name], exitCode, failure };
+  return {
+    via: "process",
+    name,
+    sabotage: CONTROL_SABOTAGE[name],
+    exitCode,
+    failure,
+  };
 }
 
 async function runRealRun(args: Args): Promise<void> {
@@ -169,11 +179,17 @@ async function main(): Promise<void> {
       await runRealRun(args);
       return;
     }
-    const { steps, binaryBytes } = await runStory(args, (step) => {
-      console.log(
-        `PASS ${step.id} ${step.title} (${(step.elapsedMs / 1000).toFixed(1)} s): ${step.result}`,
-      );
-    });
+    const { steps, binaryBytes, practiceControls } = await runStory(
+      args,
+      (step) => {
+        console.log(
+          `PASS ${step.id} ${step.title} (${(step.elapsedMs / 1000).toFixed(1)} s): ${step.result}`,
+        );
+      },
+    );
+    for (const { control, failure } of practiceControls) {
+      console.log(`control ${control} (in-process): ${failure}`);
+    }
     console.log(
       `\nOK ${steps.length} steps in ${((Date.now() - startedAt) / 1000).toFixed(1)} s`,
     );
@@ -184,14 +200,15 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     if (args.writeReadme) {
-      // Each control is a whole story with its own temporary root, app-data
-      // directory, lifecycle lock, sidecar, and loopback ports, so they share
-      // nothing but the read-only binary. `mapLimit` returns them in
-      // CONTROL_NAMES order, which is the README's order.
-      const controls = await mapLimit(
+      // Each process-level control is a whole story with its own temporary root,
+      // app-data directory, lifecycle lock, sidecar, and loopback ports, so they
+      // share nothing but the read-only binary. `mapLimit` returns them in
+      // CONTROL_NAMES order, which is the README's order. The practice controls
+      // already ran in-process at the end of the story above and follow them.
+      const processControls = await mapLimit(
         CONTROL_NAMES,
         args.jobs,
-        async (name): Promise<ControlResult> => {
+        async (name): Promise<ProcessControlResult> => {
           console.log(`running positive control ${name}`);
           const result = await runControl(name);
           console.log(`  ${name} exit ${result.exitCode}: ${result.failure}`);
@@ -206,6 +223,17 @@ async function main(): Promise<void> {
           return result;
         },
       );
+      const controls: ControlResult[] = [
+        ...processControls,
+        ...practiceControls.map(
+          ({ control, failure }): ControlResult => ({
+            via: "in-process",
+            name: control,
+            sabotage: SABOTAGE[control],
+            failure,
+          }),
+        ),
+      ];
       const realPath = join(import.meta.dir, "..", "real-run.json");
       const real = existsSync(realPath)
         ? (JSON.parse(readFileSync(realPath, "utf8")) as RealRecord)

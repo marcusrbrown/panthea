@@ -15,6 +15,7 @@ import {
   startSidecar,
 } from "../../m1-living-world/src/sidecar";
 import { resolveSidecarBinary } from "./binary";
+import type { PracticeControlRun } from "./practice-controls";
 import { startProvider } from "./provider";
 import {
   heraPolicy,
@@ -47,6 +48,8 @@ export {
 export interface StoryResult {
   readonly steps: readonly StepResult[];
   readonly binaryBytes: number;
+  /** The practice controls, each applied in-process to the data this one run collected. */
+  readonly practiceControls: readonly PracticeControlRun[];
 }
 
 export async function runStory(
@@ -131,8 +134,12 @@ export async function runStory(
     await stepContest(recorder, running);
     await stepAlliance(recorder, running);
     await stepHades(recorder, running);
-    await stepPracticeProperties(recorder, running);
-    return { steps: recorder.results, binaryBytes };
+    const { controls } = await stepPracticeProperties(recorder, running);
+    return {
+      steps: recorder.results,
+      binaryBytes,
+      practiceControls: controls,
+    };
   } finally {
     await story?.sidecar.stop("SIGTERM").catch(() => undefined);
     killAllSidecars();
