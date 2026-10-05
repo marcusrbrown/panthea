@@ -10,6 +10,8 @@ test("the root exports lookup, placeholder and helpers", () => {
       "EMPTY_SNAPSHOT",
       "conformImage",
       "encodeRgbaPng",
+      "paletteDigest",
+      "parsePalette",
       "readPngHeader",
       "recoverGrid",
       "renderPlaceholder",
@@ -20,7 +22,7 @@ test("the root exports lookup, placeholder and helpers", () => {
 });
 
 test("the root and the pure lookup never import the filesystem or the registry", () => {
-  for (const file of ["index.ts", "resolve.ts", "png.ts"]) {
+  for (const file of ["index.ts", "resolve.ts", "png.ts", "palette.ts"]) {
     const source = readFileSync(join(import.meta.dir, file), "utf8");
     expect(source, file).not.toMatch(
       /^(import|export) .*(node:fs|node:path|\.\/registry)/m,
@@ -28,10 +30,12 @@ test("the root and the pure lookup never import the filesystem or the registry",
   }
 });
 
-test("conformance has no platform imports, randomness or clock", () => {
-  const source = readFileSync(join(import.meta.dir, "conformance.ts"), "utf8");
-  expect(source).not.toMatch(/from "node:/);
-  expect(source).not.toMatch(
-    /Math\.random|Date\.now|new Date|process\.|performance\./,
-  );
+test("conformance and palette have no platform imports, randomness or clock", () => {
+  for (const file of ["conformance.ts", "palette.ts"]) {
+    const source = readFileSync(join(import.meta.dir, file), "utf8");
+    expect(source, file).not.toMatch(/from "node:/);
+    expect(source, file).not.toMatch(
+      /Math\.random|Date\.now|new Date|process\.|performance\./,
+    );
+  }
 });

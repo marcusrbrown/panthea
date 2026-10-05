@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "image": "town-study.png",
+      "width": 960,
+      "height": 1024,
+      "figure": {
+        "source": { "x": 60, "y": 190, "width": 64, "height": 80 },
+        "zoom": { "x": 180, "y": 190, "width": 256, "height": 320 },
+        "scale": 4,
+        "contentBounds": { "x": 12, "y": 12, "width": 40, "height": 54 }
+      },
+      "portrait": {
+        "source": { "x": 60, "y": 612, "width": 96, "height": 96 },
+        "zoom": { "x": 210, "y": 612, "width": 288, "height": 288 },
+        "scale": 3
+      }
+    },
+    {
+      "image": "olympus-study.png",
+      "width": 960,
+      "height": 1024,
+      "figure": {
+        "source": { "x": 60, "y": 190, "width": 64, "height": 80 },
+        "zoom": { "x": 180, "y": 190, "width": 256, "height": 320 },
+        "scale": 4,
+        "contentBounds": { "x": 12, "y": 12, "width": 40, "height": 54 }
+      },
+      "portrait": {
+        "source": { "x": 60, "y": 612, "width": 96, "height": 96 },
+        "zoom": { "x": 210, "y": 612, "width": 288, "height": 288 },
+        "scale": 3
+      }
+    },
+    {
+      "image": "underworld-study.png",
+      "width": 960,
+      "height": 1024,
+      "figure": {
+        "source": { "x": 60, "y": 190, "width": 64, "height": 80 },
+        "zoom": { "x": 180, "y": 190, "width": 256, "height": 320 },
+        "scale": 4,
+        "contentBounds": { "x": 12, "y": 12, "width": 40, "height": 54 }
+      },
+      "portrait": {
+        "source": { "x": 60, "y": 612, "width": 96, "height": 96 },
+        "zoom": { "x": 210, "y": 612, "width": 288, "height": 288 },
+        "scale": 3
+      }
+    }
+  ]
+}
