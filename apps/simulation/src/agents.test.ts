@@ -2015,6 +2015,16 @@ async function frameOf(port: number) {
   return parsed.value;
 }
 
+/**
+ * The bound on a wait that covers a real one-hour catch-up in a spawned service.
+ * The wait ends the moment the event happens; this only stops a hung service.
+ * Measured on a 10-core machine with N busy loops competing for it, the
+ * sleep-wake test took 9 s (10 loops), 14 s (20) and 18.5 s (30), and the
+ * startup catch-up test 6.5, 11 and 15.4 s, against the 20 s default; a bound
+ * of 60 s is more than three times the worst of those.
+ */
+const CATCH_UP_WAIT_MS = 60_000;
+
 async function until<T>(
   what: string,
   probe: () => T | undefined | Promise<T | undefined>,
@@ -2296,8 +2306,10 @@ describe("the service with model routing configured", () => {
     const appDataDir = await storeBehind(60 * 60 * 1000);
 
     const second = await spawnService(provider, appDataDir);
-    await until("the first model request", () =>
-      provider.requests.length > 0 ? true : undefined,
+    await until(
+      "the first model request",
+      () => (provider.requests.length > 0 ? true : undefined),
+      CATCH_UP_WAIT_MS,
     );
     const { starts, ends } = catchUps(second);
     // The town takes a while to catch up on, so the wall clock may have moved far enough for a second, short pass; the backlog's own is the first.
@@ -2307,7 +2319,7 @@ describe("the service with model routing configured", () => {
     const finished = ends[0]?.at ?? Number.POSITIVE_INFINITY;
     const early = provider.requests.filter((request) => request.at < finished);
     expect(early).toEqual([]);
-  }, 60_000);
+  }, 120_000);
 
   test("takes no turn while a sleep-wake catch-up runs, and resumes after: a clock gap forced mid-run", async () => {
     const provider = startProvider();
@@ -2335,18 +2347,24 @@ describe("the service with model routing configured", () => {
     );
     gap.run("PRAGMA busy_timeout = 2000");
     try {
-      await until("a sleep-wake catch-up to start", () => {
-        if (catchUps(service).starts.length > before) return true;
-        gap.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
-          Date.now() - 60 * 60 * 1000,
-        ]);
-        return undefined;
-      });
+      await until(
+        "a sleep-wake catch-up to start",
+        () => {
+          if (catchUps(service).starts.length > before) return true;
+          gap.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
+            Date.now() - 60 * 60 * 1000,
+          ]);
+          return undefined;
+        },
+        CATCH_UP_WAIT_MS,
+      );
     } finally {
       gap.close();
     }
-    await until("that catch-up to finish", () =>
-      catchUps(service).ends.length > before ? true : undefined,
+    await until(
+      "that catch-up to finish",
+      () => (catchUps(service).ends.length > before ? true : undefined),
+      CATCH_UP_WAIT_MS,
     );
     const start = catchUps(service).starts[before]?.at ?? 0;
     const end = catchUps(service).ends[before]?.at ?? 0;
@@ -2361,10 +2379,15 @@ describe("the service with model routing configured", () => {
       ),
     ).toEqual([]);
     // ... and they resume after it.
-    await until("turns to resume", () =>
-      provider.requests.some((request) => request.at > end) ? true : undefined,
+    await until(
+      "turns to resume",
+      () =>
+        provider.requests.some((request) => request.at > end)
+          ? true
+          : undefined,
+      CATCH_UP_WAIT_MS,
     );
-  }, 60_000);
+  }, 180_000);
 });
 
 describe("a god's refused practice moves", () => {
