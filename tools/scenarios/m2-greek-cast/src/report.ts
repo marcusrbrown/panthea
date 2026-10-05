@@ -38,7 +38,51 @@ bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # s
 \`\`\`
 
 Controls: \`kill-journal\`, \`kill-inference\`, \`chain\`, \`isolation\`, \`trace\`,
-\`stale\`, \`catch-up-inference\`, \`restore-memory\`.
+\`stale\`, \`catch-up-inference\`, \`restore-memory\`, \`petition-privacy\`, and, for the
+practice steps and the practice properties of the real run, \`thread-reopened\`,
+\`no-progress-advances\`, \`thread-no-ending\`, \`obligated-turn-unrecorded\`,
+\`ending-no-consequence\`, \`practices-missing\`, \`consequence-no-effect\`,
+\`contest-no-standing\`.
+
+Practice steps (settlement and supplication, scripted gods, the world's real
+rules; each reply is a function of the prompt its god was shown, so it names
+only what that god could name):
+
+- **S13** A refused demand closes its thread; both remember who refused; the
+  repeated demand is rejected no-progress, the world records the refusal, and
+  Hera's next prompt says why.
+- **S14** A newer account opens a linked successor; Zeus's report naming the
+  thread's subject makes no progress while one naming another agent is told;
+  he accepts, performs, and the world sees it (standing won, Hera warms).
+- **S15** A sworn term is broken and costs the oath penalty; counteroffers run
+  out, and a counter restating an earlier offer makes no progress; Hera's
+  refusal is remembered.
+- **S16** Supplication: terms kept are fulfilled; terms broken cost the wolf
+  stake, and the mortal keeps its memory, feelings, and identity.
+- **S17** A contest for favour: Poseidon tells a legend before the fishers at
+  the ferry dock; Athena, standing there, is offered a contest over it as a
+  choice (a copyable object the world's validator already took) and opens it.
+  She tells two legends to the dock's people and he tells none, so at the window's
+  end the world decides for her: her standing at the dock rises and his falls,
+  each recorded as a motif citing the closing, and Poseidon is offered no new
+  contest over what Athena did before the close. The step runs a 25-tick window
+  (\`PANTHEA_PRACTICE_BALANCE\`) in place of the authored five minutes.
+- **S18** The real run's practice properties (\`src/practice-analysis.ts\`) hold
+  over the whole scripted run. A practice control breaks the data first and the
+  property it targets must fail; \`src/practice-analysis.test.ts\` holds the same
+  controls as unit tests.
+
+The transcript (\`src/transcript.ts\`) shows each thread's cause, participants,
+moves, ending, and recorded changes, the threads open at the end with their age
+and what each waits on, every move judged no progress, and a classification of
+each turn an obligated god takes while its obligation is open (R12; an
+acceptance binds, so there is no renegotiation class, and bargaining is for a
+thread still open): the action the term calls for, committed, is *performed*; a
+turn that did something else is *waited for a named event* when its prompt names
+what stops it (the digest's UNPERFORMABLE obstacle, or no mortal at the place a
+legend is to be told); every other turn, an attempt to bargain over the accepted
+thread included, is *knowingly risked breach*, since the obligation led the
+prompt.
 
 The scenario builds the sidecar with \`apps/simulation/scripts/build-sidecar.sh\`
 and runs the compiled binary directly, with no Tauri, extending the
