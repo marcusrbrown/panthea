@@ -11,6 +11,12 @@
 // (filler lines after it), FAKE_LOG_LATE (line printed when a job starts),
 // FAKE_CRASH_ON_JOB=1 (print a crash line, flush, then SIGABRT on the first
 // job, like a native abort).
+// Restart behaviour: FAKE_START_MARKER (a path) is created by the first
+// launch; a launch that finds it already there is a replacement, and
+// FAKE_ON_RESTART=exit7 makes it exit 7 at once, =never-ready makes it stay
+// alive without ever listening.
+
+import { existsSync, writeFileSync } from "node:fs";
 
 const port = Number(process.env.FAKE_PORT);
 const jobMs = Number(process.env.FAKE_JOB_MS ?? 20);
@@ -191,7 +197,18 @@ function startServer(): void {
   }
 }
 
-if (readyDelayMs > 0) {
+const startMarker = process.env.FAKE_START_MARKER;
+const replacement = startMarker !== undefined && existsSync(startMarker);
+if (startMarker !== undefined && !replacement) {
+  writeFileSync(startMarker, "started");
+}
+if (replacement && process.env.FAKE_ON_RESTART === "exit7") {
+  process.exit(7);
+}
+
+if (replacement && process.env.FAKE_ON_RESTART === "never-ready") {
+  setInterval(() => {}, 1000);
+} else if (readyDelayMs > 0) {
   setTimeout(startServer, readyDelayMs);
 } else {
   startServer();

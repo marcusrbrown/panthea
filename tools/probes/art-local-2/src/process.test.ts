@@ -74,6 +74,34 @@ describe("spawnManaged readiness", () => {
   });
 });
 
+describe("spawnManaged readiness after termination", () => {
+  it("reports exited, not ready, when the child dies while a probe is in flight", async () => {
+    const proc = child("process.exit(7);");
+    const ready = await proc.waitReady(
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return true;
+      },
+      { timeoutMs: 5_000, pollMs: 20 },
+    );
+    expect(ready).toMatchObject({ status: "exited", exitCode: 7 });
+  });
+
+  it("reports exited as soon as termination is observed, without waiting out the pipe drain", async () => {
+    // A grandchild keeps stdout open, so the drain wait would last its full bound.
+    const proc = child(
+      "Bun.spawn([process.execPath, '-e', 'setTimeout(() => {}, 1500)'], { stdout: 'inherit', stderr: 'inherit' });" +
+        "setTimeout(() => process.exit(7), 100);",
+    );
+    const ready = await proc.waitReady(() => false, {
+      timeoutMs: 5_000,
+      pollMs: 10,
+    });
+    expect(ready).toMatchObject({ status: "exited", exitCode: 7 });
+    expect(ready.ms).toBeLessThan(450);
+  });
+});
+
 describe("spawnManaged stop", () => {
   it("stops a cooperative child with SIGTERM and does not escalate", async () => {
     const proc = child(READY_SCRIPT);
@@ -275,6 +303,11 @@ describe("restartToReady", () => {
         (result.cancel.restartToReadyMs ?? 0) -
         5,
     );
+    expect(result.cancel.totalCancelToReadyMs).toBeLessThanOrEqual(
+      (result.cancel.abortToExitMs ?? 0) +
+        (result.cancel.restartToReadyMs ?? 0) +
+        50,
+    );
     expect(result.process?.state()).toBe("running");
   });
 
@@ -342,6 +375,34 @@ describe("restartToReady idle evidence", () => {
     ]);
     expect(result.cancel.restartToIdleMs).toBeGreaterThanOrEqual(
       result.cancel.restartToReadyMs ?? Number.POSITIVE_INFINITY,
+    );
+  });
+
+  it("takes the cancel-to-ready total at readiness, before the idle wait", async () => {
+    const first = child(READY_SCRIPT);
+    await first.waitReady(readyCheck(first), { timeoutMs: 5_000, pollMs: 20 });
+    const result = await restartToReady({
+      current: first,
+      respawn: () => child(READY_SCRIPT),
+      isReady: (proc) => proc.output().stdout.includes("ready"),
+      readyTimeoutMs: 5_000,
+      pollMs: 20,
+      idle: {
+        thresholdPercent: 5,
+        timeoutMs: 2_000,
+        pollMs: 5,
+        read: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          return { rssKb: 1, cpuPercent: 1, processCount: 1 };
+        },
+      },
+    });
+    expect(result.cancel.idle).toBe("below-threshold");
+    expect(result.cancel.restartToIdleMs).toBeGreaterThanOrEqual(400);
+    expect(result.cancel.totalCancelToReadyMs).toBeLessThanOrEqual(
+      (result.cancel.abortToExitMs ?? 0) +
+        (result.cancel.restartToReadyMs ?? 0) +
+        50,
     );
   });
 

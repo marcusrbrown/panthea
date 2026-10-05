@@ -245,10 +245,23 @@ export async function runArm(
   const isReady = async () =>
     (await fetchCapabilities(config.server.baseUrl, 500)) !== null;
 
-  /** Starts the server if none is running; false (server stopped) when it never became ready. */
-  async function ensureServer(): Promise<boolean> {
+  /**
+   * Starts the server if none is running. Fails, with the reason, when the
+   * endpoint already answers before anything was spawned (the measurements
+   * would be of a server this run did not start) or when the new server never
+   * became ready.
+   */
+  async function ensureServer(): Promise<
+    { readonly ok: true } | { readonly ok: false; readonly reason: string }
+  > {
     if (current?.state() === "running") {
-      return true;
+      return { ok: true };
+    }
+    if (await isReady()) {
+      return {
+        ok: false,
+        reason: `endpoint ${config.server.baseUrl} already answers the capabilities probe; refusing to measure a server this run did not start`,
+      };
     }
     sampler.setPhase(everStarted ? "restart" : "startup");
     everStarted = true;
@@ -268,11 +281,11 @@ export async function runArm(
     entry.startupStatus = ready.status;
     if (ready.status !== "ready") {
       await proc.stop();
-      return false;
+      return { ok: false, reason: "generator server did not become ready" };
     }
     entry.readyMs = ready.ms;
     capabilities ??= await fetchCapabilities(config.server.baseUrl, 2_000);
-    return true;
+    return { ok: true };
   }
 
   const driverFor = (run: PlannedRun, phase: string) => ({
@@ -344,7 +357,8 @@ export async function runArm(
         );
         continue;
       }
-      if (!(await ensureServer())) {
+      const started = await ensureServer();
+      if (!started.ok) {
         records.push({
           schemaVersion: 1,
           arm: config.arm,
@@ -354,7 +368,7 @@ export async function runArm(
           components,
           peakRssKb: null,
           status: "failed",
-          reason: "generator server did not become ready",
+          reason: started.reason,
           completedSamples: [],
         });
         continue;
@@ -378,7 +392,7 @@ export async function runArm(
       );
     }
 
-    if (config.cancelProbe && !blocked && (await ensureServer())) {
+    if (config.cancelProbe && !blocked && (await ensureServer()).ok) {
       const probe = config.cancelProbe;
       const run: PlannedRun = {
         spec: probe.cell,

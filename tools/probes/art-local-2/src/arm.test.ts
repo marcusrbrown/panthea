@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ArmConfig, type ImageEvent, runArm } from "./arm";
-import { fakeServerCmd, freePort } from "./fixtures/util";
+import { fakeServerCmd, freePort, spawnFake } from "./fixtures/util";
 import { hashBytes } from "./measure";
 
 const tempDirs: string[] = [];
@@ -351,6 +351,40 @@ describe("runArm unspawnable server", () => {
         exit: { reason: "spawn-failed", exitCode: null, signalCode: null },
       });
       expect(server.logTail).toMatch(/^spawn failed: /);
+    }
+  });
+});
+
+describe("runArm occupied endpoint", () => {
+  it("refuses an endpoint something else already serves: no server tracked, nothing generated", async () => {
+    const cfg = await config(
+      {},
+      {},
+      { cmd: [process.execPath, "-e", "process.exit(7)"] },
+    );
+    const port = Number(new URL(cfg.server.baseUrl).port);
+    const occupant = spawnFake(port);
+    try {
+      const up = await occupant.waitReady(
+        async () =>
+          (await fetch(`${cfg.server.baseUrl}/sdcpp/v1/capabilities`)).ok,
+        { timeoutMs: 10_000, pollMs: 20 },
+      );
+      expect(up.status).toBe("ready");
+
+      const images: ImageEvent[] = [];
+      const report = await runArm(cfg, { onImage: (e) => images.push(e) });
+      expect(report.cells).toHaveLength(4);
+      for (const cell of report.cells) {
+        expect(cell).toMatchObject({ status: "failed" });
+        if (cell.status === "failed") {
+          expect(cell.reason).toMatch(/already (answers|serving|in use)/);
+        }
+      }
+      expect(report.servers).toEqual([]);
+      expect(images).toEqual([]);
+    } finally {
+      await occupant.stop();
     }
   });
 });

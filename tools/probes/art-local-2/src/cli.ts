@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
   type ArmConfig,
+  type ArmReport,
   type CellSpec,
   type ComponentSpec,
   type ImageEvent,
@@ -251,6 +252,57 @@ function redactions(
   ];
 }
 
+/** Why a configured cancel probe is not evidence of a working cancellation, if it is not. */
+function cancelProblem(
+  report: ArmReport,
+  config: ArmConfig,
+): string | undefined {
+  const probe = report.cancelProbe;
+  if (probe === null) return "no cancel probe was recorded";
+  if (probe.status !== "cancelled") {
+    return `the job ${probe.status} before it could be cancelled`;
+  }
+  const timing = probe.cancel;
+  if (timing === null) return "the cancel probe recorded no timing";
+  if (timing.readiness !== "ready") {
+    return `the replacement server was ${timing.readiness}, not ready`;
+  }
+  if (
+    timing.abortToExitMs === null ||
+    timing.restartToReadyMs === null ||
+    timing.totalCancelToReadyMs === null
+  ) {
+    return "the cancel probe is missing a timing";
+  }
+  if (
+    config.idle !== undefined &&
+    (timing.idle !== "below-threshold" || timing.restartToIdleMs === null)
+  ) {
+    return `the replacement did not settle to idle (${timing.idle})`;
+  }
+  return undefined;
+}
+
+/**
+ * Exit code for a finished arm: 1 any failed cell or, when a cancel probe is
+ * configured and the arm ran, a probe that is not full cancellation evidence;
+ * 2 blocked with nothing failed; 0 otherwise.
+ */
+export function exitCodeFor(report: ArmReport, config: ArmConfig): number {
+  if (
+    report.cells.some(
+      (c) => c.status !== "completed" && c.status !== "unavailable",
+    )
+  ) {
+    return 1;
+  }
+  if (report.cells.some((c) => c.status === "unavailable")) return 2;
+  if (config.cancelProbe && cancelProblem(report, config) !== undefined) {
+    return 1;
+  }
+  return 0;
+}
+
 export async function main(argv: readonly string[]): Promise<number> {
   let config: ArmConfig;
   let args: { config: string; out: string };
@@ -330,14 +382,13 @@ export async function main(argv: readonly string[]): Promise<number> {
       `[art-local-2] ${report.arm} cancel-probe: ${report.cancelProbe.status}`,
     );
   }
-  // A probe that completed means the job beat the abort: no cancellation evidence.
-  const bad =
-    report.cells.some(
-      (c) => c.status !== "completed" && c.status !== "unavailable",
-    ) ||
-    (report.cancelProbe !== null && report.cancelProbe.status !== "cancelled");
-  if (bad) return 1;
-  return report.cells.some((c) => c.status === "unavailable") ? 2 : 0;
+  if (config.cancelProbe && exitCodeFor(report, config) === 1) {
+    const problem = cancelProblem(report, config);
+    if (problem !== undefined) {
+      console.error(`[art-local-2] ${report.arm} cancel-probe: ${problem}`);
+    }
+  }
+  return exitCodeFor(report, config);
 }
 
 if (import.meta.main) {

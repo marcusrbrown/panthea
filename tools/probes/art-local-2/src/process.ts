@@ -252,16 +252,27 @@ export function spawnManaged(options: SpawnManagedOptions): ManagedProcess {
     async waitReady(isReady, readyOptions) {
       const pollMs = readyOptions.pollMs ?? 100;
       const startedAt = performance.now();
+      // Termination is checked before each probe and again after a probe
+      // answers: a probe that returns true for a child that already died
+      // (or that something else answered) is not readiness.
+      const exitedNow = () => ({
+        status: "exited" as const,
+        ms: performance.now() - startedAt,
+        exitCode: child.exitCode,
+      });
       for (;;) {
         const ms = performance.now() - startedAt;
-        if (phase === "exited" && exitInfo) {
-          return { status: "exited", ms, exitCode: exitInfo.exitCode };
+        if (terminationObserved) {
+          return exitedNow();
         }
         let ok = false;
         try {
           ok = await isReady();
         } catch {
           ok = false;
+        }
+        if (terminationObserved) {
+          return exitedNow();
         }
         if (ok) {
           return { status: "ready", ms: performance.now() - startedAt };
@@ -340,6 +351,8 @@ export async function restartToReady(
     timeoutMs: input.readyTimeoutMs,
     pollMs: input.pollMs,
   });
+  // Taken before any idle wait, so the total is cancel request to ready.
+  const readyAt = performance.now();
   const isReady = ready.status === "ready";
   let idleFields: Pick<
     CancelTiming,
@@ -363,7 +376,7 @@ export async function restartToReady(
     cancel: {
       abortToExitMs,
       restartToReadyMs: isReady ? ready.ms : null,
-      totalCancelToReadyMs: isReady ? performance.now() - requestedAt : null,
+      totalCancelToReadyMs: isReady ? readyAt - requestedAt : null,
       readiness: ready.status,
       escalatedToKill: stopped.escalatedToKill,
       ...idleFields,

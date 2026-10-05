@@ -13,7 +13,8 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigError, main, parseArmConfig } from "./cli";
+import type { ArmReport } from "./arm";
+import { ConfigError, exitCodeFor, main, parseArmConfig } from "./cli";
 import { fakeServerCmd, freePort } from "./fixtures/util";
 import { hashBytes } from "./measure";
 
@@ -407,5 +408,170 @@ describe("cli entry point", () => {
     );
     expect(await proc.exited).toBe(0);
     expect(existsSync(join(out, "fixture", "results.json"))).toBe(true);
+  });
+});
+
+describe("exitCodeFor", () => {
+  const config = (extra: Record<string, unknown> = {}) =>
+    parseArmConfig({ ...minimal, ...extra });
+  const probe = {
+    afterMs: 150,
+    cell: { id: "probe", width: 512, height: 640 },
+  };
+  const completedCell = { status: "completed" } as const;
+  const timing = {
+    abortToExitMs: 60,
+    restartToReadyMs: 300,
+    totalCancelToReadyMs: 360,
+    readiness: "ready",
+    escalatedToKill: false,
+    restartToIdleMs: 1000,
+    idle: "below-threshold",
+    idleThresholdPercent: 5,
+    idleCpuEvidence: [],
+  };
+  const report = (cells: unknown[], cancelProbe: unknown = null): ArmReport =>
+    ({ cells, cancelProbe }) as unknown as ArmReport;
+  const cancelled = (cancel: unknown) => ({
+    status: "cancelled",
+    cancel,
+  });
+
+  it("keeps the existing codes without a cancel probe: 0 completed, 1 failed, 2 all unavailable", () => {
+    expect(exitCodeFor(report([completedCell]), config())).toBe(0);
+    expect(
+      exitCodeFor(report([completedCell, { status: "failed" }]), config()),
+    ).toBe(1);
+    expect(exitCodeFor(report([{ status: "unavailable" }]), config())).toBe(2);
+    // An unavailable arm never ran its probe, so the configured probe is not a failure.
+    expect(
+      exitCodeFor(
+        report([{ status: "unavailable" }]),
+        config({ cancelProbe: probe }),
+      ),
+    ).toBe(2);
+  });
+
+  it("accepts a cancelled probe with a ready replacement and every timing present", () => {
+    expect(
+      exitCodeFor(
+        report([completedCell], cancelled(timing)),
+        config({ cancelProbe: probe }),
+      ),
+    ).toBe(0);
+  });
+
+  const unacceptable: [string, unknown][] = [
+    ["a missing probe record", null],
+    ["a probe that completed", { status: "completed" }],
+    ["a cancelled probe with no timing", cancelled(null)],
+    [
+      "a replacement that exited",
+      cancelled({
+        ...timing,
+        readiness: "exited",
+        restartToReadyMs: null,
+        totalCancelToReadyMs: null,
+      }),
+    ],
+    [
+      "a replacement that never became ready",
+      cancelled({
+        ...timing,
+        readiness: "timed-out",
+        restartToReadyMs: null,
+        totalCancelToReadyMs: null,
+      }),
+    ],
+    [
+      "a replacement never attempted",
+      cancelled({ ...timing, readiness: "not-attempted" }),
+    ],
+    ["a null abort-to-exit", cancelled({ ...timing, abortToExitMs: null })],
+    [
+      "a null restart-to-ready",
+      cancelled({ ...timing, restartToReadyMs: null }),
+    ],
+    [
+      "a null cancel-to-ready total",
+      cancelled({ ...timing, totalCancelToReadyMs: null }),
+    ],
+  ];
+  for (const [name, record] of unacceptable) {
+    it(`exits 1 for ${name}`, () => {
+      expect(
+        exitCodeFor(
+          report([completedCell], record),
+          config({ cancelProbe: probe }),
+        ),
+      ).toBe(1);
+    });
+  }
+
+  it("holds idle evidence to the configuration: required when set, ignored when not", () => {
+    const idle = { thresholdPercent: 5, timeoutMs: 1000 };
+    const withIdle = config({ cancelProbe: probe, idle });
+    for (const bad of [
+      { idle: "timed-out", restartToIdleMs: null },
+      { idle: "not-measured", restartToIdleMs: null },
+      { idle: "process-gone", restartToIdleMs: null },
+      { idle: "below-threshold", restartToIdleMs: null },
+    ]) {
+      expect(
+        exitCodeFor(
+          report([completedCell], cancelled({ ...timing, ...bad })),
+          withIdle,
+        ),
+      ).toBe(1);
+    }
+    expect(
+      exitCodeFor(report([completedCell], cancelled(timing)), withIdle),
+    ).toBe(0);
+    const noIdle = { ...timing, idle: "not-measured", restartToIdleMs: null };
+    expect(
+      exitCodeFor(
+        report([completedCell], cancelled(noIdle)),
+        config({ cancelProbe: probe }),
+      ),
+    ).toBe(0);
+  });
+});
+
+describe("main cancel probe: the replacement must come back", () => {
+  const probe = {
+    afterMs: 150,
+    cell: { id: "probe", width: 512, height: 640 },
+  };
+  const run = async (onRestart: "exit7" | "never-ready") => {
+    const marker = join(tmp(), "first-launch-marker");
+    const { configPath, out } = await writeConfig(
+      { cells: [], cancelProbe: probe },
+      {
+        FAKE_JOB_MS: "30000",
+        FAKE_START_MARKER: marker,
+        FAKE_ON_RESTART: onRestart,
+      },
+    );
+    const cfg = JSON.parse(readFileSync(configPath, "utf8"));
+    cfg.server.readyTimeoutMs = 1_000;
+    writeFileSync(configPath, JSON.stringify(cfg));
+    const code = await main(["--config", configPath, "--out", out]);
+    const results = JSON.parse(
+      readFileSync(join(out, "fixture", "results.json"), "utf8"),
+    );
+    return { code, results };
+  };
+
+  it("exits 1 when the replacement exits instead of becoming ready", async () => {
+    const { code, results } = await run("exit7");
+    expect(results.cancelProbe.status).toBe("cancelled");
+    expect(results.cancelProbe.cancel.readiness).toBe("exited");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 when the replacement never becomes ready", async () => {
+    const { code, results } = await run("never-ready");
+    expect(results.cancelProbe.cancel.readiness).toBe("timed-out");
+    expect(code).toBe(1);
   });
 });

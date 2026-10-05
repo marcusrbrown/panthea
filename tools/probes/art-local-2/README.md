@@ -72,13 +72,13 @@ With-LoRA and control hashes differ in every paired cell. That shows the LoRA ch
 
 ### Cancellation (restart-based)
 
-| Arm | Abort to exit | Restart to ready | Total cancel to ready | Restart to idle |
+| Arm | Abort to exit | Restart to ready | Cancel to idle | Restart to idle |
 | --- | --- | --- | --- | --- |
 | Z-Image no-LoRA | 135.8 ms | 880.7 ms | 1,868.0 ms | 1,732.2 ms |
 | SDXL | 63.2 ms | 309.6 ms | 1,184.1 ms | 1,120.8 ms |
 | FLUX | 92.1 ms | 824.2 ms | 2,001.8 ms | 1,909.7 ms |
 
-Every probe ended `cancelled` with no result recorded and no escalation to SIGKILL. These are restart times for the whole server; the server cannot cancel one job over HTTP.
+Cancel to idle is the time from the cancel request until the replacement's process-tree CPU was below 5%. It was measured after the idle wait, so it includes it; readiness (restart to ready) is separate, taken at the moment the replacement answered. The harness now also records a true cancel-to-ready total, but these results predate that, and the spawn duration needed to derive it was not recorded. Every probe ended `cancelled` with no result recorded and no escalation to SIGKILL. These are restart times for the whole server; the server cannot cancel one job over HTTP.
 
 ### Host headroom observed during the runs
 
