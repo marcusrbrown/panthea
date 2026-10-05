@@ -8,5 +8,6 @@
 // `loadMotifCatalogue` reads the sourced endings (motifs) a thread can draw on.
 
 export * from "./god-profile";
+export * from "./god-visual-profile";
 export * from "./load";
 export * from "./motifs";

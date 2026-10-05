@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { encodeRgbaPng } from "./placeholder";
+import { encodeRgbaPng } from "@panthea/assets";
 
 const RUN_TS_PATH = join(import.meta.dir, "run.ts");
 

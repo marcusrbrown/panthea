@@ -14,3 +14,4 @@ Update this index and [traceability.md](../product/traceability.md) whenever an 
 | [0006](0006-telemetry-export.md) | Telemetry export | Accepted (local trace store); export proposed | O04, O05, O06, D16 |
 | [0007](0007-local-image-generation.md) | Local image generation | Accepted | U06, U07, D15 |
 | [0008](0008-world-state-and-client-transport.md) | World state and client transport | Accepted | P01, W03, W04, W05, W07, W09, O01, O02, O03, O04, D11, D14 |
+| [0009](0009-asset-registry-lifecycle-and-uris.md) | Asset registry, lifecycle and logical URIs | Accepted | U06, U07, U08, X02 |

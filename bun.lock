@@ -64,6 +64,9 @@
     "packages/assets": {
       "name": "@panthea/assets",
       "version": "0.1.0",
+      "dependencies": {
+        "@panthea/contracts": "workspace:*",
+      },
     },
     "packages/behaviors": {
       "name": "@panthea/behaviors",
@@ -104,6 +107,11 @@
     "tools/content": {
       "name": "@panthea/tools-content",
       "version": "0.1.0",
+      "dependencies": {
+        "@panthea/assets": "workspace:*",
+        "@panthea/content": "workspace:*",
+        "@panthea/contracts": "workspace:*",
+      },
     },
     "tools/probes": {
       "name": "@panthea/tools-probes",
@@ -113,6 +121,7 @@
       "name": "@panthea/tools-probes-art-local",
       "version": "0.1.0",
       "dependencies": {
+        "@panthea/assets": "workspace:*",
         "@panthea/tools-probes-shared": "workspace:*",
       },
     },

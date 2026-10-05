@@ -4,6 +4,8 @@
 // input through.
 
 export * from "./archive";
+export * from "./asset-lifecycle";
+export * from "./assets";
 export * from "./canonical";
 export * from "./content";
 export * from "./event";

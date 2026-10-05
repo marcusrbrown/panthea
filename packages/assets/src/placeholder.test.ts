@@ -13,7 +13,7 @@ describe("renderPlaceholder", () => {
     const second = renderPlaceholder(input);
 
     expect(second.uri).toBe(first.uri);
-    expect(first.uri).toMatch(/^asset:\/\/placeholder\/[0-9a-f]{64}$/);
+    expect(first.uri).toMatch(/^panthea-asset:\/\/placeholder\/[0-9a-f]{64}$/);
     expect(Buffer.from(second.bytes).equals(Buffer.from(first.bytes))).toBe(
       true,
     );
