@@ -457,6 +457,17 @@ function failsInsideCommit(failOn: number) {
 
 const HOUR_MS = 60 * 60 * 1000;
 
+/** Cap for tests of cap accounting; the authored hour costs ~3 s each. One test pins the authored hour. */
+const CAP_MS = 10 * 60 * 1000;
+
+/** The authored world, with its catch-up cap replaced when `capMs` is given. */
+function loadWorld(capMs?: number) {
+  const authored = loadGreekWorldState();
+  return capMs === undefined
+    ? authored
+    : { ...authored, rules: { ...authored.rules, catchUpCapMs: capMs } };
+}
+
 interface Backlog {
   readonly storePath: string;
   readonly startCursor: number;
@@ -484,19 +495,28 @@ interface Backlog {
   dispose(): void;
 }
 
-function openBacklog(prefix: string): Backlog {
+function openBacklog(
+  prefix: string,
+  options: { readonly capMs?: number } = {},
+): Backlog {
   const storeDir = tempDir(prefix);
-  return backlogAt(join(storeDir, "world.sqlite"), () =>
-    rmSync(storeDir, { recursive: true, force: true }),
+  return backlogAt(
+    join(storeDir, "world.sqlite"),
+    () => rmSync(storeDir, { recursive: true, force: true }),
+    options.capMs,
   );
 }
 
 /** A backlog over the store at `storePath` (created if new), reopened from disk for every operation. */
-function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
+function backlogAt(
+  storePath: string,
+  dispose: () => void = () => {},
+  capMs?: number,
+): Backlog {
   let lastPublished: CatchUpSummary | undefined;
   const first = openStore(
     storePath,
-    createWorldProjectionReducers(loadGreekWorldState()),
+    createWorldProjectionReducers(loadWorld(capMs)),
   );
   const startCursor = readClock(first.db).cursorWallMs;
   closeStore(first);
@@ -506,7 +526,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
   ) {
     const store = openStore(
       storePath,
-      createWorldProjectionReducers(loadGreekWorldState()),
+      createWorldProjectionReducers(loadWorld(capMs)),
     );
     try {
       return await fn(store);
@@ -521,7 +541,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
     exportTo: (archivePath) => {
       const store = openStore(
         storePath,
-        createWorldProjectionReducers(loadGreekWorldState()),
+        createWorldProjectionReducers(loadWorld(capMs)),
       );
       try {
         exportArchive(store, archivePath);
@@ -531,7 +551,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
     },
     run: (nowWallMs, commitTick, betweenChunks, options) =>
       withStore(async (store) => {
-        const reducers = createWorldProjectionReducers(loadGreekWorldState());
+        const reducers = createWorldProjectionReducers(loadWorld(capMs));
         ensureTraceSchema(store.db);
         const state = restoreWorldTime(
           readLiveProjections(store, reducers),
@@ -570,7 +590,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
     withDb: (fn) => {
       const store = openStore(
         storePath,
-        createWorldProjectionReducers(loadGreekWorldState()),
+        createWorldProjectionReducers(loadWorld(capMs)),
       );
       try {
         return fn(store.db);
@@ -581,7 +601,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
     clock: () => {
       const store = openStore(
         storePath,
-        createWorldProjectionReducers(loadGreekWorldState()),
+        createWorldProjectionReducers(loadWorld(capMs)),
       );
       try {
         return readClock(store.db);
@@ -592,7 +612,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
     progress: () => {
       const store = openStore(
         storePath,
-        createWorldProjectionReducers(loadGreekWorldState()),
+        createWorldProjectionReducers(loadWorld(capMs)),
       );
       try {
         return readCatchUpProgress(store.db);
@@ -603,7 +623,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
     summary: () => {
       const store = openStore(
         storePath,
-        createWorldProjectionReducers(loadGreekWorldState()),
+        createWorldProjectionReducers(loadWorld(capMs)),
       );
       try {
         return readCatchUpSummary(store.db);
@@ -614,7 +634,7 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
     published: () => lastPublished,
     tickLive: (count) =>
       withStore((store) => {
-        const reducers = createWorldProjectionReducers(loadGreekWorldState());
+        const reducers = createWorldProjectionReducers(loadWorld(capMs));
         ensureTraceSchema(store.db);
         let state = restoreWorldTime(
           readLiveProjections(store, reducers),
@@ -645,9 +665,11 @@ function backlogAt(storePath: string, dispose: () => void = () => {}): Backlog {
 }
 
 test("a 5 hour gap with a commit that throws after two chunks, then a reopen: the backlog applies exactly the cap in total, skips exactly the excess, and applies nothing twice", async () => {
-  const backlog = openBacklog("panthea-sim-catchup-cap-throw-");
+  const backlog = openBacklog("panthea-sim-catchup-cap-throw-", {
+    capMs: CAP_MS,
+  });
   try {
-    const gapMs = 5 * HOUR_MS;
+    const gapMs = 5 * CAP_MS;
     const nowWallMs = backlog.startCursor + gapMs;
 
     // Commit 1 discards the excess; commits 2 and 3 are chunks; commit 4 throws.
@@ -655,22 +677,22 @@ test("a 5 hour gap with a commit that throws after two chunks, then a reopen: th
     expect(firstRun.degraded).toBeDefined();
     expect(firstRun.summary).toEqual({
       appliedMs: 2 * 60 * 1000,
-      skippedMs: gapMs - HOUR_MS,
+      skippedMs: gapMs - CAP_MS,
       majorOutcomes: [],
     });
     expect(backlog.clock().tick).toBe(120);
 
     const secondRun = await backlog.run(nowWallMs);
     expect(secondRun.degraded).toBeUndefined();
-    expect(secondRun.summary.appliedMs).toBe(HOUR_MS);
-    expect(secondRun.summary.skippedMs).toBe(gapMs - HOUR_MS);
-    expect(backlog.clock().tick).toBe(3600);
+    expect(secondRun.summary.appliedMs).toBe(CAP_MS);
+    expect(secondRun.summary.skippedMs).toBe(gapMs - CAP_MS);
+    expect(backlog.clock().tick).toBe(CAP_MS / 1000);
     expect(backlog.clock().cursorWallMs).toBe(nowWallMs);
     expect(backlog.progress()).toBeUndefined();
   } finally {
     backlog.dispose();
   }
-}, 30_000);
+});
 
 test("the excess over the cap is discarded in its own commit before any chunk: a commit that throws on the first chunk still leaves a gap no larger than the cap, and the progress records the discard", async () => {
   const backlog = openBacklog("panthea-sim-catchup-cap-discard-");
@@ -700,44 +722,50 @@ test("the excess over the cap is discarded in its own commit before any chunk: a
 });
 
 test("a commit that throws after the discard and before the first chunk, then a reopen: the restart still reports the discarded excess as skipped", async () => {
-  const backlog = openBacklog("panthea-sim-catchup-cap-restart-");
+  const backlog = openBacklog("panthea-sim-catchup-cap-restart-", {
+    capMs: CAP_MS,
+  });
   try {
-    const gapMs = 5 * HOUR_MS;
+    const gapMs = 5 * CAP_MS;
     const nowWallMs = backlog.startCursor + gapMs;
     await backlog.run(nowWallMs, throwsAtCommit(2));
 
     const restarted = await backlog.run(nowWallMs);
 
     expect(restarted.degraded).toBeUndefined();
-    expect(restarted.summary.appliedMs).toBe(HOUR_MS);
-    expect(restarted.summary.skippedMs).toBe(gapMs - HOUR_MS);
+    expect(restarted.summary.appliedMs).toBe(CAP_MS);
+    expect(restarted.summary.skippedMs).toBe(gapMs - CAP_MS);
     expect(backlog.progress()).toBeUndefined();
   } finally {
     backlog.dispose();
   }
-}, 30_000);
+});
 
 test("the cap bounds the remaining backlog: a discard, an immediate failure, and 30 s of downtime apply the cap in total and report the extra 30 s as skipped", async () => {
-  const backlog = openBacklog("panthea-sim-catchup-cap-downtime-");
+  const backlog = openBacklog("panthea-sim-catchup-cap-downtime-", {
+    capMs: CAP_MS,
+  });
   try {
-    const firstNow = backlog.startCursor + 5 * HOUR_MS;
+    const firstNow = backlog.startCursor + 5 * CAP_MS;
     const downtimeMs = 30_000;
     await backlog.run(firstNow, throwsAtCommit(2));
 
     const restarted = await backlog.run(firstNow + downtimeMs);
 
-    expect(restarted.summary.appliedMs).toBe(HOUR_MS);
-    expect(restarted.summary.skippedMs).toBe(4 * HOUR_MS + downtimeMs);
-    expect(backlog.clock().tick).toBe(3600);
+    expect(restarted.summary.appliedMs).toBe(CAP_MS);
+    expect(restarted.summary.skippedMs).toBe(4 * CAP_MS + downtimeMs);
+    expect(backlog.clock().tick).toBe(CAP_MS / 1000);
   } finally {
     backlog.dispose();
   }
-}, 30_000);
+});
 
 test("the cap bounds the remaining backlog, not the total: after a chunks were applied, a restart d later applies C - a + d", async () => {
-  const backlog = openBacklog("panthea-sim-catchup-cap-remaining-");
+  const backlog = openBacklog("panthea-sim-catchup-cap-remaining-", {
+    capMs: CAP_MS,
+  });
   try {
-    const firstNow = backlog.startCursor + 5 * HOUR_MS;
+    const firstNow = backlog.startCursor + 5 * CAP_MS;
     const downtimeMs = 30_000;
     const applied = 60 * 1000;
     const first = await backlog.run(firstNow, throwsAtCommit(3));
@@ -747,14 +775,14 @@ test("the cap bounds the remaining backlog, not the total: after a chunks were a
 
     // This run applied C - a + d; the summary counts the backlog's total.
     expect(backlog.clock().tick - applied / 1000).toBe(
-      (HOUR_MS - applied + downtimeMs) / 1000,
+      (CAP_MS - applied + downtimeMs) / 1000,
     );
-    expect(restarted.summary.appliedMs).toBe(HOUR_MS + downtimeMs);
-    expect(restarted.summary.skippedMs).toBe(4 * HOUR_MS);
+    expect(restarted.summary.appliedMs).toBe(CAP_MS + downtimeMs);
+    expect(restarted.summary.skippedMs).toBe(4 * CAP_MS);
   } finally {
     backlog.dispose();
   }
-}, 30_000);
+});
 
 test("a backlog that fully applied before the completing commit failed is finished by the next start: the summary is persisted then, and the progress cleared with it", async () => {
   const backlog = openBacklog("panthea-sim-catchup-final-commit-");
@@ -875,9 +903,11 @@ test("a proposal accepted while catch-up yields between chunks targets the next 
 });
 
 test("the cap discard neither consumes nor reschedules a pending proposal: it stays targeted at its tick and runs when ticking resumes", async () => {
-  const backlog = openBacklog("panthea-sim-catchup-journal-discard-");
+  const backlog = openBacklog("panthea-sim-catchup-journal-discard-", {
+    capMs: CAP_MS,
+  });
   try {
-    const nowWallMs = backlog.startCursor + 5 * HOUR_MS;
+    const nowWallMs = backlog.startCursor + 5 * CAP_MS;
     backlog.withDb((db) => insertExternalProposal(db, strikeEntry("c")));
 
     // The discard commits; the first chunk fails.
@@ -898,7 +928,7 @@ test("the cap discard neither consumes nor reschedules a pending proposal: it st
   } finally {
     backlog.dispose();
   }
-}, 30_000);
+});
 
 test("a chunk that fails to commit leaves the pending proposal pending, with no outcome and no effects, and the retry runs it once", async () => {
   const backlog = openBacklog("panthea-sim-catchup-journal-fail-");

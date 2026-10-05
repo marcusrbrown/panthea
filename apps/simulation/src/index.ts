@@ -49,11 +49,43 @@ import {
 } from "./world-store";
 
 const APP_IDENTIFIER = "ai.panthe.desktop";
+/** Simulated milliseconds per tick. */
 const TICK_INTERVAL_MS = 1000;
 const PARENT_POLL_INTERVAL_MS = 2000;
 /** A wall-clock gap between ticks larger than this is treated as a sleep/wake event (catch-up), not ordinary timer jitter. */
 const SLEEP_GAP_THRESHOLD_MS = 5_000;
 const DEFAULT_PRNG_SEED = 1;
+
+/** Sets the tick timer period in ms; for tests. */
+export const TICK_TIMER_ENV = "PANTHEA_TICK_INTERVAL_MS";
+
+/** A period is 1 to the tick interval; a slower timer would open a sleep gap and trigger catch-ups. */
+export function checkTickTimerMs(
+  ms: number,
+): { readonly ok: true } | { readonly ok: false; readonly message: string } {
+  if (Number.isInteger(ms) && ms >= 1 && ms <= TICK_INTERVAL_MS) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    message: `the tick timer must fire every whole number of milliseconds from 1 to ${TICK_INTERVAL_MS}, got ${ms}`,
+  };
+}
+
+/** Reads the tick timer env var; `undefined` ms when unset. */
+export function parseTickTimerEnv(
+  env: NodeJS.ProcessEnv = process.env,
+):
+  | { readonly ok: true; readonly ms: number | undefined }
+  | { readonly ok: false; readonly message: string } {
+  const raw = env[TICK_TIMER_ENV];
+  if (raw === undefined || raw === "") return { ok: true, ms: undefined };
+  const ms = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  const checked = checkTickTimerMs(ms);
+  return checked.ok
+    ? { ok: true, ms }
+    : { ok: false, message: `${TICK_TIMER_ENV}=${raw}: ${checked.message}` };
+}
 
 /** Resolves the per-platform app data directory. `PANTHEA_APP_DATA_DIR` overrides it for tests so they never touch the real app data dir. */
 export function resolveAppDataDir(
@@ -149,7 +181,23 @@ export interface StartOptions {
   readonly onLog?: (message: string) => void;
   /** Test-only OS-assigned port (0) instead of the real service port. */
   readonly port?: number;
+  /** Tick timer period in ms (see `checkTickTimerMs`); a tick is still one simulated second. */
+  readonly tickTimerMs?: number;
+  /** Called with the exit code instead of `process.exit`. */
+  readonly exit?: (code: number) => void;
+  /** Install SIGTERM/SIGINT handlers (default true). */
+  readonly handleSignals?: boolean;
+  /** Called after every timer cycle. */
+  readonly onCycle?: (cycle: TickCycle) => void;
 }
+
+/** What one timer cycle did. */
+export type TickCycle =
+  | "ticked"
+  | "catch-up-running"
+  | "halted"
+  | "paused"
+  | "catch-up-started";
 
 export interface ServiceHandle {
   readonly port: number;
@@ -170,6 +218,10 @@ function loadGodProfiles(): ReadonlyMap<EntityId, GodProfile> {
 /** Starts the service's store, catch-up, tick loop, server, and lifecycle guards. Returns a handle for tests. */
 export function startService(options: StartOptions): ServiceHandle {
   const log = options.onLog ?? ((message: string) => console.log(message));
+  const exit = options.exit ?? ((code: number) => process.exit(code));
+  const tickTimerMs = options.tickTimerMs ?? TICK_INTERVAL_MS;
+  const timerCheck = checkTickTimerMs(tickTimerMs);
+  if (!timerCheck.ok) throw new RangeError(timerCheck.message);
   const appDataDir = options.appDataDir ?? resolveAppDataDir();
   const parentPid = options.parentPid ?? process.ppid;
   const token = options.token;
@@ -189,7 +241,8 @@ export function startService(options: StartOptions): ServiceHandle {
     log(
       "panthea-simulation: refusing to start -- the lock is held by another live process",
     );
-    process.exit(3);
+    exit(3);
+    throw new Error("the lock is held by another live process");
   }
   const lockDb = decision.db;
 
@@ -225,6 +278,9 @@ export function startService(options: StartOptions): ServiceHandle {
     statusRef.modelEndpoints = initialEndpointStatus(routing);
   }
 
+  /** Set by `shutdown`. */
+  let shuttingDown = false;
+
   // Set synchronously at the start of every `runCatchUpNow` call, before
   // that call's first `await` -- so by the time any other code in this
   // process runs, a catch-up run already in flight is visible. This lets
@@ -253,6 +309,10 @@ export function startService(options: StartOptions): ServiceHandle {
         nowWallMs,
         onChunkCommitted: () => pauseRequestedDuringCatchUp,
       });
+      if (shuttingDown) {
+        // Stopped mid catch-up: the store is closed.
+        return Boolean(result.degraded);
+      }
       state = result.state;
       prng = result.prng;
       refreshStatusAfterCatchUp(statusRef, result, store);
@@ -322,29 +382,32 @@ export function startService(options: StartOptions): ServiceHandle {
    * proposals decided from the last committed state plus the pending entries
    * of the durable proposal journal, which the tick consumes itself.
    */
-  function runOneLiveTick(): void {
+  function runOneLiveTick(): TickCycle {
     if (catchUpInProgress) {
-      return;
+      return "catch-up-running";
     }
     if (isHalted(statusRef)) {
-      return;
+      return "halted";
     }
     const currentClock = readClock(store.db);
     if (currentClock.paused) {
       statusRef.status = "paused";
-      return;
+      return "paused";
     }
     const now = Date.now();
     const gap = now - currentClock.cursorWallMs;
     if (gap > SLEEP_GAP_THRESHOLD_MS) {
       void runCatchUpNow(now).then((degraded) => {
+        if (shuttingDown) {
+          return;
+        }
         queue = [...buildRoutineQueue(state)];
         if (degraded && tickTimer) {
           clearInterval(tickTimer);
         }
         serverHandle.broadcastFrame();
       });
-      return;
+      return "catch-up-started";
     }
 
     const step = applyLiveTick(queue, state, prng, tickDeps, {
@@ -358,7 +421,7 @@ export function startService(options: StartOptions): ServiceHandle {
         clearInterval(tickTimer);
       }
       serverHandle.broadcastFrame();
-      return;
+      return "halted";
     }
     state = step.state;
     prng = step.prng;
@@ -368,9 +431,13 @@ export function startService(options: StartOptions): ServiceHandle {
     // A turn is asked for after the tick and never waited for: inference runs
     // outside the tick, and its proposal is journaled for a later one.
     turns?.dispatch();
+    return "ticked";
   }
 
-  tickTimer = setInterval(runOneLiveTick, TICK_INTERVAL_MS);
+  tickTimer = setInterval(() => {
+    const cycle = runOneLiveTick();
+    options.onCycle?.(cycle);
+  }, tickTimerMs);
 
   // Catch-up on start: the persisted cursor may be far behind now if the
   // process was not running (killed, machine restarted). Runs in the
@@ -379,6 +446,10 @@ export function startService(options: StartOptions): ServiceHandle {
   // `/pause` and every other request are served while this chunks
   // through the backlog.
   void runCatchUpNow(Date.now()).then(() => {
+    // Stopped mid catch-up: the store is closed.
+    if (shuttingDown) {
+      return;
+    }
     startupCatchUpComplete = true;
     queue = [...buildRoutineQueue(state)];
     serverHandle.broadcastFrame();
@@ -388,7 +459,6 @@ export function startService(options: StartOptions): ServiceHandle {
     log("panthea-simulation: startup catch-up complete");
   });
 
-  let shuttingDown = false;
   function shutdown(reason: string): void {
     if (shuttingDown) {
       return;
@@ -414,7 +484,7 @@ export function startService(options: StartOptions): ServiceHandle {
       // the lock either way.
     }
     const gracefulReasons = new Set(["SIGTERM", "SIGINT", "stdin-eof"]);
-    process.exit(gracefulReasons.has(reason) ? 0 : 1);
+    exit(gracefulReasons.has(reason) ? 0 : 1);
   }
 
   const parentGuard = startParentGuard(
@@ -423,8 +493,10 @@ export function startService(options: StartOptions): ServiceHandle {
     PARENT_POLL_INTERVAL_MS,
   );
 
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+  if (options.handleSignals ?? true) {
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+  }
 
   return { port: serverHandle.port, lockPath, shutdown };
 }
@@ -458,7 +530,17 @@ function main(): void {
       return;
     }
     configReceived = true;
-    handle = startService({ token, launch: parseLaunchConfig(line) });
+    const timer = parseTickTimerEnv();
+    if (!timer.ok) {
+      console.error(
+        `panthea-simulation: ${timer.message}; the tick timer keeps its default`,
+      );
+    }
+    handle = startService({
+      token,
+      launch: parseLaunchConfig(line),
+      ...(timer.ok && timer.ms !== undefined ? { tickTimerMs: timer.ms } : {}),
+    });
   })();
 
   session.onClose(() => {
