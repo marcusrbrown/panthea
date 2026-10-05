@@ -199,7 +199,11 @@ function startServer(): void {
       return new Response("not found", { status: 404 });
     },
   });
-  console.log(`listening ${port}`);
+  // Every line this fixture logs goes through process.stdout.write, never
+  // console.log: after the 100 KB of filler a test asks for, the stdout pipe is
+  // full, and on Linux with a busy parent a console.log line written then was
+  // dropped (this one, 20 of 60 runs), while process.stdout.write waits for room.
+  process.stdout.write(`listening ${port}\n`);
   if (busyMs > 0) {
     const end = Date.now() + busyMs;
     const spin = () => {
