@@ -1,4 +1,8 @@
-// Spawns the TypeScript entry directly via `bun run` -- never the compiled
+// The service runs in this process on a fast tick timer (`test-service.ts`)
+// wherever the process boundary is not the subject. What is about the process
+// itself is spawned: the stdin protocol, a refused second launch, and a real
+// SIGKILL. A spawned test passes the same fast timer in its environment and
+// runs the TypeScript entry directly via `bun run` -- never the compiled
 // binary -- matching tools/probes/backend-lifecycle/src/sidecar.test.ts's
 // established pattern. Compiled-binary behavior (offline bun:sqlite, no
 // build-host leakage) is covered by scripts/scan-binary.sh.
@@ -35,8 +39,16 @@ import {
   createHydratedStatusRef,
   refreshStatusAfterCatchUp,
   resolveAppDataDir,
+  TICK_TIMER_ENV,
 } from "./index";
+import { parseLaunchConfig } from "./launch-config";
 import { createServiceStatusRef } from "./server";
+import {
+  FAST_TICK_MS,
+  startTestService,
+  stopAllTestServices,
+  type TestService,
+} from "./test-service";
 import type { TickDeps } from "./tick";
 import {
   createWorldProjectionReducers,
@@ -306,6 +318,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  stopAllTestServices();
   rmSync(appDataDir, { recursive: true, force: true });
 });
 
@@ -331,6 +344,7 @@ async function spawnService(
     env: {
       ...process.env,
       PANTHEA_APP_DATA_DIR: appDataDir,
+      [TICK_TIMER_ENV]: String(FAST_TICK_MS),
       ...extraEnv,
     },
   });
@@ -457,13 +471,19 @@ function strikeBody(proposalId: string, observationId: string) {
 }
 
 describe("service (bun run src/index.ts)", () => {
+  /** The service in this process on a fast tick timer, over the test's app data directory. */
+  const startInProcess = (token: string): TestService =>
+    startTestService({
+      appDataDir,
+      token,
+      launch: parseLaunchConfig(NO_SETTINGS_LINE),
+    });
+
   /** Starts a service on a fresh store and stops it cleanly, leaving a world whose persisted cursor the harness can then set. */
   async function createStore(): Promise<void> {
-    const first = await spawnService("seed-token");
-    const stdin = first.proc.stdin;
-    if (typeof stdin === "number" || !stdin) throw new Error("stdin");
-    stdin.end();
-    expect(await first.proc.exited).toBe(0);
+    const first = startInProcess("seed-token");
+    await first.waitCycles("ticked", 1);
+    first.stop();
   }
 
   const setCursor = (cursorWallMs: number) =>
@@ -493,7 +513,7 @@ describe("service (bun run src/index.ts)", () => {
   async function serviceThatCaughtUp(token: string) {
     await createStore();
     setCursor(Date.now() - 3 * 60 * 1000);
-    const running = await spawnService(token);
+    const running = startInProcess(token);
     await waitUntil("the service to have published its summary", () =>
       running.output().includes("startup catch-up complete") ? true : undefined,
     );
@@ -508,17 +528,36 @@ describe("service (bun run src/index.ts)", () => {
   }
 
   /** Restarts with a cursor in the future, so the start applies no new catch-up (a negative gap applies zero). */
-  async function restartWithNoNewCatchUp(token: string) {
+  function restartWithNoNewCatchUp(token: string) {
     setCursor(Date.now() + 10 * 60 * 1000);
-    return spawnService(token);
+    return startInProcess(token);
   }
 
-  test("a summary the service published but no client ever fetched survives a SIGKILL: the restarted frame carries the identical summary, id included", async () => {
-    const { running, persisted } = await serviceThatCaughtUp("summary-token-1");
+  test("a summary the service published survives a SIGKILL, fetched or not: the restarted frame carries the identical summary, id included, and still does after the service has ticked on", async () => {
+    // The one summary test with a real process: a SIGKILL leaves the store as a
+    // crash does, and an in-process service cannot be killed without
+    // releasing its lock.
+    await createStore();
+    setCursor(Date.now() - 3 * 60 * 1000);
+    const running = await spawnService("summary-token-1");
+    await waitUntil("the service to have published its summary", () =>
+      running.output().includes("startup catch-up complete") ? true : undefined,
+    );
+    const persisted = withActiveDb((db) => readCatchUpSummary(db));
+    if (!persisted) {
+      throw new Error("the service published but no summary is persisted");
+    }
+    expect(persisted.appliedMs).toBe(3 * 60 * 1000);
+    expect(withActiveDb((db) => readCatchUpProgress(db))).toBeUndefined();
+    // A client fetched it, and then the service was killed.
+    expect(await fetchSummary(running.port, "summary-token-1")).toEqual(
+      persisted,
+    );
     running.proc.kill("SIGKILL");
     await running.proc.exited;
 
-    const restarted = await restartWithNoNewCatchUp("summary-token-2");
+    setCursor(Date.now() + 10 * 60 * 1000);
+    const restarted = await spawnService("summary-token-2");
     try {
       // The very first frame the restarted service serves.
       const first = await fetchSummary(restarted.port, "summary-token-2");
@@ -526,7 +565,15 @@ describe("service (bun run src/index.ts)", () => {
       expect(first?.id).toBe(persisted.id);
 
       // And it is still that summary after the service has ticked on.
-      await Bun.sleep(2_500);
+      const tick = () =>
+        withActiveDb(
+          (db) =>
+            (db.query("SELECT tick FROM clock").get() as { tick: number }).tick,
+        );
+      const t0 = tick();
+      await waitUntil("the restarted world to tick on", () =>
+        tick() >= t0 + 5 ? true : undefined,
+      );
       expect(await fetchSummary(restarted.port, "summary-token-2")).toEqual(
         persisted,
       );
@@ -534,52 +581,34 @@ describe("service (bun run src/index.ts)", () => {
     } finally {
       restarted.proc.kill();
     }
-  }, 60_000);
-
-  test("a summary a client fetched and then the service was SIGKILLed: the restarted frame carries the identical summary, id included", async () => {
-    const { running, persisted } = await serviceThatCaughtUp("summary-token-3");
-    expect(await fetchSummary(running.port, "summary-token-3")).toEqual(
-      persisted,
-    );
-    running.proc.kill("SIGKILL");
-    await running.proc.exited;
-
-    const restarted = await restartWithNoNewCatchUp("summary-token-4");
-    try {
-      expect(await fetchSummary(restarted.port, "summary-token-4")).toEqual(
-        persisted,
-      );
-    } finally {
-      restarted.proc.kill();
-    }
-  }, 60_000);
+  });
 
   test("the service's own startup line is an honest publication barrier: when it appears, the first frame already carries the summary, and it is the persisted one", async () => {
     await createStore();
     setCursor(Date.now() - 3 * 60 * 1000);
-    const running = await spawnService("summary-barrier-token");
-    try {
-      await waitUntil("the service to have published its summary", () =>
-        running.output().includes("startup catch-up complete")
-          ? true
-          : undefined,
-      );
+    const running = startInProcess("summary-barrier-token");
+    await waitUntil("the service to have published its summary", () =>
+      running.output().includes("startup catch-up complete") ? true : undefined,
+    );
 
-      const persisted = withActiveDb((db) => readCatchUpSummary(db));
-      expect(persisted).toBeDefined();
-      // Fetched only now, after the barrier: had the line been printed before
-      // the status was refreshed and the frame broadcast, this would be empty.
-      expect(await fetchSummary(running.port, "summary-barrier-token")).toEqual(
-        persisted,
-      );
-    } finally {
-      running.proc.kill();
-    }
-  }, 60_000);
+    const persisted = withActiveDb((db) => readCatchUpSummary(db));
+    expect(persisted).toBeDefined();
+    // Fetched only now, after the barrier: had the line been printed before
+    // the status was refreshed and the frame broadcast, this would be empty.
+    expect(await fetchSummary(running.port, "summary-barrier-token")).toEqual(
+      persisted,
+    );
+  });
 
   test("a degraded partial summary meets a restart with nothing new to apply: every frame carries that same summary, id and applied time, because the closing commit reuses the id", async () => {
-    const HOUR_MS = 60 * 60 * 1000;
-    const seeded = loadGreekWorldState();
+    // The property is about the summary, not the size of the cap: a ten minute
+    // cap and a gap five times it discard four caps and apply none.
+    const CAP_MS = 10 * 60 * 1000;
+    const loaded = loadGreekWorldState();
+    const seeded = {
+      ...loaded,
+      rules: { ...loaded.rules, catchUpCapMs: CAP_MS },
+    };
     const reducers = createWorldProjectionReducers(seeded);
     const store = openStore(
       join(appDataDir, "active", "world.sqlite"),
@@ -588,7 +617,7 @@ describe("service (bun run src/index.ts)", () => {
     ensureTraceSchema(store.db);
     const nowWallMs = Date.now();
     store.db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
-      nowWallMs - 5 * HOUR_MS,
+      nowWallMs - 5 * CAP_MS,
     ]);
     let attempt = 0;
     const interrupted = await runCatchUp(
@@ -608,137 +637,53 @@ describe("service (bun run src/index.ts)", () => {
     );
     expect(interrupted.degraded).toBeDefined();
     const partial = readCatchUpSummary(store.db);
-    expect(partial).toMatchObject({ appliedMs: 0, skippedMs: 4 * HOUR_MS });
+    expect(partial).toMatchObject({ appliedMs: 0, skippedMs: 4 * CAP_MS });
     expect(readCatchUpProgress(store.db)).toBeDefined();
     closeStore(store);
     // The restart has nothing new to apply, so the summary cannot be replaced
     // by a completed backlog: it can only be kept.
-    setCursor(Date.now() + 10 * 60 * 1000);
+    const restarted = restartWithNoNewCatchUp("summary-partial-token");
+    // Whether this frame is served before or after the restart's closing
+    // commit, it must be that one summary.
+    expect(await fetchSummary(restarted.port, "summary-partial-token")).toEqual(
+      partial,
+    );
 
-    const restarted = await spawnService("summary-partial-token");
-    try {
-      // Whether this frame is served before or after the restart's closing
-      // commit, it must be that one summary.
-      expect(
-        await fetchSummary(restarted.port, "summary-partial-token"),
-      ).toEqual(partial);
-
-      await waitUntil("the restart to close the backlog", () =>
-        restarted.output().includes("startup catch-up complete")
-          ? true
-          : undefined,
-      );
-      expect(withActiveDb((db) => readCatchUpProgress(db))).toBeUndefined();
-      expect(withActiveDb((db) => readCatchUpSummary(db))).toEqual(partial);
-      expect(
-        await fetchSummary(restarted.port, "summary-partial-token"),
-      ).toEqual(partial);
-    } finally {
-      restarted.proc.kill();
-    }
-  }, 60_000);
+    await waitUntil("the restart to close the backlog", () =>
+      restarted.output().includes("startup catch-up complete")
+        ? true
+        : undefined,
+    );
+    expect(withActiveDb((db) => readCatchUpProgress(db))).toBeUndefined();
+    expect(withActiveDb((db) => readCatchUpSummary(db))).toEqual(partial);
+    expect(await fetchSummary(restarted.port, "summary-partial-token")).toEqual(
+      partial,
+    );
+  });
 
   test("a clean restart keeps the summary too, and a later real catch-up replaces it with a new id", async () => {
     const { running, persisted } = await serviceThatCaughtUp("summary-token-5");
-    const stdin = running.proc.stdin;
-    if (typeof stdin === "number" || !stdin) throw new Error("stdin");
-    stdin.end();
-    expect(await running.proc.exited).toBe(0);
+    running.stop();
 
-    const restarted = await restartWithNoNewCatchUp("summary-token-6");
-    try {
-      expect(await fetchSummary(restarted.port, "summary-token-6")).toEqual(
-        persisted,
-      );
-    } finally {
-      restarted.proc.kill();
-      await restarted.proc.exited;
-    }
+    const restarted = restartWithNoNewCatchUp("summary-token-6");
+    expect(await fetchSummary(restarted.port, "summary-token-6")).toEqual(
+      persisted,
+    );
+    restarted.stop();
 
     // Two more minutes pass while the service is down: a new catch-up.
     setCursor(Date.now() - 2 * 60 * 1000);
-    const later = await spawnService("summary-token-7");
-    try {
-      const replaced = await waitUntil("a new summary", () => {
-        const current = withActiveDb((db) => readCatchUpSummary(db));
-        return current && current.id !== persisted.id ? current : undefined;
-      });
-      expect(replaced.appliedMs).toBeGreaterThanOrEqual(2 * 60 * 1000);
-      expect(await fetchSummary(later.port, "summary-token-7")).toEqual(
-        replaced,
-      );
-    } finally {
-      later.proc.kill();
-    }
-  }, 90_000);
-
-  test("a proposal accepted and then the process SIGKILLed before any tick runs is still pending on restart and runs on a catch-up tick", async () => {
-    const first = await spawnService("kill-token-1");
-    const body = strikeBody("proposal-kill-1", "obs-kill-1");
-    const accepted = await service(first.port, "kill-token-1")("/proposals", {
-      method: "POST",
-      body: JSON.stringify(body),
+    const later = startInProcess("summary-token-7");
+    const replaced = await waitUntil("a new summary", () => {
+      const current = withActiveDb((db) => readCatchUpSummary(db));
+      return current && current.id !== persisted.id ? current : undefined;
     });
-    expect(accepted.status).toBe(202);
-    first.proc.kill("SIGKILL");
-    await first.proc.exited;
-
-    const journaled = withActiveDb((db) => listExternalProposals(db));
-    expect(
-      journaled.map((entry) => [entry.proposalId, entry.consumedTick]),
-    ).toEqual([["proposal-kill-1", undefined]]);
-
-    // The machine "slept" while the service was down: the restart's startup
-    // catch-up is what runs the proposal.
-    withActiveDb(
-      (db) =>
-        db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
-          Date.now() - 3 * 60 * 1000,
-        ]),
-      { write: true },
-    );
-    const second = await spawnService("kill-token-2");
-    try {
-      const consumed = await waitUntil("the proposal to be consumed", () =>
-        listExternalProposals(
-          new Database(join(appDataDir, "active", "world.sqlite"), {
-            readonly: true,
-          }),
-        ).find((entry) => entry.consumedTick !== undefined),
-      );
-      expect(consumed.proposalId).toBe("proposal-kill-1");
-
-      const caused = withActiveDb((db) =>
-        listEvents(db).filter(
-          (event) => String(event.correlationId) === "obs-kill-1",
-        ),
-      );
-      expect(caused.map((event) => event.kind)).toEqual([
-        "resource-consumed",
-        "building-ignited",
-      ]);
-      expect(caused.every((event) => event.approximate)).toBe(true);
-
-      const status = await service(second.port, "kill-token-2")("/proposals", {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
-      expect(status.status).toBe(200);
-      expect(await status.json()).toMatchObject({
-        status: "committed",
-        proposalId: "proposal-kill-1",
-      });
-    } finally {
-      second.proc.kill();
-    }
-  }, 60_000);
+    expect(replaced.appliedMs).toBeGreaterThanOrEqual(2 * 60 * 1000);
+    expect(await fetchSummary(later.port, "summary-token-7")).toEqual(replaced);
+  });
 
   test("a restart prunes model-request payload text older than seven days at startup and keeps the digests", async () => {
-    const first = await spawnService("prune-token-1");
-    const stdin = first.proc.stdin;
-    if (typeof stdin === "number" || !stdin) throw new Error("stdin");
-    stdin.end();
-    expect(await first.proc.exited).toBe(0);
+    await createStore();
 
     const day = 24 * 60 * 60 * 1000;
     const route: ModelRouteResult = {
@@ -771,25 +716,22 @@ describe("service (bun run src/index.ts)", () => {
       { write: true },
     );
 
-    const second = await spawnService("prune-token-2");
-    try {
-      // Pruning runs when the service starts, before it serves its first tick.
-      const prunedOld = withActiveDb((db) =>
-        getModelRequestByProposalId(db, old),
-      );
-      const keptRecent = withActiveDb((db) =>
-        getModelRequestByProposalId(db, recent),
-      );
-      expect(prunedOld?.promptPayload).toBeUndefined();
-      expect(prunedOld?.promptDigest).toHaveLength(64);
-      expect(keptRecent?.promptPayload).toBe("p");
-    } finally {
-      second.proc.kill();
-    }
-  }, 60_000);
+    // Pruning runs when the service starts, before it serves its first tick:
+    // `startService` has returned, so it has already happened.
+    startInProcess("prune-token-2");
+    const prunedOld = withActiveDb((db) =>
+      getModelRequestByProposalId(db, old),
+    );
+    const keptRecent = withActiveDb((db) =>
+      getModelRequestByProposalId(db, recent),
+    );
+    expect(prunedOld?.promptPayload).toBeUndefined();
+    expect(prunedOld?.promptDigest).toHaveLength(64);
+    expect(keptRecent?.promptPayload).toBe("p");
+  });
 
   test("proposals accepted while paused stay pending through a restart and run, in order, once the world resumes", async () => {
-    const first = await spawnService("pause-token-1");
+    const first = startInProcess("pause-token-1");
     const call1 = service(first.port, "pause-token-1");
     expect((await call1("/pause", { method: "POST" })).status).toBe(200);
     const a = strikeBody("proposal-pause-a", "obs-pause-a");
@@ -812,7 +754,8 @@ describe("service (bun run src/index.ts)", () => {
       });
       expect(response.status).toBe(202);
     }
-    await Bun.sleep(2500);
+    // Paused for several timer cycles, and nothing ran.
+    await first.waitCycles("paused", 5);
     const pausedTick = withActiveDb(
       (db) =>
         (db.query("SELECT tick FROM clock").get() as { tick: number }).tick,
@@ -823,61 +766,50 @@ describe("service (bun run src/index.ts)", () => {
       ),
     ).toEqual([undefined, undefined]);
 
-    const stdin = first.proc.stdin;
-    if (typeof stdin === "number" || !stdin) throw new Error("stdin");
-    stdin.end();
-    expect(await first.proc.exited).toBe(0);
+    first.stop();
 
-    const second = await spawnService("pause-token-2");
+    const second = startInProcess("pause-token-2");
     const call2 = service(second.port, "pause-token-2");
-    try {
-      await Bun.sleep(2500);
-      const stillPending: readonly ExternalProposalEntry[] = withActiveDb(
-        (db) => listExternalProposals(db),
-      );
-      expect(
-        stillPending.map((e) => [e.proposalId, e.consumedTick, e.targetTick]),
-      ).toEqual([
-        ["proposal-pause-a", undefined, pausedTick + 1],
-        ["proposal-pause-b", undefined, pausedTick + 1],
-      ]);
+    await second.waitCycles("paused", 5);
+    const stillPending: readonly ExternalProposalEntry[] = withActiveDb((db) =>
+      listExternalProposals(db),
+    );
+    expect(
+      stillPending.map((e) => [e.proposalId, e.consumedTick, e.targetTick]),
+    ).toEqual([
+      ["proposal-pause-a", undefined, pausedTick + 1],
+      ["proposal-pause-b", undefined, pausedTick + 1],
+    ]);
 
-      expect((await call2("/resume", { method: "POST" })).status).toBe(200);
-      const consumed = await waitUntil("both proposals to be consumed", () => {
-        const rows = withActiveDb((db) => listExternalProposals(db));
-        return rows.every((row) => row.consumedTick !== undefined)
-          ? rows
-          : undefined;
-      });
-      expect(consumed.map((row) => row.consumedTick)).toEqual([
-        pausedTick + 1,
-        pausedTick + 1,
-      ]);
-      const sequenceOf = (observationId: string) =>
-        withActiveDb((db) =>
-          listEvents(db).find(
-            (event) => String(event.correlationId) === observationId,
-          ),
-        )?.sequence ?? Number.NaN;
-      expect(sequenceOf("obs-pause-a")).toBeLessThan(sequenceOf("obs-pause-b"));
-    } finally {
-      second.proc.kill();
-    }
-  }, 60_000);
+    expect((await call2("/resume", { method: "POST" })).status).toBe(200);
+    const consumed = await waitUntil("both proposals to be consumed", () => {
+      const rows = withActiveDb((db) => listExternalProposals(db));
+      return rows.every((row) => row.consumedTick !== undefined)
+        ? rows
+        : undefined;
+    });
+    expect(consumed.map((row) => row.consumedTick)).toEqual([
+      pausedTick + 1,
+      pausedTick + 1,
+    ]);
+    const sequenceOf = (observationId: string) =>
+      withActiveDb((db) =>
+        listEvents(db).find(
+          (event) => String(event.correlationId) === observationId,
+        ),
+      )?.sequence ?? Number.NaN;
+    expect(sequenceOf("obs-pause-a")).toBeLessThan(sequenceOf("obs-pause-b"));
+  });
 
   test("error path: a request without the launch token is rejected", async () => {
-    const { proc, port } = await spawnService("test-token-1");
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/health`);
-      expect(response.status).toBe(401);
+    const { port } = startInProcess("test-token-1");
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
+    expect(response.status).toBe(401);
 
-      const authorized = await fetch(`http://127.0.0.1:${port}/health`, {
-        headers: { Authorization: "Bearer test-token-1" },
-      });
-      expect(authorized.status).toBe(200);
-    } finally {
-      proc.kill();
-    }
+    const authorized = await fetch(`http://127.0.0.1:${port}/health`, {
+      headers: { Authorization: "Bearer test-token-1" },
+    });
+    expect(authorized.status).toBe(200);
   });
 
   test("stdin EOF triggers a graceful exit", async () => {
@@ -897,15 +829,21 @@ describe("service (bun run src/index.ts)", () => {
   });
 
   test("a five hour gap whose first chunk never committed after the discard: the restarted service completes the backlog and its /frame reports all of it, discard included, under a new id", async () => {
-    const HOUR_MS = 60 * 60 * 1000;
-    const seeded = loadGreekWorldState();
+    // The property is about the summary, not the size of the cap: a ten minute
+    // cap and a gap five times it, so the backlog is ten chunks and not sixty.
+    const CAP_MS = 10 * 60 * 1000;
+    const loaded = loadGreekWorldState();
+    const seeded = {
+      ...loaded,
+      rules: { ...loaded.rules, catchUpCapMs: CAP_MS },
+    };
     const reducers = createWorldProjectionReducers(seeded);
     const storePath = join(appDataDir, "active", "world.sqlite");
     const store = openStore(storePath, reducers);
     ensureTraceSchema(store.db);
     const nowWallMs = Date.now();
     store.db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
-      nowWallMs - 5 * HOUR_MS,
+      nowWallMs - 5 * CAP_MS,
     ]);
     let attempt = 0;
     const interrupted = await runCatchUp(
@@ -928,45 +866,45 @@ describe("service (bun run src/index.ts)", () => {
     // The interrupted run persisted what it committed: the discard, nothing
     // applied yet. That partial summary is what a restart shows first.
     const partial = readCatchUpSummary(store.db);
-    expect(partial).toMatchObject({ appliedMs: 0, skippedMs: 4 * HOUR_MS });
+    expect(partial).toMatchObject({ appliedMs: 0, skippedMs: 4 * CAP_MS });
     closeStore(store);
 
-    const { proc, port } = await spawnService("test-token-frame");
-    try {
-      const frameSummary = async () => {
-        const response = await fetch(`http://127.0.0.1:${port}/frame`, {
-          headers: { Authorization: "Bearer test-token-frame" },
-        });
-        const parsed = parseSyncFrame(await response.json());
-        if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
-        return parsed.value.catchUpSummary;
-      };
-      const summary = await waitUntil(
-        "the completed backlog's summary",
-        async () => {
-          const current = await frameSummary();
-          return current?.appliedMs === HOUR_MS ? current : undefined;
-        },
-      );
+    const { port } = startInProcess("test-token-frame");
+    const frameSummary = async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/frame`, {
+        headers: { Authorization: "Bearer test-token-frame" },
+      });
+      const parsed = parseSyncFrame(await response.json());
+      if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
+      return parsed.value.catchUpSummary;
+    };
+    const summary = await waitUntil(
+      "the completed backlog's summary",
+      async () => {
+        const current = await frameSummary();
+        return current?.appliedMs === CAP_MS ? current : undefined;
+      },
+    );
 
-      // The cap is applied once; everything else in the five hours, and the
-      // seconds the restart took, was discarded.
-      expect(summary.appliedMs).toBe(HOUR_MS);
-      expect(summary.skippedMs).toBeGreaterThanOrEqual(4 * HOUR_MS);
-      expect(summary.skippedMs).toBeLessThan(4 * HOUR_MS + 60_000);
-      // The completed backlog is a different summary from the partial one.
-      expect(summary.id).not.toBe(partial?.id);
-    } finally {
-      proc.kill();
-    }
-  }, 60_000);
+    // The cap is applied once; everything else in the five caps, and the
+    // seconds the restart took, was discarded.
+    expect(summary.appliedMs).toBe(CAP_MS);
+    expect(summary.skippedMs).toBeGreaterThanOrEqual(4 * CAP_MS);
+    expect(summary.skippedMs).toBeLessThan(4 * CAP_MS + 60_000);
+    // The completed backlog is a different summary from the partial one.
+    expect(summary.id).not.toBe(partial?.id);
+  });
 
   test("error path: stdin EOF before any token line refuses to start (non-zero exit, never serves)", async () => {
     const proc = Bun.spawn(["bun", "run", INDEX_ENTRY], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, PANTHEA_APP_DATA_DIR: appDataDir },
+      env: {
+        ...process.env,
+        PANTHEA_APP_DATA_DIR: appDataDir,
+        [TICK_TIMER_ENV]: String(FAST_TICK_MS),
+      },
     });
 
     const stdin = proc.stdin;
@@ -986,7 +924,11 @@ describe("service (bun run src/index.ts)", () => {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, PANTHEA_APP_DATA_DIR: appDataDir },
+      env: {
+        ...process.env,
+        PANTHEA_APP_DATA_DIR: appDataDir,
+        [TICK_TIMER_ENV]: String(FAST_TICK_MS),
+      },
     });
     const stdin = proc.stdin;
     if (typeof stdin === "number" || !stdin) {
@@ -1009,7 +951,11 @@ describe("service (bun run src/index.ts)", () => {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, PANTHEA_APP_DATA_DIR: appDataDir },
+        env: {
+          ...process.env,
+          PANTHEA_APP_DATA_DIR: appDataDir,
+          [TICK_TIMER_ENV]: String(FAST_TICK_MS),
+        },
       });
       const secondStdin = second.stdin;
       if (typeof secondStdin === "number" || !secondStdin) {
