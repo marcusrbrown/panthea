@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { type ArmConfig, type ImageEvent, runArm } from "./arm";
 import { fakeServerCmd, freePort, spawnFake } from "./fixtures/util";
 import { hashBytes } from "./measure";
+import type { UsageReader } from "./rss";
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -22,6 +23,28 @@ function weights(name: string, content = "weights"): string {
   const path = join(dir, name);
   writeFileSync(path, content);
   return path;
+}
+
+/**
+ * Scripted tree readings in place of `ps`: no sleeping fixture has to stay
+ * alive long enough for a real sampler to see it. The first pid asked about is
+ * the first server (60 MiB resident) and any later pid is a replacement (80
+ * MiB), so each phase's peak says which server was read in it. Every call is
+ * counted, and the idle wait reads through the same function.
+ */
+function scriptedUsage() {
+  const pids: number[] = [];
+  const calls: number[] = [];
+  const read: UsageReader = async (pid) => {
+    if (!pids.includes(pid)) pids.push(pid);
+    calls.push(pid);
+    return {
+      rssKb: pids.indexOf(pid) === 0 ? 60 * 1024 : 80 * 1024,
+      cpuPercent: 1,
+      processCount: 1,
+    };
+  };
+  return { read, pids, calls };
 }
 
 async function config(
@@ -104,43 +127,52 @@ describe("runArm happy path", () => {
     expect(report.host.metalVerified).toBe(false);
   });
 
-  it("records sampled resident evidence with startup and per-cell phases", async () => {
-    // The sampler can only see what is still resident when it looks, so the
-    // fixture holds its 60 MiB (resident before it listens), waits 500 ms before
-    // it listens, and each job runs 400 ms: the startup phase and every cell
-    // phase last far longer than a sampling tick (20 ms plus one `ps`, which took
-    // up to 40 ms on a loaded ten-core machine), so each phase gets several
-    // samples however slow `ps` is. One cell with no warmup keeps the run short;
-    // it still has a startup phase and a with-LoRA and a control phase.
+  it("records sampled resident evidence with startup and per-cell phases from the readings it was given", async () => {
+    // The sampler reads through the injected reader, so no fixture needs to hold
+    // memory or delay its start for a real `ps` to catch it. One cell with no
+    // warmup keeps the run short; it still has a startup phase and a
+    // with-LoRA and a control phase.
+    const usage = scriptedUsage();
     const report = await runArm(
       await config(
-        {
-          FAKE_ALLOC_MB: "60",
-          FAKE_JOB_MS: "400",
-          FAKE_READY_DELAY_MS: "500",
-        },
+        {},
         {
           cells: [{ id: "512x640", width: 512, height: 640 }],
           warmupCount: 0,
           sampleCount: 1,
+          rssIntervalMs: 1,
         },
       ),
+      { readUsage: usage.read },
     );
-    expect(report.resident?.semantics).toBe(
+    const resident = report.resident;
+    expect(resident?.semantics).toBe(
       "observed-sampled-peak-not-guaranteed-maximum",
     );
-    expect(
-      report.resident?.observedSampledPeakKb,
-      `resident evidence: ${JSON.stringify(report.resident)}`,
-    ).toBeGreaterThan(50 * 1024);
-    expect(Object.keys(report.resident?.byPhase ?? {})).toContain("startup");
-    expect(
-      Object.keys(report.resident?.byPhase ?? {}).some((p) =>
-        p.startsWith("cell:"),
-      ),
-    ).toBe(true);
-    const first = report.cells[0];
-    expect(first?.peakRssKb).not.toBeNull();
+    expect(resident?.intervalMs).toBe(1);
+    expect(resident?.observedSampledPeakKb).toBe(60 * 1024);
+    expect(Object.keys(resident?.byPhase ?? {}).sort()).toEqual([
+      "cell:512x640:control",
+      "cell:512x640:lora",
+      "startup",
+    ]);
+    for (const phase of Object.values(resident?.byPhase ?? {})) {
+      expect(phase.sampleCount).toBeGreaterThan(0);
+      expect(phase.observedSampledPeakKb).toBe(60 * 1024);
+    }
+    // Every counted sample is one scripted reading; a reading still in flight
+    // when the sampler stops is not counted.
+    const counted = Object.values(resident?.byPhase ?? {}).reduce(
+      (n, p) => n + p.sampleCount,
+      0,
+    );
+    expect(resident?.sampleCount).toBe(counted);
+    expect(counted).toBeLessThanOrEqual(usage.calls.length);
+    expect(usage.pids).toHaveLength(1);
+    expect(report.cells.map((c) => c.peakRssKb)).toEqual([
+      60 * 1024,
+      60 * 1024,
+    ]);
   });
 });
 
@@ -215,10 +247,11 @@ describe("runArm blocked arms", () => {
 
 describe("runArm server failures", () => {
   it("records failed cells (no timings) when the server never becomes ready, and stops it", async () => {
+    // The fixture's 8 s start delay is never reached: the 50 ms bound ends the wait.
     const cfg = await config(
       { FAKE_READY_DELAY_MS: "8000" },
       {},
-      { readyTimeoutMs: 300 },
+      { readyTimeoutMs: 50, stopGraceMs: 50 },
     );
     const report = await runArm(cfg);
     expect(report.cells).toHaveLength(4);
@@ -256,7 +289,7 @@ describe("runArm timeout stops the server process", () => {
     const cfg = await config(
       { FAKE_JOB_MS: "30000", FAKE_LATE_STDOUT: "1" },
       {
-        timeoutMs: 300,
+        timeoutMs: 100,
         warmupCount: 0,
         sampleCount: 1,
         cells: [{ id: "c", width: 512, height: 640 }],
@@ -296,15 +329,18 @@ describe("runArm timeout stops the server process", () => {
 
 describe("runArm timeout escalation", () => {
   it("escalates to SIGKILL when the server ignores SIGTERM", async () => {
+    // The grace is shortened only here, where escalation is the point: a server
+    // that exits on SIGTERM must not be given a window short enough to miss.
     const cfg = await config(
       { FAKE_JOB_MS: "30000", FAKE_IGNORE_SIGTERM: "1" },
       {
-        timeoutMs: 300,
+        timeoutMs: 100,
         warmupCount: 0,
         sampleCount: 1,
         lora: null,
         cells: [{ id: "c", width: 512, height: 640 }],
       },
+      { stopGraceMs: 50 },
     );
     const report = await runArm(cfg);
     const cell = report.cells[0];
@@ -324,12 +360,11 @@ describe("runArm timeout escalation", () => {
 
 describe("runArm cancel probe", () => {
   it("aborts an in-flight job by restarting the server and records abort-to-exit, restart-to-ready and idle evidence", async () => {
-    // Every launch waits 500 ms before it listens, the replacement included, so
-    // the restart phase (abort to ready) spans many sampler ticks: a tick is
-    // 20 ms plus one `ps`, and a phase of 100 ms or so is missed whenever `ps` is
-    // slow, which left no "restart" samples for the assertion below.
+    // Readings are scripted, so the restart phase needs no long fixture start to
+    // span sampler ticks, and the idle wait's one reading is a known number.
+    const usage = scriptedUsage();
     const cfg = await config(
-      { FAKE_JOB_MS: "30000", FAKE_READY_DELAY_MS: "500" },
+      { FAKE_JOB_MS: "30000" },
       {
         cells: [],
         cancelProbe: {
@@ -337,20 +372,34 @@ describe("runArm cancel probe", () => {
           cell: { id: "probe", width: 512, height: 640 },
         },
         idle: { thresholdPercent: 50, timeoutMs: 5_000 },
+        rssIntervalMs: 1,
       },
     );
-    const report = await runArm(cfg);
+    const report = await runArm(cfg, { readUsage: usage.read });
     const probe = report.cancelProbe;
     expect(probe?.status).toBe("cancelled");
     if (probe?.status !== "cancelled") return;
     expect(probe.cancel?.readiness).toBe("ready");
     expect(probe.cancel?.abortToExitMs).not.toBeNull();
     expect(probe.cancel?.restartToReadyMs).not.toBeNull();
-    expect(probe.cancel?.idle).not.toBe("not-measured");
-    expect(probe.cancel?.idleCpuEvidence.length).toBeGreaterThan(0);
+    // The first idle reading (1% CPU) is under the 50% threshold.
+    expect(probe.cancel?.idle).toBe("below-threshold");
+    expect(probe.cancel?.idleCpuEvidence.map((e) => e.cpuPercent)).toEqual([1]);
     expect("outputs" in probe).toBe(false);
-    expect(Object.keys(report.resident?.byPhase ?? {})).toContain("restart");
     expect(report.servers).toHaveLength(2);
+    // The first server was read before the abort and the replacement during the restart.
+    expect(usage.pids).toHaveLength(2);
+    const byPhase = report.resident?.byPhase ?? {};
+    expect(Object.keys(byPhase).sort()).toEqual([
+      "cell:probe:cancel-probe",
+      "restart",
+      "startup",
+    ]);
+    for (const phase of Object.values(byPhase)) {
+      expect(phase.sampleCount).toBeGreaterThan(0);
+    }
+    expect(byPhase.restart?.observedSampledPeakKb).toBe(80 * 1024);
+    expect(byPhase.startup?.observedSampledPeakKb).toBe(60 * 1024);
   });
 });
 

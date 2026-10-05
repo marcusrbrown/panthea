@@ -30,6 +30,18 @@ function child(
   return proc;
 }
 
+/** Ends the grandchild a fixture left holding the pipes, so cleanup need not wait out the drain bound. */
+function releasePipes(proc: ManagedProcess): void {
+  const pid = Number(/spawned (\d+)/.exec(proc.output().stdout)?.[1]);
+  if (Number.isInteger(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
 const scratch: string[] = [];
 
 afterEach(async () => {
@@ -56,7 +68,7 @@ describe("spawnManaged readiness", () => {
   it("reports timed-out when the probe never passes, without leaving the process unbounded", async () => {
     const proc = child("setInterval(() => {}, 1000);");
     const ready = await proc.waitReady(() => false, {
-      timeoutMs: 150,
+      timeoutMs: 50,
       pollMs: 20,
     });
     expect(ready.status).toBe("timed-out");
@@ -77,9 +89,11 @@ describe("spawnManaged readiness", () => {
 describe("spawnManaged readiness after termination", () => {
   it("reports exited, not ready, when the child dies while a probe is in flight", async () => {
     const proc = child("process.exit(7);");
+    // The probe is still in flight when the child dies, and answers true only
+    // after it has: no sleep to outlast the child's start.
     const ready = await proc.waitReady(
       async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await proc.exited;
         return true;
       },
       { timeoutMs: 5_000, pollMs: 20 },
@@ -90,15 +104,19 @@ describe("spawnManaged readiness after termination", () => {
   it("reports exited as soon as termination is observed, without waiting out the pipe drain", async () => {
     // A grandchild keeps stdout open, so the drain wait would last its full bound.
     const proc = child(
-      "Bun.spawn([process.execPath, '-e', 'setTimeout(() => {}, 1500)'], { stdout: 'inherit', stderr: 'inherit' });" +
-        "setTimeout(() => process.exit(7), 100);",
+      "const gc = Bun.spawn([process.execPath, '-e', 'setTimeout(() => {}, 1500)'], { stdout: 'inherit', stderr: 'inherit' });" +
+        "console.log('spawned ' + gc.pid); setTimeout(() => process.exit(7), 100);",
     );
     const ready = await proc.waitReady(() => false, {
       timeoutMs: 5_000,
       pollMs: 10,
     });
     expect(ready).toMatchObject({ status: "exited", exitCode: 7 });
-    expect(ready.ms).toBeLessThan(450);
+    // The pipes are still held, so the drain is still pending: had waitReady
+    // waited it out, the process would already be settled. (An order, not a
+    // wall-clock bound.)
+    expect(proc.state()).not.toBe("exited");
+    releasePipes(proc);
   });
 });
 
@@ -117,14 +135,14 @@ describe("spawnManaged stop", () => {
   it("escalates to SIGKILL when SIGTERM is ignored", async () => {
     const proc = child(
       "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);",
-      { stopGraceMs: 100 },
+      { stopGraceMs: 50 },
     );
     await proc.waitReady(readyCheck(proc), { timeoutMs: 5_000, pollMs: 20 });
     const stopped = await proc.stop();
     expect(stopped.escalatedToKill).toBe(true);
     expect(stopped.exit.reason).toBe("stopped");
     expect(stopped.exit.signalCode).toBe("SIGKILL");
-    expect(stopped.exitedAfterMs).toBeGreaterThanOrEqual(90);
+    expect(stopped.exitedAfterMs).toBeGreaterThanOrEqual(40);
   });
 
   it("still reports stopped when the child exits zero in response to the stop request", async () => {
@@ -175,22 +193,18 @@ describe("spawnManaged stop", () => {
       "const gc = Bun.spawn([process.execPath, '-e', 'setTimeout(() => {}, 1500)'], { stdout: 'inherit', stderr: 'inherit' });" +
         "console.log('spawned ' + gc.pid); setTimeout(() => process.abort(), 50);",
     );
-    await proc.waitReady(() => proc.output().stdout.includes("spawned"), {
+    // Resolves with "exited" the moment termination is observed (the pipes are
+    // still held by the grandchild, so the drain is still pending).
+    const ready = await proc.waitReady(() => false, {
       timeoutMs: 5_000,
-      pollMs: 20,
+      pollMs: 5,
     });
-    // Reaped child => pid vanishes; exit has been observed or is imminent.
-    for (let i = 0; i < 500; i++) {
-      try {
-        process.kill(proc.pid, 0);
-      } catch {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(ready.status).toBe("exited");
     expect(proc.state()).not.toBe("exited");
-    const stopped = await proc.stop();
+    const stopping = proc.stop();
+    // Release the grandchild so the drain ends now, after the stop has landed.
+    releasePipes(proc);
+    const stopped = await stopping;
     expect(stopped.exit).toMatchObject({
       reason: "exited",
       signalCode: "SIGABRT",
@@ -207,7 +221,7 @@ describe("spawnManaged stop", () => {
   });
 
   it("kills a child that outlives its maximum lifetime", async () => {
-    const proc = child("setInterval(() => {}, 1000);", { maxLifetimeMs: 150 });
+    const proc = child("setInterval(() => {}, 1000);", { maxLifetimeMs: 50 });
     const exit = await proc.exited;
     expect(exit.reason).toBe("lifetime-exceeded");
   });
@@ -318,7 +332,7 @@ describe("restartToReady", () => {
       current: first,
       respawn: () => child("setInterval(() => {}, 1000);"),
       isReady: () => false,
-      readyTimeoutMs: 150,
+      readyTimeoutMs: 50,
       pollMs: 20,
     });
     expect(result.cancel.readiness).toBe("timed-out");
@@ -381,6 +395,8 @@ describe("restartToReady idle evidence", () => {
   it("takes the cancel-to-ready total at readiness, before the idle wait", async () => {
     const first = child(READY_SCRIPT);
     await first.waitReady(readyCheck(first), { timeoutMs: 5_000, pollMs: 20 });
+    let firstIdleReadAt: number | null = null;
+    const startedAt = performance.now();
     const result = await restartToReady({
       current: first,
       respawn: () => child(READY_SCRIPT),
@@ -392,17 +408,21 @@ describe("restartToReady idle evidence", () => {
         timeoutMs: 2_000,
         pollMs: 5,
         read: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 400));
+          firstIdleReadAt ??= performance.now();
           return { rssKb: 1, cpuPercent: 1, processCount: 1 };
         },
       },
     });
     expect(result.cancel.idle).toBe("below-threshold");
-    expect(result.cancel.restartToIdleMs).toBeGreaterThanOrEqual(400);
-    expect(result.cancel.totalCancelToReadyMs).toBeLessThanOrEqual(
-      (result.cancel.abortToExitMs ?? 0) +
-        (result.cancel.restartToReadyMs ?? 0) +
-        50,
+    // An order of events, not a duration: the total was stamped at readiness,
+    // which is before the idle wait's first reading. (`startedAt` precedes the
+    // call's own start, so this holds without any tolerance.)
+    expect(firstIdleReadAt).not.toBeNull();
+    expect(
+      startedAt + (result.cancel.totalCancelToReadyMs ?? Number.NaN),
+    ).toBeLessThanOrEqual(firstIdleReadAt ?? Number.NEGATIVE_INFINITY);
+    expect(result.cancel.restartToIdleMs).toBeGreaterThanOrEqual(
+      result.cancel.restartToReadyMs ?? Number.POSITIVE_INFINITY,
     );
   });
 
@@ -428,7 +448,7 @@ describe("restartToReady idle evidence", () => {
       current: first,
       respawn: () => child("setInterval(() => {}, 1000);"),
       isReady: () => false,
-      readyTimeoutMs: 100,
+      readyTimeoutMs: 50,
       pollMs: 20,
       idle: idleOptions([1]),
     });

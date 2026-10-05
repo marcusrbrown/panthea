@@ -11,6 +11,15 @@ import {
   waitForTreeIdle,
 } from "./rss";
 
+/** Waits for a condition, not a duration: polls every few ms and fails only at a generous bound. */
+async function until(condition: () => boolean, what: string): Promise<void> {
+  const giveUpAt = Date.now() + 10_000;
+  while (!condition()) {
+    if (Date.now() > giveUpAt) throw new Error(`never happened: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
 const PS = `
     1     0   9000  1.0
   100     1   2000  3.5
@@ -91,6 +100,24 @@ describe("readTreeUsage (real processes)", () => {
     expect(usage?.rssKb).toBeGreaterThan(
       Number.parseInt(rootOnly.trim(), 10) + 90 * 1024,
     );
+
+    // The real sampler (default reader, no injection) sees the same tree. This
+    // is the one test that runs it against a live process: everything else that
+    // needs RSS readings scripts them. It waits for the first reading, not for
+    // a fixed time.
+    const sampler = createTreeSampler({
+      intervalMs: 20,
+      rootPid: proc.pid,
+      phase: "real",
+    });
+    try {
+      await until(() => sampler.snapshot().sampleCount > 0, "a real reading");
+    } finally {
+      sampler.stop();
+    }
+    const evidence = sampler.snapshot();
+    expect(evidence.byPhase.real?.sampleCount).toBeGreaterThan(0);
+    expect(evidence.observedSampledPeakKb).toBeGreaterThan(100 * 1024);
   });
 
   it("returns null for a pid that does not exist", async () => {
@@ -112,9 +139,15 @@ describe("createTreeSampler", () => {
       phase: "startup",
       read: async () => scripted[Math.min(i++, scripted.length - 1)] ?? null,
     });
-    await new Promise((r) => setTimeout(r, 12));
+    await until(
+      () => sampler.snapshot().byPhase.startup !== undefined,
+      "a startup sample",
+    );
     sampler.setPhase("restart");
-    await new Promise((r) => setTimeout(r, 40));
+    await until(
+      () => sampler.snapshot().byPhase.restart !== undefined,
+      "a restart sample",
+    );
     const evidence = sampler.stop();
     expect(evidence.intervalMs).toBe(5);
     expect(evidence.semantics).toBe(
@@ -156,7 +189,7 @@ describe("createTreeSampler", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(reads).toBe(0);
     sampler.setRoot(7);
-    await new Promise((r) => setTimeout(r, 20));
+    await until(() => reads > 0, "a reading once the root is set");
     sampler.stop();
     const after = reads;
     await new Promise((r) => setTimeout(r, 30));
