@@ -276,6 +276,40 @@ test("a travel proposal to a place the god may not reach, an unknown place, or t
   }
 });
 
+test("only an authored deity may travel: a mortal's travel is refused, stores no journey, and moves nothing over the following ticks; a deity taking the same route is the control", () => {
+  // The farmer and Zeus both stand at the tavern; the lane is two steps away for either.
+  const mortal = tick(start(), travel("farmer", "lane"));
+  expect(
+    mortal.rejected.map((r) => [String(r.proposal.actor), String(r.reason)]),
+  ).toEqual([["farmer", "unauthorized-claim"]]);
+  expect(journeyEvents(mortal.events)).toEqual([]);
+  expect(mortal.state.journeys.size).toBe(0);
+  for (const result of idle(mortal.state, 3)) {
+    expect(kinds(result.events)).not.toContain("entity-moved");
+    expect(where(result.state, "farmer")).toBe("tavern");
+  }
+
+  const god = tick(start(), travel("zeus", "lane"));
+  expect(god.rejected).toEqual([]);
+  expect(kinds(god.events)).toContain("journey-started");
+  expect(where(idle(god.state, 1)[0]?.state as WorldState, "zeus")).toBe(
+    "lane",
+  );
+});
+
+test("being a deity is what permits travel, not holding `divine`: a god that lost the capability still travels through places that do not need it", () => {
+  const penalised = withActor(start(), "zeus", { capabilities: [] });
+  const result = tick(penalised, travel("zeus", "lane"));
+  expect(result.rejected).toEqual([]);
+  expect(journeyEvents(result.events).map((e) => e.kind)).toContain(
+    "journey-started",
+  );
+  // Control: the places that need `divine` stay closed to it, as before.
+  expect(
+    tick(penalised, travel("zeus", "hall")).rejected.map((r) => r.reason),
+  ).toEqual(["restricted-realm"]);
+});
+
 // --- Replacement ----------------------------------------------------------------------
 
 test("the god's next committed proposal ends the journey as replaced, before that proposal's own events, and no hop follows", () => {

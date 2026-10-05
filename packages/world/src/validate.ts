@@ -209,7 +209,11 @@ function handleTravel(
   proposal: TravelProposal,
 ): RuleOutcome {
   const actor = getActor(state, proposal.actor);
-  if (actor === undefined || !getLocation(state, proposal.to)) {
+  // Travel is a god's way to move: authored, not the revocable `divine` capability, so a penalised god still travels where it may go.
+  if (!actor?.isDeity) {
+    return reject("unauthorized-claim", "only a deity may travel");
+  }
+  if (!getLocation(state, proposal.to)) {
     return reject("malformed", `unknown travel destination: ${proposal.to}`);
   }
   if (actor.locationId === proposal.to) {
