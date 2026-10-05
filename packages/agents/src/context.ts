@@ -1706,7 +1706,7 @@ export function buildGodContext(
   const instructions = [
     // Every god, every tick: how to decide, how to act, how to speak, how to reply.
     "Decide what you do next, in character, using only what you are shown as perceived. You know nothing else about the world, and you may only name ids listed in the scene.",
-    'You may also travel to any place you can reach (action "travel", naming it): the world walks you there, one step a tick.',
+    `You may also travel to any place you can reach, naming it in "to": ${JSON.stringify({ action: "travel", to: "<place id>" })}. The world walks you there, one step a tick.`,
     "Speak your report and legend words in the first person, to those who hear them, without using your own name.",
     `Keep a legend assertion (at most ${MAX_ASSERTION_LENGTH} characters) and report content (at most ${MAX_REPORT_LENGTH} characters) to one or two short sentences.`,
     goalInstruction(remembered),

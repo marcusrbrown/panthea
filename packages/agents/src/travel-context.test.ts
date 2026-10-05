@@ -148,7 +148,10 @@ test("the prompt lists the places the god can travel to with their steps, in pla
   // Every place the schema offers is in the line, with its steps, farthest last.
   expect(line).toContain(" great-hall 4, ");
   expect(line).toEndWith(" judgment-hall 5.");
-  expect(context.instructions).toContain('action "travel"');
+  // The general instruction shows the exact shape to send, the way the prayer lines do: the place goes in "to", not "target".
+  expect(context.instructions).toContain(
+    '{"action":"travel","to":"<place id>"}',
+  );
   expect(context.instructions).not.toContain('action "move"');
   expect(context.instructions).not.toContain('action "realm-transition"');
 });

@@ -99,7 +99,7 @@ test("all seven gods' requests start with the same text, byte for byte, and it i
   expect(shared.length).toBeGreaterThan(1_000);
   for (const line of [
     "Decide what you do next, in character",
-    'You may also travel to any place you can reach (action "travel"',
+    "You may also travel to any place you can reach",
     "Speak your report and legend words in the first person",
     "You may keep one goal across turns",
     'You may also choose to wait (action "wait")',
