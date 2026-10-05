@@ -74,7 +74,8 @@ only what that god could name):
 
 The transcript (\`src/transcript.ts\`) shows each thread's cause, participants,
 moves, ending, and recorded changes, the threads open at the end with their age
-and what each waits on, every move judged no progress, and a classification of
+and what each waits on, every move judged no progress, every journey a god made
+(where it set out, each hop, how it ended), and a classification of
 each turn an obligated god takes while its obligation is open (R12; an
 acceptance binds, so there is no renegotiation class, and bargaining is for a
 thread still open): the action the term calls for, committed, is *performed*; a
@@ -93,6 +94,8 @@ loopback OpenAI-compatible endpoint the sidecar reaches through its production
 routing path, selected by the launch config line the harness sends. It answers each god from a
 queue the harness fills, or from a policy that is a pure function of the prompt
 the god was shown (Hera's), and it records every request with when it arrived.
+A god's own journey is one scripted \`travel\` turn: the world walks it there a
+step a tick, so the harness waits for the arrival and never moves the god.
 Stage-setting that is not a god's choice (moving the farmer to the tavern,
 moving Hera while a turn is in flight) is posted as fixture proposals over
 \`/proposals\`. Everything the sidecar serves is read through its API; facts no
@@ -108,7 +111,7 @@ Fault injections, one per negative claim:
   sidecar is killed while the request is in flight.
 - **Half-hour gap:** with the sidecar stopped, the harness moves the persisted
   wall cursor back 1,800,000 ms; the restart's catch-up applies it.
-- **Stale proposal:** Hera's turn is held while a fixture moves her.
+- **Stale proposal:** Hera's strike turn is held while a fixture moves her.
 - **Hostile archive:** the projection row of an export has Hera's memory and
   feeling dropped and its content hash recomputed.`;
 

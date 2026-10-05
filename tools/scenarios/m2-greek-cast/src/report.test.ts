@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { EnvironmentInfo } from "@panthea/tools-probes-shared";
 import type { StepResult } from "../../m1-living-world/src/helpers";
 import { buildReportInput, type RunSummary } from "./report";
+import { CONTROL_NAMES } from "./steps/context";
 
 const environment: EnvironmentInfo = {
   hardware: { brand: "test cpu", memoryBytes: "1" },
@@ -90,4 +91,11 @@ test("a real run adds its numbers, its properties, and its limits; without one t
   expect(text).toContain("content too long");
   expect(text).toContain("valid actions");
   expect(text).toContain("does not show");
+});
+
+test("the how-to-run text names every positive control the runner has, so a new control cannot be left out of the README", () => {
+  const input = buildReportInput(summary);
+  for (const name of CONTROL_NAMES) {
+    expect(input.howToRun).toContain(`\`${name}\``);
+  }
 });
