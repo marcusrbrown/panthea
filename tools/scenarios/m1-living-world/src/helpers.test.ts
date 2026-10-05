@@ -7,6 +7,7 @@ import {
   createStepRecorder,
   expectedBurnTicks,
   instantiate,
+  mapLimit,
   ScenarioFailure,
   waitFor,
 } from "./helpers";
@@ -214,5 +215,55 @@ describe("canonicalJson", () => {
 
   test("treats an absent key and an undefined value alike", () => {
     expect(canonicalJson({ a: 1, b: undefined })).toBe(canonicalJson({ a: 1 }));
+  });
+});
+
+describe("mapLimit", () => {
+  test("never runs more than the limit at once, and keeps the items' order whatever order they finish in", async () => {
+    let running = 0;
+    let peak = 0;
+    const items = [40, 5, 30, 1, 20, 10];
+    const results = await mapLimit(items, 3, async (ms) => {
+      running += 1;
+      peak = Math.max(peak, running);
+      await Bun.sleep(ms);
+      running -= 1;
+      return `done-${ms}`;
+    });
+    expect(results).toEqual(items.map((ms) => `done-${ms}`));
+    expect(peak).toBe(3);
+  });
+
+  test("a limit of one runs them one after another, and a limit above the item count runs them all", async () => {
+    const order: string[] = [];
+    await mapLimit(["a", "b", "c"], 1, async (item) => {
+      order.push(`start-${item}`);
+      await Bun.sleep(5);
+      order.push(`end-${item}`);
+    });
+    expect(order).toEqual([
+      "start-a",
+      "end-a",
+      "start-b",
+      "end-b",
+      "start-c",
+      "end-c",
+    ]);
+    expect(await mapLimit([1, 2], 10, async (n) => n * 2)).toEqual([2, 4]);
+    expect(await mapLimit([], 4, async (n: number) => n)).toEqual([]);
+  });
+
+  test("the first failure rejects and no further item starts", async () => {
+    const started: number[] = [];
+    await expect(
+      mapLimit([1, 2, 3, 4, 5, 6], 2, async (n) => {
+        started.push(n);
+        await Bun.sleep(5);
+        if (n === 2) throw new Error("boom");
+        return n;
+      }),
+    ).rejects.toThrow("boom");
+    await Bun.sleep(30);
+    expect(started).toEqual([1, 2, 3]);
   });
 });

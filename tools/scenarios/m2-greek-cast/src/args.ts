@@ -11,10 +11,15 @@ import { CONTROL_NAMES, type ControlName, type StoryOptions } from "./story";
  */
 export const DEFAULT_MODEL = "qwen3-8b-4k";
 
+/** Positive controls `--write-readme` runs at once: each is a whole story with its own sidecar, so the cost is cores, not ports or files. */
+export const DEFAULT_JOBS = 4;
+
 export interface Args extends StoryOptions {
   readonly real: boolean;
   readonly seconds: number;
   readonly writeReadme: boolean;
+  /** How many positive controls `--write-readme` runs at once. */
+  readonly jobs: number;
   /** Experience-gate episodes to run; 0 when not asked for. */
   readonly episodes: number;
   readonly episodeSeconds: number;
@@ -42,6 +47,8 @@ export function parseArgs(argv: readonly string[]): Args {
   let skipBuild = false;
   let real = false;
   let writeReadme = false;
+  let jobs = DEFAULT_JOBS;
+  let jobsGiven = false;
   let seconds = 180;
   let episodes = 0;
   let episodeSeconds = 300;
@@ -54,7 +61,10 @@ export function parseArgs(argv: readonly string[]): Args {
     if (arg === "--skip-build") skipBuild = true;
     else if (arg === "--real") real = true;
     else if (arg === "--write-readme") writeReadme = true;
-    else if (arg.startsWith("--seconds=")) seconds = Number(arg.slice(10));
+    else if (arg.startsWith("--jobs=")) {
+      jobs = positiveInt("--jobs", arg.slice(7));
+      jobsGiven = true;
+    } else if (arg.startsWith("--seconds=")) seconds = Number(arg.slice(10));
     else if (arg.startsWith("--episodes=")) {
       episodes = positiveInt("--episodes", arg.slice(11));
     } else if (arg.startsWith("--episode-seconds=")) {
@@ -92,6 +102,9 @@ export function parseArgs(argv: readonly string[]): Args {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
+  if (jobsGiven && !writeReadme) {
+    throw new Error("--jobs applies only with --write-readme");
+  }
   // Which endpoint flags may be combined, decided here so nothing downstream
   // (the Keychain read, the launch line) can run on a bad combination. Messages
   // name flags only, never a key.
@@ -121,6 +134,7 @@ export function parseArgs(argv: readonly string[]): Args {
     real,
     seconds,
     writeReadme,
+    jobs,
     episodes,
     episodeSeconds,
     out,

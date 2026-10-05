@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseArgs } from "./args";
+import { DEFAULT_JOBS, parseArgs } from "./args";
 import { endpointOptions } from "./real";
 
 test("the model defaults to the M2 local baseline, qwen3 8B at 4K, and reasoning is unset", () => {
@@ -210,4 +210,30 @@ test("a hosted base URL without a key reference parses (a keyless hosted endpoin
     baseUrl: "https://hosted.example.com/v1",
   });
   expect(spy.reads).toEqual([]);
+});
+
+test("--write-readme runs four controls at once unless --jobs says otherwise", () => {
+  expect(DEFAULT_JOBS).toBe(4);
+  expect(parseArgs(["--write-readme"])).toMatchObject({
+    writeReadme: true,
+    jobs: 4,
+  });
+  expect(parseArgs(["--write-readme", "--jobs=1"]).jobs).toBe(1);
+  expect(parseArgs(["--jobs=6", "--write-readme"]).jobs).toBe(6);
+});
+
+test("--jobs must be a positive whole number and applies only with --write-readme", () => {
+  for (const bad of [
+    "--jobs=0",
+    "--jobs=-2",
+    "--jobs=1.5",
+    "--jobs=",
+    "--jobs=x",
+  ]) {
+    expect(() => parseArgs(["--write-readme", bad])).toThrow(/--jobs/);
+  }
+  expect(() => parseArgs(["--jobs=2"])).toThrow(/only with --write-readme/);
+  expect(() =>
+    parseArgs(["--skip-build", "--positive-control=chain", "--jobs=2"]),
+  ).toThrow(/only with --write-readme/);
 });
