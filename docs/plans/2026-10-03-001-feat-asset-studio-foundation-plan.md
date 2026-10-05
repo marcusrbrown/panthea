@@ -28,7 +28,7 @@ R identifiers below refer to the origin document, not new product requirement ID
 
 | Origin | Obligation | Units | Acceptance |
 | --- | --- | --- | --- |
-| R1 | Kind-specific metadata and versioned states | 2 | Manifest fixtures |
+| R1 | Kind-specific metadata and versioned states | 2, 11, 12 | Manifest fixtures |
 | R2 | Complete provenance, licences, edits and cancellations | 1, 2, 5, 9, 12 | AE5, AE6 |
 | R3 | Content-addressed registry and missing-state fallback | 2, 8 | AE1 |
 | R4 | Plain files and standalone validator | 2, 5 | F4 |
@@ -90,22 +90,22 @@ Lessons from existing probes: subprocesses provide real memory/crash containment
   "verdict": "extend",
   "scope": "apps/client/src/renderer, packages/{assets,contracts,content}, tools/content, tools/probes/art-local, tools/probes/{coexistence,provider-matrix,inference-baseline}",
   "freshness": {
-    "vcs_reference": "edb2685a6498c79aa439d6c2a34544c8d517f83c"
+    "vcs_reference": "f3bc47ba55d352cf8d94d3a3156fda1f3e5f92dd"
   },
   "budget": {"max_search_passes": 4, "max_candidate_inspections": 12, "exhausted": false},
   "candidates": [
-    {"path_or_symbol": "packages/assets/src/index.ts:status", "description": "Assets export surface, currently without pipeline behavior", "disposition": "extend"},
-    {"path_or_symbol": "tools/probes/art-local/src/placeholder.ts:renderPlaceholder", "description": "Deterministic PNG bytes and placeholder content address", "disposition": "extend"},
-    {"path_or_symbol": "tools/probes/art-local/src/run.ts", "description": "Local generator adapters, provenance and probe reporting", "disposition": "extend"},
-    {"path_or_symbol": "packages/content/src/god-profile.ts:GodProfile.sprite", "description": "Required stable actor sprite identity", "disposition": "extend"},
-    {"path_or_symbol": "packages/contracts/src/content.ts:parseContentPack", "description": "Strict versioned content parsing and reference integrity", "disposition": "extend"},
-    {"path_or_symbol": "tools/content/src/index.ts:status", "description": "Content validator export surface, currently a placeholder", "disposition": "extend"},
-    {"path_or_symbol": "apps/client/src/renderer/scene.ts:createWorldRenderer", "description": "Committed world-view drawing and device-loss hooks", "disposition": "extend"},
-    {"path_or_symbol": "apps/client/src/renderer/markers.ts:createMarkerLayer", "description": "SpriteGroup lifetime and disposal", "disposition": "reuse"},
-    {"path_or_symbol": "apps/client/src/renderer/presentation.ts:placeEvents", "description": "Drawable committed-event filtering and receipt selection", "disposition": "extend"},
-    {"path_or_symbol": "tools/probes/coexistence/README.md", "description": "Unresolved heavy-work coexistence evidence", "disposition": "insufficient", "insufficiency_reason": "No asset lifecycle or registry implementation"},
-    {"path_or_symbol": "tools/probes/provider-matrix/README.md", "description": "Provider fallback and offline evidence", "disposition": "insufficient", "insufficiency_reason": "No visual or audio authoring lifecycle"},
-    {"path_or_symbol": "tools/probes/inference-baseline/README.md", "description": "Local model capacity baseline", "disposition": "insufficient", "insufficiency_reason": "No asset conformance or publication"}
+    {"path_or_symbol": "packages/assets/src/index.ts", "description": "Exports hash, placeholder, PNG and pure resolution helpers; filesystem registry is a separate subpath.", "disposition": "extend"},
+    {"path_or_symbol": "packages/assets/src/placeholder.ts:renderPlaceholder", "description": "Deterministic silhouette PNG and content-addressed logical URI, moved unchanged with golden byte tests.", "disposition": "reuse"},
+    {"path_or_symbol": "tools/probes/art-local/src/run.ts", "description": "Probe-only generator runner records provenance, timings, errors, cancellations and result artifacts.", "disposition": "insufficient", "insufficiency_reason": "Probe reporting is not the asset job, editing or publication pipeline."},
+    {"path_or_symbol": "packages/content/src/god-profile.ts:GodProfile.sprite", "description": "Core god profile retains stable sprite identity; god-visual-profile.ts separately parses visual metadata.", "disposition": "reuse"},
+    {"path_or_symbol": "packages/contracts/src/content.ts:parseContentPack; packages/contracts/src/assets.ts; packages/contracts/src/asset-lifecycle.ts", "description": "Strict content parsing and reference checks coexist with implemented asset manifests, vocabulary, provenance, lifecycle, job and provider contracts.", "disposition": "reuse"},
+    {"path_or_symbol": "tools/content/src/index.ts:main, validateAssets", "description": "Asset validator CLI and exports are implemented in tools/content/src/assets.ts.", "disposition": "reuse"},
+    {"path_or_symbol": "apps/client/src/renderer/scene.ts:createWorldRenderer", "description": "Draws locations, buildings, actor markers and recent effects; actor placement comes from the current world view.", "disposition": "extend"},
+    {"path_or_symbol": "apps/client/src/renderer/markers.ts:createMarkerLayer", "description": "Owns SpriteGroup and Sprite2D attachment, removal and disposal.", "disposition": "extend"},
+    {"path_or_symbol": "apps/client/src/renderer/presentation.ts:placeEvents", "description": "Places recent events at a subject location in the viewed realm without choosing assets or world outcomes.", "disposition": "insufficient", "insufficiency_reason": "Event presentation has no asset identity, registry resolution or lifecycle behavior."},
+    {"path_or_symbol": "tools/probes/coexistence/README.md", "description": "Heavy-work coexistence remains inconclusive; the 3072 MiB case exceeded its LLM p95 penalty threshold.", "disposition": "insufficient", "insufficiency_reason": "Coexistence measurements do not implement studio asset registry or publication behavior."},
+    {"path_or_symbol": "tools/probes/provider-matrix/README.md", "description": "Model-provider fallback and offline network evidence, not asset state fallback.", "disposition": "insufficient", "insufficiency_reason": "Provider routing does not define asset lifecycle or registry resolution."},
+    {"path_or_symbol": "tools/probes/inference-baseline/README.md", "description": "Local inference latency, capacity, concurrency and outage evidence with the renderer running.", "disposition": "insufficient", "insufficiency_reason": "Model capacity measurements do not establish asset publication or per-state resolution."}
   ]
 }
 ```
@@ -143,7 +143,7 @@ Packing consumes approved sets without granting canon status; publish performs t
 ### Deferred to Implementation
 
 - Chain choice, quantization, generation bound and cancellation latency require Unit 1 measurements; 90–120 seconds is a planning target, not a pass claim. Studio headroom is measured in Unit 7 once the real studio exists.
-- Aseprite tag/slice fidelity requires the installed editor. Isometric TileMap2D behavior requires Unit 6 verification; emit SpriteGroup geometry if it does not place/sort correctly.
+- Aseprite 1.3.18.6 is installed at `/Applications/Aseprite.app`, not on `PATH`; tag/slice fidelity still requires a real round trip with it. Isometric TileMap2D behavior requires Unit 6 verification; emit SpriteGroup geometry if it does not place/sort correctly.
 - Final native command/CSP details require packaged tests and owner approval. Renderer extraction needs core-lane agreement.
 - Palette hues, aura and portrait framing follow existing guide defaults until an owner-approved change; master palette approval blocks canon, not drafting.
 
@@ -196,12 +196,13 @@ flowchart TB
 - **Patterns:** M0 probe provenance and subprocess measurement; preserve M0 evidence rather than replacing it.
 - **Test scenarios:** Missing binary/weights yields staging guidance; failed or timed-out arm records failure without invented timings; paired-seed records retain settings and hashes; aborted job has no completed result. Real-host runs establish LoRA application, timing and memory, not mocks.
 - **Verification:** Recommend only a measured chain with a stated timing bound on M1 Pro 16 GB; generator comparison is measured here, and studio headroom moves to Unit 7 verification. Differences demonstrate application, not visual quality; owner rates contact sheets. If no chain passes, report measured conflict and alternative without shrinking scope.
+- **Outcome:** Z-Image-Turbo without a LoRA at 512×640 is the draft generator (p50/p95 76.70/76.74 s, n=3); SDXL with pixel-art-xl is the measured comparison; the Civitai Z-Image LoRA was unavailable (HTTP 401). This is a draft generator, not canon or an MVP claim, and studio headroom is measured in Unit 7.
 
 ### Unit 2. Contracts, registry and placeholder
-- [x] Land shared-additive asset foundation.
+- [x] Land shared-additive asset foundation (implemented, not yet merged).
 - **Requirements:** R1–R5, R7, R12, R18, R24; U06–U08, X02.
 - **Dependencies:** None on chosen model; core coordination for additive packages.
-- **Files:** Create `packages/contracts/src/assets.ts`, `assets.test.ts`; `packages/assets/src/registry.ts`, `registry.test.ts`, `placeholder.ts`, `placeholder.test.ts`; modify package exports in `packages/contracts/src/index.ts`, `packages/assets/src/index.ts`, `packages/assets/package.json`, `packages/content/src/god-profile.ts`, its tests and exports; create `tools/content/src/assets.ts`, `assets.test.ts`; update its `src/index.ts`, probe placeholder imports/tests, and traceability. Add asset ADR/index entry.
+- **Files:** Contracts: `packages/contracts/src/assets.ts`, `asset-lifecycle.ts`, their tests, and `index.ts` exports. Assets: `packages/assets/src/{placeholder,hash,png,resolve,registry,fixtures}.ts` with tests, the M0 placeholder moved from `tools/probes/art-local` with golden-byte tests and its probe imports updated, and `index.ts`/`package.json` exports (root, `./registry`, `./fixtures`). Content: a separate `packages/content/src/god-visual-profile.ts` and test, exported from `index.ts`; `god-profile.ts` is unchanged. Validator: `tools/content/src/assets.ts`, tests and the `index.ts` CLI. Data: `content/greek/assets/` vocabulary, empty registry index and Zeus visual profile. Also traceability and ADR 0009 with its index entry. Approved internal workspace dependencies and their `bun.lock` entries are in; new external dependencies or other lock changes still need owner approval.
 - **Approach:** Strict versioned kind-discriminated manifests, provenance, lifecycle transitions, reports and provider/job envelopes. Separate cancelled job records from asset records. Add visual profile metadata without editing core-owned god files. Resolve stable sprite ID and requested state, falling back per unresolved state. Publish immutable revisions through atomic index replacement; keep files readable without studio.
 - **Patterns:** Existing strict content parsers and placeholder PNG encoder.
 - **Test scenarios:** Reject malformed kind metadata, unknown states/version and broken references; reject illegal lifecycle transitions; preserve rejected provenance outside registry; missing ID/state returns placeholder; republish selects new revision while old bytes remain; interrupted publication leaves old index usable. Moved placeholder PNG and hashes match M0 byte-for-byte, changing only logical URI expectations.
@@ -230,9 +231,9 @@ flowchart TB
 ### Unit 5. Shared pipeline and CLI
 - [ ] Exercise request, edit and publish flows headlessly.
 - **Requirements:** R2, R4–R12, R18, R20; F1, F2, F4; AE3, AE5, AE6.
-- **Dependencies:** Units 2, 3; Unit 1 for selected generator, Unit 4 approval for canon.
+- **Dependencies:** Units 2, 3; Unit 1's selected draft generator (Z-Image-Turbo without a LoRA), Unit 4 approval for canon.
 - **Files:** Create `tools/studio/package.json`, `src/index.ts`, `src/cli.test.ts`; `packages/assets/src/jobs.ts`, `jobs.test.ts`, `pipeline.ts`, `pipeline.test.ts`, `aseprite.ts`, `aseprite.test.ts`, `packing.ts`, `packing.test.ts`; editor scripts and contact-sheet fixtures; update exports, `content/greek/assets/`, traceability and asset ADR.
-- **Approach:** CLI exposes generate/conform/open/derive/pack/publish plus lifecycle and queue actions. Resolve free text into an explicit pack subject/spec; default batch four, append rerolls, replace sheet on request edit. Reports sort fewest changes first. Serialize heavy providers and restart subprocess to abort; missing providers report staging. Tagged Aseprite documents use untrimmed cells and preserve tags/slices; explicit PNG+JSON editing remains available without Aseprite. Derive reports unsupported operations until Unit 9 rather than fabricating frames.
+- **Approach:** CLI exposes generate/conform/open/derive/pack/publish plus lifecycle and queue actions. Resolve free text into an explicit pack subject/spec; default batch four, append rerolls, replace sheet on request edit. Reports sort fewest changes first. Serialize heavy providers and restart subprocess to abort; missing providers report staging. Tagged Aseprite documents use untrimmed cells and preserve tags/slices; explicit PNG+JSON editing remains available without Aseprite. The installed Aseprite is 1.3.18.6 at `/Applications/Aseprite.app` and not on `PATH`, so `open` uses a configured executable path or `PATH` discovery. Derive reports unsupported operations until Unit 9 rather than fabricating frames.
 - **Patterns:** Probe subprocess adapters; strict contracts; shared library functions for every action.
 - **Test scenarios:** Unknown subject blocks with choices; same seed/spec yields same adapter inputs; reroll appends new seeds; pick/approve/reject/exception exercise legal states. Three-job remove/abort preserves cancellation and starts third after restart. Missing editor fails open but export/import works; save/finish/discard preserves or restores edit-session pixels and provenance; palette-changing headless conform exits nonzero with diff. Packing is reproducible; publish rejects unapproved palette/licence and preserves partial-state fallback.
 - **Verification:** Real local F1/F2/F4 on Zeus idle-south and six-expression portrait set, including installed Aseprite fidelity. T1 also needs seated and strike sets before its checkpoint. Owner approvals are explicit; CLI invocation never invents them.
@@ -297,7 +298,7 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 - [ ] Produce seamless map-ready terrain.
 - **Requirements:** R19, R20; F5; X02.
 - **Dependencies:** Tier 2; existing preview layer.
-- **Files:** Create `packages/assets/src/tiles.ts`, `tiles.test.ts`, `tiled.ts`, `tiled.test.ts`; extend CLI/app map surfaces and tests; add `content/greek/assets/tiles/`, map fixture and evidence; traceability.
+- **Files:** Extend `packages/contracts/src/assets.ts` with the tile manifest kind and vocabulary, and `tools/content/src/assets.ts` validation (Unit 2 rejects `tile`); create `packages/assets/src/tiles.ts`, `tiles.test.ts`, `tiled.ts`, `tiled.test.ts`; extend CLI/app map surfaces and tests; add `content/greek/assets/tiles/`, map fixture and evidence; traceability.
 - **Approach:** Generate or choose a seamless base texture through the existing candidate/provenance/approval flow, then stamp sixteen dual-grid masks; isometric diamonds and declared layer/occlusion. Export Tiled JSON tilesets/Wang metadata with correct eight-value wang IDs and map orientation. No 47-tile expansion.
 - **Patterns:** Deterministic recipes, guide grid/elevation/depth order; Tiled format reference in research.
 - **Test scenarios:** Generated and chosen texture paths retain provenance and require approval; non-seamless source reports edge failures. All sixteen masks are generated; neighbouring edge pixels match; identical texture/recipe regenerates bytes; invalid Wang references reject; exported tileset reloads into map preview; elevated/tall props sort correctly at layer ties.
@@ -307,7 +308,7 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 - [ ] Publish reproducible thunder-strike sound.
 - **Requirements:** R2, R5, R8, R20, R22; AE8; X05.
 - **Dependencies:** Tier 2; package/vendoring and encoder approval where needed. May run alongside Unit 11 in an isolated lane.
-- **Files:** Create `packages/assets/src/sound.ts`, `sound.test.ts`, `audio-encode.ts`, `audio-encode.test.ts`; extend CLI/app parameter panel and tests; add `content/greek/assets/sound/`, scene audio fixture and evidence; traceability and sound ADR/index.
+- **Files:** Extend `packages/contracts/src/assets.ts` with the sound manifest kind and vocabulary, and `tools/content/src/assets.ts` validation (Unit 2 rejects `sound`); create `packages/assets/src/sound.ts`, `sound.test.ts`, `audio-encode.ts`, `audio-encode.test.ts`; extend CLI/app parameter panel and tests; add `content/greek/assets/sound/`, scene audio fixture and evidence; traceability and sound ADR/index.
 - **Approach:** Presets, seeded mutation, editable parameters and re-render. Parameters/seed/sample rate/algorithm/encoder versions are source; normalize true peak to −1 dBTP and render Opus with fixed encoding metadata. Optional configured local LLM proposes validated parameters only and follows heavy-model unload ordering. No SFX model until an unmet synth sound is identified and separately approved. Playback uses one input-unlocked AudioContext.
 - **Patterns:** Manifest provenance and deterministic derivation; research zzfx/jsfxr and audio processing notes.
 - **Test scenarios:** Sound render/proposal jobs use the shared queue/provenance envelope; unavailable optional providers surface staging, and asynchronous jobs exercise removal/cancellation with no late result. AE8 delete derived render then regenerate identical bytes; invalid parameters reject; fixed seed mutation repeats; clipping input normalizes within true-peak target; absent local LLM leaves presets fully offline; unloaded model precedes optional LLM load; first-input playback works in packaged webview, including decoder/pre-skip behavior.
@@ -353,9 +354,9 @@ The simulation remains authoritative. Renderers consume recorded outcomes and as
 
 ## Documentation / Operational Notes
 
-Every requirement-bearing unit records actual evidence in traceability; no unrun acceptance is marked satisfied. Preserve ADR-0007 history with a measured supersession note. New architecture ADRs carry Status, Context, Decision, Consequences, Evidence and requirement IDs and update `docs/decisions/README.md`. Capture reusable solved problems under `docs/solutions/` after each merged unit.
+Every requirement-bearing unit records actual evidence in traceability; no unrun acceptance is marked satisfied. New architecture ADRs carry Status, Context, Decision, Consequences, Evidence and requirement IDs and update `docs/decisions/README.md`. Capture reusable solved problems under `docs/solutions/` after each merged unit.
 
-Verification includes frozen dependency installation and the workspace type/lint/test gate; touched Tauri crates require formatting and warning-free clippy. No dependencies, lockfile, capabilities, CI/build/release changes, deletions, public writes or merges bypass owner approval. Palette/canon decisions use the owner gate after evidence/doc updates. Owner opens PRs and merges manually; no automerge.
+Verification includes frozen dependency installation and the workspace type/lint/test gate; touched Tauri crates require formatting and warning-free clippy. No dependencies, lockfile, capabilities, CI/build/release changes, deletions, public writes or merges bypass owner approval. Palette/canon decisions use the owner gate after evidence/doc updates. Pushing and PR creation need owner approval; the owner merges manually, with no automerge.
 
 ---
 
