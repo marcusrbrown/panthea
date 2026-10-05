@@ -25,13 +25,7 @@ function weights(name: string, content = "weights"): string {
   return path;
 }
 
-/**
- * Scripted tree readings in place of `ps`: no sleeping fixture has to stay
- * alive long enough for a real sampler to see it. The first pid asked about is
- * the first server (60 MiB resident) and any later pid is a replacement (80
- * MiB), so each phase's peak says which server was read in it. Every call is
- * counted, and the idle wait reads through the same function.
- */
+/** Scripted readings in place of `ps`: first pid read is 60 MiB, any later (replacement) pid 80 MiB. */
 function scriptedUsage() {
   const pids: number[] = [];
   const calls: number[] = [];
@@ -128,10 +122,6 @@ describe("runArm happy path", () => {
   });
 
   it("records sampled resident evidence with startup and per-cell phases from the readings it was given", async () => {
-    // The sampler reads through the injected reader, so no fixture needs to hold
-    // memory or delay its start for a real `ps` to catch it. One cell with no
-    // warmup keeps the run short; it still has a startup phase and a
-    // with-LoRA and a control phase.
     const usage = scriptedUsage();
     const report = await runArm(
       await config(
@@ -160,8 +150,7 @@ describe("runArm happy path", () => {
       expect(phase.sampleCount).toBeGreaterThan(0);
       expect(phase.observedSampledPeakKb).toBe(60 * 1024);
     }
-    // Every counted sample is one scripted reading; a reading still in flight
-    // when the sampler stops is not counted.
+    // A reading still in flight when the sampler stops is not counted.
     const counted = Object.values(resident?.byPhase ?? {}).reduce(
       (n, p) => n + p.sampleCount,
       0,
@@ -247,7 +236,6 @@ describe("runArm blocked arms", () => {
 
 describe("runArm server failures", () => {
   it("records failed cells (no timings) when the server never becomes ready, and stops it", async () => {
-    // The fixture's 8 s start delay is never reached: the 50 ms bound ends the wait.
     const cfg = await config(
       { FAKE_READY_DELAY_MS: "8000" },
       {},
@@ -329,8 +317,7 @@ describe("runArm timeout stops the server process", () => {
 
 describe("runArm timeout escalation", () => {
   it("escalates to SIGKILL when the server ignores SIGTERM", async () => {
-    // The grace is shortened only here, where escalation is the point: a server
-    // that exits on SIGTERM must not be given a window short enough to miss.
+    // Short grace only here: other tests need a server that exits on SIGTERM not to escalate.
     const cfg = await config(
       { FAKE_JOB_MS: "30000", FAKE_IGNORE_SIGTERM: "1" },
       {
@@ -360,8 +347,6 @@ describe("runArm timeout escalation", () => {
 
 describe("runArm cancel probe", () => {
   it("aborts an in-flight job by restarting the server and records abort-to-exit, restart-to-ready and idle evidence", async () => {
-    // Readings are scripted, so the restart phase needs no long fixture start to
-    // span sampler ticks, and the idle wait's one reading is a known number.
     const usage = scriptedUsage();
     const cfg = await config(
       { FAKE_JOB_MS: "30000" },
@@ -382,12 +367,10 @@ describe("runArm cancel probe", () => {
     expect(probe.cancel?.readiness).toBe("ready");
     expect(probe.cancel?.abortToExitMs).not.toBeNull();
     expect(probe.cancel?.restartToReadyMs).not.toBeNull();
-    // The first idle reading (1% CPU) is under the 50% threshold.
     expect(probe.cancel?.idle).toBe("below-threshold");
     expect(probe.cancel?.idleCpuEvidence.map((e) => e.cpuPercent)).toEqual([1]);
     expect("outputs" in probe).toBe(false);
     expect(report.servers).toHaveLength(2);
-    // The first server was read before the abort and the replacement during the restart.
     expect(usage.pids).toHaveLength(2);
     const byPhase = report.resident?.byPhase ?? {};
     expect(Object.keys(byPhase).sort()).toEqual([

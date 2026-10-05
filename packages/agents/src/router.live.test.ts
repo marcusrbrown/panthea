@@ -1,10 +1,8 @@
 // One call through the production path against a live local Ollama: the
 // routing config parser, the router, the OpenAI-compatible adapter, and
-// Ollama's /v1 endpoint, with the derived 4K model. Opt-in: it runs only when
-// PANTHEA_LIVE_OLLAMA=1 (`bun run test:live`), never because Ollama happens to
-// be reachable, so `bun test` and `bun run check` give the same result on every
-// machine. Once opted in, a missing Ollama or model fails the test with the
-// reason. To set the model up, see tools/probes/inference-baseline/README.md.
+// Ollama's /v1 endpoint, with the derived 4K model. Opt-in: runs only with
+// PANTHEA_LIVE_OLLAMA=1 (`bun run test:live`); once opted in, a missing Ollama
+// or model fails. Setup: tools/probes/inference-baseline/README.md.
 
 import { expect, test } from "bun:test";
 import { type ParseResult, parseRoutingConfig } from "./config";

@@ -30,14 +30,14 @@ function child(
   return proc;
 }
 
-/** Ends the grandchild a fixture left holding the pipes, so cleanup need not wait out the drain bound. */
+/** Kills the grandchild holding the pipes so cleanup skips the drain bound. */
 function releasePipes(proc: ManagedProcess): void {
   const pid = Number(/spawned (\d+)/.exec(proc.output().stdout)?.[1]);
   if (Number.isInteger(pid)) {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
-      // Already gone.
+      // already gone
     }
   }
 }
@@ -89,8 +89,7 @@ describe("spawnManaged readiness", () => {
 describe("spawnManaged readiness after termination", () => {
   it("reports exited, not ready, when the child dies while a probe is in flight", async () => {
     const proc = child("process.exit(7);");
-    // The probe is still in flight when the child dies, and answers true only
-    // after it has: no sleep to outlast the child's start.
+    // The probe answers true only after the child has died.
     const ready = await proc.waitReady(
       async () => {
         await proc.exited;
@@ -112,9 +111,7 @@ describe("spawnManaged readiness after termination", () => {
       pollMs: 10,
     });
     expect(ready).toMatchObject({ status: "exited", exitCode: 7 });
-    // The pipes are still held, so the drain is still pending: had waitReady
-    // waited it out, the process would already be settled. (An order, not a
-    // wall-clock bound.)
+    // Drain still pending: waitReady did not wait it out.
     expect(proc.state()).not.toBe("exited");
     releasePipes(proc);
   });
@@ -172,9 +169,7 @@ describe("spawnManaged stop", () => {
   });
 
   it("keeps a crashing child's last words, not counting them as late, when the stop request raced its death", async () => {
-    // Its last words are read after the stop was requested (the handler runs
-    // because of the request), but the exit is its own crash, not a stop: the
-    // same disposition as a crash whose output the stop request overtook.
+    // Output read after the stop request is kept when the exit is the child's own crash.
     const proc = child(
       "process.on('SIGTERM', () => { process.stdout.write('last-words\\n'); process.abort(); }); console.log('ready'); setInterval(() => {}, 1000);",
     );
@@ -211,8 +206,7 @@ describe("spawnManaged stop", () => {
       "const gc = Bun.spawn([process.execPath, '-e', 'setTimeout(() => {}, 1500)'], { stdout: 'inherit', stderr: 'inherit' });" +
         "console.log('spawned ' + gc.pid); setTimeout(() => process.abort(), 50);",
     );
-    // Resolves with "exited" the moment termination is observed (the pipes are
-    // still held by the grandchild, so the drain is still pending).
+    // Resolves "exited" once termination is observed, while the drain is pending.
     const ready = await proc.waitReady(() => false, {
       timeoutMs: 5_000,
       pollMs: 5,
@@ -220,7 +214,7 @@ describe("spawnManaged stop", () => {
     expect(ready.status).toBe("exited");
     expect(proc.state()).not.toBe("exited");
     const stopping = proc.stop();
-    // Release the grandchild so the drain ends now, after the stop has landed.
+    // Release the pipes after the stop has landed.
     releasePipes(proc);
     const stopped = await stopping;
     expect(stopped.exit).toMatchObject({
@@ -432,9 +426,7 @@ describe("restartToReady idle evidence", () => {
       },
     });
     expect(result.cancel.idle).toBe("below-threshold");
-    // An order of events, not a duration: the total was stamped at readiness,
-    // which is before the idle wait's first reading. (`startedAt` precedes the
-    // call's own start, so this holds without any tolerance.)
+    // Ordering, not duration: the total is stamped before the first idle reading.
     expect(firstIdleReadAt).not.toBeNull();
     expect(
       startedAt + (result.cancel.totalCancelToReadyMs ?? Number.NaN),

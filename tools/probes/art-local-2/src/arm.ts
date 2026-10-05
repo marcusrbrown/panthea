@@ -51,7 +51,7 @@ export interface ArmConfig {
     readonly baseUrl: string;
     readonly env?: Readonly<Record<string, string>>;
     readonly readyTimeoutMs: number;
-    /** Ready bound for a replacement started by the cancel probe; defaults to `readyTimeoutMs`. */
+    /** Ready bound for the cancel probe's replacement; defaults to `readyTimeoutMs`. */
     readonly restartReadyTimeoutMs?: number;
     readonly maxLifetimeMs: number;
     readonly stopGraceMs?: number;
@@ -211,10 +211,7 @@ export async function runArm(
   hooks: {
     readonly onImage?: (event: ImageEvent) => void;
     readonly onServerLog?: (event: ServerLogEvent) => void;
-    /**
-     * Reads the server tree's RSS and CPU for the sampler and the idle wait;
-     * defaults to the real `ps` reader. Tests inject scripted readings.
-     */
+    /** RSS/CPU reader for the sampler and idle wait; defaults to `ps`. */
     readonly readUsage?: UsageReader;
   } = {},
 ): Promise<ArmReport> {

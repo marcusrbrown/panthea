@@ -3,10 +3,7 @@ import { rmSync } from "node:fs";
 import { runEndToEnd, runPhases } from "./measure";
 import { createWorld, makeRunDir } from "./world";
 
-// A four-minute gap is four of the world's own 60 s chunks: enough to cross
-// several chunk boundaries and the ending commit, in a fraction of the hour's
-// time. The full hour is `bun run bench:hour`, which makes the same checks at
-// 60 chunks. Every assertion below is in chunks (N), not a fixed count.
+// Four 60 s chunks; the full hour is `bun run bench:hour`.
 const GAP_MS = 4 * 60 * 1000;
 
 test("a short mirrored run and the real catch-up produce the same event stream and the same world: the mirror does the same work, not a different one", async () => {
@@ -23,7 +20,6 @@ test("a short mirrored run and the real catch-up produce the same event stream a
     expect(phases.projectionDigest).toBe(hour.projectionDigest);
     expect(phases.added.events).toBe(hour.added.events);
     expect(phases.added.outcomes).toBe(hour.added.outcomes);
-    // The instrumented run times every chunk too, as the real run does.
     expect(phases.chunkHeldMs).toHaveLength(chunks);
     expect(hour.chunkGapsMs).toHaveLength(chunks);
     // Both left a trace that answers where every event came from.
@@ -33,7 +29,6 @@ test("a short mirrored run and the real catch-up produce the same event stream a
       expect(run.trace.brokenEventLinks).toBe(0);
       expect(run.trace.eventsWithoutOutcome).toBe(0);
     }
-    // The phases cover the run: nothing named is bigger than the whole.
     const named = Object.values(phases.phases);
     expect(named.length).toBeGreaterThan(5);
     real.dispose();

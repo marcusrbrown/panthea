@@ -207,13 +207,9 @@ export interface RunFixtureInSubprocessOptions {
   readonly runtime: Runtime;
   readonly fixtureId: string;
   readonly category: FixtureCategory;
-  /** The supervisor's outer wall-clock kill (the backstop, not the boundary under test). */
+  /** The supervisor's outer wall-clock kill (the backstop). */
   readonly deadlineMs?: number;
-  /**
-   * The engine's own deadline inside the child (the interrupt handler or the
-   * Lua count hook), which is the mechanism this probe measures. Omit for the
-   * engine default (250 ms); tests shorten it so a runaway fixture ends fast.
-   */
+  /** The engine's own deadline inside the child; omit for its 250 ms default. */
   readonly engineDeadlineMs?: number;
   readonly rssLimitBytes?: number;
   readonly expect?: FixtureExpectation;
@@ -256,8 +252,7 @@ export async function runFixtureInSubprocess(
       }
     }
   };
-  // One sample at once, so a child that ends before the first interval tick
-  // (a short engine deadline) still has a recorded RSS.
+  // Sample at once: a child may end before the first interval tick.
   sampleRss();
   const sampleTimer = setInterval(sampleRss, RSS_SAMPLE_INTERVAL_MS);
 

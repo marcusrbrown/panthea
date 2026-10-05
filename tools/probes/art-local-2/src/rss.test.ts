@@ -11,7 +11,7 @@ import {
   waitForTreeIdle,
 } from "./rss";
 
-/** Waits for a condition, not a duration: polls every few ms and fails only at a generous bound. */
+/** Polls for a condition instead of sleeping; fails at a 10 s bound. */
 async function until(condition: () => boolean, what: string): Promise<void> {
   const giveUpAt = Date.now() + 10_000;
   while (!condition()) {
@@ -101,10 +101,7 @@ describe("readTreeUsage (real processes)", () => {
       Number.parseInt(rootOnly.trim(), 10) + 90 * 1024,
     );
 
-    // The real sampler (default reader, no injection) sees the same tree. This
-    // is the one test that runs it against a live process: everything else that
-    // needs RSS readings scripts them. It waits for the first reading, not for
-    // a fixed time.
+    // The one live-process test of the real sampler (default reader).
     const sampler = createTreeSampler({
       intervalMs: 20,
       rootPid: proc.pid,

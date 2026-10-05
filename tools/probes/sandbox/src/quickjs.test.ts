@@ -10,10 +10,7 @@ import { runFixtureInSubprocess } from "./host";
 
 const RUN_FILE_PATH = join(import.meta.dir, "run.ts");
 
-// Runaway fixtures end at the engine's own deadline, so tests shorten it from
-// the 250 ms default: the child's clock starts once its engine is loaded, and
-// the supervisor's outer kill (1.2 s) stays the backstop. A runaway fixture that
-// ended by that kill, not the engine, fails the tests below.
+// Short engine deadline; the supervisor's 1.2 s kill stays the backstop.
 const RUNAWAY_DEADLINE_MS = 50;
 
 function run(

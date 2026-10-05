@@ -1,8 +1,5 @@
-// Manual full-hour validity check (`bun run bench:hour`), outside `bun test`.
-// It is what `measure.test.ts` asserts at a four-minute gap, run at the whole
-// hour: 3,600 ticks, 60 chunks, the mirror and the real catch-up agreeing on
-// the event stream and the final projection, and the chunk gaps and the ending
-// commit tiling the run. It takes a few seconds; it exits 1 on any mismatch.
+// Manual full-hour check (`bun run bench:hour`): the `measure.test.ts` assertions
+// at 60 chunks instead of 4. Exits 1 on any mismatch.
 
 import { strict as assert } from "node:assert";
 import { rmSync } from "node:fs";

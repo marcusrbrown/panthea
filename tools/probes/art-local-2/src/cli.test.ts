@@ -555,9 +555,7 @@ describe("main cancel probe: the replacement must come back", () => {
     const cfg = JSON.parse(readFileSync(configPath, "utf8"));
     cfg.server.readyTimeoutMs = 1_000;
     cfg.server.stopGraceMs = 50;
-    // The first launch needs the full bound to come up; the replacement that
-    // never listens is given up on after 50 ms. (A replacement that exits is
-    // seen to exit, whatever the bound.)
+    // Only the replacement gets the short bound; the first launch needs the full one.
     if (onRestart === "never-ready") cfg.server.restartReadyTimeoutMs = 50;
     writeFileSync(configPath, JSON.stringify(cfg));
     const code = await main(["--config", configPath, "--out", out]);

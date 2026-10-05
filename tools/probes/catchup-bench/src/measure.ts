@@ -91,8 +91,7 @@ export async function runBare(world: OpenWorld): Promise<number> {
 }
 
 /**
- * One hour of the real `runCatchUp` (or `gapMs`, a whole number of chunks; the
- * tests use a few minutes, the manual `bench:hour` check the full hour).
+ * One hour (or `gapMs`, a whole number of chunks) of the real `runCatchUp`.
  *
  * Every commit boundary is stamped, by wrapping the `commitTick` that `TickDeps`
  * already lets a caller inject. The production `onChunkCommitted` callback
@@ -170,7 +169,7 @@ export interface PhaseRun extends RunResult {
   readonly chunkHeldMs: readonly number[];
 }
 
-/** One hour (or `gapMs`, a whole number of chunks) through the mirror loop, with the database, reducers, and large JSON timed. */
+/** One hour (or `gapMs`) through the mirror loop, with the database, reducers, and large JSON timed. */
 export async function runPhases(
   world: OpenWorld,
   gapMs = HOUR_MS,
