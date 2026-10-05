@@ -105,11 +105,28 @@ describe("runArm happy path", () => {
   });
 
   it("records sampled resident evidence with startup and per-cell phases", async () => {
-    const report = await runArm(await config({ FAKE_ALLOC_MB: "60" }));
+    // The sampler can only see what is still resident when it looks, so the
+    // fixture holds its 60 MiB (resident before it listens) and each job runs
+    // 400 ms: the run lasts far longer than a sampling tick (20 ms plus one `ps`),
+    // however slow `ps` is on a busy machine. One cell with no warmup keeps the
+    // run short; it still has a startup phase and a with-LoRA and a control phase.
+    const report = await runArm(
+      await config(
+        { FAKE_ALLOC_MB: "60", FAKE_JOB_MS: "400" },
+        {
+          cells: [{ id: "512x640", width: 512, height: 640 }],
+          warmupCount: 0,
+          sampleCount: 1,
+        },
+      ),
+    );
     expect(report.resident?.semantics).toBe(
       "observed-sampled-peak-not-guaranteed-maximum",
     );
-    expect(report.resident?.observedSampledPeakKb).toBeGreaterThan(50 * 1024);
+    expect(
+      report.resident?.observedSampledPeakKb,
+      `resident evidence: ${JSON.stringify(report.resident)}`,
+    ).toBeGreaterThan(50 * 1024);
     expect(Object.keys(report.resident?.byPhase ?? {})).toContain("startup");
     expect(
       Object.keys(report.resident?.byPhase ?? {}).some((p) =>
