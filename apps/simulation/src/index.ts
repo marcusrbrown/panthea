@@ -290,6 +290,9 @@ export function startService(options: StartOptions): ServiceHandle {
     statusRef.modelEndpoints = initialEndpointStatus(routing);
   }
 
+  /** Set once, by `shutdown`: whatever is still running after that has no store to read or frame to publish. */
+  let shuttingDown = false;
+
   // Set synchronously at the start of every `runCatchUpNow` call, before
   // that call's first `await` -- so by the time any other code in this
   // process runs, a catch-up run already in flight is visible. This lets
@@ -318,6 +321,11 @@ export function startService(options: StartOptions): ServiceHandle {
         nowWallMs,
         onChunkCommitted: () => pauseRequestedDuringCatchUp,
       });
+      if (shuttingDown) {
+        // Stopped while the backlog ran: the store is closed, and there is
+        // nothing left to publish.
+        return Boolean(result.degraded);
+      }
       state = result.state;
       prng = result.prng;
       refreshStatusAfterCatchUp(statusRef, result, store);
@@ -403,6 +411,9 @@ export function startService(options: StartOptions): ServiceHandle {
     const gap = now - currentClock.cursorWallMs;
     if (gap > SLEEP_GAP_THRESHOLD_MS) {
       void runCatchUpNow(now).then((degraded) => {
+        if (shuttingDown) {
+          return;
+        }
         queue = [...buildRoutineQueue(state)];
         if (degraded && tickTimer) {
           clearInterval(tickTimer);
@@ -448,6 +459,11 @@ export function startService(options: StartOptions): ServiceHandle {
   // `/pause` and every other request are served while this chunks
   // through the backlog.
   void runCatchUpNow(Date.now()).then(() => {
+    // A service stopped while its catch-up ran has closed its store; there is
+    // nothing left to publish, and a frame built now would read a closed one.
+    if (shuttingDown) {
+      return;
+    }
     startupCatchUpComplete = true;
     queue = [...buildRoutineQueue(state)];
     serverHandle.broadcastFrame();
@@ -457,7 +473,6 @@ export function startService(options: StartOptions): ServiceHandle {
     log("panthea-simulation: startup catch-up complete");
   });
 
-  let shuttingDown = false;
   function shutdown(reason: string): void {
     if (shuttingDown) {
       return;

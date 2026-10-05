@@ -31,8 +31,8 @@ export interface TestService {
   exits(): readonly number[];
   /** Resolves once `count` more cycles of `kind` have run. */
   waitCycles(kind: TickCycle, count: number): Promise<void>;
-  /** Shuts the service down as stdin EOF would, releasing its lock and its store. */
-  stop(): void;
+  /** Shuts the service down as stdin EOF would, releasing its lock and its store. Returns the exit code it asked for. */
+  stop(): number | undefined;
   /** Calls the service's API with the test token. */
   call(path: string, init?: RequestInit): Promise<Response>;
 }
@@ -53,6 +53,39 @@ export const NO_SETTINGS: LaunchConfig = {
 
 const running = new Set<TestService>();
 
+// A real process's stderr is part of "what the service printed", and a test
+// that asserts no key was printed has to see it. In this process the service
+// prints through `onLog` and, in a few places, `console.error` and
+// `console.warn`; while any test service runs, those two are tee'd into every
+// running service's lines, and restored when the last one stops.
+const sinks = new Set<(text: string) => void>();
+let restoreConsole: (() => void) | undefined;
+
+function teeConsole(sink: (text: string) => void): () => void {
+  sinks.add(sink);
+  if (!restoreConsole) {
+    const original = { error: console.error, warn: console.warn };
+    const tee =
+      (kind: "error" | "warn") =>
+      (...args: unknown[]) => {
+        const text = args.map((arg) => String(arg)).join(" ");
+        for (const each of sinks) each(text);
+        original[kind](...args);
+      };
+    console.error = tee("error");
+    console.warn = tee("warn");
+    restoreConsole = () => {
+      console.error = original.error;
+      console.warn = original.warn;
+      restoreConsole = undefined;
+    };
+  }
+  return () => {
+    sinks.delete(sink);
+    if (sinks.size === 0) restoreConsole?.();
+  };
+}
+
 /** Starts the service in this process on `options.appDataDir`. Stops itself when the test ends if `stopAll` is called from `afterEach`. */
 export function startTestService(options: TestServiceOptions): TestService {
   const lines: { at: number; text: string }[] = [];
@@ -67,6 +100,9 @@ export function startTestService(options: TestServiceOptions): TestService {
   const waiters: { kind: TickCycle; target: number; resolve: () => void }[] =
     [];
   const token = options.token ?? TEST_TOKEN;
+  const untee = teeConsole((text) => {
+    lines.push({ at: Date.now(), text });
+  });
   const handle = startService({
     token,
     launch: options.launch ?? NO_SETTINGS,
@@ -105,6 +141,8 @@ export function startTestService(options: TestServiceOptions): TestService {
     stop: () => {
       running.delete(service);
       handle.shutdown("stdin-eof");
+      untee();
+      return exits.at(-1);
     },
     call: (path, init = {}) =>
       fetch(`http://127.0.0.1:${handle.port}${path}`, {

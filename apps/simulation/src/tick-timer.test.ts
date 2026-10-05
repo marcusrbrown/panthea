@@ -7,7 +7,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readCatchUpSummary, readClock } from "@panthea/persistence";
+import {
+  closeStore,
+  openStore,
+  readCatchUpSummary,
+  readClock,
+} from "@panthea/persistence";
 import {
   checkTickTimerMs,
   parseTickTimerEnv,
@@ -21,6 +26,10 @@ import {
   tickOf,
   until,
 } from "./test-service";
+import {
+  createWorldProjectionReducers,
+  loadGreekWorldState,
+} from "./world-store";
 
 const INDEX_ENTRY = join(import.meta.dir, "index.ts");
 
@@ -182,5 +191,33 @@ describe("the spawned service reads the environment variable", () => {
       proc.kill();
       await proc.exited;
     }
+  });
+});
+
+describe("a service stopped while its startup catch-up runs", () => {
+  test("publishes nothing afterwards: no completion line, and no frame built from the store it closed", async () => {
+    // A store ten minutes behind with a ten minute cap: a backlog that is still
+    // running when the service is stopped one cycle in.
+    const loaded = loadGreekWorldState();
+    const seeded = {
+      ...loaded,
+      rules: { ...loaded.rules, catchUpCapMs: 10 * 60 * 1000 },
+    };
+    const store = openStore(
+      join(appDataDir, "active", "world.sqlite"),
+      createWorldProjectionReducers(seeded),
+    );
+    store.db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
+      Date.now() - 10 * 60 * 1000,
+    ]);
+    closeStore(store);
+
+    const service = startTestService({ appDataDir });
+    await service.waitCycles("catch-up-running", 1);
+    expect(service.stop()).toBe(0);
+    // The catch-up's continuation runs a few turns later; an error it threw
+    // would surface as an unhandled error and fail this test.
+    await Bun.sleep(300);
+    expect(service.output()).not.toContain("startup catch-up complete");
   });
 });
