@@ -21,7 +21,7 @@
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "biome check .",
     "fix": "biome check --write .",
-    "test": "bun test --parallel=8",
+    "test": "bun test --parallel=4",
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "devDependencies": {
