@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveAsset } from "@panthea/assets";
+import { resolveAsset, sha256Hex } from "@panthea/assets";
 import {
   committedVocabulary,
   type FixtureAsset,
@@ -25,6 +25,7 @@ import {
   type AssetId,
   type ConformanceReport,
   canonicalJson,
+  canonicalManifestText,
   newCandidate,
   transitionAsset,
 } from "@panthea/contracts";
@@ -267,6 +268,35 @@ describe("broken registry", () => {
     );
     expect(diagnosticsOf(root).map((d) => d.file)).toEqual([
       `assets/registry/manifests/${zeus}.json`,
+    ]);
+  });
+});
+
+describe("a blob that is only a PNG header", () => {
+  it("is reported against the blob file, not accepted", () => {
+    const root = contentRoot();
+    const [full] = [...spriteFixture().blobs.values()];
+    const bytes = (full as Uint8Array).slice(0, 29);
+    const hash = sha256Hex(bytes);
+    const manifest = {
+      ...spriteFixture().manifest,
+      atlas: { blob: hash, width: 256, height: 80 },
+    };
+    const text = new TextEncoder().encode(canonicalManifestText(manifest));
+    const revision = sha256Hex(text);
+    const registry = registryOf(root);
+    mkdirSync(join(registry, "blobs"), { recursive: true });
+    mkdirSync(join(registry, "manifests"), { recursive: true });
+    writeFileSync(join(registry, "blobs", `${hash}.png`), bytes);
+    writeFileSync(join(registry, "manifests", `${revision}.json`), text);
+    writeFileSync(
+      join(registry, "index.json"),
+      `${canonicalJson({ schemaVersion: 1, entries: [{ assetId: "placeholder-zeus", revision }] })}\n`,
+    );
+    const result = validateAssets(root);
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((d) => d.file)).toEqual([
+      `assets/registry/blobs/${hash}.png`,
     ]);
   });
 });

@@ -6,5 +6,5 @@
 
 export * from "./hash";
 export * from "./placeholder";
-export * from "./png";
+export { type PngHeader, readPngHeader } from "./png";
 export * from "./resolve";

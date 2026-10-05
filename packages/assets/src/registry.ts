@@ -17,6 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { inflateSync } from "node:zlib";
 import {
   type AssetErrorCode,
   type AssetId,
@@ -35,7 +36,7 @@ import {
   transitionAsset,
 } from "@panthea/contracts";
 import { sha256Hex } from "./hash";
-import { readPngHeader } from "./png";
+import { filtersValid, inflatedLength, parsePng } from "./png";
 import type { RegistrySnapshot, SnapshotEntry } from "./resolve";
 
 export interface RegistryProblem {
@@ -91,7 +92,11 @@ function writeAtomic(path: string, bytes: string | Uint8Array): void {
   }
 }
 
-/** Checks a blob against its declared hash and atlas size. */
+/**
+ * Checks a blob against its declared hash and atlas size: well-formed PNG
+ * chunks, and image data that inflates to exactly the scanlines the header
+ * implies with legal filter bytes. Pixels and palette indices are not decoded.
+ */
 function checkBlob(
   bytes: Uint8Array,
   hash: Sha256,
@@ -100,13 +105,36 @@ function checkBlob(
 ): Checked<true> {
   if (sha256Hex(bytes) !== hash)
     return bad("corrupt-blob", file, `bytes do not hash to ${hash}`);
-  const header = readPngHeader(bytes);
-  if (header === undefined) return bad("corrupt-blob", file, "not a PNG");
-  if (header.width !== atlas.width || header.height !== atlas.height) {
+  const parsed = parsePng(bytes);
+  if (!parsed.ok)
+    return bad("corrupt-blob", file, `not a valid PNG: ${parsed.reason}`);
+  const { png } = parsed;
+  if (png.width !== atlas.width || png.height !== atlas.height) {
     return bad(
       "corrupt-blob",
       file,
-      `PNG is ${header.width}x${header.height}, the atlas declares ${atlas.width}x${atlas.height}`,
+      `PNG is ${png.width}x${png.height}, the atlas declares ${atlas.width}x${atlas.height}`,
+    );
+  }
+  const expected = inflatedLength(png);
+  if (!Number.isSafeInteger(expected)) {
+    return bad("corrupt-blob", file, "image data size is not representable");
+  }
+  let raw: Uint8Array;
+  try {
+    raw = inflateSync(Buffer.concat(png.idat), { maxOutputLength: expected });
+  } catch {
+    return bad(
+      "corrupt-blob",
+      file,
+      "image data does not inflate to the scanline size",
+    );
+  }
+  if (!filtersValid(raw, png)) {
+    return bad(
+      "corrupt-blob",
+      file,
+      "image data is not the expected scanlines",
     );
   }
   return { ok: true, value: true };

@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import {
   type AssetId,
   type AssetManifest,
@@ -502,4 +503,211 @@ describe("loading damaged registries", () => {
       problems: [],
     });
   });
+});
+
+// --- A blob must be a whole PNG, not just a header ----------------------------
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  const body = new Uint8Array(4 + data.length);
+  body.set(new TextEncoder().encode(type), 0);
+  body.set(data, 4);
+  const out = new Uint8Array(12 + data.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, data.length);
+  out.set(body, 4);
+  view.setUint32(8 + data.length, Bun.hash.crc32(body) >>> 0);
+  return out;
+}
+
+/** A PNG with valid chunk framing and CRCs around `raw` scanline bytes. */
+function pngOf(options: {
+  readonly width: number;
+  readonly height: number;
+  readonly raw: Uint8Array;
+  readonly bitDepth?: number;
+  readonly colorType?: number;
+  readonly interlace?: number;
+  readonly palette?: Uint8Array;
+}): Uint8Array {
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, options.width);
+  view.setUint32(4, options.height);
+  ihdr[8] = options.bitDepth ?? 8;
+  ihdr[9] = options.colorType ?? 6;
+  ihdr[12] = options.interlace ?? 0;
+  const parts = [
+    Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", ihdr),
+    ...(options.palette ? [pngChunk("PLTE", options.palette)] : []),
+    pngChunk("IDAT", deflateSync(options.raw)),
+    pngChunk("IEND", new Uint8Array(0)),
+  ];
+  return Buffer.concat(parts);
+}
+
+/** The sprite fixture with its atlas replaced by `bytes` (declared 256x80, like the fixture's own). */
+function spriteWithBlob(bytes: Uint8Array): FixtureAsset {
+  const base = spriteFixture();
+  const hash = sha256Hex(bytes);
+  return {
+    manifest: {
+      ...base.manifest,
+      atlas: { blob: hash, width: 256, height: 80 },
+    },
+    blobs: new Map([[hash, bytes]]),
+  };
+}
+
+const rows = (count: number, rowBytes: number) =>
+  new Uint8Array(count * rowBytes);
+
+describe("a blob must be a whole PNG, not just a header", () => {
+  const truncated = () => {
+    const [bytes] = [...spriteFixture().blobs.values()];
+    return (bytes as Uint8Array).slice(0, 29);
+  };
+
+  it("refuses to publish a hash-consistent PNG cut off after its header, leaving the registry as it was", () => {
+    const dir = root();
+    publish(dir, spriteFixture("placeholder-hera", 5));
+    const indexBefore = textOf(join(dir, "index.json"));
+    const blobsBefore = listing(join(dir, "blobs"));
+    const manifestsBefore = listing(join(dir, "manifests"));
+
+    const cut = spriteWithBlob(truncated());
+    const result = publishAsset(dir, approved(cut), cut.blobs, vocabulary);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("corrupt-blob");
+    expect(textOf(join(dir, "index.json"))).toBe(indexBefore);
+    expect(listing(join(dir, "blobs"))).toEqual(blobsBefore);
+    expect(listing(join(dir, "manifests"))).toEqual(manifestsBefore);
+  });
+
+  it("loads a hand-written revision whose blob is a bare header as a corrupt-blob problem and falls back", () => {
+    const dir = root();
+    const healthy = publish(dir, portraitFixture());
+    const cut = spriteWithBlob(truncated());
+    const text = new TextEncoder().encode(canonicalManifestText(cut.manifest));
+    const revision = sha256Hex(text);
+    const blobPath = `blobs/${cut.manifest.atlas.blob}.png`;
+    writeFileSync(
+      join(dir, blobPath),
+      [...cut.blobs.values()][0] as Uint8Array,
+    );
+    writeFileSync(join(dir, "manifests", `${revision}.json`), text);
+    writeFileSync(
+      join(dir, "index.json"),
+      `${canonicalJson({
+        schemaVersion: 1,
+        entries: [
+          { assetId: "placeholder-zeus", revision },
+          { assetId: "zeus-portrait", revision: healthy.revision },
+        ],
+      })}\n`,
+    );
+
+    const loaded = loadRegistry(dir, vocabulary);
+    expect(loaded.problems).toHaveLength(1);
+    expect(loaded.problems[0]?.file).toBe(blobPath);
+    expect(loaded.snapshot.entries.has("zeus-portrait")).toBe(true);
+    expect(
+      resolveAsset(loaded.snapshot, { spriteId: "placeholder-zeus" }),
+    ).toMatchObject({
+      source: "placeholder",
+      reason: "missing-id",
+    });
+    expect(
+      resolveAsset(loaded.snapshot, {
+        spriteId: "zeus-portrait",
+        expression: "neutral",
+      }),
+    ).toMatchObject({
+      source: "canon",
+    });
+  });
+
+  const cases: [string, Uint8Array][] = [
+    [
+      "a deflate stream with too few rows",
+      pngOf({ width: 256, height: 80, raw: rows(79, 1025) }),
+    ],
+    [
+      "a deflate stream with extra output",
+      pngOf({ width: 256, height: 80, raw: rows(81, 1025) }),
+    ],
+    [
+      "a filter byte of 5",
+      pngOf({
+        width: 256,
+        height: 80,
+        raw: Object.assign(rows(80, 1025), { [1025 * 3]: 5 }),
+      }),
+    ],
+  ];
+  for (const [name, bytes] of cases) {
+    it(`refuses ${name}, writing nothing`, () => {
+      const dir = root();
+      const asset = spriteWithBlob(bytes);
+      const result = writeRevision(
+        dir,
+        asset.manifest,
+        asset.blobs,
+        vocabulary,
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe("corrupt-blob");
+      expect(existsSync(dir)).toBe(false);
+    });
+  }
+
+  const supported: [string, Uint8Array][] = [
+    [
+      "RGB 8-bit",
+      pngOf({ width: 256, height: 80, colorType: 2, raw: rows(80, 769) }),
+    ],
+    [
+      "indexed 8-bit with a palette",
+      pngOf({
+        width: 256,
+        height: 80,
+        colorType: 3,
+        raw: rows(80, 257),
+        palette: Uint8Array.from([0, 0, 0, 255, 255, 255]),
+      }),
+    ],
+    [
+      "grayscale 16-bit",
+      pngOf({
+        width: 256,
+        height: 80,
+        colorType: 0,
+        bitDepth: 16,
+        raw: rows(80, 513),
+      }),
+    ],
+    [
+      "Adam7 interlaced RGBA 8-bit",
+      pngOf({
+        width: 256,
+        height: 80,
+        interlace: 1,
+        raw: new Uint8Array(82070),
+      }),
+    ],
+    [
+      "the repository's own encoder",
+      spriteFixture().blobs.values().next().value as Uint8Array,
+    ],
+  ];
+  for (const [name, bytes] of supported) {
+    it(`still publishes ${name}`, () => {
+      const dir = root();
+      const asset = spriteWithBlob(bytes);
+      expect(
+        publishAsset(dir, approved(asset), asset.blobs, vocabulary).ok,
+      ).toBe(true);
+      expect(loadRegistry(dir, vocabulary).problems).toEqual([]);
+    });
+  }
 });
