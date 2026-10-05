@@ -172,7 +172,7 @@ env:
         bun install --frozen-lockfile
         bun run typecheck
         bun run lint
-        bun run test:serial
+        bun run test
     - Biome (bun run lint) excludes docs/. Validate Markdown links with a
       small inline script (e.g. a short Node/Bun script that walks
       docs/**/*.md), not a new dependency.
@@ -209,7 +209,7 @@ env:
          bun install --frozen-lockfile
          bun run typecheck
          bun run lint
-         bun run test:serial
+         bun run test
        Apply safe mechanical fixes (lint/format autofixes) on a PR branch —
        NEVER commit directly to main. A mechanical fix changes no
        requirement, so it does not touch docs/product/traceability.md. If a gate fails and the fix is not
