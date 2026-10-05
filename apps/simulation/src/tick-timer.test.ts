@@ -1,7 +1,5 @@
-// The tick timer's period is the one thing a fast test changes. A tick is
-// still one simulated second and still moves the cursor one second, so a fast
-// timer puts the cursor ahead of the wall clock; these tests pin that down,
-// and that it can never read as a sleep-wake gap or start a catch-up.
+// A fast timer changes only the period: the cursor runs ahead of the wall clock,
+// so it never reads as a sleep-wake gap or starts a catch-up.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -124,8 +122,7 @@ describe("a fast timer", () => {
     await until("the restart's startup catch-up", () =>
       second.output().includes("startup catch-up complete") ? true : undefined,
     );
-    // The cursor was ahead, so the gap was negative and nothing was applied
-    // or skipped: no summary was written for it.
+    // The cursor was ahead: nothing applied or skipped, so no summary.
     expect(
       readStore(appDataDir, (db) => readCatchUpSummary(db)),
     ).toBeUndefined();
@@ -168,7 +165,7 @@ describe("the spawned service reads the environment variable", () => {
   test("PANTHEA_TICK_INTERVAL_MS=10 makes the spawned world tick tens of times a second", async () => {
     const { proc } = await spawnWith({ [TICK_TIMER_ENV]: "10" });
     try {
-      // At the default period this takes 21 s; the bound only stops a hang.
+      // Takes 21 s at the default period.
       await until("twenty ticks", () =>
         readStore(appDataDir, (db) => readClock(db).tick) >= 20
           ? true
@@ -196,8 +193,7 @@ describe("the spawned service reads the environment variable", () => {
 
 describe("a service stopped while its startup catch-up runs", () => {
   test("publishes nothing afterwards: no completion line, and no frame built from the store it closed", async () => {
-    // A store ten minutes behind with a ten minute cap: a backlog that is still
-    // running when the service is stopped one cycle in.
+    // A 10-minute backlog, still running when the service stops.
     const loaded = loadGreekWorldState();
     const seeded = {
       ...loaded,
@@ -215,8 +211,7 @@ describe("a service stopped while its startup catch-up runs", () => {
     const service = startTestService({ appDataDir });
     await service.waitCycles("catch-up-running", 1);
     expect(service.stop()).toBe(0);
-    // The catch-up's continuation runs a few turns later; an error it threw
-    // would surface as an unhandled error and fail this test.
+    // An error in the continuation would surface as an unhandled error.
     await Bun.sleep(300);
     expect(service.output()).not.toContain("startup catch-up complete");
   });

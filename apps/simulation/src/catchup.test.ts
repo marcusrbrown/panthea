@@ -457,17 +457,10 @@ function failsInsideCommit(failOn: number) {
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/**
- * The cap most of these tests run under. What they check is cap and discard
- * accounting, which does not depend on the cap's size, and a catch-up costs
- * about 0.9 ms of CPU per simulated second, so the authored hour makes each of
- * them take three seconds, and more on a busy machine. Ten minutes is ten
- * chunks and 600 ticks. One test (`missed time above the cap`) runs the
- * authored world and pins the authored hour itself.
- */
+/** Cap for tests of cap accounting; the authored hour costs ~3 s each. One test pins the authored hour. */
 const CAP_MS = 10 * 60 * 1000;
 
-/** The authored world, with its catch-up cap replaced when `capMs` is given: the one place a test's world is made, so the store a backlog creates and every run over it agree on the cap. */
+/** The authored world, with its catch-up cap replaced when `capMs` is given. */
 function loadWorld(capMs?: number) {
   const authored = loadGreekWorldState();
   return capMs === undefined

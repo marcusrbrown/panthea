@@ -2,10 +2,8 @@
 // keys on the launch line: endpoint status from real requests, a keyed endpoint
 // whose key is missing, offline mode, and the sentinel check that a key reaches
 // only the request. Every "never" has a positive control that fails the run if
-// the check could not see a leak. The service runs in this process on a fast
-// tick timer, with its console output captured; the one test that needs real
-// stdout, stderr and a real process exit (the planted key on the launch line)
-// spawns it.
+// the check could not see a leak. The service runs in-process on a fast tick
+// timer; the planted-key test spawns it for real stdio.
 
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -129,7 +127,7 @@ interface Launch {
   readonly keys?: Record<string, string>;
 }
 
-/** The service in this process on a fast tick timer. */
+/** The service in this process. */
 async function spawnService(launch: Launch): Promise<Service> {
   const appDataDir = mkdtempSync(join(tmpdir(), "panthea-sim-settings-"));
   dirs.push(appDataDir);
@@ -149,7 +147,7 @@ async function spawnService(launch: Launch): Promise<Service> {
   return service;
 }
 
-/** The service as a separate process, with its real stdout, stderr and exit code. */
+/** The service as a separate process. */
 async function spawnProcess(launch: Launch): Promise<Service> {
   const appDataDir = mkdtempSync(join(tmpdir(), "panthea-sim-settings-"));
   dirs.push(appDataDir);

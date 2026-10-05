@@ -1,10 +1,5 @@
-// Runs the service in the test's own process, on a fast tick timer, for tests
-// whose subject is not the process boundary. A spawned service costs a second
-// of real time per test (the first live tick) plus whatever a test sleeps
-// through; this one ticks every few milliseconds and counts cycles instead of
-// sleeping. What still needs a real process (the stdin protocol, a real
-// SIGKILL, a second launch refused by the lock) stays spawned, with
-// `PANTHEA_TICK_INTERVAL_MS` set to the same fast period.
+// Runs the service in the test's own process on a fast tick timer. Tests that
+// need a real process (stdin protocol, SIGKILL, lock refusal) spawn it instead.
 
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
@@ -22,7 +17,7 @@ export interface TestService {
   readonly handle: ServiceHandle;
   readonly port: number;
   readonly appDataDir: string;
-  /** What the service logged, one entry per line, with the wall time it was logged. */
+  /** What the service logged, with wall times. */
   lines(): readonly { readonly at: number; readonly text: string }[];
   output(): string;
   /** Timer cycles by kind since the service started. */
@@ -31,7 +26,7 @@ export interface TestService {
   exits(): readonly number[];
   /** Resolves once `count` more cycles of `kind` have run. */
   waitCycles(kind: TickCycle, count: number): Promise<void>;
-  /** Shuts the service down as stdin EOF would, releasing its lock and its store. Returns the exit code it asked for. */
+  /** Shuts down as stdin EOF would; returns the exit code. */
   stop(): number | undefined;
   /** Calls the service's API with the test token. */
   call(path: string, init?: RequestInit): Promise<Response>;
@@ -44,7 +39,7 @@ export interface TestServiceOptions {
   readonly tickTimerMs?: number;
 }
 
-/** The launch config of a service with no settings: no routing, so no god takes a turn. */
+/** No settings: no routing, so no god takes a turn. */
 export const NO_SETTINGS: LaunchConfig = {
   routing: undefined,
   offline: false,
@@ -53,11 +48,8 @@ export const NO_SETTINGS: LaunchConfig = {
 
 const running = new Set<TestService>();
 
-// A real process's stderr is part of "what the service printed", and a test
-// that asserts no key was printed has to see it. In this process the service
-// prints through `onLog` and, in a few places, `console.error` and
-// `console.warn`; while any test service runs, those two are tee'd into every
-// running service's lines, and restored when the last one stops.
+// While a test service runs, console.error/warn are tee'd into its lines, as
+// stderr would be for a real process.
 const sinks = new Set<(text: string) => void>();
 let restoreConsole: (() => void) | undefined;
 
@@ -86,7 +78,7 @@ function teeConsole(sink: (text: string) => void): () => void {
   };
 }
 
-/** Starts the service in this process on `options.appDataDir`. Stops itself when the test ends if `stopAll` is called from `afterEach`. */
+/** Starts the service in this process on `options.appDataDir`. */
 export function startTestService(options: TestServiceOptions): TestService {
   const lines: { at: number; text: string }[] = [];
   const exits: number[] = [];
@@ -159,7 +151,7 @@ export function stopAllTestServices(): void {
   for (const service of [...running]) service.stop();
 }
 
-/** Reads the store without disturbing it: read-only while a service holds it, read-write once none does (a cleanly stopped WAL store cannot be opened read-only). */
+/** Reads the store: read-only while a service holds it, read-write once stopped (a WAL store). */
 export function readStore<T>(appDataDir: string, fn: (db: Database) => T): T {
   const path = join(appDataDir, "active", "world.sqlite");
   for (const readonly of [true, false]) {
@@ -187,7 +179,7 @@ export const tickOf = (appDataDir: string): number =>
 export const journalOf = (appDataDir: string) =>
   readStore(appDataDir, (db) => listExternalProposals(db));
 
-/** Polls `probe` until it returns a value. The bound only stops a hung test; nothing waits on it. */
+/** Polls `probe` until it returns a value; the bound only stops a hang. */
 export async function until<T>(
   what: string,
   probe: () => T | undefined | Promise<T | undefined>,

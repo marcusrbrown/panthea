@@ -49,25 +49,17 @@ import {
 } from "./world-store";
 
 const APP_IDENTIFIER = "ai.panthe.desktop";
-/** One world tick is one simulated second, and a live tick moves the persisted cursor forward by this much. */
+/** Simulated milliseconds per tick. */
 const TICK_INTERVAL_MS = 1000;
 const PARENT_POLL_INTERVAL_MS = 2000;
 /** A wall-clock gap between ticks larger than this is treated as a sleep/wake event (catch-up), not ordinary timer jitter. */
 const SLEEP_GAP_THRESHOLD_MS = 5_000;
 const DEFAULT_PRNG_SEED = 1;
 
-/** The environment variable that sets how often the tick timer fires; tests use it to run the world faster than real time. */
+/** Sets the tick timer period in ms; for tests. */
 export const TICK_TIMER_ENV = "PANTHEA_TICK_INTERVAL_MS";
 
-/**
- * How often the timer may fire, in milliseconds: every whole number from 1 to
- * the tick interval. A timer faster than the tick interval is safe: a tick
- * still moves the world one simulated second and the cursor one second, so the
- * cursor runs ahead of the wall clock, the gap goes negative, and neither a
- * sleep-wake catch-up nor a restart's catch-up applies anything for it. A
- * timer slower than the tick interval would let the gap grow past the
- * sleep threshold and start catch-ups of its own, so it is refused.
- */
+/** A period is 1 to the tick interval; a slower timer would open a sleep gap and trigger catch-ups. */
 export function checkTickTimerMs(
   ms: number,
 ): { readonly ok: true } | { readonly ok: false; readonly message: string } {
@@ -80,7 +72,7 @@ export function checkTickTimerMs(
   };
 }
 
-/** Reads `PANTHEA_TICK_INTERVAL_MS`: `undefined` when it is unset, a problem message when it is not a usable period. */
+/** Reads the tick timer env var; `undefined` ms when unset. */
 export function parseTickTimerEnv(
   env: NodeJS.ProcessEnv = process.env,
 ):
@@ -189,17 +181,13 @@ export interface StartOptions {
   readonly onLog?: (message: string) => void;
   /** Test-only OS-assigned port (0) instead of the real service port. */
   readonly port?: number;
-  /**
-   * How often the tick timer fires, in milliseconds; see `checkTickTimerMs`.
-   * It changes the period only: a tick is still one simulated second. Tests
-   * set it so a world ticks tens of times a second.
-   */
+  /** Tick timer period in ms (see `checkTickTimerMs`); a tick is still one simulated second. */
   readonly tickTimerMs?: number;
-  /** Called with the exit code where the service would end its process (a refused lock, a shutdown). Defaults to `process.exit`; a test that runs the service in its own process passes one that does not. */
+  /** Called with the exit code instead of `process.exit`. */
   readonly exit?: (code: number) => void;
-  /** Install the SIGTERM and SIGINT handlers. Defaults to true; a test that runs the service in its own process leaves them off. */
+  /** Install SIGTERM/SIGINT handlers (default true). */
   readonly handleSignals?: boolean;
-  /** Called after every timer cycle with what it did, so a test can count cycles instead of sleeping. */
+  /** Called after every timer cycle. */
   readonly onCycle?: (cycle: TickCycle) => void;
 }
 
@@ -290,7 +278,7 @@ export function startService(options: StartOptions): ServiceHandle {
     statusRef.modelEndpoints = initialEndpointStatus(routing);
   }
 
-  /** Set once, by `shutdown`: whatever is still running after that has no store to read or frame to publish. */
+  /** Set by `shutdown`. */
   let shuttingDown = false;
 
   // Set synchronously at the start of every `runCatchUpNow` call, before
@@ -322,8 +310,7 @@ export function startService(options: StartOptions): ServiceHandle {
         onChunkCommitted: () => pauseRequestedDuringCatchUp,
       });
       if (shuttingDown) {
-        // Stopped while the backlog ran: the store is closed, and there is
-        // nothing left to publish.
+        // Stopped mid catch-up: the store is closed.
         return Boolean(result.degraded);
       }
       state = result.state;
@@ -459,8 +446,7 @@ export function startService(options: StartOptions): ServiceHandle {
   // `/pause` and every other request are served while this chunks
   // through the backlog.
   void runCatchUpNow(Date.now()).then(() => {
-    // A service stopped while its catch-up ran has closed its store; there is
-    // nothing left to publish, and a frame built now would read a closed one.
+    // Stopped mid catch-up: the store is closed.
     if (shuttingDown) {
       return;
     }

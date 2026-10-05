@@ -1,8 +1,7 @@
 // The god turn runner against a real store, journal, trace, and tick loop.
 // The only scripted piece is the model provider, a loopback OpenAI-compatible
 // endpoint the production router talks to. Service-level tests run the real
-// entry point with a model config, in this process on a fast tick timer, and
-// drive it over HTTP.
+// entry point in-process (`test-service.ts`) and drive it over HTTP.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -1892,11 +1891,7 @@ describe("an outage", () => {
 
 // --- The service ----------------------------------------------------------------------------------------
 //
-// The real entry point with a model config: the wiring of the runner into the
-// tick loop and startup catch-up. Most tests run the service in this process on
-// a fast tick timer (`test-service.ts`), so nothing here sleeps and a test waits
-// for a count of ticks. Only what is about the process boundary, the stdin
-// protocol, is spawned, with the same fast timer in its environment.
+// In-process on a fast tick timer; only the stdin protocol is spawned.
 
 const INDEX_ENTRY = join(import.meta.dir, "index.ts");
 const TOKEN = "agents-service-token";
@@ -1951,7 +1946,7 @@ const freshAppDir = (): string => {
   return dir;
 };
 
-/** The service in this process, over a fresh (or given) app data directory, on the fast tick timer. */
+/** The service in this process on the fast tick timer. */
 function startInProcess(
   provider: Provider,
   launch?: unknown,
@@ -1963,7 +1958,7 @@ function startInProcess(
   });
 }
 
-/** The service as a separate process, for the tests whose subject is its stdin. */
+/** The service as a separate process, for stdin tests. */
 async function spawnService(
   provider: Provider,
   launch?: unknown,
@@ -2131,8 +2126,7 @@ describe("the service with model routing configured", () => {
     await until("a model request", () =>
       provider.requests.length > 0 ? true : undefined,
     );
-    // A turn is asked for only after a live tick (`index.ts` calls `dispatch()`
-    // when a tick commits), so the world had already ticked when it came.
+    // `index.ts` calls `dispatch()` after a live tick, so the world had ticked.
     expect(tickWhenAsked).toBeGreaterThanOrEqual(1);
     const start = (await frameOf(service)).sequence;
     const t0 = tickOf(appDataDir);
@@ -2159,7 +2153,7 @@ describe("the service with model routing configured", () => {
     ).toBe(true);
   });
 
-  /** A store `behindMs` behind the wall clock, as a killed service leaves it, in a world whose catch-up cap is `capMs`: the next start has the cap to catch up on and the rest to discard. */
+  /** A store `behindMs` behind the wall clock, in a world with catch-up cap `capMs`. */
   function storeBehind(capMs: number, behindMs: number): string {
     const appDataDir = freshAppDir();
     const loaded = loadGreekWorldState();
@@ -2181,9 +2175,7 @@ describe("the service with model routing configured", () => {
   }
 
   test("takes no turn until startup catch-up has finished: every provider request arrives after the catch-up's own finish line", async () => {
-    // The property is the gate, not the size of the cap: a ten minute cap and a
-    // gap six times it make a real backlog (ten chunks, 600 ticks) in about half
-    // a second, and the timer fires dozens of times inside it.
+    // The gate, not the cap size, is the property: 10 minutes keeps it fast.
     const capMs = 10 * 60 * 1000;
     const appDataDir = storeBehind(capMs, 6 * capMs);
     const provider = startProvider();

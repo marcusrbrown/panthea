@@ -1,11 +1,9 @@
-// The service runs in this process on a fast tick timer (`test-service.ts`)
-// wherever the process boundary is not the subject. What is about the process
-// itself is spawned: the stdin protocol, a refused second launch, and a real
-// SIGKILL. A spawned test passes the same fast timer in its environment and
-// runs the TypeScript entry directly via `bun run` -- never the compiled
-// binary -- matching tools/probes/backend-lifecycle/src/sidecar.test.ts's
-// established pattern. Compiled-binary behavior (offline bun:sqlite, no
-// build-host leakage) is covered by scripts/scan-binary.sh.
+// The service runs in-process on a fast tick timer (`test-service.ts`); the
+// stdin protocol, a refused second launch and a real SIGKILL are spawned via
+// `bun run` -- never the compiled binary -- matching
+// tools/probes/backend-lifecycle/src/sidecar.test.ts's established pattern.
+// Compiled-binary behavior (offline bun:sqlite, no build-host leakage) is
+// covered by scripts/scan-binary.sh.
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -471,7 +469,7 @@ function strikeBody(proposalId: string, observationId: string) {
 }
 
 describe("service (bun run src/index.ts)", () => {
-  /** The service in this process on a fast tick timer, over the test's app data directory. */
+  /** The service in this process on a fast tick timer. */
   const startInProcess = (token: string): TestService =>
     startTestService({
       appDataDir,
@@ -534,9 +532,7 @@ describe("service (bun run src/index.ts)", () => {
   }
 
   test("a summary the service published survives a SIGKILL, fetched or not: the restarted frame carries the identical summary, id included, and still does after the service has ticked on", async () => {
-    // The one summary test with a real process: a SIGKILL leaves the store as a
-    // crash does, and an in-process service cannot be killed without
-    // releasing its lock.
+    // A real SIGKILL: an in-process service cannot be killed without releasing its lock.
     await createStore();
     setCursor(Date.now() - 3 * 60 * 1000);
     const running = await spawnService("summary-token-1");
@@ -601,8 +597,7 @@ describe("service (bun run src/index.ts)", () => {
   });
 
   test("a degraded partial summary meets a restart with nothing new to apply: every frame carries that same summary, id and applied time, because the closing commit reuses the id", async () => {
-    // The property is about the summary, not the size of the cap: a ten minute
-    // cap and a gap five times it discard four caps and apply none.
+    // The cap size does not matter here; 10 minutes keeps the backlog small.
     const CAP_MS = 10 * 60 * 1000;
     const loaded = loadGreekWorldState();
     const seeded = {
@@ -716,8 +711,7 @@ describe("service (bun run src/index.ts)", () => {
       { write: true },
     );
 
-    // Pruning runs when the service starts, before it serves its first tick:
-    // `startService` has returned, so it has already happened.
+    // Pruning runs inside `startService`, before it returns.
     startInProcess("prune-token-2");
     const prunedOld = withActiveDb((db) =>
       getModelRequestByProposalId(db, old),
@@ -829,8 +823,7 @@ describe("service (bun run src/index.ts)", () => {
   });
 
   test("a five hour gap whose first chunk never committed after the discard: the restarted service completes the backlog and its /frame reports all of it, discard included, under a new id", async () => {
-    // The property is about the summary, not the size of the cap: a ten minute
-    // cap and a gap five times it, so the backlog is ten chunks and not sixty.
+    // The cap size does not matter here; 10 minutes keeps the backlog small.
     const CAP_MS = 10 * 60 * 1000;
     const loaded = loadGreekWorldState();
     const seeded = {
