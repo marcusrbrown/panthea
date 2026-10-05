@@ -36,6 +36,7 @@ import { stepOath, stepRefusal, stepSuccessor } from "./steps/s13-settlement";
 import { stepSupplication } from "./steps/s14-supplication";
 import { stepPracticeProperties } from "./steps/s15-practice-properties";
 import { CONTEST_WINDOW_TICKS, stepContest } from "./steps/s16-contest";
+import { stepAlliance, stepHades } from "./steps/s17-cast";
 
 export {
   CONTROL_NAMES,
@@ -64,8 +65,8 @@ export async function runStory(
       endpoints: [
         { id: "scripted", baseUrl: provider.baseUrl, model: "scripted" },
       ],
-      // Every god in the pack needs a route of its own. The provider scripts Zeus
-      // and Hera and answers the other five with a wait.
+      // Every god in the pack needs a route of its own. The provider answers a god
+      // from the replies the steps queue for it, and with a wait when there are none.
       roles: Object.fromEntries(
         [
           "athena",
@@ -128,6 +129,8 @@ export async function runStory(
     await stepOath(recorder, running);
     await stepSupplication(recorder, running);
     await stepContest(recorder, running);
+    await stepAlliance(recorder, running);
+    await stepHades(recorder, running);
     await stepPracticeProperties(recorder, running);
     return { steps: recorder.results, binaryBytes };
   } finally {

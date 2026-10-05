@@ -74,6 +74,24 @@ test("each thread is shown with its cause, participants, moves, ending, and the 
   expect(threads).toContain("woodcutter became wolf as punishment");
 });
 
+test("each god's distinct practices and thread endings are listed, in the order the gods are shown", () => {
+  const { input, ids } = episode();
+  const lines = section(
+    renderTranscript(recordOf(input)),
+    "What each god practiced",
+  ).split("\n");
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toStartWith(
+    "- zeus: settlement, supplication, breach with transformation; thread endings: ",
+  );
+  expect(lines[0]).toContain(`refused [${ids.refused}]`);
+  expect(lines[0]).toContain(`breached [${ids.successor}] by its act`);
+  expect(lines[1]).toStartWith(
+    "- hera: settlement, supplication; thread endings: ",
+  );
+  expect(lines[1]).toContain(`fulfilled [${ids.kept}] by its act`);
+});
+
 test("threads still open at the end are listed with their age and what each waits on; none says so", () => {
   const { input } = episode();
   expect(

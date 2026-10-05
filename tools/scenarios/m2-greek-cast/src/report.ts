@@ -44,7 +44,7 @@ practice steps and the practice properties of the real run, \`thread-reopened\`,
 \`ending-no-consequence\`, \`practices-missing\`, \`consequence-no-effect\`,
 \`contest-no-standing\`, \`alliance-unsealed\`, \`god-silent\`, \`practice-absent\`.
 
-Practice steps (settlement and supplication, scripted gods, the world's real
+Practice steps (settlement, supplication, contest, and alliance; scripted gods, the world's real
 rules; each reply is a function of the prompt its god was shown, so it names
 only what that god could name):
 
@@ -67,13 +67,28 @@ only what that god could name):
   each recorded as a motif citing the closing, and Poseidon is offered no new
   contest over what Athena did before the close. The step runs a 25-tick window
   (\`PANTHEA_PRACTICE_BALANCE\`) in place of the authored five minutes.
-- **S18** The real run's practice properties (\`src/practice-analysis.ts\`) hold
-  over the whole scripted run. A practice control breaks the data first and the
-  property it targets must fail; \`src/practice-analysis.test.ts\` holds the same
-  controls as unit tests.
+- **S18** A sealed alliance: Hephaestus walks to Hermes at the dock and tells him
+  of a kindness; Hermes asks him for an alliance over it, and he accepts. The
+  world ends the thread sealed, each of the two is allied with the other by one
+  relationship-changed event citing its memory of the sealing, and no other
+  relationship in the world is allied. \`alliance-unsealed\` rewrites the sealing
+  as a plain performance.
+- **S19** Hades takes a part in a thread: he walks to the dock and tells Hermes
+  something; Hermes demands of him, and Hades refuses, is named as the refuser,
+  and is remembered for it.
+- **S20** The real run's practice properties (\`src/practice-analysis.ts\`) hold
+  over the whole scripted run, and the full cast played: each of the seven gods
+  made at least one practice move, and every practice appeared (a settlement, a
+  supplication with terms, a contest, a breach with transformation, a sealed
+  alliance, and travel). The result lists each god's practices and thread
+  endings. A practice control breaks the data first and the property it targets
+  must fail (\`god-silent\` silences the god that opened the first thread;
+  \`practice-absent\` deletes the contest); \`src/practice-analysis.test.ts\`
+  holds the same controls as unit tests.
 
 The transcript (\`src/transcript.ts\`) shows each thread's cause, participants,
-moves, ending, and recorded changes, the threads open at the end with their age
+moves, ending, and recorded changes, each god's distinct practices and thread
+endings, the threads open at the end with their age
 and what each waits on, every move judged no progress, every journey a god made
 (where it set out, each hop, how it ended), and a classification of
 each turn an obligated god takes while its obligation is open (R12; an
