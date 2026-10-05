@@ -1,6 +1,6 @@
 // Procedural placeholder art: a deterministic pixel-silhouette composed from
 // a palette and named body/head/prop parts, encoded as real PNG bytes with a
-// stable content-addressed URI (`asset://placeholder/<sha256>`). This is the
+// stable content-addressed logical URI (`panthea-asset://placeholder/<sha256>`). This is the
 // "coherent temporary art while a job runs" piece of U06/U07 — it never
 // depends on a model, never throws (an unknown part name silently falls
 // back to a default silhouette for that slot), and returns instantly.
@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
+import { placeholderUri, type Sha256 } from "@panthea/contracts";
 
 const SIZE = 16;
 const CHANNELS = 4; // RGBA
@@ -196,7 +197,7 @@ export interface PlaceholderInput {
 }
 
 export interface PlaceholderAsset {
-  /** Stable content-addressed URI: `asset://placeholder/<sha256-hex>`. */
+  /** Stable content-addressed logical URI: `panthea-asset://placeholder/<sha256-hex>`. */
   readonly uri: string;
   /** Full PNG file bytes. */
   readonly bytes: Uint8Array;
@@ -308,8 +309,9 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
 
 /**
  * Encodes a raw RGBA pixel buffer (row-major, 4 bytes/pixel, no padding) as
- * a PNG file. Shared by placeholder rendering and bench.ts's contact-sheet
- * compositor so there is exactly one PNG writer in this probe.
+ * a PNG file. Shared by placeholder rendering and the art-local bench's
+ * contact-sheet compositor so there is exactly one PNG writer. Uses node:zlib,
+ * so it is a Node/Bun module, not a browser one.
  */
 export function encodeRgbaPng(
   rgba: Uint8Array,
@@ -388,7 +390,7 @@ export function renderPlaceholder(input: PlaceholderInput): PlaceholderAsset {
   const hash = createHash("sha256").update(bytes).digest("hex");
 
   return {
-    uri: `asset://placeholder/${hash}`,
+    uri: placeholderUri(hash as Sha256),
     bytes,
     width: SIZE,
     height: SIZE,

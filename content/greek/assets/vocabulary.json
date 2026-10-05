@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "version": 1,
+  "directions": ["south", "north", "east", "west"],
+  "expressions": [
+    "neutral",
+    "pleased",
+    "angry",
+    "grieving",
+    "scheming",
+    "awed"
+  ],
+  "paletteFamilies": ["town", "olympus", "underworld"],
+  "tiers": { "min": 1, "max": 3 },
+  "cells": [
+    { "id": "mortal", "w": 64, "h": 64, "kinds": ["sprite"] },
+    { "id": "god", "w": 64, "h": 80, "kinds": ["sprite"] },
+    { "id": "large", "w": 128, "h": 128, "kinds": ["sprite"] },
+    { "id": "portrait", "w": 96, "h": 96, "kinds": ["portrait"] }
+  ],
+  "states": [
+    {
+      "id": "idle",
+      "frames": { "min": 4, "max": 4 },
+      "fps": { "min": 6, "max": 6 }
+    },
+    {
+      "id": "seated",
+      "frames": { "min": 2, "max": 2 },
+      "cellClasses": ["god"]
+    },
+    {
+      "id": "act",
+      "frames": { "min": 4, "max": 6 },
+      "fps": { "min": 10, "max": 12 },
+      "perAbility": true
+    },
+    {
+      "id": "walk",
+      "frames": { "min": 6, "max": 6 },
+      "fps": { "min": 10, "max": 10 }
+    },
+    { "id": "hurt", "frames": { "min": 2, "max": 2 } },
+    { "id": "down", "frames": { "min": 1, "max": 1 } }
+  ],
+  "effect": { "maxEmissiveAccents": 4, "tierOneMaxMs": 300 }
+}

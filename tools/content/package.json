@@ -5,6 +5,16 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "validate:assets": "bun run src/index.ts assets"
+  },
+  "dependencies": {
+    "@panthea/assets": "workspace:*",
+    "@panthea/content": "workspace:*",
+    "@panthea/contracts": "workspace:*"
+  },
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
   }
 }

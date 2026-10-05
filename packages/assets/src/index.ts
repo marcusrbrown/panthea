@@ -1,12 +1,10 @@
-// Generation adapters, provenance, and the asset registry live here.
-// Placeholder until the first generation adapter lands.
+// Asset foundation: deterministic placeholder art, pure registry lookup, PNG
+// and hash helpers. The filesystem registry (publish, load) is the separate
+// "@panthea/assets/registry" subpath, so importing this root never pulls in
+// node:fs. The placeholder and hash modules use node:zlib and node:crypto:
+// this package is for Node and Bun, not the browser.
 
-export interface PackageStatus {
-  readonly package: "assets";
-  readonly ready: false;
-}
-
-export const status: PackageStatus = {
-  package: "assets",
-  ready: false,
-};
+export * from "./hash";
+export * from "./placeholder";
+export * from "./png";
+export * from "./resolve";

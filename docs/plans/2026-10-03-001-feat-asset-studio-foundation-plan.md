@@ -90,8 +90,7 @@ Lessons from existing probes: subprocesses provide real memory/crash containment
   "verdict": "extend",
   "scope": "apps/client/src/renderer, packages/{assets,contracts,content}, tools/content, tools/probes/art-local, tools/probes/{coexistence,provider-matrix,inference-baseline}",
   "freshness": {
-    "vcs_reference": "feat/studio-foundation@5b87b6eec8a0c3bc1c91f2532183610d4b65dccb",
-    "scope_baseline": "65e73e2f0354fd89551f05f58e355360304ea75aa7792a92b284b49c90b444cb"
+    "vcs_reference": "edb2685a6498c79aa439d6c2a34544c8d517f83c"
   },
   "budget": {"max_search_passes": 4, "max_candidate_inspections": 12, "exhausted": false},
   "candidates": [
@@ -199,7 +198,7 @@ flowchart TB
 - **Verification:** Recommend only a measured chain with a stated timing bound on M1 Pro 16 GB; generator comparison is measured here, and studio headroom moves to Unit 7 verification. Differences demonstrate application, not visual quality; owner rates contact sheets. If no chain passes, report measured conflict and alternative without shrinking scope.
 
 ### Unit 2. Contracts, registry and placeholder
-- [ ] Land shared-additive asset foundation.
+- [x] Land shared-additive asset foundation.
 - **Requirements:** R1–R5, R7, R12, R18, R24; U06–U08, X02.
 - **Dependencies:** None on chosen model; core coordination for additive packages.
 - **Files:** Create `packages/contracts/src/assets.ts`, `assets.test.ts`; `packages/assets/src/registry.ts`, `registry.test.ts`, `placeholder.ts`, `placeholder.test.ts`; modify package exports in `packages/contracts/src/index.ts`, `packages/assets/src/index.ts`, `packages/assets/package.json`, `packages/content/src/god-profile.ts`, its tests and exports; create `tools/content/src/assets.ts`, `assets.test.ts`; update its `src/index.ts`, probe placeholder imports/tests, and traceability. Add asset ADR/index entry.

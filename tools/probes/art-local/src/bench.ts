@@ -5,8 +5,8 @@
 // (a small tiled PNG for the owner's review — no automated quality score).
 
 import { inflateSync } from "node:zlib";
+import { encodeRgbaPng } from "@panthea/assets";
 import * as drawthings from "./drawthings";
-import { encodeRgbaPng } from "./placeholder";
 import * as sdcpp from "./sdcpp";
 
 export interface PromptFixture {
