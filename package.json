@@ -22,6 +22,7 @@
     "lint": "biome check .",
     "fix": "biome check --write .",
     "test": "bun test --parallel=4",
+    "test:serial": "bun test",
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "devDependencies": {
