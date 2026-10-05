@@ -90,16 +90,16 @@ Lessons from existing probes: subprocesses provide real memory/crash containment
   "verdict": "extend",
   "scope": "apps/client/src/renderer, packages/{assets,contracts,content}, tools/content, tools/probes/art-local, tools/probes/{coexistence,provider-matrix,inference-baseline}",
   "freshness": {
-    "vcs_reference": "f3bc47ba55d352cf8d94d3a3156fda1f3e5f92dd"
+    "vcs_reference": "78ad4e085e54c96f0b5b4f376377d6f36a3cc853"
   },
   "budget": {"max_search_passes": 4, "max_candidate_inspections": 12, "exhausted": false},
   "candidates": [
-    {"path_or_symbol": "packages/assets/src/index.ts", "description": "Exports hash, placeholder, PNG and pure resolution helpers; filesystem registry is a separate subpath.", "disposition": "extend"},
-    {"path_or_symbol": "packages/assets/src/placeholder.ts:renderPlaceholder", "description": "Deterministic silhouette PNG and content-addressed logical URI, moved unchanged with golden byte tests.", "disposition": "reuse"},
+    {"path_or_symbol": "packages/assets/src/index.ts", "description": "Root exports hash, placeholder rendering, PNG header reading and pure resolution; no RGBA decoder; the filesystem registry is a separate subpath.", "disposition": "extend"},
+    {"path_or_symbol": "packages/assets/src/placeholder.ts:renderPlaceholder", "description": "Deterministic silhouette PNG and content-addressed logical URI; shares CRC from png.ts and preserves six placeholder and one encoder golden vectors.", "disposition": "reuse"},
     {"path_or_symbol": "tools/probes/art-local/src/run.ts", "description": "Probe-only generator runner records provenance, timings, errors, cancellations and result artifacts.", "disposition": "insufficient", "insufficiency_reason": "Probe reporting is not the asset job, editing or publication pipeline."},
     {"path_or_symbol": "packages/content/src/god-profile.ts:GodProfile.sprite", "description": "Core god profile retains stable sprite identity; god-visual-profile.ts separately parses visual metadata.", "disposition": "reuse"},
-    {"path_or_symbol": "packages/contracts/src/content.ts:parseContentPack; packages/contracts/src/assets.ts; packages/contracts/src/asset-lifecycle.ts", "description": "Strict content parsing and reference checks coexist with implemented asset manifests, vocabulary, provenance, lifecycle, job and provider contracts.", "disposition": "reuse"},
-    {"path_or_symbol": "tools/content/src/index.ts:main, validateAssets", "description": "Asset validator CLI and exports are implemented in tools/content/src/assets.ts.", "disposition": "reuse"},
+    {"path_or_symbol": "packages/contracts/src/content.ts:parseContentPack; packages/contracts/src/assets.ts; packages/contracts/src/asset-lifecycle.ts", "description": "Strict content parsing and reference checks coexist with implemented asset manifests, vocabulary, provenance, lifecycle, job and provider contracts; ConformanceReport carries checks, status and messages, with no structured metrics.", "disposition": "reuse"},
+    {"path_or_symbol": "tools/content/src/index.ts:main, validateAssets", "description": "Asset validator CLI and exports are implemented in tools/content/src/assets.ts; it checks registry integrity including PNG chunks and CRCs, bounded scanline inflation and filter bytes, not pixel decoding or conformance.", "disposition": "reuse"},
     {"path_or_symbol": "apps/client/src/renderer/scene.ts:createWorldRenderer", "description": "Draws locations, buildings, actor markers and recent effects; actor placement comes from the current world view.", "disposition": "extend"},
     {"path_or_symbol": "apps/client/src/renderer/markers.ts:createMarkerLayer", "description": "Owns SpriteGroup and Sprite2D attachment, removal and disposal.", "disposition": "extend"},
     {"path_or_symbol": "apps/client/src/renderer/presentation.ts:placeEvents", "description": "Places recent events at a subject location in the viewed realm without choosing assets or world outcomes.", "disposition": "insufficient", "insufficiency_reason": "Event presentation has no asset identity, registry resolution or lifecycle behavior."},
@@ -199,7 +199,7 @@ flowchart TB
 - **Outcome:** Z-Image-Turbo without a LoRA at 512×640 is the draft generator (p50/p95 76.70/76.74 s, n=3); SDXL with pixel-art-xl is the measured comparison; the Civitai Z-Image LoRA was unavailable (HTTP 401). This is a draft generator, not canon or an MVP claim, and studio headroom is measured in Unit 7.
 
 ### Unit 2. Contracts, registry and placeholder
-- [x] Land shared-additive asset foundation (implemented, not yet merged).
+- [x] Land shared-additive asset foundation.
 - **Requirements:** R1–R5, R7, R12, R18, R24; U06–U08, X02.
 - **Dependencies:** None on chosen model; core coordination for additive packages.
 - **Files:** Contracts: `packages/contracts/src/assets.ts`, `asset-lifecycle.ts`, their tests, and `index.ts` exports. Assets: `packages/assets/src/{placeholder,hash,png,resolve,registry,fixtures}.ts` with tests, the M0 placeholder moved from `tools/probes/art-local` with golden-byte tests and its probe imports updated, and `index.ts`/`package.json` exports (root, `./registry`, `./fixtures`). Content: a separate `packages/content/src/god-visual-profile.ts` and test, exported from `index.ts`; `god-profile.ts` is unchanged. Validator: `tools/content/src/assets.ts`, tests and the `index.ts` CLI. Data: `content/greek/assets/` vocabulary, empty registry index and Zeus visual profile. Also traceability and ADR 0009 with its index entry. Approved internal workspace dependencies and their `bun.lock` entries are in; new external dependencies or other lock changes still need owner approval.
@@ -209,11 +209,11 @@ flowchart TB
 - **Verification:** Standalone validator catches invalid mappings/hashes; valid partial canon resolves deterministically. No source dependency or lockfile change without approval.
 
 ### Unit 3. Deterministic conformance
-- [ ] Implement automatic and report-only cleanup.
+- [x] Implement automatic and report-only cleanup.
 - **Requirements:** R9, R11, R12; AE2, AE3; U06, X02.
 - **Dependencies:** Unit 2; provisional palette fixtures suffice.
 - **Files:** Create `packages/assets/src/conformance.ts`, `conformance.test.ts`, `fixtures/conformance/`; update asset exports and traceability.
-- **Approach:** Confidence-bearing grid recovery, deterministic k-centroid reduction, fixed-palette mapping without dithering, binary alpha, canvas/pivot checks, silhouette and mirror reports. Low confidence requests scale; no guess. Hand imports are report-only. Optional external detector remains disabled unless explicitly installed/approved.
+- **Approach:** Confidence-bearing grid recovery, deterministic k-centroid reduction, fixed-palette mapping without dithering, binary alpha, canvas/pivot checks, silhouette and mirror reports. Low confidence requests scale; no guess. Background removal uses caller-supplied alpha or key-colour settings. Key tolerance, grid thresholds, alpha cutoff and palette are explicit inputs. Pure functions work on decoded RGBA and return a typed result: invalid input, needs-scale with grid evidence, or the image, proposal, contract report, local metrics and pixel diff. Hand imports are report-only. Optional external detector remains disabled unless explicitly installed/approved.
 - **Patterns:** M0 deterministic encoder and art-guide checks; stable iteration and tie-breaking.
 - **Test scenarios:** AE2 71-colour 8× input produces correct 64×80 grid and bounded colours; identical input produces identical bytes/reports; ambiguous grid requires supplied scale; invalid pivot, stray pixels and asymmetric mirror produce specific reports; report-only hand edit returns diff with unchanged input bytes; portrait interior antialias and declared effect accents obey kind rules.
 - **Verification:** Fixture results expose detected scale, merged colours and moved pixels; automated silhouette checks do not certify recognizable identity.
