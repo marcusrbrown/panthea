@@ -24,6 +24,7 @@ import {
   primaryTarget,
   REPETITION_CAP,
 } from "./episode-analysis";
+import { journeysOf, renderJourneyCounts, renderJourneys } from "./journeys";
 import { analyzePractices, type ThreadRecord } from "./practice-analysis";
 import {
   committedInOrder,
@@ -589,6 +590,22 @@ function renderDispositions(record: EpisodeRecord): string {
   ].join("\n");
 }
 
+function journeysIn(record: EpisodeRecord) {
+  return journeysOf(record.input.events, record.input.timing?.startLocations);
+}
+
+/** Every journey a god made, from the run's own events; no check reads it. */
+function renderJourneySection(record: EpisodeRecord): string {
+  const journeys = journeysIn(record);
+  return journeys.length === 0
+    ? renderJourneys(journeys, (god) => nameOf(record, god))
+    : [
+        `- journeys: ${renderJourneyCounts(journeys)}`,
+        "",
+        renderJourneys(journeys, (god) => nameOf(record, god)),
+      ].join("\n");
+}
+
 function renderChecks(record: EpisodeRecord): string {
   const rows = record.episode.gods.flatMap((g) =>
     g.checks.map(
@@ -677,6 +694,10 @@ export function renderTranscript(record: EpisodeRecord): string {
     "## What the world did",
     "",
     renderWorldNotes(record),
+    "",
+    "## Journeys",
+    "",
+    renderJourneySection(record),
     "",
     "## Practice threads",
     "",
@@ -773,6 +794,7 @@ export function renderSummary(
     `- Model: ${modelLine(settings)}`,
     `- ${records.length} episodes of ${settings.seconds} s, each a fresh world from the initial authored Greek state; no fixtures, no seeds`,
     `- dispositions: ${renderDispositionCounts(records.flatMap((record) => buildDispositions(record.input)))}`,
+    `- journeys: ${renderJourneyCounts(records.flatMap(journeysIn))}`,
     "",
     "## Automated checks",
     "",

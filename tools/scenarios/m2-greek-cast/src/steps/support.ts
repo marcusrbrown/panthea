@@ -133,21 +133,23 @@ export async function locationOf(
   return (await stateOf(story)).actors.get(toEntityId(actor))?.locationId;
 }
 
-/** A god moves (or crosses realms) to `to`, and is observed there. */
-export async function walk(
-  story: Story,
-  god: God,
-  kind: "move" | "realm-transition",
-  to: string,
-): Promise<void> {
+/**
+ * A god travels to `to`: one scripted travel turn, then the world walks the
+ * journey one hop a tick until the god stands there.
+ */
+export async function walk(story: Story, god: God, to: string): Promise<void> {
   await driveGod(
     story,
     god,
-    kind,
-    JSON.stringify({ action: kind, to }),
-    `${god} goes to ${to}`,
+    "travel",
+    JSON.stringify({ action: "travel", to }),
+    `${god} sets out for ${to}`,
   );
-  const at = await locationOf(story, god);
+  const at = await waitFor(
+    `${god} arrives at ${to}`,
+    async () => ((await locationOf(story, god)) === to ? to : undefined),
+    { timeoutMs: 30_000, intervalMs: 100 },
+  );
   check(at === to, `${god} stands at ${to}`, String(at));
 }
 

@@ -116,7 +116,7 @@ test("the transcript opens with the settings and an identity header per god from
 test("actions are listed in the order the world applied them, each with tick, god, action and target, backing, and the model's own words", () => {
   const actions = buildActions(story());
   expect(actions.map((a) => `${a.god}:${a.verb}`)).toEqual([
-    "zeus:move → olympus-gate",
+    "zeus:travel → olympus-gate",
     "hera:legend",
     "zeus:report → hera",
   ]);
@@ -135,7 +135,7 @@ test("actions are listed in the order the world applied them, each with tick, go
     text.indexOf("## What happened"),
     text.indexOf("## Repetition"),
   );
-  const order = ["move → olympus-gate", "legend", "report → hera"].map((s) =>
+  const order = ["travel → olympus-gate", "legend", "report → hera"].map((s) =>
     happened.indexOf(s),
   );
   expect(order.every((i) => i >= 0)).toBe(true);
@@ -154,7 +154,7 @@ test("each action lists the events it caused and the beliefs and feelings that f
   const text = renderTranscript(story());
   expect(text).toContain("hera → zeus: affinity -1");
   // The move caused no belief or feeling: nothing listed under it.
-  const move = buildActions(story()).find((a) => a.verb.startsWith("move"));
+  const move = buildActions(story()).find((a) => a.verb.startsWith("travel"));
   expect(move?.changes).toEqual([]);
 });
 
@@ -666,9 +666,9 @@ test("the repetition summary lists every distinct choice a god made, not the top
     .slice(text.indexOf("## Repetition"), text.indexOf("## Automated checks"))
     .split("\n")
     .find((line) => line.startsWith("- Zeus:"));
-  for (const to of targets) expect(zeus).toContain(`move:${to}`);
-  expect(zeus).toContain("move:a ×2");
-  expect(zeus).toContain("move:h ×1");
+  for (const to of targets) expect(zeus).toContain(`travel:${to}`);
+  expect(zeus).toContain("travel:a ×2");
+  expect(zeus).toContain("travel:h ×1");
   // Control: a god with one choice lists one.
   const hera = text.split("\n").find((line) => line.startsWith("- Hera:"));
   expect(hera).toContain("Choices: none");
@@ -714,12 +714,12 @@ test("goal-set and goal-ended lines are rendered in order, and each action sits 
         ?.trim(),
     ),
   ).toEqual([
-    "move → great-hall (context-backed)",
+    "travel → great-hall (context-backed)",
     "goal set → farmer (declaration)",
-    "move → town-square (context-backed)",
+    "travel → town-square (context-backed)",
     "report → farmer (context-backed)",
     "goal ended (achieved) (declaration)",
-    "move → tavern (context-backed)",
+    "travel → tavern (context-backed)",
   ]);
   expect(blocks[1]?.block).toContain('"Win the farmer\'s devotion."');
   expect(blocks[4]?.block).toContain('"Win the farmer\'s devotion."');
@@ -773,7 +773,7 @@ test("an action that carries a goal change is chosen under the old goal, and the
   );
   expect(lines).toEqual([
     "goal set → hera (declaration)",
-    "move → olympus-gate (context-backed)",
+    "travel → olympus-gate (context-backed)",
     "goal ended (abandoned) (declaration)",
     "goal set → farmer (declaration)",
   ]);
@@ -1158,7 +1158,7 @@ function dispositionRecord(index = 1): EpisodeRecord {
       outcome: "rejected",
     }),
   ];
-  const apart = act("zeus", { kind: "move", to: "tavern" }, 8, {
+  const apart = act("zeus", { kind: "travel", to: "tavern" }, 8, {
     outcome: "rejected",
   });
   const rejections = [...refused, apart];
@@ -1193,10 +1193,10 @@ function dispositionRecord(index = 1): EpisodeRecord {
 test("the transcript lists every god proposal with the action and what the world did with it, rejections and their reason codes included", () => {
   const text = renderTranscript(dispositionRecord());
   expect(text).toContain("## What the world did with every proposal");
-  expect(text).toMatch(/Zeus: move → olympus-gate — committed: entity-moved/);
+  expect(text).toMatch(/Zeus: travel → olympus-gate — committed: entity-moved/);
   expect(text).toMatch(/Hera: bless → pet-1 — rejected: stale-target/);
   expect(text).toMatch(/Hera: bless → pet-2 — rejected: stale-target/);
-  expect(text).toMatch(/Zeus: move → tavern — rejected: not-adjacent/);
+  expect(text).toMatch(/Zeus: travel → tavern — rejected: not-adjacent/);
   expect(text).toContain("- dispositions: bless 2 × stale-target");
   // The committed-actions list still holds only what committed.
   const committedSection = text.split("## What happened")[1]?.split("##")[0];
@@ -1215,7 +1215,7 @@ test("the summary adds one line counting dispositions by action kind and outcome
     files: ["episode-1.md", "episode-2.md"],
   });
   expect(text).toContain(
-    "- dispositions: bless 4 × stale-target, move 2 × committed, move 2 × not-adjacent",
+    "- dispositions: bless 4 × stale-target, travel 2 × committed, travel 2 × not-adjacent",
   );
 });
 
@@ -1299,5 +1299,123 @@ test("the world section lists each half of a supplication's bargain as the world
   );
   expect(lines[1]).toContain(
     "farmer's offering to hera was seen made [evt-5-2] (evt-14-3)",
+  );
+});
+
+// --- Journeys: read from the run's own events ---------------------------------------
+
+/** Zeus's journey to the mountain path, as the world's log holds it, and Hera's refused one. */
+function journeyEvents(): Record<string, unknown>[] {
+  const envelope = (
+    id: string,
+    sequence: number,
+    tick: number,
+    correlationId: string,
+  ) => ({
+    schemaVersion: 1,
+    id,
+    sequence,
+    simTime: tick * 1000,
+    tick,
+    correlationId,
+    causationId: correlationId,
+    approximate: false,
+  });
+  return [
+    {
+      ...envelope("evt-5-100", 100, 5, "obs-travel"),
+      kind: "journey-started",
+      entityId: "zeus",
+      to: "mountain-path",
+    },
+    {
+      ...envelope("evt-5-101", 101, 5, "evt-5-100"),
+      kind: "entity-moved",
+      entityId: "zeus",
+      to: "olympus-gate",
+    },
+    {
+      ...envelope("evt-6-102", 102, 6, "evt-5-100"),
+      kind: "realm-transitioned",
+      entityId: "zeus",
+      to: "mountain-path",
+      via: "olympus-gate",
+    },
+    {
+      ...envelope("evt-6-103", 103, 6, "evt-5-100"),
+      kind: "journey-ended",
+      entityId: "zeus",
+      journeyEventId: "evt-5-100",
+      ending: "arrived",
+    },
+    {
+      ...envelope("evt-9-104", 104, 9, "obs-pit"),
+      kind: "journey-started",
+      entityId: "hera",
+      to: "pit",
+    },
+    {
+      ...envelope("evt-9-105", 105, 9, "evt-9-104"),
+      kind: "journey-ended",
+      entityId: "hera",
+      journeyEventId: "evt-9-104",
+      ending: "refused",
+      reason: "restricted-realm",
+    },
+  ];
+}
+
+function journeyRecord(): EpisodeRecord {
+  const base = record([], journeyEvents());
+  const input = {
+    ...base.input,
+    timing: {
+      gods: ["zeus", "hera"],
+      endedAtMs: 0,
+      endTick: 300,
+      startLocations: { zeus: "great-hall", hera: "great-hall" },
+    },
+  };
+  return { ...base, input };
+}
+
+test("the transcript shows each journey from the run's own events: the god, where it started and went, when, each hop, and how it ended", () => {
+  const text = renderTranscript(journeyRecord());
+  const section = text.split("## Journeys")[1]?.split("\n## ")[0] ?? "";
+  expect(section).toContain(
+    "- journeys: 2 started: 1 arrived, 1 refused (restricted-realm), 0 replaced, 0 still travelling",
+  );
+  expect(section).toContain(
+    "1. Zeus: great-hall → mountain-path, set out at tick 5, 2 hops, arrived at tick 6",
+  );
+  expect(section).toContain("   - tick 5: moved to olympus-gate");
+  expect(section).toContain(
+    "   - tick 6: crossed from olympus-gate to mountain-path",
+  );
+  expect(section).toContain(
+    "2. Hera: great-hall → pit, set out at tick 9, 0 hops, refused at tick 9 (restricted-realm)",
+  );
+});
+
+test("an episode in which no god travelled says so, and no check reads journeys", () => {
+  const text = renderTranscript(record([move("zeus", "olympus-gate", 2)]));
+  expect(text.split("## Journeys")[1]?.split("\n## ")[0]).toContain(
+    "No god set out on a journey.",
+  );
+  // The checks table is unchanged by journeys: a refused journey fails nothing.
+  const checks = (r: EpisodeRecord) =>
+    r.episode.gods.flatMap((g) => g.checks.map((c) => [c.name, c.ok]));
+  const plain = record([], []);
+  expect(checks(journeyRecord())).toEqual(checks(plain));
+});
+
+test("the summary adds one line counting journeys started and how they ended across all episodes", () => {
+  const text = renderSummary([journeyRecord(), journeyRecord()], {
+    seconds: 300,
+    model: "m",
+    files: ["episode-1.md", "episode-2.md"],
+  });
+  expect(text).toContain(
+    "- journeys: 4 started: 2 arrived, 2 refused (restricted-realm ×2), 0 replaced, 0 still travelling",
   );
 });

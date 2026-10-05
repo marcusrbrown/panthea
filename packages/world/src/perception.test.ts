@@ -412,7 +412,8 @@ test("a realm transition is perceived at its destination and not from outside", 
     events,
   );
   expect(outside?.events).toEqual([]);
-  expect(JSON.stringify(outside)).not.toContain("olympus-gate");
+  // The gate is a place Zeus could travel to, so the snapshot may name it as one; nothing of the crossing is in what he perceived.
+  expect(JSON.stringify(outside?.events)).not.toContain("olympus-gate");
 });
 
 test("the cap keeps the newest perceived events: remote events never crowd out older local ones", () => {
@@ -648,4 +649,51 @@ test("a blessing is still seen by the recipient itself at the place it was given
   const events = [blessed("farmer", 340)];
   const farmer = perceive(fixtureState(), id("farmer"), events);
   expect(farmer?.events.map((e) => e.sequence)).toEqual([340]);
+});
+
+// --- Destinations ----------------------------------------------------------------------------------
+
+test("a snapshot lists every place the observer could travel to, nearest first, each with its steps, and never where it stands", () => {
+  const snapshot = perceive(fixtureState(), id("zeus"));
+  expect(
+    snapshot?.destinations.map((place) => [
+      String(place.id),
+      place.name,
+      place.realm,
+      place.steps,
+    ]),
+  ).toEqual([
+    ["square", "The Square", "mortal", 1],
+    ["olympus-gate", "Olympus Gate", "olympus", 2],
+  ]);
+  const atGate = perceive(
+    actorAt(fixtureState(), "zeus", "olympus-gate"),
+    id("zeus"),
+  );
+  expect(atGate?.destinations.map((place) => String(place.id))).toEqual([
+    "square",
+    "tavern",
+  ]);
+});
+
+test("a place the observer lacks the capability for is not a destination", () => {
+  const state = fixtureState();
+  const gate = state.locations.get(id("olympus-gate"));
+  if (!gate) throw new Error("no gate");
+  const gated: WorldState = {
+    ...state,
+    locations: new Map(state.locations).set(id("olympus-gate"), {
+      ...gate,
+      requiredCapability: "divine",
+    }),
+  };
+  const farmer = perceive(gated, id("farmer"));
+  expect(farmer?.destinations.map((place) => String(place.id))).toEqual([
+    "square",
+  ]);
+  const zeus = perceive(gated, id("zeus"));
+  expect(zeus?.destinations.map((place) => String(place.id))).toEqual([
+    "square",
+    "olympus-gate",
+  ]);
 });

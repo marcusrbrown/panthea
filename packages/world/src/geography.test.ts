@@ -8,6 +8,7 @@ import {
   nextHop,
   outgoingEdges,
   routeLength,
+  routeLengths,
 } from "./geography";
 import { createInitialWorldState, toEntityId } from "./state";
 
@@ -274,4 +275,38 @@ test("a route's length counts moves: zero when already there, one per hop, and n
     routeLength(state, here("hall"), here("island"), divine),
   ).toBeUndefined();
   expect(routeLength(state, here("tavern"), here("hall"), [])).toBeUndefined();
+});
+
+test("routeLengths gives the steps to every place a route reaches, and none the traveler may not enter or cannot reach", () => {
+  const state = hallMap();
+  expect(
+    [...routeLengths(state, here("hall"), ["divine"])].map(([place, steps]) => [
+      String(place),
+      steps,
+    ]),
+  ).toEqual([
+    ["gate", 1],
+    ["pass", 2],
+    ["square", 3],
+    ["tavern", 4],
+  ]);
+  // Without the capability the gate is closed, and the hall has no other way out.
+  expect(routeLengths(state, here("hall"), []).size).toBe(0);
+  expect(
+    [...routeLengths(state, here("square"), [])].map(([place, steps]) => [
+      String(place),
+      steps,
+    ]),
+  ).toEqual([
+    ["tavern", 1],
+    ["pass", 1],
+  ]);
+  // It agrees with routeLength everywhere.
+  for (const place of ["gate", "pass", "square", "tavern", "island", "hall"]) {
+    expect(routeLengths(state, here("hall"), ["divine"]).get(here(place))).toBe(
+      place === "hall"
+        ? undefined
+        : routeLength(state, here("hall"), here(place), ["divine"]),
+    );
+  }
 });

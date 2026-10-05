@@ -42,7 +42,7 @@ test("each proposal gets its action kind and what the world did: the events it c
   const stale = rejected("hera", bless("pet-1"), "stale-target", 6);
   const apart = rejected(
     "zeus",
-    { kind: "move", to: "tavern" },
+    { kind: "travel", to: "tavern" },
     "not-adjacent",
     7,
   );
@@ -63,9 +63,9 @@ test("each proposal gets its action kind and what the world did: the events it c
   expect(
     dispositions.map((d) => [d.actor, d.kind, d.target, d.outcome, d.events]),
   ).toEqual([
-    ["zeus", "move", "olympus-gate", "committed", ["entity-moved"]],
+    ["zeus", "travel", "olympus-gate", "committed", ["entity-moved"]],
     ["hera", "bless", "pet-1", "stale-target", []],
-    ["zeus", "move", "tavern", "not-adjacent", []],
+    ["zeus", "travel", "tavern", "not-adjacent", []],
     ["hera", "legend", "legend", "pending", []],
   ]);
 });
@@ -96,11 +96,11 @@ test("counts are by action kind and outcome, biggest first, and read as one line
 
   expect(dispositionCounts(dispositions)).toEqual([
     { kind: "bless", outcome: "stale-target", count: 3 },
-    { kind: "move", outcome: "committed", count: 2 },
+    { kind: "travel", outcome: "committed", count: 2 },
     { kind: "bless", outcome: "not-adjacent", count: 1 },
   ]);
   expect(renderDispositionCounts(dispositions)).toBe(
-    "bless 3 × stale-target, move 2 × committed, bless 1 × not-adjacent",
+    "bless 3 × stale-target, travel 2 × committed, bless 1 × not-adjacent",
   );
 });
 

@@ -18,7 +18,7 @@ import {
   type ResourceAmount,
   type WorldEvent,
 } from "@panthea/contracts";
-import { ALTAR, outgoingEdges } from "./geography";
+import { ALTAR, outgoingEdges, routeLengths } from "./geography";
 import {
   type ActorState,
   type BuildingState,
@@ -74,6 +74,15 @@ export interface PerceivedExit {
   readonly requiredCapability?: string;
 }
 
+/** A place the observer could travel to: map knowledge, not something perceived. */
+export interface PerceivedDestination {
+  readonly id: EntityId;
+  readonly name: string;
+  readonly realm: string;
+  /** How many steps the shortest route takes. */
+  readonly steps: number;
+}
+
 /**
  * An event as an observer knows it: what happened and to whom, never the raw
  * payload. `subjects` holds only ids the snapshot itself contains (the
@@ -103,6 +112,8 @@ export interface PerceptionSnapshot {
     readonly revision: number;
   };
   readonly exits: readonly PerceivedExit[];
+  /** Every other place a route reaches without entering one the observer lacks the capability for, nearest first. */
+  readonly destinations: readonly PerceivedDestination[];
   readonly actors: readonly PerceivedActor[];
   readonly buildings: readonly PerceivedBuilding[];
   /** Perceived events, oldest first. */
@@ -211,6 +222,8 @@ function eventLocation(
     case "relationship-changed":
     case "goal-set":
     case "goal-ended":
+    case "journey-started":
+    case "journey-ended":
     case "unmet-need":
     case "petition-answered":
     case "petition-lapsed":
@@ -331,6 +344,24 @@ export function perceive(
   }
   exits.sort((a, b) => (a.to < b.to ? -1 : a.to > b.to ? 1 : 0));
 
+  const destinations: PerceivedDestination[] = [];
+  for (const [place, steps] of routeLengths(
+    state,
+    here.id,
+    actor.capabilities,
+  )) {
+    const there = getLocation(state, place);
+    if (there) {
+      destinations.push({
+        id: there.id,
+        name: there.name,
+        realm: there.realm,
+        steps,
+      });
+    }
+  }
+  destinations.sort((a, b) => a.steps - b.steps || compareIds(a, b));
+
   const actors: PerceivedActor[] = [];
   for (const other of state.actors.values()) {
     if (other.id === actorId || !other.alive) continue;
@@ -403,6 +434,7 @@ export function perceive(
       revision: here.revision,
     },
     exits,
+    destinations,
     actors,
     buildings,
     events,

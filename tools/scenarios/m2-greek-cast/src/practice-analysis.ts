@@ -636,7 +636,7 @@ export function classifyTurn(
 
   const term = thread?.term;
   const committed = outcome === "committed";
-  const goes = kind === "move" || kind === "realm-transition";
+  const goes = kind === "travel";
   // A boon the god owes is performed by the exact step the row showed, and by nothing else that merely looks
   // busy: the bless the row showed, naming the owed prayer; the strike the row showed, on its target; the hop the
   // row gave. A row that showed no step (it named an obstacle) leaves nothing to perform, so no action counts and
@@ -660,11 +660,7 @@ export function classifyTurn(
     ) {
       return { class: "performed", named: undefined, choice };
     }
-    if (
-      goes &&
-      (shown?.action === "move" || shown?.action === "realm-transition") &&
-      fields.to === shown.to
-    ) {
+    if (goes && shown?.action === "travel" && fields.to === shown.to) {
       return { class: "performed", named: undefined, choice };
     }
   }

@@ -19,8 +19,7 @@ export const MIN_ACTIONS = 5;
 
 /** Actions a god's context offers whatever its profile grants. */
 export const CONTEXT_ACTIONS: readonly string[] = [
-  "move",
-  "realm-transition",
+  "travel",
   "report",
   "bless",
   "practice",
@@ -88,8 +87,7 @@ export interface EpisodeAnalysis {
 /** The target that makes two choices the same choice. */
 export function primaryTarget(proposal: Record<string, unknown>): string {
   switch (proposal.kind) {
-    case "move":
-    case "realm-transition":
+    case "travel":
       return String(proposal.to);
     case "strike":
       return String(proposal.target);

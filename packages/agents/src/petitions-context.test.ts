@@ -139,7 +139,7 @@ const prayersOf = (text: string) => {
   return lines.slice(start, end).join("\n");
 };
 
-test("Hera on Olympus is shown the farmer's punish petition: who asked, the request, the offender and the building, where each is, and the way toward the town square", () => {
+test("Hera on Olympus is shown the farmer's punish petition: who asked, the request, the offender and the building, where each is, and travel to the town square", () => {
   const run = greek();
   const opened = run.prayAboutTheft("farmer", "woodcutter");
   expect(String(opened.god)).toBe("hera");
@@ -157,8 +157,9 @@ test("Hera on Olympus is shown the farmer's punish petition: who asked, the requ
   expect(prayers).toContain("punish woodcutter");
   expect(prayers).toContain("woodshed");
   expect(prayers).toContain("Town Square");
+  // The place the people are at, and that the god can travel there (the world walks it the way).
   expect(prayers).toContain(
-    "take Gates of Olympus [olympus-gate] toward Town Square",
+    'farmer, woodcutter, woodshed at Town Square [town-square]: you can travel there (action "travel", to "town-square")',
   );
   // The theft it was about, as the cause.
   expect(prayers).toContain("woodcutter stole food");
@@ -742,7 +743,7 @@ test("prayers are per-tick state, so they come after what the god remembers and 
   expect(text.indexOf("What do you do?")).toBeGreaterThan(prayers);
 });
 
-test("a help prayer from afar offers the way to help as a choice: take the next hop toward the petitioner if you choose to help, and bless once there", () => {
+test("a help prayer from afar offers the way to help as a choice: travel to the petitioner if you choose to help, and bless once there", () => {
   const run = greek();
   const theft = run.apply({
     kind: "theft",
@@ -755,11 +756,12 @@ test("a help prayer from afar offers the way to help as a choice: take the next 
   const opened = prayAbout(run, "farmer", theft.id);
   const prayers = prayersOf(run.prompt(String(opened.god)));
   expect(prayers).toContain("help freely");
-  expect(prayers).toContain("take Gates of Olympus [olympus-gate]");
+  expect(prayers).toContain('{"action":"travel","to":"altar"} (Altar of Zeus)');
   expect(prayers).toContain("bless");
-  // It takes several moves, and the hint is for one who chooses to help: a condition, not a command.
+  // It takes several steps, and the hint is for one who chooses to help: a condition, not a command.
   expect(prayers).toContain("if you choose this");
-  expect(prayers).toContain("turn by turn until you are with them");
+  expect(prayers).toContain("the world walks you there");
+  expect(prayers).not.toContain("turn by turn");
   expect(prayers).not.toContain("To answer it");
   expect(prayers).not.toContain("keep going each turn");
   // Not the guidance for a petitioner who is here.
@@ -788,15 +790,15 @@ test("a help prayer from a petitioner who is here offers bless as one of the cho
   expect(prayers).not.toContain("To answer it");
 });
 
-test("a punish prayer offers striking the offender's building as a choice: go toward it from afar if you choose to, and strike it where it stands once there", () => {
+test("a punish prayer offers striking the offender's building as a choice: travel to it from afar if you choose to, and strike it where it stands once there", () => {
   const run = greek();
   const opened = run.prayAboutTheft("farmer", "woodcutter");
   const god = String(opened.god);
   const afar = prayersOf(run.prompt(god));
   expect(afar).toContain("punish freely");
-  expect(afar).toContain("then strike woodshed");
+  expect(afar).toContain("once you are there, strike woodshed");
   expect(afar).toContain("if you choose this");
-  expect(afar).toContain("take Gates of Olympus [olympus-gate]");
+  expect(afar).toContain('{"action":"travel","to":"town-square"}');
   expect(afar).not.toContain("To answer it");
   run.state = actorAt(run.state, god, "town-square");
   const near = prayersOf(run.prompt(god));
@@ -805,7 +807,7 @@ test("a punish prayer offers striking the offender's building as a choice: go to
   );
 });
 
-test("the instructions say a goal change can ride with a move or an answer in the same turn", () => {
+test("the instructions say a goal change can ride with an action or an answer in the same turn", () => {
   const run = greek();
   const text = run.prompt("hera");
   expect(text).toContain("same turn");
@@ -828,64 +830,32 @@ function godAtTheGate() {
   return { run, god };
 }
 
-test("from the Gates of Olympus a prayer's guidance names the action that reaches the hop: realm-transition to the Mountain Path, not a move", () => {
-  const { run, god } = godAtTheGate();
-  const prayers = prayersOf(run.prompt(god));
-  expect(prayers).toContain('(action "realm-transition", to "mountain-path"');
-  expect(prayers).not.toContain('(action "move", to "mountain-path"');
-  // The same hop in the whereabouts line names its action too.
-  expect(prayers).toContain('(action "realm-transition", to "mountain-path")');
+test("whatever the god's place, a prayer's guidance names one action, travel, to the place the people are: the world works out the way, so no hop and no crossing is named", () => {
+  for (const place of ["olympus-gate", "great-hall"]) {
+    const { run, god } = godAtTheGate();
+    run.state = actorAt(run.state, god, place);
+    const prayers = prayersOf(run.prompt(god));
+    expect(prayers).toContain('{"action":"travel","to":"altar"}');
+    expect(prayers).toContain(
+      'farmer at Altar of Zeus [altar]: you can travel there (action "travel", to "altar")',
+    );
+    expect(prayers).not.toContain('"action":"move"');
+    expect(prayers).not.toContain("realm-transition");
+  }
 });
 
-test("from the Hall of the Gods the first hop is an ordinary move to the Gates, and the guidance says so", () => {
-  const run = greek();
-  const opened = run.prayAboutTheft("farmer", "woodcutter");
-  const prayers = prayersOf(run.prompt(String(opened.god)));
-  expect(prayers).toContain('(action "move", to "olympus-gate"');
-});
-
-test("the guided hop is accepted whichever of move and realm-transition the model names: the gate run's rejected `move` to the Mountain Path now commits as the crossing it is", () => {
+test("the guided travel parses, from wherever the god stands, and a move or a crossing no longer does", () => {
   const { run, god } = godAtTheGate();
   const schema = run.schema(god);
-  // The schema offers both destinations; the gate runs showed a model pairing the wrong kind with one.
   const to = (schema.jsonSchema as { properties: { to: { enum: string[] } } })
     .properties.to.enum;
-  expect(to).toEqual(expect.arrayContaining(["mountain-path", "great-hall"]));
-  const crossing = schema.parse({
-    action: "move",
-    to: "mountain-path",
-  }) as unknown;
-  expect(crossing).toEqual({
+  expect(to).toEqual(expect.arrayContaining(["altar", "great-hall"]));
+  expect(schema.parse({ action: "travel", to: "altar" }) as unknown).toEqual({
     ok: true,
-    value: { action: "realm-transition", to: "mountain-path" },
+    value: { action: "travel", to: "altar" },
   });
-  const step = schema.parse({
-    action: "realm-transition",
-    to: "great-hall",
-  }) as unknown;
-  expect(step).toEqual({
-    ok: true,
-    value: { action: "move", to: "great-hall" },
-  });
-  // The right pairs still parse as themselves.
-  expect(schema.parse({ action: "move", to: "great-hall" }) as unknown).toEqual(
-    {
-      ok: true,
-      value: { action: "move", to: "great-hall" },
-    },
-  );
-  expect(
-    schema.parse({
-      action: "realm-transition",
-      to: "mountain-path",
-    }) as unknown,
-  ).toEqual({
-    ok: true,
-    value: { action: "realm-transition", to: "mountain-path" },
-  });
-  // A destination that is neither is still refused.
-  expect(schema.parse({ action: "move", to: "altar" }).ok).toBe(false);
-  expect(schema.parse({ action: "realm-transition", to: "altar" }).ok).toBe(
-    false,
-  );
+  // The gate runs showed a model pairing the wrong kind of move with a destination; there is now one action to name.
+  for (const action of ["move", "realm-transition"]) {
+    expect(schema.parse({ action, to: "mountain-path" }).ok).toBe(false);
+  }
 });

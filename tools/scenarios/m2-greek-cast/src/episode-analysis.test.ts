@@ -60,12 +60,12 @@ test("profile trace fails on an action the profile does not grant, one with no r
   expect(strike?.ok).toBe(false);
   expect(strike?.detail).toContain("strike");
   expect(
-    run(act("hera", { kind: "move", to: "x" }, 1, { role: null }))?.ok,
+    run(act("hera", { kind: "travel", to: "x" }, 1, { role: null }))?.ok,
   ).toBe(false);
   expect(
-    run(act("hera", { kind: "move", to: "x" }, 1, { role: "zeus" }))?.ok,
+    run(act("hera", { kind: "travel", to: "x" }, 1, { role: "zeus" }))?.ok,
   ).toBe(false);
-  expect(run(act("hades", { kind: "move", to: "x" }, 1), "hades")?.ok).toBe(
+  expect(run(act("hades", { kind: "travel", to: "x" }, 1), "hades")?.ok).toBe(
     false,
   );
   expect(run(act("hera", { kind: "gather", resource: "wood" }, 1))?.ok).toBe(
@@ -75,9 +75,7 @@ test("profile trace fails on an action the profile does not grant, one with no r
   expect(run(act("hera", { kind: "legend", assertion: "x" }, 1))?.ok).toBe(
     true,
   );
-  expect(run(act("hera", { kind: "realm-transition", to: "x" }, 1))?.ok).toBe(
-    true,
-  );
+  expect(run(act("hera", { kind: "travel", to: "x" }, 1))?.ok).toBe(true);
 });
 
 test("profile trace judges only committed proposals: a rejected one with no request is not a failure", () => {
@@ -104,14 +102,14 @@ test("repetition: three identical choices in a row pass, a fourth fails, and the
   expect(check(three, "zeus", "repetition")?.ok).toBe(true);
   expect(three.gods[0]?.longestRun).toEqual({
     length: 3,
-    key: "move:olympus-gate",
+    key: "travel:olympus-gate",
   });
 
   const four = analyzeEpisode(input(repeated(4)), identities, ["zeus"]);
   const failed = check(four, "zeus", "repetition");
   expect(failed?.ok).toBe(false);
   expect(failed?.detail).toContain("4");
-  expect(failed?.detail).toContain("move:olympus-gate");
+  expect(failed?.detail).toContain("travel:olympus-gate");
 });
 
 test("repetition: the key is kind and primary target, and a different choice breaks the run", () => {
@@ -128,10 +126,10 @@ test("repetition: the key is kind and primary target, and a different choice bre
   ).toBe(true);
   // Same target, different kind: not a repeat.
   const kinds = [
-    act("zeus", { kind: "move", to: "x" }, 1),
-    act("zeus", { kind: "realm-transition", to: "x" }, 2),
-    act("zeus", { kind: "move", to: "x" }, 3),
-    act("zeus", { kind: "realm-transition", to: "x" }, 4),
+    act("zeus", { kind: "travel", to: "x" }, 1),
+    act("zeus", { kind: "travel", to: "x" }, 2),
+    act("zeus", { kind: "strike", target: "x", power: 1 }, 3),
+    act("zeus", { kind: "strike", target: "x", power: 1 }, 4),
   ];
   expect(
     check(
@@ -221,7 +219,7 @@ test("minimum activity: five committed model actions pass, four fail, and reject
   expect(check(four, "zeus", "minimum activity")?.ok).toBe(false);
   const rejected = [
     ...["a", "b", "c", "d"].map((to, i) => move("zeus", to, i + 1)),
-    act("zeus", { kind: "move", to: "z" }, 9, { outcome: "rejected" }),
+    act("zeus", { kind: "travel", to: "z" }, 9, { outcome: "rejected" }),
   ];
   expect(
     check(

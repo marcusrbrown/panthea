@@ -56,6 +56,8 @@ export interface RealInput {
     readonly gods: readonly string[];
     readonly endedAtMs: number;
     readonly endTick: number;
+    /** Where the world first placed each god, read from the run's first frame: the start of a god's first journey. */
+    readonly startLocations?: Readonly<Record<string, string>>;
   };
 }
 
@@ -104,8 +106,7 @@ export interface RealAnalysis {
 export const MAX_REFUSALS = 12;
 
 export const GOD_ACTIONS: ReadonlySet<string> = new Set([
-  "move",
-  "realm-transition",
+  "travel",
   "strike",
   "legend",
   "report",

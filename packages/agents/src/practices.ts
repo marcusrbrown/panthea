@@ -32,7 +32,6 @@ import {
   inAnswerWindow,
   isThreadOpen,
   type MemoryEntry,
-  nextHop,
   openPetitionsFor,
   type Petition,
   type PracticeThread,
@@ -95,7 +94,7 @@ export interface OwedBoon {
   readonly offeringMade: boolean;
   /**
    * The next concrete step, as the object the god would send: the bless when it is with the mortal and the
-   * world would take it, else the next hop toward the mortal. Absent when there is none to show, and then
+   * world would take it, else travel to where the mortal stands. Absent when there is none to show, and then
    * `blocked` says why. Never an object the parser or the world would refuse.
    */
   readonly next?:
@@ -108,9 +107,8 @@ export interface OwedBoon {
         readonly intent: Readonly<Record<string, unknown>>;
       }
     | {
-        readonly kind: "hop";
+        readonly kind: "travel";
         readonly intent: Readonly<Record<string, unknown>>;
-        readonly via: string;
       };
   readonly blocked?: string;
   /**
@@ -499,26 +497,21 @@ function owedBoonOf(
       },
     };
   }
-  const hop = nextHop(
-    state,
-    god.locationId,
-    petitioner.locationId,
-    god.capabilities,
-  );
-  const exit = hop === undefined ? undefined : state.locations.get(hop);
-  const from = state.locations.get(god.locationId);
-  if (hop === undefined || exit === undefined || from === undefined) {
+  if (
+    routeLength(
+      state,
+      god.locationId,
+      petitioner.locationId,
+      god.capabilities,
+    ) === undefined
+  ) {
     return { ...base, blocked: "there is no way from where you stand to them" };
   }
   return {
     ...base,
     next: {
-      kind: "hop",
-      via: exit.name,
-      intent: {
-        action: exit.realm === from.realm ? "move" : "realm-transition",
-        to: hop,
-      },
+      kind: "travel",
+      intent: { action: "travel", to: petitioner.locationId },
     },
   };
 }
@@ -615,23 +608,7 @@ function owedStrikeOf(
     .sort(
       (a, b) => a.length - b.length || (a.building.id < b.building.id ? -1 : 1),
     )[0];
-  const hop =
-    nearest === undefined
-      ? undefined
-      : nextHop(
-          state,
-          god.locationId,
-          nearest.building.locationId,
-          god.capabilities,
-        );
-  const exit = hop === undefined ? undefined : state.locations.get(hop);
-  const from = state.locations.get(god.locationId);
-  if (
-    nearest === undefined ||
-    hop === undefined ||
-    exit === undefined ||
-    from === undefined
-  ) {
+  if (nearest === undefined) {
     return {
       ...base,
       blocked: "there is no way from where you stand to a building it names",
@@ -641,12 +618,8 @@ function owedStrikeOf(
     ...base,
     building: where(nearest.building),
     next: {
-      kind: "hop",
-      via: exit.name,
-      intent: {
-        action: exit.realm === from.realm ? "move" : "realm-transition",
-        to: hop,
-      },
+      kind: "travel",
+      intent: { action: "travel", to: nearest.building.locationId },
     },
   };
 }
@@ -1349,13 +1322,13 @@ function owedBoonRows(view: ThreadView, owed: OwedBoon, by: string): string[] {
     lines.push(
       `  ${building.name} [${building.id}] is here: strike it now with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
     );
-  } else if (owed.next?.kind === "hop" && building !== undefined) {
+  } else if (owed.next?.kind === "travel" && building !== undefined) {
     lines.push(
-      `  ${building.name} [${building.id}] stands at ${building.placeName} [${building.place}]: your next step is ${json(owed.next.intent)} (${owed.next.via}), turn by turn until you are there, then strike it.`,
+      `  ${building.name} [${building.id}] stands at ${building.placeName} [${building.place}]: your next step is ${json(owed.next.intent)}; the world walks you there, and once you are there, strike it.`,
     );
-  } else if (owed.next?.kind === "hop") {
+  } else if (owed.next?.kind === "travel") {
     lines.push(
-      `  ${owed.petitioner} is not here (they are at ${owed.placeName} [${owed.place}]): your next step is ${json(owed.next.intent)} (${owed.next.via}), turn by turn until you are with them, then bless them naming the prayer.`,
+      `  ${owed.petitioner} is not here (they are at ${owed.placeName} [${owed.place}]): your next step is ${json(owed.next.intent)}; the world walks you there, and once you are with them, bless them naming the prayer.`,
     );
   } else if (owed.blocked !== undefined) {
     lines.push(`  You cannot give it now: ${owed.blocked}.`);

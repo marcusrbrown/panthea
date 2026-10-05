@@ -1,4 +1,4 @@
-// S4 to S8: the causal story. Zeus, moved by scripted turns, strikes the
+// S4 to S8: the causal story. Zeus, sent by scripted travel turns, strikes the
 // farmer's tavern while the farmer watches; Hera, on Olympus, never sees it
 // and her prompts carry no trace of it; Zeus returns and tells her an
 // exaggerated account with a claim; her belief changes how she feels about him,
@@ -84,16 +84,9 @@ export async function stepStrike(
   return recorder.run(
     "S4",
     "Zeus strikes the tavern; witnesses remember",
-    "Zeus, moved by scripted turns from Olympus to the tavern, strikes the farmer's tavern through a model proposal; the ignition records the strike and Zeus; exactly the two present, Zeus and the farmer, remember it, each citing the ignition event, with the harm attributed to Zeus and the farmer as its target; Hera and the woodcutter, elsewhere, do not; the farmer now holds a grudge.",
+    "Zeus, sent by a scripted travel turn from Olympus to the tavern, strikes the farmer's tavern through a model proposal; the ignition records the strike and Zeus; exactly the two present, Zeus and the farmer, remember it, each citing the ignition event, with the harm attributed to Zeus and the farmer as its target; Hera and the woodcutter, elsewhere, do not; the farmer now holds a grudge.",
     async (step) => {
-      for (const [kind, to] of [
-        ["move", "olympus-gate"],
-        ["realm-transition", "mountain-path"],
-        ["move", "town-square"],
-        ["move", "tavern"],
-      ] as const) {
-        await walk(story, "zeus", kind, to);
-      }
+      await walk(story, "zeus", "tavern");
       // Stage the strike so the farmer is at the tavern when it lands, without
       // racing the farmer's own routine (it walks to the altar when it has
       // something to pray about). Zeus's reply is a function of what he is shown:
@@ -348,16 +341,9 @@ export async function stepReport(
   return recorder.run(
     "S6",
     "Zeus tells Hera; her feeling changes, with the belief as cause",
-    "Zeus walks back to Olympus and, through a model proposal citing the ignition he witnessed, tells Hera an exaggerated account with a claim; Hera's belief is attributed to Zeus, stores his words as told (they differ from what happened), and shifts her affinity toward Zeus by exactly one relationship-changed event that cites that belief; no legend is recorded.",
+    "Zeus travels back to Olympus and, through a model proposal citing the ignition he witnessed, tells Hera an exaggerated account with a claim; Hera's belief is attributed to Zeus, stores his words as told (they differ from what happened), and shifts her affinity toward Zeus by exactly one relationship-changed event that cites that belief; no legend is recorded.",
     async (step) => {
-      for (const [kind, to] of [
-        ["move", "town-square"],
-        ["move", "mountain-path"],
-        ["realm-transition", "olympus-gate"],
-        ["move", "great-hall"],
-      ] as const) {
-        await walk(story, "zeus", kind, to);
-      }
+      await walk(story, "zeus", "great-hall");
       const legendsBefore = (await stateOf(story)).legends.size;
       const claim =
         story.options.control === "chain"

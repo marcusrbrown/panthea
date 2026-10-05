@@ -95,11 +95,11 @@ test("all seven gods' requests start with the same text, byte for byte, and it i
   const requests = GODS.map((god) => requestOf(world, god).whole);
   expect(GODS).toHaveLength(7);
   const shared = sharedLines(requests);
-  // Most of the generic guidance is in it: how to decide, how to move, how to speak, what a goal is, how to wait, how to reply.
+  // Most of the generic guidance is in it: how to decide, how to travel, how to speak, what a goal is, how to wait, how to reply.
   expect(shared.length).toBeGreaterThan(1_000);
   for (const line of [
     "Decide what you do next, in character",
-    'You may also move to a neighboring place (action "move")',
+    "You may also travel to any place you can reach",
     "Speak your report and legend words in the first person",
     "You may keep one goal across turns",
     'You may also choose to wait (action "wait")',
@@ -247,7 +247,7 @@ test("a god's slow state (what it remembers, how it feels, its goal, what it did
       "Here with you:",
       "Buildings here:",
       "Recent events here:",
-      "Ways out:",
+      "Places you can travel to (steps away):",
     ]) {
       const at = user.indexOf(heading);
       expect(at).toBeGreaterThan(where);

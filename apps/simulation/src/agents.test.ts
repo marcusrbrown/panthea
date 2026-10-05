@@ -850,6 +850,69 @@ describe("which god takes the turn", () => {
     ]);
   });
 
+  test("a god travelling to a declared destination takes no turn; the same god standing still does", async () => {
+    // Zeus in the great hall is three hops from the tavern: after the first, the journey is under way.
+    const travelling = newWorld();
+    stage(travelling, { actor: "zeus", kind: "travel", to: "tavern" });
+    expect(travelling.state.journeys.has(id("zeus"))).toBe(true);
+    const provider = startProvider();
+    const runner = runnerFor(travelling, provider, ["zeus"]);
+    expect(runner.dispatch()).toBe(false);
+    expect(provider.requests).toHaveLength(0);
+
+    // Control: with no journey, the same runner asks him.
+    const standing = newWorld();
+    const calm = startProvider();
+    const plain = runnerFor(standing, calm, ["zeus"]);
+    expect(plain.dispatch()).toBe(true);
+    await plain.idle();
+    expect(calm.requests.map((r) => r.god)).toEqual(["zeus"]);
+  });
+
+  test("the other gods are served while one travels, and owing alone does not call the traveller back", async () => {
+    const world = newWorld();
+    owes(world, "zeus", "hera");
+    stage(world, { actor: "zeus", kind: "travel", to: "tavern" });
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera", "zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    // Zeus owes, and would go first if he stood still.
+    expect(provider.requests.map((r) => r.god)).toEqual(["hera"]);
+    expect(runner.dispatch()).toBe(false);
+    expect(provider.requests).toHaveLength(1);
+  });
+
+  test("a travelling god a thread is waiting on for its answer is picked", async () => {
+    const world = newWorld();
+    // Zeus asks something of Hera and waits for her answer; Hera, meanwhile, sets out for the tavern.
+    demands(world, "zeus", "hera");
+    stage(world, { actor: "hera", kind: "travel", to: "tavern" });
+    expect(world.state.journeys.has(id("hera"))).toBe(true);
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["hera"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["hera"]);
+  });
+
+  test("a god is eligible again the tick it arrives", async () => {
+    const world = newWorld();
+    // The great hall to the mountain path is two hops, through the gate.
+    stage(world, { actor: "zeus", kind: "travel", to: "mountain-path" });
+    const provider = startProvider();
+    const runner = runnerFor(world, provider, ["zeus"]);
+    expect(runner.dispatch()).toBe(false);
+    tick(world);
+    expect(world.state.journeys.has(id("zeus"))).toBe(false);
+    expect(String(world.state.actors.get(id("zeus"))?.locationId)).toBe(
+      "mountain-path",
+    );
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.map((r) => r.god)).toEqual(["zeus"]);
+  });
+
   test("a god with a pending proposal is never picked, however urgent; it is picked again once the tick consumes it", async () => {
     const world = newWorld();
     owes(world, "zeus", "hera");
@@ -1323,13 +1386,13 @@ async function actOut(
 
 describe("a god's own recent actions", () => {
   test("the bounded read returns exactly the events its own actions committed, newest first window, and the same ones the pure rule names", async () => {
-    // Zeus at the tavern: a legend, a strike, then a move; every kind of own action the read covers.
+    // Zeus at the tavern: a legend, a strike, then a trip; every kind of own action the read covers.
     const tavern = newWorld("tavern");
     const provider = startProvider();
     await actOut(tavern, provider, [
       '{"action":"legend","assertion":"The tavern will burn."}',
       '{"action":"strike","target":"the-tavern","power":3}',
-      '{"action":"move","to":"town-square"}',
+      '{"action":"travel","to":"town-square"}',
     ]);
     // And a report, in the great hall where Hera stands.
     const hall = newWorld("great-hall");
@@ -1363,7 +1426,7 @@ describe("a god's own recent actions", () => {
     const provider = startProvider();
     const moves = Array.from({ length: OWN_EVENT_WINDOW + 3 }, (_, i) =>
       JSON.stringify({
-        action: "move",
+        action: "travel",
         to: i % 2 === 0 ? "olympus-gate" : "great-hall",
       }),
     );
@@ -1417,13 +1480,13 @@ describe("a god's own recent actions", () => {
     await actOut(
       world,
       provider,
-      [JSON.stringify({ action: "move", to: "olympus-gate" })],
+      [JSON.stringify({ action: "travel", to: "olympus-gate" })],
       "hera",
     );
     await actOut(
       world,
       provider,
-      [JSON.stringify({ action: "move", to: "olympus-gate" })],
+      [JSON.stringify({ action: "travel", to: "olympus-gate" })],
       "zeus",
     );
 
@@ -1701,6 +1764,79 @@ describe("a god's own recent actions", () => {
       expect(logs.join("\n")).toContain("injected read failure: json_extract");
       expect(provider.requests).toHaveLength(0);
 
+      failing.on = false;
+      expect(runner.dispatch()).toBe(true);
+      await runner.idle();
+      expect(provider.requests).toHaveLength(1);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+});
+
+describe("a god's journey", () => {
+  test("once the journey ends the god's next prompt says how: it arrived; the god that never travelled is told nothing", async () => {
+    const world = newWorld();
+    stage(world, { actor: "zeus", kind: "travel", to: "mountain-path" });
+    tick(world);
+    expect(world.state.journeys.has(id("zeus"))).toBe(false);
+    const provider = startProvider(() => '{"action":"wait"}');
+    const runner = runnerFor(world, provider, ["zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    expect(provider.requests.at(-1)?.body ?? "").toContain(
+      "Your last journey ended: you arrived.",
+    );
+    // Control: Hera never set out, and is told of no journey.
+    const hera = runnerFor(world, provider, ["hera"]);
+    expect(hera.dispatch()).toBe(true);
+    await hera.idle();
+    expect(provider.requests.at(-1)?.body ?? "").not.toContain(
+      "Your last journey",
+    );
+  });
+
+  test("a travelling god a thread is waiting on is shown its journey: where it is going, and that waiting leaves it running", async () => {
+    const world = newWorld();
+    demands(world, "zeus", "hera");
+    stage(world, { actor: "hera", kind: "travel", to: "tavern" });
+    const provider = startProvider(() => '{"action":"wait"}');
+    const runner = runnerFor(world, provider, ["hera"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+    const body = provider.requests.at(-1)?.body ?? "";
+    expect(body).toContain("You are on a journey to The Tavern [tavern]");
+    expect(body).toContain("Waiting leaves it running");
+    // She waited: nothing was journaled, and the journey runs on.
+    expect(pendingModelProposals(world)).toEqual([]);
+    tick(world);
+    expect(world.state.journeys.has(id("hera"))).toBe(true);
+  });
+
+  test("a store fault in the read of the latest journey ending is logged and the turn abandoned: nothing rejects, no model is asked, and the next dispatch works", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const world = newWorld();
+      const provider = startProvider();
+      const failing = { on: true, match: "journey-ended" };
+      const logs: string[] = [];
+      const runner = createGodTurnRunner({
+        ...deps(provider, ["hera"]),
+        store: faultyStore(world.store, failing),
+        getState: () => world.state,
+        lifecycle: world.lifecycle,
+        statusRef: world.statusRef,
+        onLog: (message) => logs.push(message),
+      });
+      expect(runner.dispatch()).toBe(true);
+      await runner.idle();
+      await Bun.sleep(20);
+      expect(unhandled).toEqual([]);
+      expect(runner.inFlight()).toBe(false);
+      expect(logs.join("\n")).toContain("injected read failure: journey-ended");
+      expect(provider.requests).toHaveLength(0);
       failing.on = false;
       expect(runner.dispatch()).toBe(true);
       await runner.idle();

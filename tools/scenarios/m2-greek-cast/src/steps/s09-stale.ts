@@ -1,12 +1,13 @@
 // S9: a god's proposal built from a snapshot the world has since moved past is
 // rejected as stale-target, with no effect; the same proposal in an unchanged
-// world commits. The proposal is a realm transition, which pins the god and its
-// location: report, move, legend, and bless pin nothing, so they are never stale
-// (the validator judges their conditions at commit time instead).
+// world commits. The proposal is a strike, which pins the god, its location, and
+// the building: report, travel, legend, and bless pin nothing, so they are never
+// stale (the validator judges their conditions at commit time instead).
 
 import { outcomeOf } from "../../../m1-living-world/src/steps/api";
 import { eventsOf } from "../../../m1-living-world/src/steps/direct";
 import type { Recorder, Story } from "./context";
+import { walkTo } from "./practice";
 import {
   check,
   lastInputOrder,
@@ -14,20 +15,20 @@ import {
   postFixture,
   waitForConsumed,
   waitForModelProposal,
-  walk,
   within,
 } from "./support";
 
-/** Hera's held turn: a realm transition out of Olympus Gate, which pins her and her location. */
-const CROSS = JSON.stringify({
-  action: "realm-transition",
-  to: "mountain-path",
+/** Hera's held turn: a light strike on the old oak (no one's, so no one prays about it), which pins her, her location, and the building. */
+const STRIKE = JSON.stringify({
+  action: "strike",
+  target: "old-oak",
+  power: 1,
 });
 
-/** Holds a Hera realm-transition turn in flight, optionally changes the world, releases it, and returns how it ended. */
+/** Holds a Hera strike turn in flight, optionally changes the world, releases it, and returns how it ended. */
 async function heldTurn(story: Story, changeWorld: boolean) {
   const after = lastInputOrder(story);
-  const held = story.provider.hold("hera", CROSS);
+  const held = story.provider.hold("hera", STRIKE);
   await within("hera's turn is in flight", held.arrived, 30_000);
   if (changeWorld) {
     // While the model thinks, Hera is moved by a fixture: her revision and her
@@ -35,17 +36,17 @@ async function heldTurn(story: Story, changeWorld: boolean) {
     await postFixture(
       story,
       "hera",
-      { kind: "move", to: "great-hall" },
+      { kind: "move", to: "tavern" },
       "hera is moved while her turn is in flight",
     );
     const at = await locationOf(story, "hera");
-    check(at === "great-hall", "hera stands in the hall", String(at));
+    check(at === "tavern", "hera stands at the tavern", String(at));
   }
   held.release();
   const journaled = await waitForModelProposal(
     story,
     "hera",
-    "realm-transition",
+    "strike",
     after,
     "hera's held turn is journaled",
   );
@@ -64,18 +65,18 @@ export async function stepStale(
   await recorder.run(
     "S9",
     "Stale god proposal rejected",
-    "A god's realm transition (which pins the god and its location), built from a snapshot the world has since moved past (the god itself was moved while the model thought), is rejected as stale-target and causes no event; the same proposal in an unchanged world commits.",
+    "A god's strike (which pins the god, its location, and the building), built from a snapshot the world has since moved past (the god itself was moved while the model thought), is rejected as stale-target and causes no event; the same proposal in an unchanged world commits.",
     async (step) => {
-      // Hera goes to the gate, where a realm transition is possible.
-      await walk(story, "hera", "move", "olympus-gate");
+      // Hera travels to the square, where the old oak stands.
+      await walkTo(story, "hera", "town-square");
       const unchanged = await heldTurn(story, false);
       check(
         unchanged.consumed.outcome === "committed",
         "in an unchanged world the held proposal commits",
         `${unchanged.consumed.outcome} ${unchanged.consumed.reason}`,
       );
-      // She crosses back to the gate for the second try.
-      await walk(story, "hera", "realm-transition", "olympus-gate");
+      // She returns to the square for the second try.
+      await walkTo(story, "hera", "town-square");
 
       const stale = await heldTurn(story, story.options.control !== "stale");
       check(
@@ -102,7 +103,7 @@ export async function stepStale(
         "an event carries its observation",
       );
       step.done(
-        `held turn in an unchanged world: committed; the same realm transition after hera was moved: ${stale.consumed.outcome} (${stale.consumed.reason}), no event`,
+        `held turn in an unchanged world: committed; the same strike after hera was moved: ${stale.consumed.outcome} (${stale.consumed.reason}), no event`,
       );
     },
   );

@@ -27,6 +27,12 @@ const DOCK = "ferry-dock";
 const offeredAct = (prompt: string): string | undefined =>
   /"move":"contest","act":"(evt-[^"]+)"/.exec(prompt)?.[1];
 
+/** Every act id a prompt offers to contest. */
+const offeredActs = (prompt: string): string[] =>
+  [...prompt.matchAll(/"move":"contest","act":"(evt-[^"]+)"/g)].flatMap(
+    (match) => (match[1] === undefined ? [] : [match[1]]),
+  );
+
 export async function stepContest(
   recorder: Recorder,
   story: Story,
@@ -212,10 +218,15 @@ export async function stepContest(
         story.provider.requests.length,
         "poseidon's next prompt after the close",
       );
+      // Another god's act, still young enough to contest (Hera's blessing at the dock, from an earlier step), may be offered to him; what the closed contest settled may not.
+      const athenas = after.services
+        .filter((held) => held.god === "athena")
+        .map((held) => String(held.id));
+      const offered = offeredActs(prompt.prompt);
       check(
-        offeredAct(prompt.prompt) === undefined,
+        athenas.length > 0 && offered.every((act) => !athenas.includes(act)),
         "Poseidon is offered no contest over Athena's legends: they came before the close",
-        prompt.prompt.slice(0, 300),
+        `offered ${offered.join(", ") || "none"}; Athena's acts ${athenas.join(", ")}`,
       );
 
       step.done(
