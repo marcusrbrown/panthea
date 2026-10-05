@@ -502,9 +502,11 @@ Phase A gate (2026-10-03): the practices plan's Unit 6 gate ran three times on q
 
 Superseded 2026-10-02: Units 9, 10, and 11 are absorbed by `docs/plans/2026-10-02-001-feat-god-practices-plan.md` (origin `docs/brainstorms/2026-10-02-god-practices-requirements.md`): its Unit 7 carries the five gods and twenty inhabitants (this plan's Unit 9), its Unit 9 the gods-first scheduler (Unit 10), and its Units 1, 4, 5, and 8 the endings, transformation, and alliances by settlement (Unit 11). The unit texts below are kept for their context and are not to be worked from; Unit 13 runs after that plan.
 
+Done 2026-10-04: Units 9, 10, and 11 are done through that plan. Unit 9 (the five gods and twenty inhabitants) is its Unit 7; Unit 10 (the scheduler) is its Unit 9, landed in #117 (gods that owe, or are waited on, go first, with no god passed over more than a round) and #119 (travel journeys), with the per-request timing table and the journeys line standing in for the metrics (the queue, generation, and commit split is not needed for M2, and Unit 13 can add it if the unattended run needs it); Unit 11 (transformation, grudges, and alliances) is its Units 1, 4, 5, and 8. Its Unit 10 closes the evidence: the scripted run now has all seven gods acting and every practice appearing, a sealed alliance among them, asserted by `scenario:m2` (S18 to S20) with positive controls that fail. W09 and W01 stay planned until M2's exit; Unit 13 is next.
+
 ### Phase C — Full cast, director, scheduler, unattended evidence
 
-- [ ] **Unit 9: Remaining five gods and twenty inhabitants**
+- [x] **Unit 9: Remaining five gods and twenty inhabitants** (done 2026-10-04 through the practices plan, its Unit 7)
 
 **Goal:** Athena, Hermes, Hephaestus, Poseidon, and Hades profiles; twenty routine inhabitants.
 
@@ -520,7 +522,7 @@ Superseded 2026-10-02: Units 9, 10, and 11 are absorbed by `docs/plans/2026-10-0
 
 **Verification:** content tests; W01 partial with portraits and sprites named for M4.
 
-- [ ] **Unit 10: Gods-first scheduler**
+- [x] **Unit 10: Gods-first scheduler** (done 2026-10-04 through the practices plan, its Unit 9)
 
 **Goal:** fair, bounded scheduling for seven gods within measured capacity.
 
@@ -540,7 +542,7 @@ Superseded 2026-10-02: Units 9, 10, and 11 are absorbed by `docs/plans/2026-10-0
 
 **Verification:** tests; metrics visible in the unattended run and judged against Unit 13's thresholds under real load.
 
-- [ ] **Unit 11: Transformation, grudges, and alliances**
+- [x] **Unit 11: Transformation, grudges, and alliances** (done 2026-10-04 through the practices plan, its Units 1, 4, 5, 8, and 10)
 
 **Goal:** W09 effects with provenance.
 
