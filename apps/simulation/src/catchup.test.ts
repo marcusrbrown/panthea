@@ -206,19 +206,30 @@ test("missed time above the cap: exactly one hour is applied and the excess is r
   } finally {
     rmSync(storeDir, { recursive: true, force: true });
   }
-}, 20_000);
+  // The one test that applies the authored hour whole, so it is also the heavy
+  // one: 3.7 s alone, 14 to 16 s with thirty busy loops on ten cores. The bound
+  // only stops a hang.
+}, 60_000);
 
 test("a capped catch-up run's discarded excess is never replayed by a later catch-up call", async () => {
   const storeDir = tempDir("panthea-sim-catchup-no-replay-");
   try {
     const storePath = join(storeDir, "world.sqlite");
-    const seeded = loadGreekWorldState();
+    // The property is about the discard, not the cap's size (the authored hour
+    // is applied whole by the test above), so this world's cap is ten minutes
+    // and the run applies 600 ticks, not 3,600.
+    const capMs = 10 * 60 * 1000;
+    const loaded = loadGreekWorldState();
+    const seeded = {
+      ...loaded,
+      rules: { ...loaded.rules, catchUpCapMs: capMs },
+    };
     const reducers = createWorldProjectionReducers(seeded);
     const store = openStore(storePath, reducers);
     ensureTraceSchema(store.db);
 
     const startCursor = readClock(store.db).cursorWallMs;
-    const firstNow = startCursor + 5 * 60 * 60 * 1000;
+    const firstNow = startCursor + 5 * capMs;
 
     const firstRun = await runCatchUp(
       seeded,
@@ -227,8 +238,8 @@ test("a capped catch-up run's discarded excess is never replayed by a later catc
       { nowWallMs: firstNow },
     );
     expect(firstRun.degraded).toBeUndefined();
-    expect(firstRun.summary.appliedMs).toBe(60 * 60 * 1000);
-    expect(firstRun.state.tick).toBe(3600);
+    expect(firstRun.summary.appliedMs).toBe(capMs);
+    expect(firstRun.state.tick).toBe(capMs / 1000);
     // The run closed its own backlog in its final commit, so a later call
     // starts from nothing.
     expect(readCatchUpProgress(store.db)).toBeUndefined();
@@ -245,10 +256,10 @@ test("a capped catch-up run's discarded excess is never replayed by a later catc
     );
 
     expect(secondRun.summary.appliedMs).toBe(0);
-    expect(secondRun.state.tick).toBe(3600);
-    // Total simulated advance across both calls stays exactly one hour.
+    expect(secondRun.state.tick).toBe(capMs / 1000);
+    // Total simulated advance across both calls stays exactly the cap.
     expect(firstRun.summary.appliedMs + secondRun.summary.appliedMs).toBe(
-      60 * 60 * 1000,
+      capMs,
     );
 
     closeStore(store);

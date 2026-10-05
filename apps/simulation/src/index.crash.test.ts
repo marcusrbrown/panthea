@@ -26,9 +26,16 @@ import {
 } from "./world-store";
 
 const INDEX_ENTRY = join(import.meta.dir, "index.ts");
-const CATCH_UP_CAP_MS = 60 * 60 * 1000;
+// The properties here (a kill mid-chunk resumes from the last commit, each run
+// respects the cap, no interval is applied twice) do not depend on the cap's
+// size, only on the gap being well past it. The authored cap is an hour and
+// its own tests are in catchup.test.ts; here the store is seeded with a ten
+// minute cap and a gap six times it, so a run applies 600 one-second chunks and
+// not 3,600. An hour of the whole town took 13 s alone and over a minute when
+// the machine was busy, which is CPU, not the property.
+const CATCH_UP_CAP_MS = 10 * 60 * 1000;
 const SEEDED_CHUNK_MS = 1_000;
-const MISSED_HOURS = 5;
+const MISSED_MS = 6 * CATCH_UP_CAP_MS;
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -60,11 +67,15 @@ test("kill during a startup catch-up chunk: restart resumes from the last commit
     const seeded = loadGreekWorldState();
     const seededWithTinyChunks = {
       ...seeded,
-      rules: { ...seeded.rules, catchUpChunkMs: SEEDED_CHUNK_MS },
+      rules: {
+        ...seeded.rules,
+        catchUpChunkMs: SEEDED_CHUNK_MS,
+        catchUpCapMs: CATCH_UP_CAP_MS,
+      },
     };
     const reducers = createWorldProjectionReducers(seededWithTinyChunks);
     const store = openStore(activeStorePath, reducers);
-    const missedCursor = Date.now() - MISSED_HOURS * 60 * 60 * 1000;
+    const missedCursor = Date.now() - MISSED_MS;
     store.db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
       missedCursor,
     ]);
@@ -136,8 +147,8 @@ test("kill during a startup catch-up chunk: restart resumes from the last commit
             reject(
               new Error("timed out waiting for startup catch-up to complete"),
             ),
-          // A full hour of the whole town (twenty routine mortals, each traced) takes
-          // several times longer to apply than two did.
+          // Ten minutes of the whole town (twenty routine mortals, each traced) in
+          // one-second chunks: about 3 s alone and ten times that on a busy machine.
           60_000,
         ),
       ),

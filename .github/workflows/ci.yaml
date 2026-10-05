@@ -46,7 +46,7 @@ jobs:
 
       - name: ✅ Test
         # Linux skips piped core dumps at an exact one-byte limit.
-        run: prlimit --core=1:1 -- bun run test:serial
+        run: prlimit --core=1:1 -- bun run test
 
   rust:
     name: rust

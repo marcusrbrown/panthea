@@ -25,7 +25,23 @@ const failJob = process.env.FAKE_FAIL_JOB === "1";
 const allocMb = Number(process.env.FAKE_ALLOC_MB ?? 0);
 const busyMs = Number(process.env.FAKE_BUSY_MS ?? 0);
 
-const keep = allocMb > 0 ? Buffer.alloc(allocMb * 1024 * 1024, 1) : null;
+// FAKE_ALLOC_MB is resident memory the arm's sampler is meant to observe, so it
+// must be real, held, and visible before the server says it is ready. The buffer
+// hangs off globalThis (not a module-scope const the engine may treat as dead),
+// every page is written, and the server does not listen until its own RSS shows
+// the allocation (bounded: a platform that never shows it listens anyway, so
+// the arm reports what the sampler saw instead of timing out).
+function holdResident(mb: number): void {
+  const bytes = mb * 1024 * 1024;
+  const held = Buffer.alloc(bytes, 1);
+  (globalThis as { __fakeResident?: Buffer }).__fakeResident = held;
+  const deadline = Date.now() + 2_000;
+  while (process.memoryUsage().rss < bytes && Date.now() < deadline) {
+    held.fill(2);
+    held.fill(1);
+  }
+}
+if (allocMb > 0) holdResident(allocMb);
 
 if (process.env.FAKE_LOG_EARLY) {
   process.stdout.write(`${process.env.FAKE_LOG_EARLY}\n`);
@@ -183,7 +199,11 @@ function startServer(): void {
       return new Response("not found", { status: 404 });
     },
   });
-  console.log(`listening ${port}`);
+  // Every line this fixture logs goes through process.stdout.write, never
+  // console.log: after the 100 KB of filler a test asks for, the stdout pipe is
+  // full, and on Linux with a busy parent a console.log line written then was
+  // dropped (this one, 20 of 60 runs), while process.stdout.write waits for room.
+  process.stdout.write(`listening ${port}\n`);
   if (busyMs > 0) {
     const end = Date.now() + busyMs;
     const spin = () => {
@@ -213,4 +233,3 @@ if (replacement && process.env.FAKE_ON_RESTART === "never-ready") {
 } else {
   startServer();
 }
-void keep;

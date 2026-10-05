@@ -105,11 +105,34 @@ describe("runArm happy path", () => {
   });
 
   it("records sampled resident evidence with startup and per-cell phases", async () => {
-    const report = await runArm(await config({ FAKE_ALLOC_MB: "60" }));
+    // The sampler can only see what is still resident when it looks, so the
+    // fixture holds its 60 MiB (resident before it listens), waits 500 ms before
+    // it listens, and each job runs 400 ms: the startup phase and every cell
+    // phase last far longer than a sampling tick (20 ms plus one `ps`, which took
+    // up to 40 ms on a loaded ten-core machine), so each phase gets several
+    // samples however slow `ps` is. One cell with no warmup keeps the run short;
+    // it still has a startup phase and a with-LoRA and a control phase.
+    const report = await runArm(
+      await config(
+        {
+          FAKE_ALLOC_MB: "60",
+          FAKE_JOB_MS: "400",
+          FAKE_READY_DELAY_MS: "500",
+        },
+        {
+          cells: [{ id: "512x640", width: 512, height: 640 }],
+          warmupCount: 0,
+          sampleCount: 1,
+        },
+      ),
+    );
     expect(report.resident?.semantics).toBe(
       "observed-sampled-peak-not-guaranteed-maximum",
     );
-    expect(report.resident?.observedSampledPeakKb).toBeGreaterThan(50 * 1024);
+    expect(
+      report.resident?.observedSampledPeakKb,
+      `resident evidence: ${JSON.stringify(report.resident)}`,
+    ).toBeGreaterThan(50 * 1024);
     expect(Object.keys(report.resident?.byPhase ?? {})).toContain("startup");
     expect(
       Object.keys(report.resident?.byPhase ?? {}).some((p) =>
@@ -301,8 +324,12 @@ describe("runArm timeout escalation", () => {
 
 describe("runArm cancel probe", () => {
   it("aborts an in-flight job by restarting the server and records abort-to-exit, restart-to-ready and idle evidence", async () => {
+    // Every launch waits 500 ms before it listens, the replacement included, so
+    // the restart phase (abort to ready) spans many sampler ticks: a tick is
+    // 20 ms plus one `ps`, and a phase of 100 ms or so is missed whenever `ps` is
+    // slow, which left no "restart" samples for the assertion below.
     const cfg = await config(
-      { FAKE_JOB_MS: "30000" },
+      { FAKE_JOB_MS: "30000", FAKE_READY_DELAY_MS: "500" },
       {
         cells: [],
         cancelProbe: {
