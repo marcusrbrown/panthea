@@ -16,6 +16,9 @@ export const PRACTICE_CONTROLS = [
   "practices-missing",
   "consequence-no-effect",
   "contest-no-standing",
+  "alliance-unsealed",
+  "god-silent",
+  "practice-absent",
 ] as const;
 export type PracticeControl = (typeof PRACTICE_CONTROLS)[number];
 
@@ -29,6 +32,9 @@ export const CONTROLLED_PROPERTY: Readonly<Record<PracticeControl, string>> = {
   "practices-missing": "supplication and settlement",
   "consequence-no-effect": "consequence changes a later choice",
   "contest-no-standing": "contest endings",
+  "alliance-unsealed": "alliances sealed by agreement",
+  "god-silent": "every god practiced",
+  "practice-absent": "every practice appeared",
 };
 
 export const SABOTAGE: Readonly<Record<PracticeControl, string>> = {
@@ -48,6 +54,12 @@ export const SABOTAGE: Readonly<Record<PracticeControl, string>> = {
     "The harness removes the endings from every prompt the gods were shown afterwards, as if no consequence had reached a later choice.",
   "contest-no-standing":
     "The harness deletes the standing changes a decided contest left behind, as if the world had closed a contest and changed no one's standing.",
+  "alliance-unsealed":
+    "The harness rewrites the sealed ending of the alliance as a plain performance, as if two gods had become allied by something other than a settlement's seal.",
+  "god-silent":
+    "The harness deletes every move, contest, and journey of the god that opened the first thread, as if that god had taken part in no practice.",
+  "practice-absent":
+    "The harness deletes the contest, as if the run had never played one.",
 };
 
 type Loose = Record<string, unknown>;
@@ -185,6 +197,33 @@ export function sabotage(
         ),
       );
     }
+    case "alliance-unsealed":
+      return withEvents(input, (all) =>
+        all.map((e) =>
+          e.kind === "practice-ended" && e.reason === "sealed"
+            ? { ...e, reason: "performed" }
+            : e,
+        ),
+      );
+    case "god-silent": {
+      const first = events.find((e) => e.kind === "practice-opened")?.entityId;
+      return withEvents(input, (all) =>
+        all.filter(
+          (e) =>
+            !(
+              e.entityId === first &&
+              (e.kind === "practice-opened" ||
+                e.kind === "practice-moved" ||
+                e.kind === "contest-opened" ||
+                e.kind === "journey-started")
+            ),
+        ),
+      );
+    }
+    case "practice-absent":
+      return withEvents(input, (all) =>
+        all.filter((e) => e.kind !== "contest-opened"),
+      );
     case "consequence-no-effect": {
       const endings = events
         .filter(

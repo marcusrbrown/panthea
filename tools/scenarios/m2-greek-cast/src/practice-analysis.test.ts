@@ -2,16 +2,24 @@ import { expect, test } from "bun:test";
 import {
   analyzePractices,
   buildThreads,
+  castPractices,
   classifyTurn,
   consequencesOf,
   obligationRows,
   openThreads,
+  PRACTICES,
   parseAll,
 } from "./practice-analysis";
-import { episode, prompt } from "./practice-test-data";
+import { CAST, episode, fullCast, prompt } from "./practice-test-data";
 import type { RealInput } from "./real-analysis";
 
 const analyze = (input: RealInput) => analyzePractices(input);
+const analyzeCast = (input: RealInput) => analyzePractices(input, CAST);
+const castProperty = (input: RealInput, name: string) => {
+  const found = analyzeCast(input).properties.find((p) => p.name === name);
+  if (!found) throw new Error(`no property ${name}`);
+  return found;
+};
 const property = (input: RealInput, name: string) => {
   const found = analyze(input).properties.find((p) => p.name === name);
   if (!found) throw new Error(`no property ${name}`);
@@ -1174,15 +1182,167 @@ test("a contest still open past its window with no ending fails; one still insid
 
 // --- The controls the scripted story runs ------------------------------------------------------
 
-test("each practice control breaks exactly the property it is for: on the coherent episode every property holds, and with the control applied the targeted one fails", async () => {
+test("each practice control breaks exactly the property it is for: on the full-cast episode every property holds, and with the control applied the targeted one fails", async () => {
   const { CONTROLLED_PROPERTY, PRACTICE_CONTROLS, sabotage } = await import(
     "./practice-controls"
   );
-  const { input } = episode();
-  expect(analyze(input).properties.every((p) => p.ok)).toBe(true);
+  const { input } = fullCast();
+  expect(analyzeCast(input).properties.every((p) => p.ok)).toBe(true);
   for (const control of PRACTICE_CONTROLS) {
-    const broken = analyze(sabotage(control, input)).properties;
+    const broken = analyzeCast(sabotage(control, input)).properties;
     const target = broken.find((p) => p.name === CONTROLLED_PROPERTY[control]);
     expect([control, target?.ok]).toEqual([control, false]);
   }
+});
+
+// --- The full cast: every god acts, every practice appears, an alliance comes only from a seal -----------
+
+test("each god's practices are read from the log: the moves it made, in the practices it made them in", () => {
+  const { input } = fullCast();
+  const events = parseAll(input.events);
+  const record = castPractices(events, buildThreads(events), CAST);
+  const practices = (god: string) =>
+    record.find((r) => r.god === god)?.practices;
+  expect(record.map((r) => r.god)).toEqual([...CAST]);
+  expect(practices("zeus")).toEqual([
+    "settlement",
+    "supplication",
+    "breach with transformation",
+    "travel",
+  ]);
+  expect(practices("hera")).toEqual(["settlement", "supplication", "travel"]);
+  // Athena opened the contest; Poseidon's legend is the act it rests on.
+  expect(practices("athena")).toEqual(["contest"]);
+  expect(practices("poseidon")).toEqual(["contest"]);
+  // A sealed alliance is the act of both gods in it.
+  expect(practices("hermes")).toEqual(["settlement", "sealed alliance"]);
+  expect(practices("hephaestus")).toEqual([
+    "settlement",
+    "sealed alliance",
+    "travel",
+  ]);
+  expect(practices("hades")).toEqual(["settlement", "travel"]);
+  // Every practice is some god's.
+  expect(new Set(record.flatMap((r) => r.practices))).toEqual(
+    new Set(PRACTICES),
+  );
+});
+
+test("each god's thread endings are listed with how they ended and whether the god's own act decided it", () => {
+  const { input, ids } = fullCast();
+  const events = parseAll(input.events);
+  const record = castPractices(events, buildThreads(events), CAST);
+  const endings = (god: string) =>
+    record
+      .find((r) => r.god === god)
+      ?.endings.map((e) => [e.thread, e.outcome, e.decided]);
+  expect(endings("hades")).toEqual([[ids.hadesRefused, "refused", true]]);
+  expect(endings("hermes")).toEqual([
+    [ids.alliance, "fulfilled", true],
+    [ids.hadesRefused, "refused", false],
+  ]);
+  expect(endings("athena")).toEqual([]);
+});
+
+test("every god practiced: each of the seven made a practice move; a cast god that made none fails, and a run with no cast named is not asked", () => {
+  const { input } = fullCast();
+  const found = castProperty(input, "every god practiced");
+  expect(found.ok).toBe(true);
+  expect(found.detail).toContain("hades: settlement, travel");
+  expect(analyze(input).properties.map((p) => p.name)).not.toContain(
+    "every god practiced",
+  );
+  // Hades answered Hermes and walked, and nothing else: with both gone he did nothing.
+  const silent = without(
+    input,
+    (e) =>
+      e.entityId === "hades" &&
+      ["practice-moved", "journey-started"].includes(e.kind),
+  );
+  const missing = castProperty(silent, "every god practiced");
+  expect(missing.ok).toBe(false);
+  expect(missing.detail).toContain("hades: no practice move");
+  // A god the cast names that never appears at all fails the same way.
+  expect(
+    analyzePractices(input, [...CAST, "apollo"]).properties.find(
+      (p) => p.name === "every god practiced",
+    )?.ok,
+  ).toBe(false);
+});
+
+test("every practice appeared: settlement, supplication, contest, a breach with transformation, a sealed alliance, and travel; the one that is missing is named", () => {
+  const { input } = fullCast();
+  const found = castProperty(input, "every practice appeared");
+  expect(found.ok).toBe(true);
+  for (const practice of PRACTICES) expect(found.detail).toContain(practice);
+  for (const [practice, drop] of [
+    ["contest", (e: Loose) => e.kind === "contest-opened"],
+    ["travel", (e: Loose) => e.kind === "journey-started"],
+    [
+      "sealed alliance",
+      (e: Loose) => e.kind === "practice-ended" && e.reason === "sealed",
+    ],
+    [
+      "breach with transformation",
+      (e: Loose) => e.kind === "motif-applied" && e.effect === "transformation",
+    ],
+    [
+      "supplication",
+      (e: Loose) =>
+        e.kind === "practice-opened" && e.practice === "supplication",
+    ],
+  ] as const) {
+    const bare = castProperty(without(input, drop), "every practice appeared");
+    expect([practice, bare.ok]).toEqual([practice, false]);
+    expect(bare.detail).toContain(`missing: ${practice}`);
+  }
+});
+
+test("alliances sealed by agreement: each allied relationship cites a memory of a sealed ending, and each sealed ending allied both gods; with none, nothing is asked", () => {
+  const { input, ids } = fullCast();
+  const found = property(input, "alliances sealed by agreement");
+  expect(found.ok).toBe(true);
+  expect(found.detail).toContain("hephaestus");
+  expect(found.detail).toContain(ids.sealing);
+  const none = property(episode().input, "alliances sealed by agreement");
+  expect(none.ok).toBe(true);
+  expect(none.detail).toContain("no alliance");
+});
+
+test("an alliance with no seal fails: an ending that is not a sealing, an allied feeling no sealed ending explains, and a sealing that allied only one of the two", () => {
+  const { input, ids } = fullCast();
+  // The ending the alliance cites is a plain performance, not a sealing.
+  const unsealed: RealInput = {
+    ...input,
+    events: input.events.map((e: Loose) =>
+      e.id === ids.sealing ? { ...e, reason: "performed" } : e,
+    ) as never,
+  };
+  const first = property(unsealed, "alliances sealed by agreement");
+  expect(first.ok).toBe(false);
+  expect(first.detail).toContain("not a sealed ending");
+  // Hades is allied with Hermes by a feeling that cites a refusal.
+  const refusal = input.events.find(
+    (e: Loose) => e.kind === "relationship-changed" && e.toward === "hades",
+  ) as Loose;
+  const forged: RealInput = {
+    ...input,
+    events: input.events.map((e: Loose) =>
+      e.id === refusal.id ? { ...e, allied: true } : e,
+    ) as never,
+  };
+  const second = property(forged, "alliances sealed by agreement");
+  expect(second.ok).toBe(false);
+  expect(second.detail).toContain("hermes → hades");
+  // The seal allied Hermes with Hephaestus and not Hephaestus with Hermes.
+  const half = without(
+    input,
+    (e) =>
+      e.kind === "relationship-changed" &&
+      e.entityId === "hephaestus" &&
+      e.allied === true,
+  );
+  const third = property(half, "alliances sealed by agreement");
+  expect(third.ok).toBe(false);
+  expect(third.detail).toContain("hephaestus → hermes");
 });

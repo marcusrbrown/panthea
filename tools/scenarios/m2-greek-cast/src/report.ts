@@ -42,7 +42,7 @@ Controls: \`kill-journal\`, \`kill-inference\`, \`chain\`, \`isolation\`, \`trac
 practice steps and the practice properties of the real run, \`thread-reopened\`,
 \`no-progress-advances\`, \`thread-no-ending\`, \`obligated-turn-unrecorded\`,
 \`ending-no-consequence\`, \`practices-missing\`, \`consequence-no-effect\`,
-\`contest-no-standing\`.
+\`contest-no-standing\`, \`alliance-unsealed\`, \`god-silent\`, \`practice-absent\`.
 
 Practice steps (settlement and supplication, scripted gods, the world's real
 rules; each reply is a function of the prompt its god was shown, so it names
