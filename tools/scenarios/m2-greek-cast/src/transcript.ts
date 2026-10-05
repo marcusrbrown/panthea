@@ -25,7 +25,11 @@ import {
   REPETITION_CAP,
 } from "./episode-analysis";
 import { journeysOf, renderJourneyCounts, renderJourneys } from "./journeys";
-import { analyzePractices, type ThreadRecord } from "./practice-analysis";
+import {
+  analyzePractices,
+  describeCast,
+  type ThreadRecord,
+} from "./practice-analysis";
 import {
   committedInOrder,
   type RealAnalysis,
@@ -495,6 +499,17 @@ function renderPracticeThreads(record: EpisodeRecord): string {
     : threads.map((thread) => renderThread(thread, record)).join("\n\n");
 }
 
+/** Each god's distinct practices and how its threads ended, in the order the gods are shown. */
+function renderCast(record: EpisodeRecord): string {
+  const { cast } = analyzePractices(
+    record.input,
+    record.episode.gods.map((g) => g.god),
+  );
+  return describeCast(cast)
+    .map((line) => `- ${line}`)
+    .join("\n");
+}
+
 function renderOpenThreads(record: EpisodeRecord): string {
   const { open } = analyzePractices(record.input);
   return open.length === 0
@@ -702,6 +717,10 @@ export function renderTranscript(record: EpisodeRecord): string {
     "## Practice threads",
     "",
     renderPracticeThreads(record),
+    "",
+    "## What each god practiced",
+    "",
+    renderCast(record),
     "",
     "## Open threads at the end",
     "",

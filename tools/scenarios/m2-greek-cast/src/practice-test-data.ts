@@ -157,6 +157,8 @@ export function prompt(
 
 export interface Episode {
   readonly input: RealInput;
+  /** The log the input's events were written to, to be continued. */
+  readonly log: Log;
   readonly ids: {
     readonly contest: string;
     readonly contestClosing: string;
@@ -731,6 +733,7 @@ export function episode(): Episode {
   });
 
   return {
+    log,
     input: {
       requests,
       proposals,
@@ -747,6 +750,157 @@ export function episode(): Episode {
       npObservation: repeat.observationId,
       refusedEnding: refusedEnding.id,
       breachEnding: breach.id,
+    },
+  };
+}
+
+/** The seven gods of the authored cast. */
+export const CAST = [
+  "athena",
+  "hades",
+  "hephaestus",
+  "hera",
+  "hermes",
+  "poseidon",
+  "zeus",
+] as const;
+
+export interface FullCast {
+  readonly input: RealInput;
+  readonly ids: Episode["ids"] & {
+    /** The alliance thread, and the event that ended it sealed. */
+    readonly alliance: string;
+    readonly sealing: string;
+    /** Hermes's demand of Hades, which Hades refused. */
+    readonly hadesRefused: string;
+  };
+}
+
+/**
+ * The coherent episode, carried on to the full cast: journeys by four gods;
+ * Hephaestus walks to the dock, tells Hermes of a kindness, and Hermes asks him
+ * for an alliance, which he accepts and the world seals, so each of the two
+ * becomes allied with the other; Hades walks to the dock and tells Hermes
+ * something, and Hermes demands of him in turn, which Hades refuses.
+ */
+export function fullCast(): FullCast {
+  const base = episode();
+  const { log } = base;
+  for (const [god, to] of [
+    ["zeus", "town-square"],
+    ["hera", "town-square"],
+  ] as const) {
+    log.add("journey-started", 149, { entityId: god, to });
+  }
+
+  // Hephaestus walks to the dock, tells Hermes of a kindness, and Hermes asks him for an alliance.
+  log.add("journey-started", 150, {
+    entityId: "hephaestus",
+    to: "ferry-dock",
+  });
+  const oars = log.told(
+    155,
+    "hephaestus",
+    "hermes",
+    "I forged the ferryman's oars",
+    {
+      effect: "kindness",
+      agent: "hephaestus",
+    },
+  );
+  const alliance = log.add("practice-opened", 156, {
+    entityId: "hermes",
+    practice: "settlement",
+    counterparty: "hephaestus",
+    causes: [oars.report.id],
+    term: {
+      kind: "ally",
+      party: "hephaestus",
+      to: "hermes",
+      deadline: 206,
+    },
+    negotiationDeadline: 216,
+    counterBudget: 3,
+    subject: { agent: "hephaestus" },
+  });
+  log.add("practice-moved", 157, {
+    entityId: "hephaestus",
+    threadId: alliance.id,
+    move: "accept",
+    sworn: false,
+  });
+  const sealing = log.add("practice-ended", 157, {
+    entityId: "hermes",
+    counterparty: "hephaestus",
+    threadId: alliance.id,
+    outcome: "fulfilled",
+    reason: "sealed",
+  });
+  log.remember(
+    157,
+    sealing,
+    "practice-ended",
+    ["hermes", "hephaestus"],
+    { outcome: "fulfilled", sealed: true },
+    [
+      {
+        entityId: "hermes",
+        toward: "hephaestus",
+        affinityDelta: 0,
+        allied: true,
+      },
+      {
+        entityId: "hephaestus",
+        toward: "hermes",
+        affinityDelta: 0,
+        allied: true,
+      },
+    ],
+  );
+
+  // Hades walks to the dock and tells Hermes something; Hermes demands of him, and he refuses.
+  log.add("journey-started", 160, { entityId: "hades", to: "ferry-dock" });
+  const decree = log.told(
+    162,
+    "hades",
+    "hermes",
+    "No shade leaves my halls unpaid for",
+    { effect: "kindness", agent: "hades" },
+  );
+  const demanded = log.add("practice-opened", 163, {
+    entityId: "hermes",
+    practice: "settlement",
+    counterparty: "hades",
+    causes: [decree.report.id],
+    term: term("be-at", "hades", "town-square", 203),
+    negotiationDeadline: 223,
+    counterBudget: 3,
+    subject: { agent: "hades" },
+  });
+  const no = log.add("practice-moved", 164, {
+    entityId: "hades",
+    threadId: demanded.id,
+    move: "refuse",
+  });
+  log.remember(
+    164,
+    no,
+    "practice-moved",
+    ["hermes", "hades"],
+    { outcome: "refused", agent: "hades" },
+    [{ entityId: "hermes", toward: "hades", affinityDelta: -1 }],
+  );
+
+  return {
+    input: {
+      ...base.input,
+      events: log.events as unknown as RealInput["events"],
+    },
+    ids: {
+      ...base.ids,
+      alliance: alliance.id,
+      sealing: sealing.id,
+      hadesRefused: demanded.id,
     },
   };
 }

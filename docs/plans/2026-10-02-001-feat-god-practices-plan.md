@@ -493,7 +493,7 @@ Status (2026-10-03): the scenario and harness are done (34159f4). The gate ran t
 
 **Verification:** tests pass; archive round-trip equal.
 
-- [ ] **Unit 9: Gods-first scheduler**
+- [x] **Unit 9: Gods-first scheduler**
 
 **Goal:** seven gods share one model fairly, with inference spent on decisions.
 
@@ -532,7 +532,9 @@ Status (2026-10-04): Unit 9 is split into two PRs, by owner decision. PR 1 is th
 
 Status (2026-10-04): PR 2 implements travel per the owner's choices of this date, which differ from the Approach text above and replace it where they differ: `travel(to)` is a god's one movement action and replaces `move` and `realm-transition` for gods (mortal routines keep both); the god's prompt lists the places it can travel to instead of its exits. A validated `travel` stores one journey and takes the first hop on the tick it is applied; every tick the world advances each journey by one hop, worked out from where the god stands and run through the existing move and realm-transition validators, with no model call and no divinity cost. A journey ends once, with a private event giving the reason: arrived, refused (a refused or no-route hop moves nothing, and the event carries the world's reason), or replaced (the god commits its next proposal). A god on a journey is not eligible for a turn until it ends, unless a thread awaits its answer (owing alone does not call it back). The journey is one `WorldState` field, in the codec and the archive's projection check. The contract changed accordingly: `travel` in `proposal.ts`, `journey-started` and `journey-ended` in `event.ts`, and `defaults.md` records the rules. The tests of this unit are covered by `journey.test.ts`, the dispatch tests in `agents.test.ts`, and the archive test in `proposal-journal.test.ts`, except the "metrics appear in the scenario summary" test, which PR 1's note above leaves to the per-request timing table; the checkbox stays unticked until the owner confirms that reading.
 
-- [ ] **Unit 10: Seven-god scenario and evidence**
+Status (2026-10-04): done. Both PRs have landed (the scheduler in #117, travel journeys in #119), and the owner has confirmed the reading of the "metrics appear in the scenario summary" test: the existing per-request timing table (when each god was asked, when its proposal was applied, its latency) and the journeys line meet it. The queue, generation, and commit split the Approach lists is not needed for M2; M2 Unit 13 can add it if the unattended run needs it.
+
+- [x] **Unit 10: Seven-god scenario and evidence**
 
 **Goal:** the full cast plays every practice in one scripted run, ready for Unit 13 of the M2 plan.
 
@@ -551,6 +553,8 @@ Status (2026-10-04): PR 2 implements travel per the owner's choices of this date
 - Integration: the seven-god scripted run passes, and each positive control fails as required.
 
 **Verification:** `scenario:m2` passes; traceability rows updated; the M2 plan records Units 9–11 as done through this plan.
+
+Status (2026-10-04): done. The owner approved this scope. The story is now 20 steps. Hermes, Hephaestus, and Hades each play a short arc beside the existing ones: S18 is a sealed alliance (Hermes demands that Hephaestus ally with him over a kindness Hephaestus told him; Hephaestus accepts; the world ends the thread sealed and allies both gods, each by one `relationship-changed` event citing its memory of the sealing, which rests on the sealed ending; no other relationship in the world is allied), and S19 is Hades walking to the dock, telling Hermes something, and refusing Hermes's demand in turn (named as the refuser, remembered by both, Hermes cooling toward him). The practice-properties step becomes S20 and names the cast: three new properties over the run's events, `alliances sealed by agreement`, `every god practiced` (each of the seven made at least one practice move), and `every practice appeared` (a settlement, a supplication with terms, a contest, a breach with transformation, a sealed alliance, and travel). `castPractices` in `practice-analysis.ts` reads each god's practices and thread endings from the log, and the transcript lists them. A god's practice move is a thread it opened or moved on, a contest it opened, or a journey it set out on; a contest's rival is credited only when the act the contest rests on was its own (Poseidon's legend), and a sealed alliance is the act of both gods in it. Three positive controls were added and fail: `alliance-unsealed` (S18), `god-silent` and `practice-absent` (S20). The existing practice controls still fail on the S20 properties. A real-model episode was not run; the new properties are asked only of a run that names its cast, so the gate's two-god episodes are unchanged.
 
 ## System-Wide Impact
 

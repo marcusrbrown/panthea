@@ -365,13 +365,16 @@ export function buildThreads(events: readonly WorldEvent[]): ThreadRecord[] {
   );
 }
 
-/** The gods an ending is the act of: who refused or withdrew; who performed or breached a settlement; for a supplication, the god whose boon and terms it was. */
+/** The gods an ending is the act of: who refused or withdrew; who performed or breached a settlement; for a supplication, the god whose boon and terms it was; for a sealed alliance, both gods, since an agreement is the act of both. */
 export function causedBy(
   thread: ThreadRecord,
   gods: ReadonlySet<string>,
 ): string[] {
   const ending = thread.ending;
   if (ending === undefined) return [];
+  if (ending.sealed) {
+    return [thread.demander, thread.obligated].filter((god) => gods.has(god));
+  }
   let who: string | undefined;
   if (ending.reason === "refused" || ending.reason === "withdrawn") {
     who = ending.by;
@@ -1183,6 +1186,247 @@ function obligatedTurnsRecorded(turns: ObligatedTurns): Property {
   };
 }
 
+// --- The full cast ---------------------------------------------------------------------------
+
+/** The practices a full run plays, each at least once. A breach with transformation is a supplication's breached stake; travel is a god's journey. */
+export const PRACTICES = [
+  "settlement",
+  "supplication",
+  "contest",
+  "breach with transformation",
+  "sealed alliance",
+  "travel",
+] as const;
+export type Practice = (typeof PRACTICES)[number];
+
+export interface GodEnding {
+  readonly thread: string;
+  readonly practice: ThreadRecord["practice"];
+  readonly outcome: string;
+  readonly reason: string;
+  /** Whether the god's own act decided it (`causedBy`). */
+  readonly decided: boolean;
+}
+
+export interface GodRecord {
+  readonly god: string;
+  /** The practices the god made a move in, once each, in the order of `PRACTICES`. */
+  readonly practices: readonly Practice[];
+  /** The endings of the threads the god was a party to, oldest thread first. */
+  readonly endings: readonly GodEnding[];
+}
+
+/**
+ * What each god of `cast` did, from the log alone. A god made a move in a
+ * practice when it opened a thread or moved on one (a settlement's demand,
+ * counter, answer; a supplication's offer), opened a contest, or set out on a
+ * journey; the rival of a contest is credited when the act the contest rests on
+ * was its own. A breach with transformation is credited to the god whose act the
+ * ending was, and a sealed alliance to both gods in it.
+ */
+export function castPractices(
+  events: readonly WorldEvent[],
+  threads: readonly ThreadRecord[],
+  cast: readonly string[],
+): GodRecord[] {
+  const gods = new Set(cast);
+  const byId = new Map(events.map((event) => [event.id as string, event]));
+  const kindOf = new Map(threads.map((thread) => [thread.id, thread.practice]));
+  const did = new Map<string, Set<Practice>>(
+    cast.map((god) => [god, new Set()]),
+  );
+  const credit = (god: string, practice: Practice) =>
+    did.get(god)?.add(practice);
+  for (const event of events) {
+    switch (event.kind) {
+      case "practice-opened":
+        credit(event.entityId, event.practice);
+        break;
+      case "practice-moved": {
+        const practice = kindOf.get(event.threadId);
+        if (practice !== undefined) credit(event.entityId, practice);
+        break;
+      }
+      case "contest-opened":
+        credit(event.entityId, "contest");
+        if (byId.get(event.cause)?.entityId === event.rival) {
+          credit(event.rival, "contest");
+        }
+        break;
+      case "journey-started":
+        credit(event.entityId, "travel");
+        break;
+      default:
+        break;
+    }
+  }
+  const transformed = new Set(
+    events.flatMap((event) =>
+      event.kind === "motif-applied" && event.effect === "transformation"
+        ? [event.threadId as string]
+        : [],
+    ),
+  );
+  for (const thread of threads) {
+    const { ending } = thread;
+    if (ending === undefined) continue;
+    const decided = causedBy(thread, gods);
+    if (ending.sealed) {
+      for (const god of decided) credit(god, "sealed alliance");
+    } else if (ending.outcome === "breached" && transformed.has(thread.id)) {
+      for (const god of decided) credit(god, "breach with transformation");
+    }
+  }
+  return cast.map((god) => ({
+    god,
+    practices: PRACTICES.filter((practice) => did.get(god)?.has(practice)),
+    endings: threads.flatMap((thread) =>
+      thread.ending === undefined ||
+      (thread.demander !== god && thread.obligated !== god)
+        ? []
+        : [
+            {
+              thread: thread.id,
+              practice: thread.practice,
+              outcome: thread.ending.outcome,
+              reason: thread.ending.reason,
+              decided: causedBy(thread, gods).includes(god),
+            },
+          ],
+    ),
+  }));
+}
+
+/** Each god's practices and thread endings in words, one line per god, for the transcript. */
+export function describeCast(record: readonly GodRecord[]): string[] {
+  return record.map(
+    ({ god, practices, endings }) =>
+      `${god}: ${practices.length === 0 ? "no practice move" : practices.join(", ")}; thread endings: ${
+        endings.length === 0
+          ? "none"
+          : endings
+              .map(
+                (e) =>
+                  `${e.outcome}${e.reason === "sealed" ? " (sealed)" : ""} [${e.thread}]${e.decided ? " by its act" : ""}`,
+              )
+              .join(", ")
+      }`,
+  );
+}
+
+function everyGodPracticed(record: readonly GodRecord[]): Property {
+  return {
+    name: "every god practiced",
+    ok: record.length > 0 && record.every((r) => r.practices.length > 0),
+    detail: record
+      .map(
+        (r) =>
+          `${r.god}: ${r.practices.length === 0 ? "no practice move" : r.practices.join(", ")}`,
+      )
+      .join("; "),
+  };
+}
+
+function everyPracticeAppeared(record: readonly GodRecord[]): Property {
+  const by = (practice: Practice) =>
+    record.filter((r) => r.practices.includes(practice)).map((r) => r.god);
+  const missing = PRACTICES.filter((practice) => by(practice).length === 0);
+  return {
+    name: "every practice appeared",
+    ok: missing.length === 0,
+    detail: `${PRACTICES.filter((p) => !missing.includes(p))
+      .map((practice) => `${practice} (${by(practice).join(", ")})`)
+      .join(
+        "; ",
+      )}${missing.length === 0 ? "" : `; missing: ${missing.join(", ")}`}`,
+  };
+}
+
+/**
+ * An alliance comes only from a sealed settlement (R19, W09): each allied
+ * feeling cites the memory of an ending that was a sealing of an alliance term
+ * between those two gods, and each sealing allied both gods toward each other.
+ * A run with no alliance holds this vacuously; the scripted story is what
+ * requires one.
+ */
+function alliancesSealed(
+  threads: readonly ThreadRecord[],
+  events: readonly WorldEvent[],
+): Property {
+  const name = "alliances sealed by agreement";
+  const memories = new Map(
+    events.flatMap((event) =>
+      event.kind === "memory-recorded"
+        ? [[event.id as string, event] as const]
+        : [],
+    ),
+  );
+  const sealings = new Map(
+    threads.flatMap((thread) =>
+      thread.ending?.sealed === true && thread.term.kind === "ally"
+        ? [[thread.ending.eventId, thread] as const]
+        : [],
+    ),
+  );
+  const problems: string[] = [];
+  const allied = new Set<string>();
+  for (const event of events) {
+    if (event.kind !== "relationship-changed" || event.allied !== true)
+      continue;
+    const pair = `${event.entityId} → ${event.toward}`;
+    const memory = memories.get(event.memoryEventId);
+    const ended = memory?.sourceEventId;
+    const thread = ended === undefined ? undefined : sealings.get(ended);
+    if (
+      memory === undefined ||
+      memory.memoryKind !== "witnessed" ||
+      memory.ending?.sealed !== true ||
+      thread === undefined
+    ) {
+      problems.push(
+        `${pair} became allied citing [${event.memoryEventId}], which is not a sealed ending of an alliance term`,
+      );
+      continue;
+    }
+    const gods = [thread.demander, thread.obligated].sort();
+    if (gods.join() !== [event.entityId, event.toward].sort().join()) {
+      problems.push(
+        `${pair} became allied citing [${thread.ending?.eventId}], a sealing between ${gods.join(" and ")}`,
+      );
+      continue;
+    }
+    allied.add(`${event.entityId}>${event.toward}>${ended}`);
+  }
+  for (const [ended, thread] of sealings) {
+    const [a, b] = [thread.demander, thread.obligated];
+    for (const [from, toward] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      if (!allied.has(`${from}>${toward}>${ended}`)) {
+        problems.push(
+          `the sealed ending [${ended}] left ${from} → ${toward} not allied`,
+        );
+      }
+    }
+  }
+  return {
+    name,
+    ok: problems.length === 0,
+    detail:
+      problems.length > 0
+        ? problems.join("; ")
+        : sealings.size === 0
+          ? "no alliance was formed"
+          : [...sealings]
+              .map(
+                ([ended, thread]) =>
+                  `${thread.demander} ↔ ${thread.obligated} sealed by [${ended}], each allied with the other`,
+              )
+              .join("; "),
+  };
+}
+
 /** Everything the practice analysis finds, for the transcript and the properties. */
 export interface PracticeAnalysis {
   readonly threads: readonly ThreadRecord[];
@@ -1190,6 +1434,8 @@ export interface PracticeAnalysis {
   readonly noProgress: readonly NoProgressMove[];
   readonly obligated: ObligatedTurns;
   readonly now: number;
+  /** What each god of the named cast did; empty when no cast was named. */
+  readonly cast: readonly GodRecord[];
   readonly properties: readonly Property[];
 }
 
@@ -1293,19 +1539,30 @@ export function contestEndingsRecorded(
   };
 }
 
-export function analyzePractices(input: RealInput): PracticeAnalysis {
+/**
+ * With `cast` named (the scripted story names its seven gods) the run is also
+ * asked that each of them made a practice move and that every practice
+ * appeared; a real run names none, since an unscripted model plays what it
+ * plays.
+ */
+export function analyzePractices(
+  input: RealInput,
+  cast: readonly string[] = [],
+): PracticeAnalysis {
   const events = parseAll(input.events);
   const gods = godsOf(input);
   const threads = buildThreads(events);
   const now = lastTick(events);
   const noProgress = noProgressMoves(input.proposals, events);
   const obligated = obligatedTurns(input, threads, gods);
+  const record = castPractices(events, threads, cast);
   return {
     threads,
     open: openThreads(threads, now),
     noProgress,
     obligated,
     now,
+    cast: record,
     properties: [
       godThreadEndings(threads, gods),
       practicesRun(threads),
@@ -1315,6 +1572,10 @@ export function analyzePractices(input: RealInput): PracticeAnalysis {
       consequenceChangesChoice(threads, input, events, gods),
       obligatedTurnsRecorded(obligated),
       contestEndingsRecorded(events, now),
+      alliancesSealed(threads, events),
+      ...(cast.length === 0
+        ? []
+        : [everyGodPracticed(record), everyPracticeAppeared(record)]),
     ],
   };
 }
