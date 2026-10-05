@@ -330,7 +330,10 @@ function validate(input: ConformanceInput): InvalidInput | undefined {
   return undefined;
 }
 
-/** True when any channel of the two RGBA pixels differs by more than `tolerance`. */
+/**
+ * True when any channel of the two RGBA pixels differs by more than `tolerance`.
+ * The RGB of a fully transparent pixel is invisible, so it compares as zero.
+ */
 function pixelsDiffer(
   a: Uint8Array,
   ai: number,
@@ -338,10 +341,12 @@ function pixelsDiffer(
   bi: number,
   tolerance: number,
 ): boolean {
+  const aHidden = a[ai + 3] === 0;
+  const bHidden = b[bi + 3] === 0;
   for (let c = 0; c < 4; c += 1) {
-    if (Math.abs((a[ai + c] as number) - (b[bi + c] as number)) > tolerance) {
-      return true;
-    }
+    const av = c < 3 && aHidden ? 0 : (a[ai + c] as number);
+    const bv = c < 3 && bHidden ? 0 : (b[bi + c] as number);
+    if (Math.abs(av - bv) > tolerance) return true;
   }
   return false;
 }

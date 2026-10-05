@@ -14,6 +14,7 @@ import {
   conformImage,
   type GridParams,
   type Rgb,
+  type RgbaImage,
   recoverGrid,
 } from "./conformance";
 import { committedVocabulary, spriteFixture } from "./fixtures";
@@ -855,6 +856,110 @@ describe("report-only mode", () => {
     const before = Uint8Array.from(given.rgba);
     done(given);
     expect(given.rgba).toEqual(before);
+  });
+});
+
+describe("colour hidden under alpha 0", () => {
+  const base = () => upscale(figure5(), 8);
+  /** Deterministic non-zero, per-pixel varying RGB on every alpha-0 pixel. */
+  const withHiddenRgb = (src: RgbaImage): RgbaImage => {
+    const out = cloneImage(src);
+    const rand = lcg(7);
+    for (let at = 0; at < out.rgba.length; at += 4) {
+      if (out.rgba[at + 3] !== 0) continue;
+      for (let c = 0; c < 3; c += 1) {
+        out.rgba[at + c] = 1 + ((rand() >>> 8) % 255);
+      }
+    }
+    return out;
+  };
+  const png = (img: RgbaImage) =>
+    Buffer.from(encodeRgbaPng(img.rgba, img.width, img.height));
+
+  it("recovers the same grid evidence as the zero-filled image", () => {
+    const baseline = recoverGrid(base(), CELL, GRID);
+    expect(baseline).toMatchObject({
+      ok: true,
+      grid: { scale: 8, source: "detected", confidence: 1, offGridEdges: 0 },
+    });
+    expect(recoverGrid(withHiddenRgb(base()), CELL, GRID)).toEqual(baseline);
+  });
+
+  it("counts no blended block for colour no pixel shows", () => {
+    const result = done(input({ ...withHiddenRgb(base()), scale: 8 }));
+    expect(result.metrics.blendedBlocks).toBe(0);
+  });
+
+  it("conforms in auto mode to the same result and PNG bytes as the zero-filled image", () => {
+    const baseline = done(input({ ...base() }));
+    const given = input({ ...withHiddenRgb(base()) });
+    expect(conformImage(given)).toEqual(baseline);
+    expect(png(done(given).image).equals(png(baseline.image))).toBe(true);
+  });
+
+  it("reports the same evidence in report-only mode and leaves every input byte untouched", () => {
+    const source = withHiddenRgb(base());
+    const snapshot = Uint8Array.from(source.rgba);
+    const baseline = done(input({ ...base(), mode: "report-only" }));
+    const given = input({ ...source, mode: "report-only" });
+    expect(conformImage(given).status).toBe("done");
+    const result = done(given);
+    expect(result.proposal).toEqual(baseline.proposal);
+    expect(result.report).toEqual(baseline.report);
+    expect(result.metrics).toEqual(baseline.metrics);
+    expect(result.diff).toEqual(baseline.diff);
+    expect(result.editDiff).toEqual(baseline.editDiff);
+    expect(result.image.rgba).toEqual(snapshot);
+    expect(result.image.rgba).not.toBe(given.rgba);
+    expect(given.rgba).toEqual(snapshot);
+    expect(result.image.rgba).not.toEqual(baseline.image.rgba);
+  });
+
+  describe("edge counts on a 2x grid", () => {
+    const edges = (pixel: Parameters<typeof image>[2]) => {
+      const resolved = recoverGrid(
+        image(8, 8, pixel),
+        { w: 4, h: 4 },
+        { edgeTolerance: 8, minConfidence: 0.5, minEdges: 1 },
+      );
+      if (!("grid" in resolved)) throw new Error(resolved.message);
+      return {
+        on: resolved.grid.onGridEdges,
+        off: resolved.grid.offGridEdges,
+      };
+    };
+    const hiddenAt = (
+      x: number,
+      y: number,
+    ): [number, number, number, number] => [
+      1 + ((x * 31 + y * 17) % 255),
+      1 + ((x * 13 + y * 29) % 255),
+      1 + ((x * 7 + y * 11) % 255),
+      0,
+    ];
+
+    it("finds no edge between pixels that differ only in hidden colour", () => {
+      expect(edges((x, y) => hiddenAt(x, y))).toEqual({ on: 0, off: 0 });
+    });
+
+    it("still finds the boundary of transparent against opaque", () => {
+      expect(
+        edges((x, y) => (x < 4 ? hiddenAt(x, y) : [0, 0, 0, 255])),
+      ).toEqual({ on: 8, off: 0 });
+    });
+
+    it("finds no edge when the alpha step is within the tolerance and the visible colour is zero", () => {
+      expect(edges((x, y) => (x < 4 ? hiddenAt(x, y) : [0, 0, 0, 5]))).toEqual({
+        on: 0,
+        off: 0,
+      });
+    });
+
+    it("finds the boundary when the alpha step exceeds the tolerance", () => {
+      expect(edges((x, y) => (x < 4 ? hiddenAt(x, y) : [0, 0, 0, 20]))).toEqual(
+        { on: 8, off: 0 },
+      );
+    });
   });
 });
 
