@@ -4,6 +4,7 @@
 // node:fs. The placeholder and hash modules use node:zlib and node:crypto:
 // this package is for Node and Bun, not the browser.
 
+export * from "./conformance";
 export * from "./hash";
 export * from "./placeholder";
 export { type PngHeader, readPngHeader } from "./png";
