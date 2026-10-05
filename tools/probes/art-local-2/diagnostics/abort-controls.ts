@@ -1,8 +1,13 @@
 // Temporary CI diagnostic: how does this platform report a child that dies of
-// SIGABRT? Runs a few controls that need no repository code, each twice (the
-// inherited core-dump limit, then `ulimit -c 0` inside the child's own shell),
-// and prints one JSON document. Every wait is bounded, only pids this script
+// SIGABRT? Runs a few controls that need no repository code, each twice: with
+// the inherited core-dump limit, then with the core limit set to exactly one
+// byte through prlimit(1). Prints one JSON document with a record for every
+// control and variant: it ran, was not run (prlimit missing), was skipped by
+// the total deadline, or errored. Every wait is bounded, only pids this script
 // created are signalled, and nothing from the environment is printed.
+//
+// One byte, not `ulimit -c 1`: ulimit counts blocks, and a core limit of
+// exactly 1 byte is the value the kernel treats as "abort a piped core dump".
 //
 //   bun tools/probes/art-local-2/diagnostics/abort-controls.ts
 
@@ -39,7 +44,32 @@ const shell = (script: string) =>
 /** Core-dump helpers that could be catching the abort, by command name only. */
 function coreHelpers(): string[] {
   const names = shell("ps -eo comm=").split("\n");
-  return [...new Set(names.filter((n) => /apport|coredump|abrt/i.test(n)))];
+  return [...new Set(names.filter((n) => /coredum|apport|abrt/i.test(n)))];
+}
+
+const STATUS_FIELDS = ["State", "CoreDumping", "VmSize", "VmRSS", "Threads"];
+
+/** A few named lines of /proc/<pid>/status; never the whole file. */
+function procStatus(pid: number): Record<string, string> | null {
+  const text = readText(`/proc/${pid}/status`);
+  if (text === null) return null;
+  const fields: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const colon = line.indexOf(":");
+    const key = line.slice(0, colon);
+    if (STATUS_FIELDS.includes(key)) fields[key] = line.slice(colon + 1).trim();
+  }
+  return fields;
+}
+
+/** The core-size row of /proc/<pid>/limits (soft, hard, units), or null. */
+function coreLimitRow(pid: number | "self"): string | null {
+  return (
+    readText(`/proc/${pid}/limits`)
+      ?.split("\n")
+      .find((line) => line.startsWith("Max core file size"))
+      ?.replace(/\s+/g, " ") ?? null
+  );
 }
 
 interface Control {
@@ -49,6 +79,8 @@ interface Control {
   /** Wait for this stdout text, while the child is still alive, before acting. */
   readonly readyText?: string;
   readonly act?: (child: Bun.Subprocess) => void;
+  /** A longer wait for the child to exit, in the inherited-limit variant only. */
+  readonly inheritedExitWaitMs?: number;
 }
 
 const idle = "setInterval(() => {}, 1000)";
@@ -68,6 +100,7 @@ const controls: readonly Control[] = [
     name: "bun-abort-ignore",
     cmd: [bun, "-e", "process.abort()"],
     stdio: "ignore",
+    inheritedExitWaitMs: 30_000,
   },
   {
     name: "parent-kills-sigabrt",
@@ -104,17 +137,24 @@ const controls: readonly Control[] = [
   },
 ];
 
-const variants = [
-  { name: "inherited-core-limit", wrap: (cmd: readonly string[]) => cmd },
+const prlimitPath = shell("command -v prlimit") || null;
+
+interface Variant {
+  readonly name: string;
+  readonly wrap: (cmd: readonly string[]) => string[];
+  /** Why this variant cannot run here, when it cannot. */
+  readonly unavailable?: string;
+}
+
+const variants: readonly Variant[] = [
+  { name: "inherited-core-limit", wrap: (cmd) => [...cmd] },
   {
-    name: "shell-core-limit-0",
-    // exec keeps the pid, so signals still reach the control itself.
-    wrap: (cmd: readonly string[]) => [
-      "sh",
-      "-c",
-      'ulimit -c 0; exec "$0" "$@"',
-      ...cmd,
-    ],
+    name: "core-limit-1-byte",
+    // prlimit execs the command, so signals still reach the control itself.
+    wrap: (cmd) => ["prlimit", "--core=1:1", "--", ...cmd],
+    ...(prlimitPath === null
+      ? { unavailable: "prlimit is not available on this platform" }
+      : {}),
   },
 ];
 
@@ -140,12 +180,16 @@ async function collect(
 
 async function runControl(
   control: Control,
-  variant: (typeof variants)[number],
+  variant: Variant,
 ): Promise<Record<string, unknown>> {
   const stdout = { text: "" };
   const stderr = { text: "" };
   const startedAt = performance.now();
-  const child = Bun.spawn([...variant.wrap(control.cmd)], {
+  const exitWaitMs =
+    variant.name === "inherited-core-limit"
+      ? (control.inheritedExitWaitMs ?? WAIT_MS)
+      : WAIT_MS;
+  const child = Bun.spawn(variant.wrap(control.cmd), {
     stdin: "ignore",
     stdout: control.stdio,
     stderr: control.stdio,
@@ -178,13 +222,15 @@ async function runControl(
 
     const exited = await Promise.race([
       child.exited.then(() => true),
-      sleep(Math.max(0, WAIT_MS - (performance.now() - startedAt))).then(
+      sleep(Math.max(0, exitWaitMs - (performance.now() - startedAt))).then(
         () => false,
       ),
     ]);
     const record: Record<string, unknown> = {
       control: control.name,
       variant: variant.name,
+      status: "ran",
+      exitBoundMs: exitWaitMs,
       exitedWithinBound: exited,
       elapsedMs: Math.round(performance.now() - startedAt),
       actedAfterMs,
@@ -193,10 +239,8 @@ async function runControl(
     };
     if (!exited) {
       record.aliveAtBound = alive(child.pid);
-      record.procState =
-        readText(`/proc/${child.pid}/status`)
-          ?.split("\n")
-          .find((line) => line.startsWith("State:")) ?? null;
+      record.procStatus = procStatus(child.pid);
+      record.childCoreLimit = coreLimitRow(child.pid);
       record.coreHelpers = coreHelpers();
     }
 
@@ -211,6 +255,11 @@ async function runControl(
     }
     record.stdoutHead = stdout.text.slice(0, 200);
     record.stderrHead = stderr.text.slice(0, 600);
+    if (variant.name !== "inherited-core-limit") {
+      // A prlimit that could not set the limit (for example EPERM) reports it
+      // on stderr; that is the wrapper failing, not evidence about the abort.
+      record.wrapperReportedFailure = /prlimit/i.test(stderr.text);
+    }
     return record;
   } finally {
     // Only the child and grandchild this run created.
@@ -232,25 +281,35 @@ const started = performance.now();
 const results: Record<string, unknown>[] = [];
 for (const variant of variants) {
   for (const control of controls) {
-    if (performance.now() - started > TOTAL_DEADLINE_MS) {
+    const label = { control: control.name, variant: variant.name };
+    if (variant.unavailable !== undefined) {
       results.push({
-        control: control.name,
-        variant: variant.name,
-        skipped: "total deadline reached",
+        ...label,
+        status: "not-run",
+        reason: variant.unavailable,
       });
-      continue;
-    }
-    try {
-      results.push(await runControl(control, variant));
-    } catch (error) {
+    } else if (performance.now() - started > TOTAL_DEADLINE_MS) {
       results.push({
-        control: control.name,
-        variant: variant.name,
-        error: String(error).slice(0, 300),
+        ...label,
+        status: "skipped",
+        reason: "total deadline reached",
       });
+    } else {
+      try {
+        results.push(await runControl(control, variant));
+      } catch (error) {
+        results.push({
+          ...label,
+          status: "error",
+          error: String(error).slice(0, 300),
+        });
+      }
     }
   }
 }
+
+const count = (status: string) =>
+  results.filter((r) => r.status === status).length;
 
 console.log(
   JSON.stringify(
@@ -266,13 +325,19 @@ console.log(
         kernel: `${type()} ${release()}`,
         kernelBuild: version(),
         corePattern: readText("/proc/sys/kernel/core_pattern"),
+        corePipeLimit: readText("/proc/sys/kernel/core_pipe_limit"),
         coreUlimit: shell("ulimit -c"),
+        parentCoreLimit: coreLimitRow("self"),
+        prlimit: { available: prlimitPath !== null, path: prlimitPath },
         coreHelpers: coreHelpers(),
       },
       totalMs: Math.round(performance.now() - started),
-      runs: results.length,
-      failedRuns: results.filter((r) => "error" in r).length,
-      skippedRuns: results.filter((r) => "skipped" in r).length,
+      deadlineMs: TOTAL_DEADLINE_MS,
+      records: results.length,
+      ran: count("ran"),
+      notRun: count("not-run"),
+      skipped: count("skipped"),
+      errors: count("error"),
       results,
     },
     null,
