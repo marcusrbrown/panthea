@@ -68,15 +68,33 @@ describe("treeUsage", () => {
 });
 
 describe("readTreeUsage (real processes)", () => {
-  const spawned: { kill(): void }[] = [];
-  afterEach(() => {
-    for (const p of spawned.splice(0)) p.kill();
+  const spawned: { kill(): void; exited: Promise<number> }[] = [];
+  const grandchildren: number[] = [];
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // Teardown owns both processes: the parent forwards SIGTERM to its child.
+  afterEach(async () => {
+    for (const p of spawned.splice(0)) {
+      p.kill();
+      await p.exited;
+    }
+    for (const pid of grandchildren.splice(0)) {
+      await until(() => !alive(pid), `grandchild ${pid} exits`);
+    }
   });
 
   it("includes a grandchild's resident memory in the tree total", async () => {
     const grandchild =
       "const b = Buffer.alloc(120 * 1024 * 1024, 1); console.log('ready'); setInterval(() => b[0]++, 1000);";
-    const parent = `const c = Bun.spawn([process.execPath, '-e', ${JSON.stringify(grandchild)}], {stdout: 'pipe'});
+    const parent = `let c; process.on('SIGTERM', () => { c?.kill(); process.exit(0); });
+      c = Bun.spawn([process.execPath, '-e', ${JSON.stringify(grandchild)}], {stdout: 'pipe'});
+      console.log(c.pid);
       const r = c.stdout.getReader(); await r.read(); console.log('ready'); setInterval(() => {}, 1000);`;
     const proc = Bun.spawn([process.execPath, "-e", parent], {
       stdout: "pipe",
@@ -84,7 +102,16 @@ describe("readTreeUsage (real processes)", () => {
     });
     spawned.push(proc);
     const reader = proc.stdout.getReader();
-    await reader.read(); // parent printed ready => grandchild is resident
+    // The parent prints the grandchild's pid, then ready => grandchild is resident.
+    let out = "";
+    while (!out.includes("ready")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("parent exited before ready");
+      out += new TextDecoder().decode(value);
+      if (grandchildren.length === 0 && out.includes("\n")) {
+        grandchildren.push(Number.parseInt(out, 10));
+      }
+    }
     const usage = await readTreeUsage(proc.pid);
     expect(usage).not.toBeNull();
     expect(usage?.processCount).toBeGreaterThanOrEqual(2);
