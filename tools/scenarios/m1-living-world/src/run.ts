@@ -6,12 +6,12 @@
 //   bun run scenario:m1                              run the story
 //   bun run scenario:m1 --skip-build                 reuse the existing sidecar binary
 //   bun run scenario:m1 --positive-control=<name>    break one check on purpose; must fail
-//   bun run scenario:m1 --write-readme               run the story and both controls, rewrite README.md
+//   bun run scenario:m1 --write-readme [--jobs=4]    run the story, then every control four at a time, rewrite README.md
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureEnvironment, renderReport } from "@panthea/tools-probes-shared";
-import { ScenarioFailure } from "./helpers";
+import { mapLimit, ScenarioFailure } from "./helpers";
 import { buildReportInput, type ControlResult } from "./report";
 import { killAllSidecars } from "./sidecar";
 import {
@@ -21,17 +21,29 @@ import {
   type StoryOptions,
 } from "./story";
 
+/** Positive controls `--write-readme` runs at once: each is a whole story with its own sidecar, so the cost is cores, not ports or files. */
+const DEFAULT_JOBS = 4;
+
 interface Args extends StoryOptions {
   readonly writeReadme: boolean;
+  readonly jobs: number;
 }
 
 function parseArgs(argv: readonly string[]): Args {
   let control: ControlName | undefined;
   let writeReadme = false;
   let skipBuild = false;
+  let jobs: number | undefined;
   for (const arg of argv) {
     if (arg === "--write-readme") writeReadme = true;
-    else if (arg === "--skip-build") skipBuild = true;
+    else if (arg.startsWith("--jobs=")) {
+      jobs = Number(arg.slice(7));
+      if (!Number.isInteger(jobs) || jobs < 1) {
+        throw new Error(
+          `--jobs must be a positive whole number, got ${arg.slice(7)}`,
+        );
+      }
+    } else if (arg === "--skip-build") skipBuild = true;
     else if (arg === "--positive-control") control = "archive";
     else if (arg.startsWith("--positive-control=")) {
       const name = arg.slice("--positive-control=".length);
@@ -45,7 +57,15 @@ function parseArgs(argv: readonly string[]): Args {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return { ...(control ? { control } : {}), writeReadme, skipBuild };
+  if (jobs !== undefined && !writeReadme) {
+    throw new Error("--jobs applies only with --write-readme");
+  }
+  return {
+    ...(control ? { control } : {}),
+    writeReadme,
+    skipBuild,
+    jobs: jobs ?? DEFAULT_JOBS,
+  };
 }
 
 const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
@@ -116,21 +136,27 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     if (args.writeReadme) {
-      const controls: ControlResult[] = [];
-      for (const name of CONTROL_NAMES) {
-        console.log(`\nrunning positive control ${name}`);
-        const result = await runControl(name);
-        console.log(`  exit ${result.exitCode}: ${result.failure}`);
-        if (
-          result.exitCode === 0 ||
-          !result.failure.startsWith("FAIL invariant violated")
-        ) {
-          throw new Error(
-            `positive control ${name} did not fail on an invariant (exit ${result.exitCode}: ${result.failure})`,
-          );
-        }
-        controls.push(result);
-      }
+      // Each control is a whole story with its own temporary root, app-data
+      // directory, lifecycle lock, and sidecar, so they share nothing but the
+      // read-only binary. The results come back in CONTROL_NAMES order.
+      const controls = await mapLimit(
+        CONTROL_NAMES,
+        args.jobs,
+        async (name): Promise<ControlResult> => {
+          console.log(`running positive control ${name}`);
+          const result = await runControl(name);
+          console.log(`  ${name} exit ${result.exitCode}: ${result.failure}`);
+          if (
+            result.exitCode === 0 ||
+            !result.failure.startsWith("FAIL invariant violated")
+          ) {
+            throw new Error(
+              `positive control ${name} did not fail on an invariant (exit ${result.exitCode}: ${result.failure})`,
+            );
+          }
+          return result;
+        },
+      );
       const report = renderReport(
         buildReportInput({
           steps,

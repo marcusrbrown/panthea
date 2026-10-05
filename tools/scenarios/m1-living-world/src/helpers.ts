@@ -166,6 +166,35 @@ export async function waitFor<T>(
   }
 }
 
+// --- Concurrency ----------------------------------------------------------------
+
+/** Runs `run` over `items` with at most `limit` in flight; the results are in `items` order whatever order they finish in. Rejects with the first failure, after which no further item starts. */
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  run: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const index = next;
+      next += 1;
+      try {
+        results[index] = await run(items[index] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return results;
+}
+
 // --- Step records ---------------------------------------------------------------
 
 export interface Measurement {

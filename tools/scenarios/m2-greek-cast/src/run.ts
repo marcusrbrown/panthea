@@ -5,7 +5,7 @@
 //   bun run scenario:m2                              run the scripted story
 //   bun run scenario:m2 --skip-build                 reuse the existing sidecar binary
 //   bun run scenario:m2 --positive-control=<name>    break one check on purpose; must fail
-//   bun run scenario:m2 --write-readme               run the story and every control, rewrite README.md (uses real-run.json)
+//   bun run scenario:m2 --write-readme [--jobs=4]    run the story, then every control four at a time, rewrite README.md (uses real-run.json)
 //   bun run scenario:m2 --real [--seconds=N]         both gods through local Ollama, unscripted; asserts properties, writes real-run.json
 //                                                    (rebuilds the sidecar first, unless --skip-build)
 //   bun run scenario:m2 --episodes=N --model=M --base-url=https://host/v1 [--key-ref=NAME]
@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureEnvironment, renderReport } from "@panthea/tools-probes-shared";
-import { ScenarioFailure } from "../../m1-living-world/src/helpers";
+import { mapLimit, ScenarioFailure } from "../../m1-living-world/src/helpers";
 import { killAllSidecars } from "../../m1-living-world/src/sidecar";
 import { type Args, parseArgs } from "./args";
 import { resolveSidecarBinary } from "./binary";
@@ -184,21 +184,28 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     if (args.writeReadme) {
-      const controls: ControlResult[] = [];
-      for (const name of CONTROL_NAMES) {
-        console.log(`\nrunning positive control ${name}`);
-        const result = await runControl(name);
-        console.log(`  exit ${result.exitCode}: ${result.failure}`);
-        if (
-          result.exitCode === 0 ||
-          !result.failure.startsWith("FAIL invariant violated")
-        ) {
-          throw new Error(
-            `positive control ${name} did not fail on an invariant (exit ${result.exitCode}: ${result.failure})`,
-          );
-        }
-        controls.push(result);
-      }
+      // Each control is a whole story with its own temporary root, app-data
+      // directory, lifecycle lock, sidecar, and loopback ports, so they share
+      // nothing but the read-only binary. `mapLimit` returns them in
+      // CONTROL_NAMES order, which is the README's order.
+      const controls = await mapLimit(
+        CONTROL_NAMES,
+        args.jobs,
+        async (name): Promise<ControlResult> => {
+          console.log(`running positive control ${name}`);
+          const result = await runControl(name);
+          console.log(`  ${name} exit ${result.exitCode}: ${result.failure}`);
+          if (
+            result.exitCode === 0 ||
+            !result.failure.startsWith("FAIL invariant violated")
+          ) {
+            throw new Error(
+              `positive control ${name} did not fail on an invariant (exit ${result.exitCode}: ${result.failure})`,
+            );
+          }
+          return result;
+        },
+      );
       const realPath = join(import.meta.dir, "..", "real-run.json");
       const real = existsSync(realPath)
         ? (JSON.parse(readFileSync(realPath, "utf8")) as RealRecord)

@@ -16,7 +16,7 @@ bun run --cwd tools/scenarios scenario:m1 --positive-control=bad-proposals # mus
 bun run --cwd tools/scenarios scenario:m1 --positive-control=claim-owner   # must exit non-zero
 bun run --cwd tools/scenarios scenario:m1 --positive-control=pause         # must exit non-zero
 bun run --cwd tools/scenarios scenario:m1 --positive-control=underworld    # must exit non-zero
-bun run --cwd tools/scenarios scenario:m1 --write-readme                   # story + every control, rewrites this file
+bun run --cwd tools/scenarios scenario:m1 --write-readme [--jobs=4]        # story, then every control four at a time (--jobs=N), rewrites this file
 ```
 
 The scenario builds the sidecar with `apps/simulation/scripts/build-sidecar.sh`
