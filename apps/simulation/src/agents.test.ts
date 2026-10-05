@@ -1099,9 +1099,9 @@ describe("the lifecycle seam", () => {
         ["zeus", "hera"],
         lifecycleFor(world),
       );
-      // Ten minutes behind: a real run of chunks, each committed to the real store.
+      // Three minutes behind: three real chunks (the authored chunk is one minute), each committed to the real store. The property is about the boundaries between chunks, not the size of the gap, and a catch-up is CPU-bound, so a longer gap only makes the test depend on how busy the machine is (ten minutes took 1.5 s alone and over the 5 s limit under parallel load).
       world.store.db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
-        Date.now() - 10 * 60 * 1000,
+        Date.now() - 3 * 60 * 1000,
       ]);
       const dispatched: boolean[] = [];
       world.flags.catchUpRunning = true;
@@ -2151,9 +2151,16 @@ describe("the service with model routing configured", () => {
     const tickAt = async () =>
       readStore(service.appDataDir, (db) => readClock(db).tick);
     const t0 = await tickAt();
-    await Bun.sleep(3_200);
-    // Three seconds of a turn in flight, and the world ticked through them.
-    expect((await tickAt()) - t0).toBeGreaterThanOrEqual(2);
+    // The turn is still held open, and the world ticks through it: two more
+    // ticks arrive while the provider has not answered. Waiting for the ticks
+    // themselves, not for three seconds of wall time, keeps the claim (the
+    // world does not wait on a turn) independent of how much CPU the service
+    // process gets; the bound only stops a hung service.
+    await until(
+      "the world to tick twice while the turn is held open",
+      async () => ((await tickAt()) - t0 >= 2 ? true : undefined),
+      30_000,
+    );
     expect(provider.requests).toHaveLength(1);
     expect((await frameOf(service.port)).sequence).toBeGreaterThanOrEqual(
       start,
