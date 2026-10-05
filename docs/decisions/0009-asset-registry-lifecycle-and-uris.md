@@ -23,7 +23,7 @@ A delegated implementation decision under D26 and the approved [asset studio pla
 **Registry** (`@panthea/assets/registry`, the only module with `node:fs`; single writer, no locks).
 
 - Layout under `content/greek/assets/registry/`: `blobs/<sha256>.png`, `manifests/<revision>.json` and `index.json`. A manifest is stored as its canonical JSON plus a newline; its revision is the sha256 of exactly those bytes. The index is `{ schemaVersion, entries: [{ assetId, revision }] }` sorted by id.
-- Publishing is two phases. `writeRevision` validates the manifest and its blob, then writes the blob and manifest through temp files and renames; existing identical content is reused, and an existing file with different bytes is a corruption error that is never overwritten. `selectRevision` re-verifies the revision and replaces the one index atomically. `publishAsset` takes an approved record and publishes exactly the manifest that record owns, runs both phases, and only then returns the canon record. A crash between the phases leaves the old index in use. Republishing selects a new revision and leaves the old bytes in place.
+- Publishing is two phases. `writeRevision` validates the manifest and its blob, then writes the blob and manifest through temp files and renames; existing identical content is reused, and an existing file with different bytes is a corruption error that is never overwritten. `selectRevision` re-verifies the revision and replaces the one index atomically. `publishAsset` takes an approved record and an approved palette whose digest matches its id, colours and ramps. The manifest and its realm variants must reference that palette. These checks run before any writes; publication then uses exactly the manifest the record owns, runs both phases, and returns the canon record. A crash between the phases leaves the old index in use. Republishing selects a new revision and leaves the old bytes in place.
 - `loadRegistry` returns a snapshot plus problems. An entry that fails any check is left out, so lookups for it fall back; temp files and unreferenced revisions are ignored.
 
 **Lookup** (`@panthea/assets`, no filesystem). `resolveAsset` takes a snapshot and a sprite id with optional state, direction, ability or expression (defaults: idle, south). It returns canon frames, or the deterministic placeholder with a reason: missing id, missing state, or wrong kind.
@@ -32,11 +32,11 @@ A delegated implementation decision under D26 and the approved [asset studio pla
 
 **Visual profiles.** `GodVisualProfile` (`content/greek/assets/subjects/<god>.json`) holds palette family, iconography and an optional portrait id, joined to the god profile by god id. `GodProfile` and the god JSON files are unchanged.
 
-**Validator.** `bun run --cwd tools/content validate:assets` checks the vocabulary, god sprite ids, visual profiles and the registry (index, canonical manifests and revisions, blob hashes and PNG sizes, ability references against the owning god, kind and character references, provenance consistency). Exit 0 is valid, 1 invalid with `<file>: <message>` lines, 64 usage. A partial or empty canon is valid.
+**Validator.** `bun run --cwd tools/content validate:assets` checks the vocabulary, matching GPL/HEX palette entries, realm ramps, approval digest, god sprite ids, visual profiles and the registry (index, canonical manifests and revisions, blob hashes and PNG sizes, ability references against the owning god, kind and character references, provenance consistency). Canon entries must reference the approved palette; this metadata check does not verify atlas pixel colours. Exit 0 is valid, 1 invalid with `<file>: <message>` lines, 64 usage. A partial canon is valid, and an empty registry may use a draft palette.
 
-## Unit 2 boundaries
+## Boundaries
 
-Not in this decision: tile and sound manifest fields; job queue, scheduling, abort and restart; provider implementations; conformance and its reports; the master palette and its approval; Aseprite editing; derivation; storing authoring records (candidates, drafts, request ledgers); packaged-client loading and the desktop capability; the studio UI. No canon asset, palette or licence has been approved, and the committed registry is empty.
+Not in this decision: tile and sound manifest fields; job queue, scheduling, abort and restart; provider implementations; pixel conformance and its reports; Aseprite editing; derivation; storing authoring records (candidates, drafts, request ledgers); packaged-client loading and the desktop capability; the studio UI. The committed registry is empty; palette and asset approvals remain explicit owner actions.
 
 ## Consequences
 

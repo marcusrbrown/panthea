@@ -90,11 +90,11 @@ Lessons from existing probes: subprocesses provide real memory/crash containment
   "verdict": "extend",
   "scope": "apps/client/src/renderer, packages/{assets,contracts,content}, tools/content, tools/probes/art-local, tools/probes/{coexistence,provider-matrix,inference-baseline}",
   "freshness": {
-    "vcs_reference": "78ad4e085e54c96f0b5b4f376377d6f36a3cc853"
+    "vcs_reference": "9deea6574f8340a0d027e658d804f7782f573022"
   },
   "budget": {"max_search_passes": 4, "max_candidate_inspections": 12, "exhausted": false},
   "candidates": [
-    {"path_or_symbol": "packages/assets/src/index.ts", "description": "Root exports hash, placeholder rendering, PNG header reading and pure resolution; no RGBA decoder; the filesystem registry is a separate subpath.", "disposition": "extend"},
+    {"path_or_symbol": "packages/assets/src/index.ts", "description": "Root exports hash, placeholder rendering, PNG header reading, pure resolution, and deterministic RGBA conformance functions with local metrics, pixel diffs, and report-only mode; no RGBA/PNG decoder; filesystem registry is a separate subpath.", "disposition": "extend"},
     {"path_or_symbol": "packages/assets/src/placeholder.ts:renderPlaceholder", "description": "Deterministic silhouette PNG and content-addressed logical URI; shares CRC from png.ts and preserves six placeholder and one encoder golden vectors.", "disposition": "reuse"},
     {"path_or_symbol": "tools/probes/art-local/src/run.ts", "description": "Probe-only generator runner records provenance, timings, errors, cancellations and result artifacts.", "disposition": "insufficient", "insufficiency_reason": "Probe reporting is not the asset job, editing or publication pipeline."},
     {"path_or_symbol": "packages/content/src/god-profile.ts:GodProfile.sprite", "description": "Core god profile retains stable sprite identity; god-visual-profile.ts separately parses visual metadata.", "disposition": "reuse"},
@@ -219,14 +219,14 @@ flowchart TB
 - **Verification:** Fixture results expose detected scale, merged colours and moved pixels; automated silhouette checks do not certify recognizable identity.
 
 ### Unit 4. Master palette approval
-- [ ] Propose palette and record owner disposition.
+- [x] Owner approved the 48-colour `greek-master` palette on 2026-10-05; digest `faa637b2ce7bd3493f20a7a1b191554640b9a801a6e8fc42f8a985bb07073209` recorded. This approves the palette only.
 - **Requirements:** R9, R12, R20; X02.
 - **Dependencies:** Unit 2 metadata; does not require model selection.
-- **Files:** Create `content/greek/palette/master.gpl`, `master.hex`, family definitions and swatch evidence under `docs/evidence/asset-studio/`; add `tools/content/src/palette.test.ts`; update traceability.
-- **Approach:** Propose at most 64 original or attributed CC0 colours and town/Olympus/Underworld families. Preserve guide limits of 16 sprite and 32 portrait colours. Draft palette may support tests; no canon before approval.
+- **Files:** Create `content/greek/palette/master.gpl`, `master.hex`, `palette.json` (family and ramp definitions) and swatch evidence under `docs/evidence/asset-studio/palette/`; add `packages/assets/src/palette.ts`, `palette.test.ts`, `tools/content/src/palette.ts`, `palette.test.ts`; update `packages/assets/src/{registry.ts,fixtures.ts,index.ts}`, `tools/content/src/assets.ts` and traceability.
+- **Approach:** Propose at most 64 original or attributed CC0 colours and town/Olympus/Underworld families. Preserve guide limits of 16 sprite and 32 portrait colours; those budgets stay in conformance, not the master parser. Draft palette may support tests; no canon before approval. `parsePalette` is a pure strict parser over `palette.json`, `master.gpl` and `master.hex`: the two lists name the same unique colours in the same order, every 4–5 shade ramp shade is a master colour, a colour appears once per family (it may serve several), and the families are exactly the vocabulary's. An approval is the digest of the palette id, master list and ramps, so editing any of them voids it; GPL names are cosmetic. `publishAsset` takes the parsed palette and refuses, before any write, a draft palette, a stale digest, or a manifest or realm variant that names another palette; `validateAssets` reads the palette and flags canon entries it does not back. The owner-approved palette is `greek-master`: 48 original colours in 12 four-shade ramps. This approval covers only the palette, not an asset, licence, or generator output. Interactive and headless replacement of off-palette pixels is Unit 5; until then a hand edit is report-only and an owner exception does not approve a palette.
 - **Patterns:** `docs/product/art-guide.md` palette rules.
 - **Test scenarios:** GPL/hex encode identical entries; duplicate/out-of-master family colours fail validation; unapproved palette blocks publish; palette replacement on a hand edit produces report/confirmation, never silent mutation.
-- **Verification:** Owner reviews swatches and records approval or requested changes. Any guide-default change is a separate owner question.
+- **Verification:** The owner approved the current `greek-master` palette digest on 2026-10-05. This approval is not canon asset approval. Any guide-default change is a separate owner question.
 
 ### Unit 5. Shared pipeline and CLI
 - [ ] Exercise request, edit and publish flows headlessly.

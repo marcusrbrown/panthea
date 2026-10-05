@@ -36,6 +36,7 @@ import {
   transitionAsset,
 } from "@panthea/contracts";
 import { sha256Hex } from "./hash";
+import { type Palette, paletteDigest } from "./palette";
 import { filtersValid, inflatedLength, parsePng } from "./png";
 import type { RegistrySnapshot, SnapshotEntry } from "./resolve";
 
@@ -301,17 +302,43 @@ export function selectRevision(
   return assetOk(next);
 }
 
+/** Why `palette` cannot back `manifest` in canon, if it cannot: metadata only, no pixel is checked. */
+export function paletteRefusal(
+  manifest: AssetManifest,
+  palette: Palette,
+): string | undefined {
+  if (palette.approval.status !== "approved") {
+    return `palette "${palette.id}" is a draft; only an approved palette publishes`;
+  }
+  if (palette.approval.digest !== paletteDigest(palette)) {
+    return `palette "${palette.id}" changed after its approval; the recorded digest does not match`;
+  }
+  if (manifest.paletteId !== palette.id) {
+    return `the manifest names palette "${manifest.paletteId}", not the approved "${palette.id}"`;
+  }
+  if (manifest.kind === "sprite") {
+    for (const variant of manifest.realmVariants) {
+      if (variant.paletteId !== palette.id) {
+        return `the ${variant.paletteFamily} realm variant names palette "${variant.paletteId}", not the approved "${palette.id}"`;
+      }
+    }
+  }
+  return undefined;
+}
+
 /**
  * Approved to canon: publishes exactly the manifest the approved record
- * owns. Writes the revision, selects it, and only then returns the canon
- * record. Anything that is not an approved record is refused before the
- * registry is touched.
+ * owns, under the approved palette its manifest and realm variants name.
+ * Writes the revision, selects it, and only then returns the canon record.
+ * Anything that is not an approved record, or has no matching approved
+ * palette, is refused before the registry is touched.
  */
 export function publishAsset(
   root: string,
   record: AssetRecord,
   blobs: ReadonlyMap<Sha256, Uint8Array>,
   vocabulary: AssetVocabulary,
+  palette: Palette,
 ): AssetResult<{ readonly record: AssetRecord; readonly revision: Sha256 }> {
   if (record.state !== "approved") {
     return assetFail(
@@ -319,6 +346,8 @@ export function publishAsset(
       `only approved assets publish; this one is ${record.state}`,
     );
   }
+  const refusal = paletteRefusal(record.manifest, palette);
+  if (refusal !== undefined) return assetFail("not-approved", refusal);
   const written = writeRevision(root, record.manifest, blobs, vocabulary);
   if (!written.ok) return written;
   const selected = selectRevision(

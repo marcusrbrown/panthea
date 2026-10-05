@@ -27,10 +27,12 @@ import {
 import {
   committedVocabulary,
   type FixtureAsset,
+  paletteFixture,
   portraitFixture,
   spriteFixture,
 } from "./fixtures";
 import { sha256Hex } from "./hash";
+import type { Palette } from "./palette";
 import {
   loadRegistry,
   publishAsset,
@@ -40,6 +42,7 @@ import {
 import { resolveAsset } from "./resolve";
 
 const vocabulary = committedVocabulary();
+const palette = paletteFixture().palette;
 const dirs: string[] = [];
 const root = () => {
   const dir = mkdtempSync(join(tmpdir(), "assets-registry-"));
@@ -68,7 +71,13 @@ function approved(asset: FixtureAsset): AssetRecord {
 }
 
 function publish(dir: string, asset: FixtureAsset) {
-  const result = publishAsset(dir, approved(asset), asset.blobs, vocabulary);
+  const result = publishAsset(
+    dir,
+    approved(asset),
+    asset.blobs,
+    vocabulary,
+    palette,
+  );
   if (!result.ok) throw new Error(result.message);
   return result.value;
 }
@@ -186,7 +195,13 @@ describe("publishing", () => {
     if (!draft.ok || !rejected.ok) throw new Error("setup");
     for (const record of [candidate, draft.value, rejected.value]) {
       const dir = root();
-      const result = publishAsset(dir, record, asset.blobs, vocabulary);
+      const result = publishAsset(
+        dir,
+        record,
+        asset.blobs,
+        vocabulary,
+        palette,
+      );
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.code).toBe("not-approved");
       expect(existsSync(dir)).toBe(false);
@@ -222,13 +237,25 @@ describe("an approval covers only the manifest that was approved", () => {
     const first = publish(dir, spriteFixture("placeholder-zeus", 3));
     const before = textOf(join(dir, "index.json"));
 
-    const missing = publishAsset(dir, approved(a), b.blobs, vocabulary);
+    const missing = publishAsset(
+      dir,
+      approved(a),
+      b.blobs,
+      vocabulary,
+      palette,
+    );
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.code).toBe("missing-blob");
 
     const [bytesB] = [...b.blobs.values()];
     const forged = new Map([[a.manifest.atlas.blob, bytesB as Uint8Array]]);
-    const mismatched = publishAsset(dir, approved(a), forged, vocabulary);
+    const mismatched = publishAsset(
+      dir,
+      approved(a),
+      forged,
+      vocabulary,
+      palette,
+    );
     expect(mismatched.ok).toBe(false);
     if (!mismatched.ok) expect(mismatched.code).toBe("hash-mismatch");
 
@@ -258,7 +285,7 @@ describe("an approval covers only the manifest that was approved", () => {
       if (!next.ok) throw new Error(next.message);
       record = next.value;
     }
-    const result = publishAsset(dir, record, asset.blobs, vocabulary);
+    const result = publishAsset(dir, record, asset.blobs, vocabulary, palette);
     if (!result.ok) throw new Error(result.message);
     const stored = loadRegistry(dir, vocabulary).snapshot.entries.get(
       "placeholder-zeus",
@@ -293,7 +320,7 @@ describe("an approval covers only the manifest that was approved", () => {
       if (!next.ok) throw new Error(next.message);
       record = next.value;
     }
-    const second = publishAsset(dir, record, asset.blobs, vocabulary);
+    const second = publishAsset(dir, record, asset.blobs, vocabulary, palette);
     if (!second.ok) throw new Error(second.message);
     expect(second.value.revision).not.toBe(first.revision);
     expect(existsSync(join(dir, "manifests", `${first.revision}.json`))).toBe(
@@ -576,7 +603,13 @@ describe("a blob must be a whole PNG, not just a header", () => {
     const manifestsBefore = listing(join(dir, "manifests"));
 
     const cut = spriteWithBlob(truncated());
-    const result = publishAsset(dir, approved(cut), cut.blobs, vocabulary);
+    const result = publishAsset(
+      dir,
+      approved(cut),
+      cut.blobs,
+      vocabulary,
+      palette,
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("corrupt-blob");
     expect(textOf(join(dir, "index.json"))).toBe(indexBefore);
@@ -705,9 +738,99 @@ describe("a blob must be a whole PNG, not just a header", () => {
       const dir = root();
       const asset = spriteWithBlob(bytes);
       expect(
-        publishAsset(dir, approved(asset), asset.blobs, vocabulary).ok,
+        publishAsset(dir, approved(asset), asset.blobs, vocabulary, palette).ok,
       ).toBe(true);
       expect(loadRegistry(dir, vocabulary).problems).toEqual([]);
     });
   }
+});
+
+describe("publishing needs the approved palette the manifest names", () => {
+  const refused = (
+    record: AssetRecord,
+    given: Palette,
+    asset: FixtureAsset,
+    ...mentions: string[]
+  ) => {
+    const dir = root();
+    const result = publishAsset(dir, record, asset.blobs, vocabulary, given);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("not-approved");
+    for (const text of mentions) expect(result.message).toContain(text);
+    // Refused before any write: no blob, manifest or index appeared.
+    expect(existsSync(dir)).toBe(false);
+  };
+  const withVariant = (id: string): FixtureAsset => {
+    const base = spriteFixture();
+    return {
+      blobs: base.blobs,
+      manifest: {
+        ...base.manifest,
+        realmVariants: [{ paletteFamily: "underworld", paletteId: id }],
+      },
+    };
+  };
+
+  it("publishes under an approved palette that matches the manifest and its realm variants", () => {
+    const dir = root();
+    const asset = withVariant("fixture-master");
+    const result = publishAsset(
+      dir,
+      approved(asset),
+      asset.blobs,
+      vocabulary,
+      palette,
+    );
+    expect(result.ok).toBe(true);
+    expect(loadRegistry(dir, vocabulary).problems).toEqual([]);
+  });
+
+  it("refuses a draft palette", () => {
+    const asset = spriteFixture();
+    refused(
+      approved(asset),
+      paletteFixture("draft").palette,
+      asset,
+      "fixture-master",
+      "draft",
+    );
+  });
+
+  it("refuses a palette whose id is not the manifest's", () => {
+    const asset = spriteFixture();
+    refused(
+      approved(asset),
+      paletteFixture("approved", "other-master").palette,
+      asset,
+      "fixture-master",
+      "other-master",
+    );
+  });
+
+  it("refuses a realm variant that names another palette", () => {
+    const asset = withVariant("elsewhere");
+    refused(approved(asset), palette, asset, "elsewhere", "underworld");
+  });
+
+  it("refuses an approved palette whose data changed after its digest was recorded", () => {
+    const asset = spriteFixture();
+    const [, ...rest] = palette.colours;
+    const edited: Palette = {
+      ...palette,
+      colours: [[1, 2, 3], ...rest],
+    };
+    expect(edited.approval).toEqual(palette.approval);
+    refused(approved(asset), edited, asset, "digest");
+  });
+
+  it("checks the record first: a candidate is refused as not approved whatever the palette", () => {
+    const asset = spriteFixture();
+    refused(
+      newCandidate(asset.manifest, pass),
+      paletteFixture("draft").palette,
+      asset,
+      "only approved assets publish",
+    );
+  });
 });

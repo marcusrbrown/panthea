@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "greek-master",
+  "approval": {
+    "status": "approved",
+    "digest": "faa637b2ce7bd3493f20a7a1b191554640b9a801a6e8fc42f8a985bb07073209"
+  },
+  "families": [
+    {
+      "id": "town",
+      "ramps": [
+        {
+          "id": "soil",
+          "shades": ["#382d29", "#70503b", "#b77a4e", "#e4b77e"]
+        },
+        {
+          "id": "olive",
+          "shades": ["#3b4431", "#68764a", "#9ea65f", "#d5c887"]
+        },
+        {
+          "id": "terracotta",
+          "shades": ["#63392f", "#a4553c", "#ce7651", "#ecae7d"]
+        },
+        {
+          "id": "stone-sky",
+          "shades": ["#56655d", "#889684", "#c4c6a6", "#eee0bd"]
+        }
+      ]
+    },
+    {
+      "id": "olympus",
+      "ramps": [
+        {
+          "id": "marble",
+          "shades": ["#526471", "#8fa6ad", "#c7d8d4", "#f0eee0"]
+        },
+        {
+          "id": "pale-gold",
+          "shades": ["#76572f", "#b38b43", "#ddbf70", "#f4e4ae"]
+        },
+        {
+          "id": "lapis",
+          "shades": ["#243f63", "#3c6290", "#7194b8", "#c5d1d3"]
+        },
+        {
+          "id": "cloud",
+          "shades": ["#637b89", "#9fb5bf", "#d6e1df", "#f3f0dc"]
+        }
+      ]
+    },
+    {
+      "id": "underworld",
+      "ramps": [
+        { "id": "ash", "shades": ["#3d4148", "#666a71", "#969494", "#cbc1b0"] },
+        {
+          "id": "violet",
+          "shades": ["#413846", "#69596b", "#927f8b", "#c4aeb0"]
+        },
+        {
+          "id": "bone",
+          "shades": ["#514940", "#827766", "#b9aa91", "#e4d8ba"]
+        },
+        {
+          "id": "ember",
+          "shades": ["#512f2d", "#813f35", "#b65337", "#db8251"]
+        }
+      ]
+    }
+  ]
+}

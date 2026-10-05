@@ -6,6 +6,7 @@
 
 export * from "./conformance";
 export * from "./hash";
+export * from "./palette";
 export * from "./placeholder";
 export { type PngHeader, readPngHeader } from "./png";
 export * from "./resolve";

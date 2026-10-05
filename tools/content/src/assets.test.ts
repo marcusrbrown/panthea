@@ -17,6 +17,8 @@ import { resolveAsset, sha256Hex } from "@panthea/assets";
 import {
   committedVocabulary,
   type FixtureAsset,
+  type FixturePalette,
+  paletteFixture,
   portraitFixture,
   spriteFixture,
 } from "@panthea/assets/fixtures";
@@ -41,7 +43,16 @@ function contentRoot(): string {
   dirs.push(dir);
   cpSync(join(COMMITTED, "gods"), join(dir, "gods"), { recursive: true });
   cpSync(join(COMMITTED, "assets"), join(dir, "assets"), { recursive: true });
+  cpSync(join(COMMITTED, "palette"), join(dir, "palette"), { recursive: true });
   return dir;
+}
+
+/** Replaces the root's palette files with the fixture palette's. */
+function writePalette(root: string, files: FixturePalette["files"]) {
+  mkdirSync(join(root, "palette"), { recursive: true });
+  for (const [name, text] of Object.entries(files)) {
+    writeFileSync(join(root, "palette", name), text);
+  }
 }
 afterEach(() => {
   for (const dir of dirs.splice(0))
@@ -56,6 +67,8 @@ const pass: ConformanceReport = {
 };
 
 function publish(root: string, asset: FixtureAsset) {
+  const { files, palette } = paletteFixture();
+  writePalette(root, files);
   let record = newCandidate(asset.manifest, pass);
   for (const action of [{ type: "pick" }, { type: "approve" }] as const) {
     const next = transitionAsset(record, action);
@@ -67,6 +80,7 @@ function publish(root: string, asset: FixtureAsset) {
     record,
     asset.blobs,
     vocabulary,
+    palette,
   );
   if (!result.ok) throw new Error(result.message);
   return result.value.revision;
@@ -125,6 +139,54 @@ describe("valid partial canon", () => {
 
   it("accepts a god with a visual profile but no assets (missing states fall back)", () => {
     expect(validateAssets(contentRoot()).ok).toBe(true);
+  });
+});
+
+describe("the master palette", () => {
+  const manifestOf = (revision: string) =>
+    `assets/registry/manifests/${revision}.json`;
+
+  it("accepts a draft palette with an empty canon", () => {
+    const root = contentRoot();
+    writePalette(root, paletteFixture("draft").files);
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("reports a missing or malformed palette file", () => {
+    const missing = contentRoot();
+    rmSync(join(missing, "palette", "palette.json"));
+    expect(diagnosticsOf(missing)).toEqual([
+      { file: "palette/palette.json", message: "file is missing" },
+    ]);
+
+    const malformed = contentRoot();
+    writeFileSync(join(malformed, "palette", "master.hex"), "not a colour\n");
+    expect(files(malformed)).toEqual(["palette/master.hex"]);
+  });
+
+  it("blocks a canon entry when the palette is a draft", () => {
+    const root = contentRoot();
+    const revision = publish(root, spriteFixture());
+    expect(validateAssets(root).ok).toBe(true);
+    writePalette(root, paletteFixture("draft").files);
+    expect(diagnosticsOf(root)).toEqual([
+      {
+        file: manifestOf(revision),
+        message: expect.stringContaining("draft"),
+      },
+    ]);
+  });
+
+  it("blocks a canon entry whose manifest names another palette", () => {
+    const root = contentRoot();
+    const revision = publish(root, spriteFixture());
+    writePalette(root, paletteFixture("approved", "other-master").files);
+    expect(diagnosticsOf(root)).toEqual([
+      {
+        file: manifestOf(revision),
+        message: expect.stringContaining("other-master"),
+      },
+    ]);
   });
 });
 

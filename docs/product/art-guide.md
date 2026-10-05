@@ -39,7 +39,7 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 
 - One master palette per content pack, at most 64 colours, committed as a `.gpl`/`.hex` file under `content/greek/palette/` and referenced by every asset. The owner approves the master palette before any asset is marked canon; drafts conform against a provisional palette until then.
 - Each character gets ramps of 4–5 shades drawn from the master palette; world sprites use at most 16 colours including outline, portraits at most 32.
-- Realm families (defaults; final hues chosen in the master palette):
+- Realm families (hues set by the owner-approved [`greek-master` palette](../../content/greek/palette/palette.json); other guide defaults remain owner-vetoable):
   - Town and wilderness: warm earth, olive, terracotta, sun-bleached stone; sky light.
   - Olympus: cool whites, pale gold, lapis, marble; high key.
   - Underworld: desaturated violet, ash, bone, ember accents; low key.
