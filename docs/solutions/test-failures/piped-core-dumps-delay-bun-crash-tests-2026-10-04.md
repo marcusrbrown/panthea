@@ -35,7 +35,7 @@ Five bounded Bun controls remained alive at four seconds with `CoreDumping: 1`. 
 Set the exact one-byte core limit for the Linux test runner:
 
 ```sh
-prlimit --core=1:1 -- bun run test:serial
+prlimit --core=1:1 -- bun run test
 ```
 
 The soft and hard limits both use bytes. This value suppresses the piped dump. All seven controls exited with `SIGABRT` in 4–56 ms under this limit.
