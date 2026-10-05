@@ -1,11 +1,11 @@
 // The god turn runner against a real store, journal, trace, and tick loop.
 // The only scripted piece is the model provider, a loopback OpenAI-compatible
-// endpoint the production router talks to. Service-level tests spawn the real
-// entry point with a model config and drive it over HTTP.
+// endpoint the production router talks to. Service-level tests run the real
+// entry point with a model config, in this process on a fast tick timer, and
+// drive it over HTTP.
 
-import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -22,7 +22,7 @@ import {
   listEvents,
   listExternalProposals,
   openStore,
-  readClock,
+  readCatchUpSummary,
   type Store,
 } from "@panthea/persistence";
 import {
@@ -55,11 +55,23 @@ import {
   loadEmbeddedGreekGodProfiles,
   loadEmbeddedGreekWorldPack,
 } from "./greek-world-pack";
+import { TICK_TIMER_ENV } from "./index";
+import { parseLaunchConfig } from "./launch-config";
 import {
   applyLiveTick,
   createServiceStatusRef,
   type ServiceStatusRef,
 } from "./server";
+import {
+  FAST_TICK_MS,
+  journalOf,
+  readStore,
+  startTestService,
+  stopAllTestServices,
+  type TestService,
+  tickOf,
+  until,
+} from "./test-service";
 import { buildRoutineQueue, type TickDeps } from "./tick";
 import {
   createEventSource,
@@ -1878,11 +1890,13 @@ describe("an outage", () => {
   });
 });
 
-// --- The service, spawned ----------------------------------------------------------------------------------
+// --- The service ----------------------------------------------------------------------------------------
 //
 // The real entry point with a model config: the wiring of the runner into the
-// tick loop, the pause endpoint, and startup catch-up. Each test spawns its
-// own service over a fresh app data directory.
+// tick loop and startup catch-up. Most tests run the service in this process on
+// a fast tick timer (`test-service.ts`), so nothing here sleeps and a test waits
+// for a count of ticks. Only what is about the process boundary, the stdin
+// protocol, is spawned, with the same fast timer in its environment.
 
 const INDEX_ENTRY = join(import.meta.dir, "index.ts");
 const TOKEN = "agents-service-token";
@@ -1891,14 +1905,13 @@ interface Spawned {
   readonly proc: ReturnType<typeof Bun.spawn>;
   readonly port: number;
   output(): string;
-  /** Each line the service printed, with the wall time it was read. */
-  lines(): readonly { readonly at: number; readonly text: string }[];
 }
 
 const spawned: Spawned[] = [];
 const appDirs: string[] = [];
 
 afterEach(() => {
+  stopAllTestServices();
   for (const service of spawned.splice(0)) service.proc.kill();
   for (const dir of appDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -1932,17 +1945,39 @@ function launchLineFor(provider: Provider, override?: unknown): string {
   );
 }
 
+const freshAppDir = (): string => {
+  const dir = mkdtempSync(join(tmpdir(), "panthea-sim-agents-svc-"));
+  appDirs.push(dir);
+  return dir;
+};
+
+/** The service in this process, over a fresh (or given) app data directory, on the fast tick timer. */
+function startInProcess(
+  provider: Provider,
+  launch?: unknown,
+  appDataDir = freshAppDir(),
+): TestService {
+  return startTestService({
+    appDataDir,
+    launch: parseLaunchConfig(launchLineFor(provider, launch)),
+  });
+}
+
+/** The service as a separate process, for the tests whose subject is its stdin. */
 async function spawnService(
   provider: Provider,
-  appDataDir = mkdtempSync(join(tmpdir(), "panthea-sim-agents-svc-")),
   launch?: unknown,
-): Promise<Spawned & { readonly appDataDir: string }> {
-  appDirs.push(appDataDir);
+): Promise<Spawned> {
+  const appDataDir = freshAppDir();
   const proc = Bun.spawn(["bun", "run", INDEX_ENTRY], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, PANTHEA_APP_DATA_DIR: appDataDir },
+    env: {
+      ...process.env,
+      PANTHEA_APP_DATA_DIR: appDataDir,
+      [TICK_TIMER_ENV]: String(FAST_TICK_MS),
+    },
   });
   const writer = proc.stdin;
   if (typeof writer === "number" || !writer) throw new Error("stdin");
@@ -1950,15 +1985,6 @@ async function spawnService(
   await writer.flush();
 
   let buffer = "";
-  const lines: { at: number; text: string }[] = [];
-  let partial = "";
-  const take = (chunk: string) => {
-    buffer += chunk;
-    const at = Date.now();
-    const parts = (partial + chunk).split("\n");
-    partial = parts.pop() ?? "";
-    for (const text of parts) lines.push({ at, text });
-  };
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   const port = await new Promise<number>((resolve, reject) => {
@@ -1971,7 +1997,7 @@ async function spawnService(
         for (;;) {
           const { value, done } = await reader.read();
           if (done) return reject(new Error("service exited early"));
-          take(decoder.decode(value, { stream: true }));
+          buffer += decoder.decode(value, { stream: true });
           const match = /PANTHEA_PORT=(\d+)/.exec(buffer);
           if (match?.[1]) {
             clearTimeout(timer);
@@ -1982,134 +2008,80 @@ async function spawnService(
         for (;;) {
           const { value, done } = await reader.read();
           if (done) return;
-          take(decoder.decode(value, { stream: true }));
+          buffer += decoder.decode(value, { stream: true });
         }
       } catch {
         // Killed; nothing more to read.
       }
     })();
   });
-  const service = {
-    proc,
-    port,
-    output: () => buffer,
-    lines: () => lines,
-    appDataDir,
-  };
+  const service = { proc, port, output: () => buffer };
   spawned.push(service);
   return service;
 }
 
-const api =
-  (port: number) =>
-  (path: string, init: RequestInit = {}) =>
-    fetch(`http://127.0.0.1:${port}${path}`, {
-      ...init,
-      headers: { Authorization: `Bearer ${TOKEN}` },
-    });
-
-async function frameOf(port: number) {
-  const body = await (await api(port)("/frame")).json();
+async function frameOf(service: TestService) {
+  const body = await (await service.call("/frame")).json();
   const parsed = parseSyncFrame(body);
   if (!parsed.ok) throw new Error(parsed.message);
   return parsed.value;
 }
 
-/**
- * The bound on a wait that covers a real one-hour catch-up in a spawned service.
- * The wait ends the moment the event happens; this only stops a hung service.
- * Measured on a 10-core machine with N busy loops competing for it, the startup
- * catch-up test took 6.5 s (10 loops), 11 s (20) and 15.4 s (30), against the
- * 20 s default; a bound of 60 s is nearly four times the worst of those.
- */
-const CATCH_UP_WAIT_MS = 60_000;
-
-async function until<T>(
-  what: string,
-  probe: () => T | undefined | Promise<T | undefined>,
-  timeoutMs = 20_000,
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = await probe();
-    if (value !== undefined) return value;
-    await Bun.sleep(50);
-  }
-  throw new Error(`timed out waiting for ${what}`);
-}
-
-/** Reads the running service's store without disturbing it. */
-function readStore<T>(appDataDir: string, fn: (db: Database) => T): T {
-  const db = new Database(join(appDataDir, "active", "world.sqlite"), {
-    readonly: true,
-  });
-  try {
-    return fn(db);
-  } finally {
-    db.close();
-  }
-}
-
-const journalOf = (appDataDir: string) =>
-  readStore(appDataDir, (db) => listExternalProposals(db));
-
 describe("the service's launch config", () => {
   const SENTINEL = "sk-sentinel-DO-NOT-LEAK-0123456789";
-  const tickOf = (appDataDir: string) =>
-    readStore(appDataDir, (db) => readClock(db).tick);
 
   test("a config line with no models: no god takes a turn, and the world runs", async () => {
     const provider = startProvider();
-    const service = await spawnService(provider, undefined, {
+    const service = startInProcess(provider, {
       models: null,
       offline: false,
       keys: {},
     });
-    const t0 = tickOf(service.appDataDir);
-    await until("the world to tick", () =>
-      tickOf(service.appDataDir) > t0 ? true : undefined,
-    );
-    await Bun.sleep(1_500);
+    // With routing a god is asked on the first tick; none is asked in five.
+    await service.waitCycles("ticked", 5);
+    expect(tickOf(service.appDataDir)).toBeGreaterThanOrEqual(5);
     expect(provider.requests).toHaveLength(0);
-    const frame = await frameOf(service.port);
+    const frame = await frameOf(service);
     expect(frame.status).toBe("running");
     expect(frame.degradedReason).toBeUndefined();
-  }, 40_000);
+  });
 
   test("an invalid config line starts the world with god turns off under model-degraded, logs the parse error, and never logs a key", async () => {
     const provider = startProvider();
-    const service = await spawnService(provider, undefined, {
+    const service = startInProcess(provider, {
       models: { endpoints: 3 },
       offline: false,
       keys: { "zeus-key": SENTINEL },
     });
     const frame = await until("model-degraded", async () => {
-      const current = await frameOf(service.port);
+      const current = await frameOf(service);
       return current.degradedReason === "model-degraded" ? current : undefined;
     });
     expect(frame.status).toBe("degraded");
     // The world runs regardless: it keeps ticking.
     const t0 = tickOf(service.appDataDir);
-    await until("the world to tick", () =>
-      tickOf(service.appDataDir) > t0 ? true : undefined,
-    );
+    await service.waitCycles("ticked", 3);
+    expect(tickOf(service.appDataDir)).toBeGreaterThan(t0);
     expect(provider.requests).toHaveLength(0);
     expect(service.output()).toMatch(
       /model settings are not valid: .*endpoints/,
     );
     expect(service.output()).toContain("god turns are off");
     expect(service.output()).not.toContain(SENTINEL);
-  }, 40_000);
+  });
 
   test("a config line that is not JSON also degrades instead of failing startup, and does not echo the line", async () => {
     const provider = startProvider();
-    const appDataDir = mkdtempSync(join(tmpdir(), "panthea-sim-agents-svc-"));
-    appDirs.push(appDataDir);
+    const appDataDir = freshAppDir();
     const proc = Bun.spawn(["bun", "run", INDEX_ENTRY], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, PANTHEA_APP_DATA_DIR: appDataDir },
+      env: {
+        ...process.env,
+        PANTHEA_APP_DATA_DIR: appDataDir,
+        [TICK_TIMER_ENV]: String(FAST_TICK_MS),
+      },
     });
     const writer = proc.stdin;
     if (typeof writer === "number" || !writer) throw new Error("stdin");
@@ -2131,7 +2103,7 @@ describe("the service's launch config", () => {
       proc.kill();
     }
     expect(provider.requests).toHaveLength(0);
-  }, 40_000);
+  });
 
   test("stdin EOF after both lines still shuts the service down gracefully", async () => {
     const provider = startProvider();
@@ -2141,43 +2113,38 @@ describe("the service's launch config", () => {
     await stdin.end();
     expect(await service.proc.exited).toBe(0);
     expect(service.output()).toContain("shutting down (stdin-eof)");
-  }, 40_000);
+  });
 });
 
 describe("the service with model routing configured", () => {
-  test("keeps ticking at cadence while a turn is held open for seconds, then commits the god's proposal", async () => {
+  test("the tick asks for a turn and never waits for it: a held answer does not stop the world, and when it comes the proposal commits on a later tick", async () => {
+    const appDataDir = freshAppDir();
     const release = held();
+    let tickWhenAsked: number | undefined;
     const provider = startProvider(async (god) => {
+      tickWhenAsked ??= tickOf(appDataDir);
       await release.gate;
       return LEGEND(god);
     });
-    const service = await spawnService(provider);
+    const service = startInProcess(provider, undefined, appDataDir);
 
     await until("a model request", () =>
       provider.requests.length > 0 ? true : undefined,
     );
-    const start = (await frameOf(service.port)).sequence;
-    const tickAt = async () =>
-      readStore(service.appDataDir, (db) => readClock(db).tick);
-    const t0 = await tickAt();
-    // The turn is still held open, and the world ticks through it: two more
-    // ticks arrive while the provider has not answered. Waiting for the ticks
-    // themselves, not for three seconds of wall time, keeps the claim (the
-    // world does not wait on a turn) independent of how much CPU the service
-    // process gets; the bound only stops a hung service.
-    await until(
-      "the world to tick twice while the turn is held open",
-      async () => ((await tickAt()) - t0 >= 2 ? true : undefined),
-      30_000,
-    );
+    // A turn is asked for only after a live tick (`index.ts` calls `dispatch()`
+    // when a tick commits), so the world had already ticked when it came.
+    expect(tickWhenAsked).toBeGreaterThanOrEqual(1);
+    const start = (await frameOf(service)).sequence;
+    const t0 = tickOf(appDataDir);
+    // The answer is still held, and the world ticks through it.
+    await service.waitCycles("ticked", 5);
+    expect(tickOf(appDataDir) - t0).toBeGreaterThanOrEqual(5);
     expect(provider.requests).toHaveLength(1);
-    expect((await frameOf(service.port)).sequence).toBeGreaterThanOrEqual(
-      start,
-    );
+    expect((await frameOf(service)).sequence).toBeGreaterThan(start);
 
     release.release();
     const consumed = await until("the god's proposal to run", () =>
-      journalOf(service.appDataDir).find(
+      journalOf(appDataDir).find(
         (entry) => entry.outcome?.status === "committed",
       ),
     );
@@ -2186,139 +2153,60 @@ describe("the service with model routing configured", () => {
       kind: "legend",
     });
     expect(
-      readStore(service.appDataDir, (db) =>
+      readStore(appDataDir, (db) =>
         listEvents(db).some((event) => event.kind === "legend-recorded"),
       ),
     ).toBe(true);
-  }, 40_000);
+  });
 
-  test("shows model-degraded through an outage while routines keep committing, and clears it when the provider recovers", async () => {
-    const provider = startProvider(() => 500);
-    const service = await spawnService(provider);
-
-    const degraded = await until("model-degraded", async () => {
-      const frame = await frameOf(service.port);
-      return frame.status === "degraded" &&
-        frame.degradedReason === "model-degraded"
-        ? frame
-        : undefined;
-    });
-    const tickAtDegraded = degraded.sequence;
-    await until("routines to keep committing", async () =>
-      (await frameOf(service.port)).sequence > tickAtDegraded
-        ? true
-        : undefined,
+  /** A store `behindMs` behind the wall clock, as a killed service leaves it, in a world whose catch-up cap is `capMs`: the next start has the cap to catch up on and the rest to discard. */
+  function storeBehind(capMs: number, behindMs: number): string {
+    const appDataDir = freshAppDir();
+    const loaded = loadGreekWorldState();
+    const seeded = {
+      ...loaded,
+      rules: { ...loaded.rules, catchUpCapMs: capMs },
+    };
+    const reducers = createWorldProjectionReducers(seeded);
+    mkdirSync(join(appDataDir, "active"), { recursive: true });
+    const store = openStore(
+      join(appDataDir, "active", "world.sqlite"),
+      reducers,
     );
-    expect(journalOf(service.appDataDir)).toEqual([]);
-
-    provider.respond = (god) => LEGEND(god);
-    await until("recovery", async () => {
-      const frame = await frameOf(service.port);
-      return frame.status === "running" ? frame : undefined;
-    });
-    await until("a god's proposal to commit", () =>
-      journalOf(service.appDataDir).find(
-        (entry) => entry.outcome?.status === "committed",
-      ),
-    );
-  }, 60_000);
-
-  test("a pause freezes new turns; a turn in flight journals and waits, and runs after resume", async () => {
-    const release = held();
-    const provider = startProvider(async (god) => {
-      await release.gate;
-      return LEGEND(god);
-    });
-    const service = await spawnService(provider);
-    const call = api(service.port);
-
-    await until("a model request", () =>
-      provider.requests.length > 0 ? true : undefined,
-    );
-    expect((await call("/pause", { method: "POST" })).status).toBe(200);
-    release.release();
-
-    const pending = await until("the turn to journal", () =>
-      journalOf(service.appDataDir).find(
-        (entry) => entry.consumedTick === undefined,
-      ),
-    );
-    expect(pending.proposal).toMatchObject({ source: "model" });
-    // Paused: nothing runs it and nothing else is asked, however long we wait.
-    const requestsWhilePaused = provider.requests.length;
-    const tickWhilePaused = readStore(
-      service.appDataDir,
-      (db) => readClock(db).tick,
-    );
-    await Bun.sleep(2_500);
-    expect(provider.requests).toHaveLength(requestsWhilePaused);
-    expect(readStore(service.appDataDir, (db) => readClock(db).tick)).toBe(
-      tickWhilePaused,
-    );
-    expect(
-      journalOf(service.appDataDir).find(
-        (e) => e.proposalId === pending.proposalId,
-      )?.consumedTick,
-    ).toBeUndefined();
-
-    expect((await call("/resume", { method: "POST" })).status).toBe(200);
-    await until("the entry to run after resume", () =>
-      journalOf(service.appDataDir).find(
-        (entry) =>
-          entry.proposalId === pending.proposalId &&
-          entry.outcome?.status === "committed",
-      ),
-    );
-  }, 40_000);
-
-  /** A store `behindMs` behind the wall clock, left by a service that was killed: the next start has that much to catch up. */
-  async function storeBehind(behindMs: number): Promise<string> {
-    const appDataDir = mkdtempSync(join(tmpdir(), "panthea-sim-agents-svc-"));
-    const first = await spawnService(
-      startProvider(() => '{"action":"wait"}'),
-      appDataDir,
-    );
-    first.proc.kill();
-    await first.proc.exited;
-    spawned.splice(spawned.indexOf(first), 1);
-    const db = new Database(join(appDataDir, "active", "world.sqlite"));
-    db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
+    store.db.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
       Date.now() - behindMs,
     ]);
-    db.close();
+    closeStore(store);
     return appDataDir;
   }
 
-  const catchUps = (service: Spawned) => {
-    const starts = service
-      .lines()
-      .filter((l) => l.text.endsWith("catch-up started"));
-    const ends = service
-      .lines()
-      .filter((l) => l.text.endsWith("catch-up finished"));
-    return { starts, ends };
-  };
-
   test("takes no turn until startup catch-up has finished: every provider request arrives after the catch-up's own finish line", async () => {
+    // The property is the gate, not the size of the cap: a ten minute cap and a
+    // gap six times it make a real backlog (ten chunks, 600 ticks) in about half
+    // a second, and the timer fires dozens of times inside it.
+    const capMs = 10 * 60 * 1000;
+    const appDataDir = storeBehind(capMs, 6 * capMs);
     const provider = startProvider();
-    // An hour behind, the most a catch-up applies: a long backlog to get through.
-    const appDataDir = await storeBehind(60 * 60 * 1000);
+    const service = startInProcess(provider, undefined, appDataDir);
 
-    const second = await spawnService(provider, appDataDir);
-    await until(
-      "the first model request",
-      () => (provider.requests.length > 0 ? true : undefined),
-      CATCH_UP_WAIT_MS,
+    await until("the first model request", () =>
+      provider.requests.length > 0 ? true : undefined,
     );
-    const { starts, ends } = catchUps(second);
-    // The town takes a while to catch up on, so the wall clock may have moved far enough for a second, short pass; the backlog's own is the first.
+    const lines = service.lines();
+    const starts = lines.filter((l) => l.text.endsWith("catch-up started"));
+    const ends = lines.filter((l) => l.text.endsWith("catch-up finished"));
     expect(starts.length).toBeGreaterThanOrEqual(1);
     expect(ends.length).toBeGreaterThanOrEqual(1);
-    expect(second.output()).toContain("startup catch-up complete");
+    expect(service.output()).toContain("startup catch-up complete");
+    // The backlog was real: the cap was applied and the timer fired through it.
+    expect(
+      readStore(appDataDir, (db) => readCatchUpSummary(db))?.appliedMs,
+    ).toBe(capMs);
+    expect(service.cycles()["catch-up-running"]).toBeGreaterThan(0);
     const finished = ends[0]?.at ?? Number.POSITIVE_INFINITY;
     const early = provider.requests.filter((request) => request.at < finished);
     expect(early).toEqual([]);
-  }, 120_000);
+  });
 });
 
 describe("a god's refused practice moves", () => {
