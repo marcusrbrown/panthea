@@ -10,8 +10,19 @@ import { runFixtureInSubprocess } from "./host";
 
 const RUN_FILE_PATH = join(import.meta.dir, "run.ts");
 
-function run(fixtureId: string, category: FixtureCategory) {
+// Runaway fixtures end at the engine's own deadline, so tests shorten it from
+// the 250 ms default: the child's clock starts once its engine is loaded, and
+// the supervisor's outer kill (1.2 s) stays the backstop. A runaway fixture that
+// ended by that kill, not the engine, fails the tests below.
+const RUNAWAY_DEADLINE_MS = 50;
+
+function run(
+  fixtureId: string,
+  category: FixtureCategory,
+  engineDeadlineMs?: number,
+) {
   return runFixtureInSubprocess({
+    engineDeadlineMs,
     runFilePath: RUN_FILE_PATH,
     runtime: "quickjs",
     fixtureId,
@@ -49,10 +60,15 @@ describe("quickjs sandbox", () => {
     }
   }, 30_000);
 
-  test("infinite loop terminates within the deadline", async () => {
-    const record = await run("loop-infinite", "loop-recursion");
+  test("infinite loop is terminated by the engine's interrupt deadline, not the supervisor's kill", async () => {
+    const record = await run(
+      "loop-infinite",
+      "loop-recursion",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(record.outcome).toBe("terminated");
-    expect(record.timeToTerminationMs).toBeLessThan(2000);
+    expect(record.supervisorKilled).toBe(false);
+    expect(record.childOutput?.interruptFired).toBe(true);
   }, 5_000);
 
   test("deep recursion hits the stack limit", async () => {
@@ -61,7 +77,11 @@ describe("quickjs sandbox", () => {
   }, 5_000);
 
   test("allocation bomb terminates, with isolated RSS recorded honestly", async () => {
-    const record = await run("allocation-array-growth", "allocation");
+    const record = await run(
+      "allocation-array-growth",
+      "allocation",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(record.outcome).toBe("terminated");
     expect(record.peakRssBytes).toBeGreaterThan(0);
   }, 5_000);
@@ -79,7 +99,11 @@ describe("quickjs sandbox", () => {
   }, 5_000);
 
   test("after a terminated fixture, the next valid behavior runs in a fresh runtime", async () => {
-    const terminated = await run("loop-infinite", "loop-recursion");
+    const terminated = await run(
+      "loop-infinite",
+      "loop-recursion",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(terminated.outcome).toBe("terminated");
     const followUp = await run("happy-path", "happy-path");
     expect(followUp.outcome).toBe("completed");
@@ -127,7 +151,11 @@ describe("quickjs sandbox", () => {
   }, 5_000);
 
   test("an infinitely self-requeuing microtask chain is drained under the deadline and terminated, not silently ignored", async () => {
-    const record = await run("async-microtask-recursion", "async-hang");
+    const record = await run(
+      "async-microtask-recursion",
+      "async-hang",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(record.outcome).toBe("terminated");
     expect(record.childOutput?.jobsExecuted).toBeGreaterThan(0);
   }, 5_000);

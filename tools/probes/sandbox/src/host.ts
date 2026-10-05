@@ -207,7 +207,14 @@ export interface RunFixtureInSubprocessOptions {
   readonly runtime: Runtime;
   readonly fixtureId: string;
   readonly category: FixtureCategory;
+  /** The supervisor's outer wall-clock kill (the backstop, not the boundary under test). */
   readonly deadlineMs?: number;
+  /**
+   * The engine's own deadline inside the child (the interrupt handler or the
+   * Lua count hook), which is the mechanism this probe measures. Omit for the
+   * engine default (250 ms); tests shorten it so a runaway fixture ends fast.
+   */
+  readonly engineDeadlineMs?: number;
   readonly rssLimitBytes?: number;
   readonly expect?: FixtureExpectation;
 }
@@ -227,6 +234,9 @@ export async function runFixtureInSubprocess(
       options.runtime,
       "--fixture",
       options.fixtureId,
+      ...(options.engineDeadlineMs === undefined
+        ? []
+        : ["--deadline-ms", String(options.engineDeadlineMs)]),
     ],
     { stdout: "pipe", stderr: "pipe" },
   );
@@ -235,7 +245,7 @@ export async function runFixtureInSubprocess(
   let supervisorKilled = false;
   const startedAt = performance.now();
 
-  const sampleTimer = setInterval(() => {
+  const sampleRss = () => {
     const rss = sampleRssBytes(proc.pid);
     if (rss !== undefined) {
       peakRssBytes =
@@ -245,7 +255,11 @@ export async function runFixtureInSubprocess(
         proc.kill("SIGKILL");
       }
     }
-  }, RSS_SAMPLE_INTERVAL_MS);
+  };
+  // One sample at once, so a child that ends before the first interval tick
+  // (a short engine deadline) still has a recorded RSS.
+  sampleRss();
+  const sampleTimer = setInterval(sampleRss, RSS_SAMPLE_INTERVAL_MS);
 
   const killTimer = setTimeout(() => {
     if (!supervisorKilled) {
