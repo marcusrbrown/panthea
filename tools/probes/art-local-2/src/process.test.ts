@@ -171,6 +171,24 @@ describe("spawnManaged stop", () => {
     });
   });
 
+  it("keeps a crashing child's last words, not counting them as late, when the stop request raced its death", async () => {
+    // Its last words are read after the stop was requested (the handler runs
+    // because of the request), but the exit is its own crash, not a stop: the
+    // same disposition as a crash whose output the stop request overtook.
+    const proc = child(
+      "process.on('SIGTERM', () => { process.stdout.write('last-words\\n'); process.abort(); }); console.log('ready'); setInterval(() => {}, 1000);",
+    );
+    await proc.waitReady(readyCheck(proc), { timeoutMs: 5_000, pollMs: 20 });
+    const stopped = await proc.stop();
+    expect(stopped.exit).toMatchObject({
+      reason: "exited",
+      signalCode: "SIGABRT",
+    });
+    expect(proc.output().stdout).toContain("last-words");
+    expect(stopped.lateOutputBytes).toBe(0);
+    expect(proc.output().lateBytes).toBe(0);
+  });
+
   it("keeps lifetime-exceeded ahead of stopped when the bound fires during a requested stop", async () => {
     const proc = child(
       "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);",
