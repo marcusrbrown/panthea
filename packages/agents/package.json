@@ -17,6 +17,6 @@
     "@panthea/content": "workspace:*",
     "@panthea/contracts": "workspace:*",
     "@panthea/world": "workspace:*",
-    "ai": "7.0.126"
+    "ai": "7.0.127"
   }
 }
