@@ -184,6 +184,23 @@ describe("spawnManaged stop", () => {
     expect(proc.output().lateBytes).toBe(0);
   });
 
+  it("keeps the bounded prefix of a crash's output that overflows the cap, flags truncation, and counts none of it late", async () => {
+    const proc = child(
+      "process.on('SIGTERM', () => { console.log('CRASH-DIAGNOSTIC-IS-LONG'); process.abort(); }); console.log('ready'); setInterval(() => {}, 1000);",
+      { maxOutputBytes: 16 },
+    );
+    await proc.waitReady(readyCheck(proc), { timeoutMs: 5_000, pollMs: 20 });
+    const stopped = await proc.stop();
+    expect(stopped.exit).toMatchObject({
+      reason: "exited",
+      signalCode: "SIGABRT",
+    });
+    expect(proc.output().stdout).toBe("ready\nCRASH-DIAG");
+    expect(proc.output().truncated).toBe(true);
+    expect(stopped.lateOutputBytes).toBe(0);
+    expect(proc.output().lateBytes).toBe(0);
+  });
+
   it("keeps lifetime-exceeded ahead of stopped when the bound fires during a requested stop", async () => {
     const proc = child(
       "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);",

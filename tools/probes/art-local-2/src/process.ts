@@ -139,6 +139,8 @@ export function spawnManaged(options: SpawnManagedOptions): ManagedProcess {
   /** Output read after a stop request, held until the exit shows whether the stop caused it. */
   const heldLate: { readonly bytes: number; readonly keep: () => void }[] = [];
   let heldLateBytes = 0;
+  /** Late bytes beyond the hold cap: not held, but truncation if the exit was a crash. */
+  let overflowLateBytes = 0;
   let exitedOnItsOwn = false;
 
   async function consume(
@@ -163,12 +165,17 @@ export function spawnManaged(options: SpawnManagedOptions): ManagedProcess {
       for await (const chunk of stream) {
         if (stopRequested && !exitedOnItsOwn) {
           lateBytes += chunk.byteLength;
-          // Held (up to the retention cap) in case the exit was the child's own crash.
-          if (heldLateBytes + chunk.byteLength <= maxOutputBytes) {
-            heldLateBytes += chunk.byteLength;
+          // Held (a prefix, up to the retention cap) in case the exit was the child's own crash.
+          const held = chunk.subarray(
+            0,
+            Math.min(chunk.byteLength, maxOutputBytes - heldLateBytes),
+          );
+          overflowLateBytes += chunk.byteLength - held.byteLength;
+          if (held.byteLength > 0) {
+            heldLateBytes += held.byteLength;
             heldLate.push({
-              bytes: chunk.byteLength,
-              keep: () => retain(chunk),
+              bytes: held.byteLength,
+              keep: () => retain(held),
             });
           }
           continue;
@@ -217,6 +224,11 @@ export function spawnManaged(options: SpawnManagedOptions): ManagedProcess {
       for (const held of heldLate.splice(0)) {
         lateBytes -= held.bytes;
         held.keep();
+      }
+      if (overflowLateBytes > 0) {
+        lateBytes -= overflowLateBytes;
+        truncated = true;
+        overflowLateBytes = 0;
       }
     }
     phase = "exited";
