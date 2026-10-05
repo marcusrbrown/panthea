@@ -35,14 +35,6 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      # Temporary: remove once the Linux SIGABRT test failures are diagnosed.
-      # It runs first so it reports even when later steps fail, and it needs
-      # no installed dependencies.
-      - name: 🔎 SIGABRT diagnostics (temporary)
-        timeout-minutes: 2
-        continue-on-error: true
-        run: bun tools/probes/art-local-2/diagnostics/abort-controls.ts
-
       - name: 📦 Install dependencies
         run: bun install --frozen-lockfile
 
@@ -53,7 +45,8 @@ jobs:
         run: bun run lint
 
       - name: ✅ Test
-        run: bun run test
+        # Linux skips piped core dumps at an exact one-byte limit.
+        run: prlimit --core=1:1 -- bun run test
 
   rust:
     name: rust
