@@ -207,7 +207,10 @@ export interface RunFixtureInSubprocessOptions {
   readonly runtime: Runtime;
   readonly fixtureId: string;
   readonly category: FixtureCategory;
+  /** The supervisor's outer wall-clock kill (the backstop). */
   readonly deadlineMs?: number;
+  /** The engine's own deadline inside the child; omit for its 250 ms default. */
+  readonly engineDeadlineMs?: number;
   readonly rssLimitBytes?: number;
   readonly expect?: FixtureExpectation;
 }
@@ -227,6 +230,9 @@ export async function runFixtureInSubprocess(
       options.runtime,
       "--fixture",
       options.fixtureId,
+      ...(options.engineDeadlineMs === undefined
+        ? []
+        : ["--deadline-ms", String(options.engineDeadlineMs)]),
     ],
     { stdout: "pipe", stderr: "pipe" },
   );
@@ -235,7 +241,7 @@ export async function runFixtureInSubprocess(
   let supervisorKilled = false;
   const startedAt = performance.now();
 
-  const sampleTimer = setInterval(() => {
+  const sampleRss = () => {
     const rss = sampleRssBytes(proc.pid);
     if (rss !== undefined) {
       peakRssBytes =
@@ -245,7 +251,10 @@ export async function runFixtureInSubprocess(
         proc.kill("SIGKILL");
       }
     }
-  }, RSS_SAMPLE_INTERVAL_MS);
+  };
+  // Sample at once: a child may end before the first interval tick.
+  sampleRss();
+  const sampleTimer = setInterval(sampleRss, RSS_SAMPLE_INTERVAL_MS);
 
   const killTimer = setTimeout(() => {
     if (!supervisorKilled) {

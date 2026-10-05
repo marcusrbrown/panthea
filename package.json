@@ -22,6 +22,7 @@
     "lint": "biome check .",
     "fix": "biome check --write .",
     "test": "bun test --parallel=4",
+    "test:live": "PANTHEA_LIVE_OLLAMA=1 bun test packages/agents/src/router.live.test.ts",
     "check": "bun run typecheck && bun run lint && bun run test"
   },
   "devDependencies": {

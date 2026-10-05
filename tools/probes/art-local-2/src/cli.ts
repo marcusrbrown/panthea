@@ -142,6 +142,9 @@ export function parseArmConfig(raw: unknown): ArmConfig {
         optional(server.readyTimeoutMs, (v) =>
           posInt(v, "$.server.readyTimeoutMs"),
         ) ?? 120_000,
+      restartReadyTimeoutMs: optional(server.restartReadyTimeoutMs, (v) =>
+        posInt(v, "$.server.restartReadyTimeoutMs"),
+      ),
       maxLifetimeMs:
         optional(server.maxLifetimeMs, (v) =>
           posInt(v, "$.server.maxLifetimeMs"),

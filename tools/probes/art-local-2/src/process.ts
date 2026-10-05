@@ -7,7 +7,8 @@
 // requested is counted in `lateBytes` and discarded from the retained
 // output, so a result that arrives after cancellation can never be mistaken
 // for a completed one. "Late" is defined by when this process read the
-// chunk, not when the child wrote it.
+// chunk, not when the child wrote it. Exception: output read after the request
+// is kept when the exit was the child's own crash (a signal the stop did not send).
 
 import type { CancelTiming } from "./measure";
 import { type UsageReader, waitForTreeIdle } from "./rss";
@@ -135,28 +136,51 @@ export function spawnManaged(options: SpawnManagedOptions): ManagedProcess {
   let truncated = false;
   let lateBytes = 0;
 
+  /** Output read after a stop request, held until the exit shows whether the stop caused it. */
+  const heldLate: { readonly bytes: number; readonly keep: () => void }[] = [];
+  let heldLateBytes = 0;
+  /** Late bytes beyond the hold cap: not held, but truncation if the exit was a crash. */
+  let overflowLateBytes = 0;
+  let exitedOnItsOwn = false;
+
   async function consume(
     stream: ReadableStream<Uint8Array>,
     sink: (text: string) => void,
   ): Promise<void> {
     const decoder = new TextDecoder();
+    const retain = (chunk: Uint8Array) => {
+      const room = maxOutputBytes - retainedBytes;
+      if (room <= 0) {
+        truncated = true;
+        return;
+      }
+      const kept = chunk.byteLength > room ? chunk.subarray(0, room) : chunk;
+      if (kept.byteLength < chunk.byteLength) {
+        truncated = true;
+      }
+      retainedBytes += kept.byteLength;
+      sink(decoder.decode(kept, { stream: true }));
+    };
     try {
       for await (const chunk of stream) {
-        if (stopRequested) {
+        if (stopRequested && !exitedOnItsOwn) {
           lateBytes += chunk.byteLength;
+          // Held (a prefix, up to the retention cap) in case the exit was the child's own crash.
+          const held = chunk.subarray(
+            0,
+            Math.min(chunk.byteLength, maxOutputBytes - heldLateBytes),
+          );
+          overflowLateBytes += chunk.byteLength - held.byteLength;
+          if (held.byteLength > 0) {
+            heldLateBytes += held.byteLength;
+            heldLate.push({
+              bytes: held.byteLength,
+              keep: () => retain(held),
+            });
+          }
           continue;
         }
-        const room = maxOutputBytes - retainedBytes;
-        if (room <= 0) {
-          truncated = true;
-          continue;
-        }
-        const kept = chunk.byteLength > room ? chunk.subarray(0, room) : chunk;
-        if (kept.byteLength < chunk.byteLength) {
-          truncated = true;
-        }
-        retainedBytes += kept.byteLength;
-        sink(decoder.decode(kept, { stream: true }));
+        retain(chunk);
       }
     } catch {
       // A closed pipe is the normal end of a killed child.
@@ -194,6 +218,19 @@ export function spawnManaged(options: SpawnManagedOptions): ManagedProcess {
           ? "stopped"
           : "exited",
     };
+    if (exitInfo.reason === "exited") {
+      // The stop did not cause this exit: held output is not late.
+      exitedOnItsOwn = true;
+      for (const held of heldLate.splice(0)) {
+        lateBytes -= held.bytes;
+        held.keep();
+      }
+      if (overflowLateBytes > 0) {
+        lateBytes -= overflowLateBytes;
+        truncated = true;
+        overflowLateBytes = 0;
+      }
+    }
     phase = "exited";
     return exitInfo;
   });

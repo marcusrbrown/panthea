@@ -1,8 +1,8 @@
 // One call through the production path against a live local Ollama: the
 // routing config parser, the router, the OpenAI-compatible adapter, and
-// Ollama's /v1 endpoint, with the derived 4K model. Skipped, with the reason
-// printed, when Ollama or the model is not there. To set the model up, see
-// tools/probes/inference-baseline/README.md.
+// Ollama's /v1 endpoint, with the derived 4K model. Opt-in: runs only with
+// PANTHEA_LIVE_OLLAMA=1 (`bun run test:live`); once opted in, a missing Ollama
+// or model fails. Setup: tools/probes/inference-baseline/README.md.
 
 import { expect, test } from "bun:test";
 import { type ParseResult, parseRoutingConfig } from "./config";
@@ -10,6 +10,7 @@ import { createRouter, type IntentSchema } from "./router";
 
 const OLLAMA = "http://127.0.0.1:11434";
 const MODEL = "llama3.2-3b-4k";
+const optedIn = process.env.PANTHEA_LIVE_OLLAMA === "1";
 
 async function unavailableReason(): Promise<string | undefined> {
   try {
@@ -27,9 +28,10 @@ async function unavailableReason(): Promise<string | undefined> {
   }
 }
 
-const skipReason = await unavailableReason();
-if (skipReason) {
-  console.log(`live Ollama test skipped: ${skipReason}`);
+if (!optedIn) {
+  console.log(
+    "live Ollama test skipped: set PANTHEA_LIVE_OLLAMA=1 (bun run test:live)",
+  );
 }
 
 interface Turn {
@@ -57,9 +59,12 @@ const turnIntent: IntentSchema<Turn> = {
   },
 };
 
-test.skipIf(skipReason !== undefined)(
+test.skipIf(!optedIn)(
   "a live local Ollama answers one turn with a schema-valid intent through the production path",
   async () => {
+    const unavailable = await unavailableReason();
+    if (unavailable)
+      throw new Error(`live Ollama test opted in but ${unavailable}`);
     const config = parseRoutingConfig({
       endpoints: [{ id: "ollama", baseUrl: `${OLLAMA}/v1`, model: MODEL }],
       roles: { zeus: { endpoint: "ollama" } },

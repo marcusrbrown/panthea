@@ -8,8 +8,16 @@ import { runFixtureInSubprocess } from "./host";
 
 const RUN_FILE_PATH = join(import.meta.dir, "run.ts");
 
-function run(fixtureId: string, category: FixtureCategory) {
+// Short engine deadline; the supervisor's 1.2 s kill stays the backstop.
+const RUNAWAY_DEADLINE_MS = 50;
+
+function run(
+  fixtureId: string,
+  category: FixtureCategory,
+  engineDeadlineMs?: number,
+) {
   return runFixtureInSubprocess({
+    engineDeadlineMs,
     runFilePath: RUN_FILE_PATH,
     runtime: "lua",
     fixtureId,
@@ -43,18 +51,31 @@ describe("lua sandbox", () => {
   }, 30_000);
 
   test("infinite loop terminates within the deadline via the lua_sethook count hook", async () => {
-    const record = await run("loop-infinite", "loop-recursion");
+    const record = await run(
+      "loop-infinite",
+      "loop-recursion",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(record.outcome).toBe("terminated");
-    expect(record.timeToTerminationMs).toBeLessThan(2000);
+    expect(record.supervisorKilled).toBe(false);
+    expect(record.childOutput?.timedOut).toBe(true);
   }, 5_000);
 
   test("deep recursion hits the stack limit", async () => {
-    const record = await run("loop-deep-recursion", "loop-recursion");
+    const record = await run(
+      "loop-deep-recursion",
+      "loop-recursion",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(record.outcome).toBe("terminated");
   }, 5_000);
 
   test("allocation bomb terminates, with isolated RSS recorded honestly", async () => {
-    const record = await run("allocation-array-growth", "allocation");
+    const record = await run(
+      "allocation-array-growth",
+      "allocation",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(record.outcome).toBe("terminated");
     expect(record.peakRssBytes).toBeGreaterThan(0);
   }, 5_000);
@@ -72,7 +93,11 @@ describe("lua sandbox", () => {
   }, 5_000);
 
   test("after a terminated fixture, the next valid behavior runs in a fresh engine", async () => {
-    const terminated = await run("loop-infinite", "loop-recursion");
+    const terminated = await run(
+      "loop-infinite",
+      "loop-recursion",
+      RUNAWAY_DEADLINE_MS,
+    );
     expect(terminated.outcome).toBe("terminated");
     const followUp = await run("happy-path", "happy-path");
     expect(followUp.outcome).toBe("completed");

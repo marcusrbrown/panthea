@@ -150,4 +150,4 @@ Four static reductions of existing full-matrix sample 0 outputs (seed 20261003),
 - [components.json](components.json): pinned runtime and component manifest.
 - [arms/](arms): full and smoke configs per arm.
 - [evidence/unit1-measurements.json](evidence/unit1-measurements.json): sanitized measurements, hashes, log counts and headroom for this README.
-- `src/`: harness (CLI, server driver, process control, RSS sampler, redaction) and its tests.
+- `src/`: harness (CLI, server driver, process control, RSS sampler, redaction) and its tests. `runArm` takes an optional `readUsage` hook (default: the real `ps` reader), so the arm tests script their RSS and CPU readings; `src/rss.test.ts` is the one test that samples a live process. A config's `server.restartReadyTimeoutMs` (optional, default `readyTimeoutMs`) bounds the cancel probe's replacement separately from the first launch.

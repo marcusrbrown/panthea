@@ -285,7 +285,7 @@ describe("main", () => {
 
   it("exits 1 when a cell times out and records no image for it", async () => {
     const { configPath, out } = await writeConfig(
-      { timeoutMs: 300, warmupCount: 0, sampleCount: 1, lora: null },
+      { timeoutMs: 100, warmupCount: 0, sampleCount: 1, lora: null },
       { FAKE_JOB_MS: "30000" },
     );
     const code = await main(["--config", configPath, "--out", out]);
@@ -554,6 +554,9 @@ describe("main cancel probe: the replacement must come back", () => {
     );
     const cfg = JSON.parse(readFileSync(configPath, "utf8"));
     cfg.server.readyTimeoutMs = 1_000;
+    cfg.server.stopGraceMs = 50;
+    // Only the replacement gets the short bound; the first launch needs the full one.
+    if (onRestart === "never-ready") cfg.server.restartReadyTimeoutMs = 50;
     writeFileSync(configPath, JSON.stringify(cfg));
     const code = await main(["--config", configPath, "--out", out]);
     const results = JSON.parse(

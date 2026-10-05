@@ -20,7 +20,7 @@ import {
   type SettingValue,
 } from "./measure";
 import { type ManagedProcess, restartToReady, spawnManaged } from "./process";
-import { createTreeSampler } from "./rss";
+import { createTreeSampler, type UsageReader } from "./rss";
 import { runCell } from "./run";
 import {
   type BodyShape,
@@ -51,6 +51,8 @@ export interface ArmConfig {
     readonly baseUrl: string;
     readonly env?: Readonly<Record<string, string>>;
     readonly readyTimeoutMs: number;
+    /** Ready bound for the cancel probe's replacement; defaults to `readyTimeoutMs`. */
+    readonly restartReadyTimeoutMs?: number;
     readonly maxLifetimeMs: number;
     readonly stopGraceMs?: number;
     /** Hash-checked like any component; mismatch blocks the arm. */
@@ -209,6 +211,8 @@ export async function runArm(
   hooks: {
     readonly onImage?: (event: ImageEvent) => void;
     readonly onServerLog?: (event: ServerLogEvent) => void;
+    /** RSS/CPU reader for the sampler and idle wait; defaults to `ps`. */
+    readonly readUsage?: UsageReader;
   } = {},
 ): Promise<ArmReport> {
   const components: ComponentProvenance[] = await Promise.all(
@@ -232,6 +236,7 @@ export async function runArm(
   const sampler = createTreeSampler({
     intervalMs: config.rssIntervalMs ?? 250,
     phase: "startup",
+    read: hooks.readUsage,
   });
 
   const spawn = (): ManagedProcess =>
@@ -425,9 +430,11 @@ export async function runArm(
               return proc;
             },
             isReady,
-            readyTimeoutMs: config.server.readyTimeoutMs,
+            readyTimeoutMs:
+              config.server.restartReadyTimeoutMs ??
+              config.server.readyTimeoutMs,
             pollMs: 50,
-            idle: config.idle,
+            idle: config.idle && { ...config.idle, read: hooks.readUsage },
           });
           if (entry) {
             entry.startupStatus =

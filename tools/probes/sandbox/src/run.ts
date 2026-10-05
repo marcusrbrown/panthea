@@ -41,12 +41,14 @@ interface ParsedArgs {
   readonly all: boolean;
   readonly runtime?: string;
   readonly fixture?: string;
+  readonly deadlineMs?: number;
 }
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
   let all = false;
   let runtime: string | undefined;
   let fixture: string | undefined;
+  let deadlineMs: number | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--all") {
@@ -57,9 +59,12 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     } else if (arg === "--fixture") {
       fixture = argv[i + 1];
       i += 1;
+    } else if (arg === "--deadline-ms") {
+      deadlineMs = Number(argv[i + 1]);
+      i += 1;
     }
   }
-  return { all, runtime, fixture };
+  return { all, runtime, fixture, deadlineMs };
 }
 
 function isRuntime(value: string | undefined): value is Runtime {
@@ -69,13 +74,14 @@ function isRuntime(value: string | undefined): value is Runtime {
 async function runOneFixture(
   runtime: Runtime,
   fixtureId: string,
+  deadlineMs: number | undefined,
 ): Promise<void> {
   const fixture = getFixture(fixtureId);
   const source = readFixtureSource(fixture, runtime);
   const result =
     runtime === "quickjs"
-      ? await runQuickJsFixture({ source })
-      : await runLuaFixture({ source });
+      ? await runQuickJsFixture({ source, deadlineMs })
+      : await runLuaFixture({ source, deadlineMs });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
@@ -476,7 +482,7 @@ async function main(): Promise<void> {
   if (typeof args.fixture !== "string") {
     throw new Error("--fixture <id> is required");
   }
-  await runOneFixture(args.runtime, args.fixture);
+  await runOneFixture(args.runtime, args.fixture, args.deadlineMs);
 }
 
 await main();
