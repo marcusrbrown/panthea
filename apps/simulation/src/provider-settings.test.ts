@@ -2,7 +2,10 @@
 // keys on the launch line: endpoint status from real requests, a keyed endpoint
 // whose key is missing, offline mode, and the sentinel check that a key reaches
 // only the request. Every "never" has a positive control that fails the run if
-// the check could not see a leak.
+// the check could not see a leak. The service runs in this process on a fast
+// tick timer, with its console output captured; the one test that needs real
+// stdout, stderr and a real process exit (the planted key on the launch line)
+// spawns it.
 
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -17,6 +20,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSyncFrame, type SyncFrame } from "@panthea/contracts";
 import { listExternalProposals } from "@panthea/persistence";
+import { TICK_TIMER_ENV } from "./index";
+import { parseLaunchConfig } from "./launch-config";
+import {
+  FAST_TICK_MS,
+  startTestService,
+  stopAllTestServices,
+} from "./test-service";
 
 const INDEX_ENTRY = join(import.meta.dir, "index.ts");
 const TOKEN = "provider-settings-token";
@@ -93,7 +103,7 @@ function startProvider(
 // --- The spawned service ----------------------------------------------------------------
 
 interface Service {
-  readonly proc: ReturnType<typeof Bun.spawn>;
+  readonly proc?: ReturnType<typeof Bun.spawn>;
   readonly port: number;
   readonly appDataDir: string;
   /** Everything the service printed, stdout and stderr. */
@@ -106,7 +116,8 @@ const services: Service[] = [];
 const dirs: string[] = [];
 
 afterEach(() => {
-  for (const service of services.splice(0)) service.proc.kill();
+  stopAllTestServices();
+  for (const service of services.splice(0)) service.proc?.kill();
   for (const provider of providers.splice(0)) provider.stop();
   for (const dir of dirs.splice(0))
     rmSync(dir, { recursive: true, force: true });
@@ -118,14 +129,39 @@ interface Launch {
   readonly keys?: Record<string, string>;
 }
 
+/** The service in this process on a fast tick timer. */
 async function spawnService(launch: Launch): Promise<Service> {
+  const appDataDir = mkdtempSync(join(tmpdir(), "panthea-sim-settings-"));
+  dirs.push(appDataDir);
+  const inProcess = startTestService({
+    appDataDir,
+    token: TOKEN,
+    launch: parseLaunchConfig(
+      JSON.stringify({ offline: false, keys: {}, ...launch }),
+    ),
+  });
+  const service: Service = {
+    port: inProcess.port,
+    appDataDir,
+    output: () => inProcess.output(),
+    stop: async () => inProcess.stop() ?? 0,
+  };
+  return service;
+}
+
+/** The service as a separate process, with its real stdout, stderr and exit code. */
+async function spawnProcess(launch: Launch): Promise<Service> {
   const appDataDir = mkdtempSync(join(tmpdir(), "panthea-sim-settings-"));
   dirs.push(appDataDir);
   const proc = Bun.spawn(["bun", "run", INDEX_ENTRY], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, PANTHEA_APP_DATA_DIR: appDataDir },
+    env: {
+      ...process.env,
+      PANTHEA_APP_DATA_DIR: appDataDir,
+      [TICK_TIMER_ENV]: String(FAST_TICK_MS),
+    },
   });
   const stdin = proc.stdin;
   if (typeof stdin === "number" || !stdin) throw new Error("stdin");
@@ -175,7 +211,7 @@ async function until<T>(
   while (Date.now() < deadline) {
     const value = await probe();
     if (value !== undefined) return value;
-    await Bun.sleep(50);
+    await Bun.sleep(5);
   }
   throw new Error(`timed out waiting for ${what}`);
 }
@@ -261,7 +297,7 @@ describe("the leak scan can see a leak (positive controls)", () => {
     expect(filesHolding(service.appDataDir, SENTINEL).length).toBeGreaterThan(
       0,
     );
-  }, 60_000);
+  });
 });
 
 describe("endpoint status comes from real requests", () => {
@@ -296,7 +332,7 @@ describe("endpoint status comes from real requests", () => {
       state: "ok",
     });
     expect(recovered.status).toBe("running");
-  }, 60_000);
+  });
 
   test("before any request every configured endpoint is untried, and a service with no models carries no status", async () => {
     const none = await spawnService({ models: null });
@@ -311,7 +347,7 @@ describe("endpoint status comes from real requests", () => {
     expect(frame.modelEndpoints).toEqual([
       { endpoint: "local", state: "untried" },
     ]);
-  }, 60_000);
+  });
 
   test("a keyed endpoint whose key is missing at spawn fails with key-not-set, sends nothing upstream, and gods idle under model-degraded", async () => {
     const provider = startProvider(() => ({
@@ -340,7 +376,7 @@ describe("endpoint status comes from real requests", () => {
     });
     expect(frame.degradedReason).toBe("model-degraded");
     expect(provider.requests).toHaveLength(0);
-  }, 60_000);
+  });
 
   test("positive control: the same keyed endpoint with its key set is reached with the bearer key and reports ok", async () => {
     const provider = startProvider();
@@ -360,7 +396,7 @@ describe("endpoint status comes from real requests", () => {
     for (const request of provider.requests) {
       expect(request.authorization).toBe(`Bearer ${SENTINEL}`);
     }
-  }, 60_000);
+  });
 });
 
 describe("offline mode", () => {
@@ -393,7 +429,7 @@ describe("offline mode", () => {
     expect(statusOf(frame, "hosted")?.reason).toBeDefined();
     expect(JSON.stringify(frame)).not.toContain(SENTINEL);
     expect(provider.requests.length).toBeGreaterThan(0);
-  }, 90_000);
+  });
 
   test("offline, the hosted endpoint is dropped before any request (still untried), and the local fallback answers", async () => {
     const provider = startProvider();
@@ -417,7 +453,7 @@ describe("offline mode", () => {
     for (const request of provider.requests) {
       expect(request.authorization).toBeNull();
     }
-  }, 60_000);
+  });
 });
 
 describe("a key reaches only the request (sentinel)", () => {
@@ -429,7 +465,7 @@ describe("a key reaches only the request (sentinel)", () => {
 
   test("a planted key sent on the launch line never appears in a prompt, the frame, the world store (journal and trace), or the logs", async () => {
     const provider = startProvider();
-    const service = await spawnService({
+    const service = await spawnProcess({
       models: keyed(provider),
       keys: { sk: SENTINEL },
     });
@@ -462,7 +498,7 @@ describe("a key reaches only the request (sentinel)", () => {
     expect(await service.stop()).toBe(0);
     expect(service.output()).not.toContain(SENTINEL);
     expect(filesHolding(service.appDataDir, SENTINEL)).toEqual([]);
-  }, 60_000);
+  });
 
   test("control: an endpoint that echoes the key back in its error is redacted in the trace row, the frame, and the logs", async () => {
     const provider = startProvider((request) => ({
@@ -503,7 +539,7 @@ describe("a key reaches only the request (sentinel)", () => {
     expect(await service.stop()).toBe(0);
     expect(service.output()).not.toContain(SENTINEL);
     expect(filesHolding(service.appDataDir, SENTINEL)).toEqual([]);
-  }, 60_000);
+  });
 
   test("control: a model that puts the key in its answer is refused before it is journaled, and the trace row holds the marker", async () => {
     const provider = startProvider((request) =>
@@ -537,7 +573,7 @@ describe("a key reaches only the request (sentinel)", () => {
     expect(await service.stop()).toBe(0);
     expect(service.output()).not.toContain(SENTINEL);
     expect(filesHolding(service.appDataDir, SENTINEL)).toEqual([]);
-  }, 60_000);
+  });
 
   describe("a key JSON escapes", () => {
     test("positive control: the key and its escaped form differ, and the key still reaches the request as the bearer", async () => {
@@ -552,7 +588,7 @@ describe("a key reaches only the request (sentinel)", () => {
       );
       expect(provider.requests[0]?.authorization).toBe(`Bearer ${TRICKY}`);
       expect(await service.stop()).toBe(0);
-    }, 60_000);
+    });
 
     test("an endpoint that echoes the key in a JSON error body is redacted in the frame, the trace row, and the logs", async () => {
       const provider = startProvider((request) => ({
@@ -593,7 +629,7 @@ describe("a key reaches only the request (sentinel)", () => {
       expect(service.output()).not.toContain(TRICKY_ESCAPED);
       expect(filesHolding(service.appDataDir, TRICKY)).toEqual([]);
       expect(filesHolding(service.appDataDir, TRICKY_ESCAPED)).toEqual([]);
-    }, 60_000);
+    });
 
     test("a model that puts the key in its answer is refused before the journal even though the proposal holds it escaped", async () => {
       const provider = startProvider((request) =>
@@ -626,6 +662,6 @@ describe("a key reaches only the request (sentinel)", () => {
       expect(service.output()).not.toContain(TRICKY_ESCAPED);
       expect(filesHolding(service.appDataDir, TRICKY)).toEqual([]);
       expect(filesHolding(service.appDataDir, TRICKY_ESCAPED)).toEqual([]);
-    }, 60_000);
+    });
   });
 });
