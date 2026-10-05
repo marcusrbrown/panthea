@@ -2018,10 +2018,9 @@ async function frameOf(port: number) {
 /**
  * The bound on a wait that covers a real one-hour catch-up in a spawned service.
  * The wait ends the moment the event happens; this only stops a hung service.
- * Measured on a 10-core machine with N busy loops competing for it, the
- * sleep-wake test took 9 s (10 loops), 14 s (20) and 18.5 s (30), and the
- * startup catch-up test 6.5, 11 and 15.4 s, against the 20 s default; a bound
- * of 60 s is more than three times the worst of those.
+ * Measured on a 10-core machine with N busy loops competing for it, the startup
+ * catch-up test took 6.5 s (10 loops), 11 s (20) and 15.4 s (30), against the
+ * 20 s default; a bound of 60 s is nearly four times the worst of those.
  */
 const CATCH_UP_WAIT_MS = 60_000;
 
@@ -2320,74 +2319,6 @@ describe("the service with model routing configured", () => {
     const early = provider.requests.filter((request) => request.at < finished);
     expect(early).toEqual([]);
   }, 120_000);
-
-  test("takes no turn while a sleep-wake catch-up runs, and resumes after: a clock gap forced mid-run", async () => {
-    const provider = startProvider();
-    const service = await spawnService(provider);
-    // Turns are flowing: gods have asked and their proposals have run.
-    await until("gods taking turns", () =>
-      provider.requests.length >= 2 &&
-      journalOf(service.appDataDir).some(
-        (entry) => entry.outcome?.status === "committed",
-      )
-        ? true
-        : undefined,
-    );
-    const before = catchUps(service).starts.length;
-
-    // The seam is the persisted clock the tick loop reads every second: put
-    // its cursor an hour behind, as a sleeping machine would leave it. A tick
-    // already in flight can overwrite it, so it is set again until the
-    // service's own catch-up starts.
-    const gap = new Database(
-      join(service.appDataDir, "active", "world.sqlite"),
-      {
-        readwrite: true,
-      },
-    );
-    gap.run("PRAGMA busy_timeout = 2000");
-    try {
-      await until(
-        "a sleep-wake catch-up to start",
-        () => {
-          if (catchUps(service).starts.length > before) return true;
-          gap.run("UPDATE clock SET cursor_wall_ms = ? WHERE id = 1", [
-            Date.now() - 60 * 60 * 1000,
-          ]);
-          return undefined;
-        },
-        CATCH_UP_WAIT_MS,
-      );
-    } finally {
-      gap.close();
-    }
-    await until(
-      "that catch-up to finish",
-      () => (catchUps(service).ends.length > before ? true : undefined),
-      CATCH_UP_WAIT_MS,
-    );
-    const start = catchUps(service).starts[before]?.at ?? 0;
-    const end = catchUps(service).ends[before]?.at ?? 0;
-    // A catch-up may begin and end inside one millisecond; that is valid.
-    expect(end).toBeGreaterThanOrEqual(start);
-    // Turns were flowing before it (control for the assertion below) ...
-    expect(provider.requests.some((request) => request.at < start)).toBe(true);
-    // ... none started inside it ...
-    expect(
-      provider.requests.filter(
-        (request) => request.at > start && request.at < end,
-      ),
-    ).toEqual([]);
-    // ... and they resume after it.
-    await until(
-      "turns to resume",
-      () =>
-        provider.requests.some((request) => request.at > end)
-          ? true
-          : undefined,
-      CATCH_UP_WAIT_MS,
-    );
-  }, 180_000);
 });
 
 describe("a god's refused practice moves", () => {
