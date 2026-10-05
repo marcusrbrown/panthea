@@ -8,8 +8,10 @@ test("the root exports lookup, placeholder and helpers", () => {
     [
       "DEFAULT_PLACEHOLDER",
       "EMPTY_SNAPSHOT",
+      "conformImage",
       "encodeRgbaPng",
       "readPngHeader",
+      "recoverGrid",
       "renderPlaceholder",
       "resolveAsset",
       "sha256Hex",
@@ -24,4 +26,12 @@ test("the root and the pure lookup never import the filesystem or the registry",
       /^(import|export) .*(node:fs|node:path|\.\/registry)/m,
     );
   }
+});
+
+test("conformance has no platform imports, randomness or clock", () => {
+  const source = readFileSync(join(import.meta.dir, "conformance.ts"), "utf8");
+  expect(source).not.toMatch(/from "node:/);
+  expect(source).not.toMatch(
+    /Math\.random|Date\.now|new Date|process\.|performance\./,
+  );
 });
