@@ -14,7 +14,7 @@ import {
   type PracticeThread,
   toEntityId,
 } from "@panthea/world";
-import { GODS, type God } from "../provider";
+import type { God } from "../provider";
 import type { Recorder, Story } from "./context";
 import {
   eventsOfKind,
@@ -469,10 +469,15 @@ export async function stepSupplication(
           capabilities: changed?.capabilities,
         }),
       );
+      // The form change forgets nothing. A mortal that already holds as many as it can (the town's wrongs fill a
+      // memory) forgets its least salient as new ones form, as every full memory does, so a missing one is allowed
+      // only from a full memory.
+      const capacity = after.rules.memoryBalance?.capacity ?? 24;
       check(
-        memoriesBefore.every((m) => kept_.includes(m.id)),
-        "every memory it held before is still held",
-        `${memoriesBefore.length} before, ${kept_.length} after`,
+        memoriesBefore.every((m) => kept_.includes(m.id)) ||
+          kept_.length >= capacity,
+        "every memory it held before is still held, unless a full memory forgot it as new ones formed",
+        `${memoriesBefore.length} before, ${kept_.length} after, capacity ${capacity}`,
       );
       // The boon and the breach may move how it feels about the gods (it remembers a kindness, and a broken term); the form
       // change itself moves nothing, and every feeling it held is still held, toward everyone but the gods unchanged.
@@ -481,16 +486,23 @@ export async function stepSupplication(
           .filter(([key]) => key.startsWith(`${mortal}>`))
           .map(([key, value]) => [key, JSON.stringify(value)]),
       );
-      const gods = new Set<string>(GODS);
+      // The town's own wrongs move how a mortal feels about other mortals, so what is held is that no feeling is
+      // lost and that the change of form itself formed no memory, and so moved no feeling.
+      const formedByChange = storedEvents(story).filter(
+        (e) =>
+          e.kind === "memory-recorded" &&
+          e.entityId === mortal &&
+          e.sourceEventId === change.id,
+      );
       check(
-        feelingsBefore.every(
-          ([key, value]) =>
-            feelingsAfter.has(key as string) &&
-            (gods.has(String(key).split(">")[1] as string) ||
-              feelingsAfter.get(key as string) === value),
-        ),
-        "every feeling it held is still held, and none toward a mortal changed",
-        JSON.stringify({ before: feelingsBefore, after: [...feelingsAfter] }),
+        feelingsBefore.every(([key]) => feelingsAfter.has(key as string)) &&
+          formedByChange.length === 0,
+        "every feeling it held is still held, and the change of form formed no memory or feeling of its own",
+        JSON.stringify({
+          before: feelingsBefore,
+          after: [...feelingsAfter],
+          formedByChange,
+        }),
       );
       step.done(
         `${first.god} offered ${first.petitioner} terms on ${first.id}: ${first.petitioner}'s routine accepted, the blessing ${keptBoon} and its offering ${offering?.id} fulfilled ${keptThread.id}; ${second.god} offered ${mortal} the same with the wolf as stake: it took the boon and had nothing to offer, ${brokenThread.id} breached (${brokenEnd?.id}) and ${change?.id} made it a wolf with its ${memoriesBefore.length} memories kept`,

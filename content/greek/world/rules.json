@@ -138,6 +138,7 @@
       "salience_theft": 6,
       "salience_noticed": 5,
       "salience_patronage": 8,
+      "salience_wrong": 6,
       "salience_practice-ended": 7,
       "harmAffinity": 2,
       "kindnessAffinity": 1,
@@ -157,7 +158,12 @@
       "directorQuietTicks": 120,
       "goalLockTicks": 40,
       "strikeGoodsCap": 2,
-      "defectionAffinity": 1
+      "defectionAffinity": 1,
+      "wrongCooldownTicks": 30,
+      "wrongNeedMultiplier": 2,
+      "wrongLossCap": 2,
+      "creditDeadlineTicks": 100,
+      "revengeWindowTicks": 300
     },
     "practiceBalance": {
       "negotiationTicks": 200,
@@ -173,6 +179,28 @@
       "contestActTicks": 120,
       "contestLedgerMax": 48,
       "contestStanding": 1
+    },
+    "temperamentOdds": {
+      "greedy": {
+        "theft": 2,
+        "cheating": 1,
+        "unpaid-debt": 150,
+        "broken-agreement": 150,
+        "revenge": 20
+      },
+      "quarrelsome": {
+        "feud": 2,
+        "unpaid-debt": 50,
+        "broken-agreement": 50,
+        "revenge": 40
+      },
+      "proud": {
+        "feud": 1,
+        "unpaid-debt": 30,
+        "broken-agreement": 30,
+        "revenge": 60
+      },
+      "honest": {}
     },
     "troubleKinds": {
       "fire": "hephaestus",

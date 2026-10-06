@@ -555,7 +555,7 @@ test("WORLD_EVENT_KINDS lists every kind parseEvent accepts", () => {
   expect(WORLD_EVENT_KINDS).toContain("memory-recorded");
   expect(WORLD_EVENT_KINDS).toContain("report-told");
   expect(WORLD_EVENT_KINDS).toContain("relationship-changed");
-  expect(WORLD_EVENT_KINDS).toHaveLength(44);
+  expect(WORLD_EVENT_KINDS).toHaveLength(47);
 });
 
 test("an unknown event kind is rejected with reason unknown-kind", () => {
@@ -987,7 +987,7 @@ test("only kinds someone can perceive are witnessable: a memory of a report, a m
   for (const eventKind of WITNESSED_EVENT_KINDS) {
     expect(parseEvent(envelope({ ...WITNESSED, eventKind })).ok).toBe(true);
   }
-  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 24);
+  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 26);
 });
 
 // --- Legend tellings: a claim and the recorded hearers ------------------------------------
@@ -2655,5 +2655,101 @@ test("a patronage memory names the mortal, its home, and both gods, and blames n
     { ...memory, consequence: { effect: "harm", agent: "athena" } },
   ]) {
     expect(parseEvent(envelope(bad)).ok).toBe(false);
+  }
+});
+
+test("a wrong names the wrongdoer, the victim, the kind, the loss, and what set the odds; a debt or an agreement names the credit, a revenge the wrong it answers", () => {
+  const raw = {
+    kind: "wrong",
+    entityId: "lykos",
+    victim: "doris",
+    wrong: "theft",
+    resource: "food",
+    amount: 2,
+    temperament: "greedy",
+    needy: true,
+  };
+  const parsed = parseEvent(envelope(raw));
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok) {
+    expect(eventSubjects(parsed.value).map(String)).toEqual(["lykos", "doris"]);
+    expect(eventCause(parsed.value)).toBeUndefined();
+  }
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).toContain("wrong");
+  const debt = parseEvent(
+    envelope({
+      ...raw,
+      wrong: "unpaid-debt",
+      resource: "currency",
+      credit: "evt-3",
+    }),
+  );
+  expect(debt.ok && String(eventCause(debt.value))).toBe("evt-3");
+  const revenge = parseEvent(
+    envelope({ ...raw, wrong: "feud", revenge: "evt-2" }),
+  );
+  expect(revenge.ok && String(eventCause(revenge.value))).toBe("evt-2");
+  for (const bad of [
+    { ...raw, victim: "lykos" },
+    { ...raw, wrong: "arson" },
+    { ...raw, amount: 0 },
+    { ...raw, amount: 1.5 },
+    { ...raw, resource: undefined },
+    { ...raw, temperament: "wicked" },
+    { ...raw, needy: "yes" },
+    { ...raw, needy: undefined },
+    // A debt or an agreement names the credit that failed, and no other wrong does.
+    { ...raw, wrong: "unpaid-debt" },
+    { ...raw, wrong: "broken-agreement" },
+    { ...raw, credit: "evt-3" },
+    // Only a feud is a revenge.
+    { ...raw, revenge: "evt-2" },
+  ]) {
+    expect([JSON.stringify(bad), parseEvent(envelope(bad)).ok]).toEqual([
+      JSON.stringify(bad),
+      false,
+    ]);
+  }
+});
+
+test("a credit trade names its seller, buyer, goods, price, which side is deferred, and its deadline; settling it names the credit", () => {
+  const raw = {
+    kind: "credit-extended",
+    entityId: "seller",
+    buyer: "buyer",
+    goods: { resource: "food", amount: 2 },
+    price: { resource: "currency", amount: 6 },
+    deferred: "payment",
+    deadline: 40,
+  };
+  const parsed = parseEvent(envelope(raw));
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok) {
+    expect(eventSubjects(parsed.value).map(String)).toEqual([
+      "seller",
+      "buyer",
+    ]);
+  }
+  expect(parseEvent(envelope({ ...raw, deferred: "delivery" })).ok).toBe(true);
+  for (const bad of [
+    { ...raw, buyer: "seller" },
+    { ...raw, deferred: "never" },
+    { ...raw, deadline: -1 },
+    { ...raw, deadline: 1.5 },
+    { ...raw, goods: { resource: "food", amount: 0 } },
+    { ...raw, price: { resource: "currency" } },
+    { ...raw, goods: undefined },
+  ]) {
+    expect(parseEvent(envelope(bad)).ok).toBe(false);
+  }
+  const settled = parseEvent(
+    envelope({ kind: "credit-settled", entityId: "buyer", credit: "evt-3" }),
+  );
+  expect(settled.ok && String(eventCause(settled.value))).toBe("evt-3");
+  expect(
+    parseEvent(envelope({ kind: "credit-settled", entityId: "buyer" })).ok,
+  ).toBe(false);
+  for (const kind of ["credit-extended", "credit-settled"]) {
+    expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain(kind);
   }
 });

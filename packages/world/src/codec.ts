@@ -51,16 +51,19 @@ import {
   parseReportContent,
   parseSalience,
   parseString,
+  parseTemperamentOdds,
   parseThreadSubject,
   parseTransformation,
   parseTroubleKinds,
   REALMS,
   type RejectionReasonCode,
   SERVICE_KINDS,
+  TEMPERAMENTS,
   TRANSPORT_KINDS,
   type Transformation,
   UNMET_NEED_REASONS,
   WITNESSED_EVENT_KINDS,
+  WRONG_KINDS,
 } from "@panthea/contracts";
 import { memoryBalanceOf } from "./memory";
 import {
@@ -74,6 +77,7 @@ import {
   type BuildingStatus,
   type Contest,
   type ContestTally,
+  type Credit,
   type FavorState,
   type LegendRecord,
   type LocationState,
@@ -90,6 +94,7 @@ import {
   type ServiceAct,
   type WithheldCapability,
   type WorldState,
+  type WrongRecord,
 } from "./state";
 
 /**
@@ -107,6 +112,8 @@ export interface EncodedWorldState {
   readonly legends: readonly (readonly [LegendId, LegendRecord])[];
   readonly memories: readonly (readonly [EntityId, readonly MemoryEntry[]])[];
   readonly relationships: readonly (readonly [string, RelationshipState])[];
+  readonly wrongs: readonly (readonly [EventId, WrongRecord])[];
+  readonly credits: readonly (readonly [EventId, Credit])[];
   /** `[mortal, patron god]`, one entry per mortal that has a patron. */
   readonly patrons: readonly (readonly [EntityId, EntityId])[];
   readonly goals: readonly (readonly [EntityId, ActiveGoal])[];
@@ -166,6 +173,8 @@ export function encode(state: WorldState): EncodedWorldState {
     legends: [...state.legends.entries()],
     memories: [...state.memories.entries()],
     relationships: [...state.relationships.entries()],
+    wrongs: [...state.wrongs.entries()],
+    credits: [...state.credits.entries()],
     patrons: [...state.patrons.entries()],
     goals: [...state.goals.entries()],
     journeys: [...state.journeys.entries()],
@@ -405,6 +414,11 @@ function parseActorState(
   if (!alive.ok) return alive;
   const isDeity = parseOptionalBoolean(value.isDeity, `${path}.isDeity`);
   if (!isDeity.ok) return isDeity;
+  const temperament =
+    value.temperament === undefined
+      ? ok<(typeof TEMPERAMENTS)[number] | undefined>(undefined)
+      : parseEnum(value.temperament, `${path}.temperament`, TEMPERAMENTS);
+  if (!temperament.ok) return temperament;
   const capabilities = parseArray(
     value.capabilities,
     `${path}.capabilities`,
@@ -442,6 +456,9 @@ function parseActorState(
     locationId: locationId.value,
     alive: alive.value,
     ...(isDeity.value === undefined ? {} : { isDeity: isDeity.value }),
+    ...(temperament.value === undefined
+      ? {}
+      : { temperament: temperament.value }),
     capabilities: capabilities.value,
     inventory: inventory.value,
     ...(drives.value === undefined ? {} : { drives: drives.value }),
@@ -712,6 +729,11 @@ function parseWorldRules(
       ? ok<Readonly<Record<string, string>> | undefined>(undefined)
       : parseTroubleKinds(value.troubleKinds, `${path}.troubleKinds`);
   if (!troubleKinds.ok) return troubleKinds;
+  const temperamentOdds =
+    value.temperamentOdds === undefined
+      ? ok<WorldState["rules"]["temperamentOdds"]>(undefined)
+      : parseTemperamentOdds(value.temperamentOdds, `${path}.temperamentOdds`);
+  if (!temperamentOdds.ok) return temperamentOdds;
   return ok({
     catchUpCapMs: catchUpCapMs.value,
     catchUpChunkMs: catchUpChunkMs.value,
@@ -734,6 +756,9 @@ function parseWorldRules(
     ...(troubleKinds.value === undefined
       ? {}
       : { troubleKinds: troubleKinds.value }),
+    ...(temperamentOdds.value === undefined
+      ? {}
+      : { temperamentOdds: temperamentOdds.value }),
   });
 }
 
@@ -1029,6 +1054,7 @@ const CAUSE_KINDS = [
   "need",
   "grudge",
   "harm",
+  "wrong",
 ] as const;
 
 function parseCause(item: unknown, at: string): ParseResult<PetitionCause> {
@@ -1056,10 +1082,16 @@ function parseCause(item: unknown, at: string): ParseResult<PetitionCause> {
       ? ok<number | undefined>(undefined)
       : parseNonNegativeInteger(item.amount, `${at}.amount`);
   if (!amount.ok) return amount;
+  const wrong =
+    item.wrong === undefined
+      ? ok<(typeof WRONG_KINDS)[number] | undefined>(undefined)
+      : parseEnum(item.wrong, `${at}.wrong`, WRONG_KINDS);
+  if (!wrong.ok) return wrong;
   return ok({
     eventId: eventId.value,
     tick: tick.value,
     kind: kind.value,
+    ...(wrong.value === undefined ? {} : { wrong: wrong.value }),
     ...(offender.value === undefined ? {} : { offender: offender.value }),
     ...(building.value === undefined ? {} : { building: building.value }),
     ...(resource.value === undefined ? {} : { resource: resource.value }),
@@ -1732,6 +1764,150 @@ function parseRelationshipEntry(
   ] as const);
 }
 
+function parseWrongEntry(
+  value: unknown,
+  path: string,
+  knownActorIds: ReadonlySet<EntityId>,
+): ParseResult<readonly [EventId, WrongRecord]> {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return fail(path, "expected an [id, wrong] entry");
+  }
+  const key = parseEventId(value[0], `${path}[0]`);
+  if (!key.ok) return key;
+  const record = value[1];
+  if (!isRecord(record)) return fail(`${path}[1]`, "expected a wrong");
+  const id = parseEventId(record.id, `${path}[1].id`);
+  if (!id.ok) return id;
+  if (id.value !== key.value) {
+    return fail(
+      `${path}[0]`,
+      `entry key "${key.value}" does not match its own id`,
+    );
+  }
+  const wrongdoer = parseEntityId(record.wrongdoer, `${path}[1].wrongdoer`);
+  if (!wrongdoer.ok) return wrongdoer;
+  const victim = parseEntityId(record.victim, `${path}[1].victim`);
+  if (!victim.ok) return victim;
+  for (const actor of [wrongdoer.value, victim.value]) {
+    if (!knownActorIds.has(actor)) {
+      return fail(`${path}[1]`, `wrong names unknown actor: ${actor}`);
+    }
+  }
+  const kind = parseEnum(record.kind, `${path}[1].kind`, WRONG_KINDS);
+  if (!kind.ok) return kind;
+  const tick = parseNonNegativeInteger(record.tick, `${path}[1].tick`);
+  if (!tick.ok) return tick;
+  const revenge = parseOptionalEventIdField(
+    record.revenge,
+    `${path}[1].revenge`,
+  );
+  if (!revenge.ok) return revenge;
+  const avenged = parseOptionalEventIdField(
+    record.avenged,
+    `${path}[1].avenged`,
+  );
+  if (!avenged.ok) return avenged;
+  return ok([
+    key.value,
+    {
+      id: id.value,
+      wrongdoer: wrongdoer.value,
+      victim: victim.value,
+      kind: kind.value,
+      tick: tick.value,
+      ...(revenge.value === undefined ? {} : { revenge: revenge.value }),
+      ...(avenged.value === undefined ? {} : { avenged: avenged.value }),
+    },
+  ] as const);
+}
+
+function parseOptionalEventIdField(
+  value: unknown,
+  path: string,
+): ParseResult<EventId | undefined> {
+  return value === undefined
+    ? ok<EventId | undefined>(undefined)
+    : parseEventId(value, path);
+}
+
+function parseResourceAmountField(
+  value: unknown,
+  path: string,
+): ParseResult<{ readonly resource: string; readonly amount: number }> {
+  if (!isRecord(value)) return fail(path, "expected a resource amount");
+  const resource = parseString(value.resource, `${path}.resource`);
+  if (!resource.ok) return resource;
+  const amount = parseNonNegativeInteger(value.amount, `${path}.amount`);
+  if (!amount.ok) return amount;
+  if (amount.value < 1)
+    return fail(`${path}.amount`, "expected a positive integer");
+  return ok({ resource: resource.value, amount: amount.value });
+}
+
+function parseCreditEntry(
+  value: unknown,
+  path: string,
+  knownActorIds: ReadonlySet<EntityId>,
+): ParseResult<readonly [EventId, Credit]> {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return fail(path, "expected an [id, credit] entry");
+  }
+  const key = parseEventId(value[0], `${path}[0]`);
+  if (!key.ok) return key;
+  const record = value[1];
+  if (!isRecord(record)) return fail(`${path}[1]`, "expected a credit");
+  const id = parseEventId(record.id, `${path}[1].id`);
+  if (!id.ok) return id;
+  if (id.value !== key.value) {
+    return fail(
+      `${path}[0]`,
+      `entry key "${key.value}" does not match its own id`,
+    );
+  }
+  const seller = parseEntityId(record.seller, `${path}[1].seller`);
+  if (!seller.ok) return seller;
+  const buyer = parseEntityId(record.buyer, `${path}[1].buyer`);
+  if (!buyer.ok) return buyer;
+  for (const actor of [seller.value, buyer.value]) {
+    if (!knownActorIds.has(actor)) {
+      return fail(`${path}[1]`, `credit names unknown actor: ${actor}`);
+    }
+  }
+  const goods = parseResourceAmountField(record.goods, `${path}[1].goods`);
+  if (!goods.ok) return goods;
+  const price = parseResourceAmountField(record.price, `${path}[1].price`);
+  if (!price.ok) return price;
+  const deferred = parseEnum(record.deferred, `${path}[1].deferred`, [
+    "payment",
+    "delivery",
+  ] as const);
+  if (!deferred.ok) return deferred;
+  const deadline = parseNonNegativeInteger(
+    record.deadline,
+    `${path}[1].deadline`,
+  );
+  if (!deadline.ok) return deadline;
+  const status = parseEnum(record.status, `${path}[1].status`, [
+    "open",
+    "settled",
+    "defaulted",
+  ] as const);
+  if (!status.ok) return status;
+  return ok([
+    key.value,
+    {
+      id: id.value,
+      seller: seller.value,
+      buyer: buyer.value,
+      goods: goods.value,
+      price: price.value,
+      deferred: deferred.value,
+      deadline: deadline.value,
+      status: status.value,
+    },
+  ] as const);
+}
+
 function parseNumberRecord(
   value: unknown,
   path: string,
@@ -1841,6 +2017,26 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
     );
   }
   const relationships = new Map(relationshipEntries.value);
+
+  const wrongEntries = parseArray(value.wrongs, "wrongs", (item, path) =>
+    parseWrongEntry(item, path, knownActorIds),
+  );
+  if (!wrongEntries.ok) return wrongEntries;
+  const duplicateWrong = findDuplicateKey(wrongEntries.value);
+  if (duplicateWrong !== undefined) {
+    return fail("wrongs", `duplicate wrong: ${duplicateWrong}`);
+  }
+  const wrongs = new Map(wrongEntries.value);
+
+  const creditEntries = parseArray(value.credits, "credits", (item, path) =>
+    parseCreditEntry(item, path, knownActorIds),
+  );
+  if (!creditEntries.ok) return creditEntries;
+  const duplicateCredit = findDuplicateKey(creditEntries.value);
+  if (duplicateCredit !== undefined) {
+    return fail("credits", `duplicate credit: ${duplicateCredit}`);
+  }
+  const credits = new Map(creditEntries.value);
 
   const patronEntries = parseArray(value.patrons, "patrons", (item, path) => {
     if (!Array.isArray(item) || item.length !== 2) {
@@ -2111,6 +2307,8 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
     legends,
     memories,
     relationships,
+    wrongs,
+    credits,
     patrons,
     goals,
     journeys,

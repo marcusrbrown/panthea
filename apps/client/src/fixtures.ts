@@ -132,6 +132,8 @@ function worldOf(
     memories: new Map(),
     relationships: new Map(),
     patrons: new Map(),
+    wrongs: new Map(),
+    credits: new Map(),
     goals: new Map(),
     journeys: new Map(),
     needs: new Map(),

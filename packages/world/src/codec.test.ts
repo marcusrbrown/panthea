@@ -580,3 +580,82 @@ test("a mortal's patron and the trouble-kind table round-trip through the codec,
   // Control: the same stored world, untouched, decodes.
   expect(() => decode(encoded)).not.toThrow();
 });
+
+test("wrongs, credits, and a mortal's temperament round-trip through the codec, and decode holds them to the world's actors and kinds", () => {
+  const pack = patronPack();
+  const state = createInitialWorldState({
+    ...pack,
+    inhabitants: pack.inhabitants.map((inhabitant) =>
+      inhabitant.id === "farmer"
+        ? { ...inhabitant, temperament: "greedy" as const }
+        : inhabitant,
+    ),
+    rules: {
+      ...pack.rules,
+      temperamentOdds: { greedy: { theft: 2, revenge: 20 } },
+    },
+  });
+  const withRecords = {
+    ...state,
+    wrongs: new Map([
+      [
+        "evt-1-1" as EventId,
+        {
+          id: "evt-1-1" as EventId,
+          wrongdoer: toEntityId("farmer"),
+          victim: toEntityId("zeus"),
+          kind: "theft" as const,
+          tick: 1,
+          avenged: "evt-2-2" as EventId,
+        },
+      ],
+    ]),
+    credits: new Map([
+      [
+        "evt-3-3" as EventId,
+        {
+          id: "evt-3-3" as EventId,
+          seller: toEntityId("zeus"),
+          buyer: toEntityId("farmer"),
+          goods: { resource: "food", amount: 1 },
+          price: { resource: "currency", amount: 3 },
+          deferred: "delivery" as const,
+          deadline: 60,
+          status: "open" as const,
+        },
+      ],
+    ]),
+  };
+  const encoded = JSON.parse(JSON.stringify(encode(withRecords)));
+  expect(decode(encoded)).toEqual(withRecords);
+  expect(decode(encoded).actors.get(toEntityId("farmer"))?.temperament).toBe(
+    "greedy",
+  );
+  const refused = (patch: Record<string, unknown>) =>
+    expect(() => decode({ ...encoded, ...patch })).toThrow();
+  const wrong = encoded.wrongs[0][1];
+  const credit = encoded.credits[0][1];
+  refused({ wrongs: [["evt-1-1", { ...wrong, wrongdoer: "nobody" }]] });
+  refused({ wrongs: [["evt-1-1", { ...wrong, kind: "arson" }]] });
+  refused({ wrongs: [["evt-9-9", wrong]] });
+  refused({ wrongs: [encoded.wrongs[0], encoded.wrongs[0]] });
+  refused({ wrongs: "none" });
+  refused({ credits: [["evt-3-3", { ...credit, buyer: "nobody" }]] });
+  refused({ credits: [["evt-3-3", { ...credit, deferred: "never" }]] });
+  refused({ credits: [["evt-3-3", { ...credit, status: "lost" }]] });
+  refused({
+    credits: [
+      ["evt-3-3", { ...credit, goods: { resource: "food", amount: 0 } }],
+    ],
+  });
+  refused({ credits: [encoded.credits[0], encoded.credits[0]] });
+  refused({
+    rules: { ...encoded.rules, temperamentOdds: { greedy: { arson: 1 } } },
+  });
+  refused({
+    rules: { ...encoded.rules, temperamentOdds: { greedy: { theft: 1001 } } },
+  });
+  const actors = JSON.parse(JSON.stringify(encoded.actors));
+  actors.find(([id]: [string]) => id === "farmer")[1].temperament = "wicked";
+  refused({ actors });
+});

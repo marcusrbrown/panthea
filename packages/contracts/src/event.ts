@@ -407,6 +407,66 @@ export interface PatronChangedEvent extends EventEnvelope {
   readonly unanswered: readonly EventId[];
 }
 
+/** How a mortal is disposed to wrong others: authored on each inhabitant, and what sets its odds of each kind of wrong. */
+export const TEMPERAMENTS = [
+  "greedy",
+  "quarrelsome",
+  "proud",
+  "honest",
+] as const;
+export type Temperament = (typeof TEMPERAMENTS)[number];
+
+/** The ways one mortal wrongs another. */
+export const WRONG_KINDS = [
+  "theft",
+  "cheating",
+  "feud",
+  "unpaid-debt",
+  "broken-agreement",
+] as const;
+export type WrongKind = (typeof WRONG_KINDS)[number];
+
+/**
+ * `entityId` wronged `victim`, who knows it and who did it. `resource` and `amount` are the loss: taken from the
+ * victim and kept by the wrongdoer (theft, cheating), spoiled (feud), or owed and never paid or delivered
+ * (unpaid debt, broken agreement, which name the `credit` that failed). A revenge is a feud that names the wrong
+ * it answers (`revenge`). `temperament` and `needy` record what set the odds.
+ */
+export interface WrongEvent extends EventEnvelope {
+  readonly kind: "wrong";
+  readonly entityId: EntityId;
+  readonly victim: EntityId;
+  readonly wrong: WrongKind;
+  readonly resource: string;
+  readonly amount: number;
+  readonly temperament: Temperament;
+  readonly needy: boolean;
+  readonly revenge?: EventId;
+  readonly credit?: EventId;
+}
+
+/**
+ * `entityId` (the seller) and `buyer` struck a credit trade: one side is handed over now and the other is owed by
+ * `deadline` (a world tick, inclusive). A deferred `payment` means the goods went to the buyer now; a deferred
+ * `delivery` means the buyer paid now. The world judges it at the deadline.
+ */
+export interface CreditExtendedEvent extends EventEnvelope {
+  readonly kind: "credit-extended";
+  readonly entityId: EntityId;
+  readonly buyer: EntityId;
+  readonly goods: ResourceAmount;
+  readonly price: ResourceAmount;
+  readonly deferred: "payment" | "delivery";
+  readonly deadline: number;
+}
+
+/** `entityId` kept a credit trade: it paid, or delivered, what it owed. */
+export interface CreditSettledEvent extends EventEnvelope {
+  readonly kind: "credit-settled";
+  readonly entityId: EntityId;
+  readonly credit: EventId;
+}
+
 /** Why a god's goal change was refused. */
 export const GOAL_REFUSAL_REASONS = ["locked"] as const;
 export type GoalRefusalReason = (typeof GOAL_REFUSAL_REASONS)[number];
@@ -707,6 +767,8 @@ export const UNPLACED_EVENT_KINDS = [
   "petition-lapsed",
   "petition-refused",
   "patron-changed",
+  "credit-extended",
+  "credit-settled",
   "goal-change-refused",
   "practice-opened",
   "practice-moved",
@@ -863,6 +925,9 @@ export type WorldEvent =
   | PetitionLapsedEvent
   | PetitionRefusedEvent
   | PatronChangedEvent
+  | WrongEvent
+  | CreditExtendedEvent
+  | CreditSettledEvent
   | GoalChangeRefusedEvent
   | PracticeOpenedEvent
   | PracticeMovedEvent
@@ -909,6 +974,9 @@ const EVENT_KIND_SET: Record<WorldEvent["kind"], true> = {
   "petition-lapsed": true,
   "petition-refused": true,
   "patron-changed": true,
+  wrong: true,
+  "credit-extended": true,
+  "credit-settled": true,
   "goal-change-refused": true,
   "practice-opened": true,
   "practice-moved": true,
@@ -990,6 +1058,10 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
         return [event.entityId, event.petitioner];
       case "patron-changed":
         return [event.entityId, event.from, event.to];
+      case "wrong":
+        return [event.entityId, event.victim];
+      case "credit-extended":
+        return [event.entityId, event.buyer];
       case "mortal-struck":
         return [event.entityId, event.actor];
       case "practice-opened":
@@ -1000,6 +1072,7 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
       case "contest-opened":
       case "contest-closed":
         return [event.entityId, event.rival, event.place];
+      case "credit-settled":
       case "practice-moved":
       case "practice-refused":
       case "motif-applied":
@@ -1064,6 +1137,10 @@ export function eventCause(event: WorldEvent): EventId | undefined {
       return event.petitionId;
     case "patron-changed":
       return event.answered;
+    case "wrong":
+      return event.revenge ?? event.credit;
+    case "credit-settled":
+      return event.credit;
     case "practice-opened":
       return event.causes[0];
     case "practice-moved":
@@ -2099,6 +2176,103 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
         entityId: entityId.value,
         god: god.value,
         petitionId: petitionId.value,
+      });
+    }
+    case "wrong": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const victim = parseEntityId(input.victim, "victim");
+      if (!victim.ok) return victim;
+      if (victim.value === entityId.value) {
+        return fail("victim", "a mortal does not wrong itself");
+      }
+      const wrong = parseEnum(input.wrong, "wrong", WRONG_KINDS);
+      if (!wrong.ok) return wrong;
+      const resource = parseString(input.resource, "resource");
+      if (!resource.ok) return resource;
+      const amount = parsePositiveInteger(input.amount, "amount");
+      if (!amount.ok) return amount;
+      const temperament = parseEnum(
+        input.temperament,
+        "temperament",
+        TEMPERAMENTS,
+      );
+      if (!temperament.ok) return temperament;
+      if (typeof input.needy !== "boolean") {
+        return fail("needy", "expected true or false");
+      }
+      const revenge = parseOptionalEventId(input.revenge, "revenge");
+      if (!revenge.ok) return revenge;
+      const credit = parseOptionalEventId(input.credit, "credit");
+      if (!credit.ok) return credit;
+      if (revenge.value !== undefined && wrong.value !== "feud") {
+        return fail("revenge", "only a feud is a revenge");
+      }
+      const owed =
+        wrong.value === "unpaid-debt" || wrong.value === "broken-agreement";
+      if (owed !== (credit.value !== undefined)) {
+        return fail(
+          "credit",
+          "a debt or an agreement names the credit that failed, and no other wrong does",
+        );
+      }
+      return ok({
+        ...envelope,
+        kind: "wrong",
+        entityId: entityId.value,
+        victim: victim.value,
+        wrong: wrong.value,
+        resource: resource.value,
+        amount: amount.value,
+        temperament: temperament.value,
+        needy: input.needy,
+        ...(revenge.value === undefined ? {} : { revenge: revenge.value }),
+        ...(credit.value === undefined ? {} : { credit: credit.value }),
+      });
+    }
+    case "credit-extended": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const buyer = parseEntityId(input.buyer, "buyer");
+      if (!buyer.ok) return buyer;
+      if (buyer.value === entityId.value) {
+        return fail("buyer", "a mortal does not trade with itself");
+      }
+      const goods = parseResourceAmount(input.goods, "goods");
+      if (!goods.ok) return goods;
+      const price = parseResourceAmount(input.price, "price");
+      if (!price.ok) return price;
+      if (goods.value.amount < 1 || price.value.amount < 1) {
+        return fail("goods", "a credit trade moves a positive amount each way");
+      }
+      const deferred = parseEnum(input.deferred, "deferred", [
+        "payment",
+        "delivery",
+      ] as const);
+      if (!deferred.ok) return deferred;
+      const deadline = parseNonNegativeInteger(input.deadline, "deadline");
+      if (!deadline.ok) return deadline;
+      return ok({
+        ...envelope,
+        kind: "credit-extended",
+        entityId: entityId.value,
+        buyer: buyer.value,
+        goods: goods.value,
+        price: price.value,
+        deferred: deferred.value,
+        deadline: deadline.value,
+      });
+    }
+    case "credit-settled": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const credit = parseEventId(input.credit, "credit");
+      if (!credit.ok) return credit;
+      return ok({
+        ...envelope,
+        kind: "credit-settled",
+        entityId: entityId.value,
+        credit: credit.value,
       });
     }
     case "patron-changed": {

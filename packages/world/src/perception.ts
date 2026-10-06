@@ -207,6 +207,8 @@ function eventLocation(
     case "stock-spoiled":
     // A strike on a mortal falls where the mortal stood.
     case "mortal-struck":
+    // A wrong is seen where the wrongdoer stood.
+    case "wrong":
       return actorLocationAt(state, event.entityId, event, window);
     // A blessing is given where the blessed one stood, before whoever was there: a rival may see it. The
     // recipient is placed as any actor is, where it was when this happened; if the window cannot say, no
@@ -231,6 +233,8 @@ function eventLocation(
     case "petition-lapsed":
     case "petition-refused":
     case "patron-changed":
+    case "credit-extended":
+    case "credit-settled":
     case "goal-change-refused":
     case "practice-opened":
     case "practice-moved":
@@ -277,6 +281,8 @@ export function perceivesEvent(
   event: WorldEvent,
   window: readonly WorldEvent[],
 ): boolean {
+  // A god learns of a wrong between mortals only from the prayer it is made in, never by standing near it.
+  if (event.kind === "wrong" && observer.isDeity === true) return false;
   const at = eventLocation(state, event, window);
   if (at === undefined || !perceivedLocations(state, observer).has(at)) {
     return false;

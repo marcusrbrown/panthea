@@ -202,6 +202,34 @@ export function resourceValue(rules: WorldRules, resource: string): number {
   return rules.economyBalance[`value_${resource}`] ?? 1;
 }
 
+/**
+ * The good in `inventory` worth the most per unit (then the larger holding, then the name that sorts first),
+ * and how much of it to take: what is held, up to `cap`. Nothing when the inventory holds no such good.
+ */
+export function mostValuableGood(
+  rules: WorldRules,
+  inventory: ReadonlyMap<string, number>,
+  cap: number,
+  excluding: readonly string[] = [],
+): { resource: string; amount: number } | undefined {
+  let best: { resource: string; held: number; value: number } | undefined;
+  for (const [resource, held] of inventory) {
+    if (held <= 0 || excluding.includes(resource)) continue;
+    const value = resourceValue(rules, resource);
+    if (
+      best === undefined ||
+      value > best.value ||
+      (value === best.value &&
+        (held > best.held || (held === best.held && resource < best.resource)))
+    ) {
+      best = { resource, held, value };
+    }
+  }
+  return best === undefined
+    ? undefined
+    : { resource: best.resource, amount: Math.min(best.held, cap) };
+}
+
 /** The amount one gather commits, from `rules.economyBalance.gatherAmount`; defaults to 1. */
 export function gatherAmountOf(rules: WorldRules): number {
   return rules.economyBalance.gatherAmount ?? 1;

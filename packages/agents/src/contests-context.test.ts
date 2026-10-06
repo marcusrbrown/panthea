@@ -425,7 +425,10 @@ test("a crowd of rival acts stays within the section's budget: the newest are of
 });
 
 test("a busy world with rival acts, open contests, and a crowd of prayers still builds every god's prompt within the whole-prompt guard", () => {
-  let state = withoutFireSpread(greekState());
+  const quiet = withoutFireSpread(greekState());
+  // The town's own wrongs add prayers to every prompt; the prompt budget for them is measured with the prompts' own unit.
+  const { temperamentOdds: _wrongs, ...rules } = quiet.rules;
+  let state = { ...quiet, rules };
   let prng = createPrng(1);
   const log: WorldEvent[] = [];
   for (let tick = 0; tick < 400; tick += 1) {

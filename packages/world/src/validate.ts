@@ -38,8 +38,8 @@ import {
   evaluateTradeAcceptance,
   gatherAmountOf,
   getResourceAmount,
+  mostValuableGood,
   NEUTRAL_DRIVES,
-  resourceValue,
 } from "./economy";
 import { igniteThresholdOf } from "./fire";
 import {
@@ -431,27 +431,11 @@ function goodsStruck(
   state: WorldState,
   mortal: ActorState,
 ): { resource: string; amount: number } | undefined {
-  let best: { resource: string; held: number; value: number } | undefined;
-  for (const [resource, held] of mortal.inventory) {
-    if (held <= 0) continue;
-    const value = resourceValue(state.rules, resource);
-    if (
-      best === undefined ||
-      value > best.value ||
-      (value === best.value &&
-        (held > best.held || (held === best.held && resource < best.resource)))
-    ) {
-      best = { resource, held, value };
-    }
-  }
-  if (best === undefined) return undefined;
-  return {
-    resource: best.resource,
-    amount: Math.min(
-      best.held,
-      petitionBalanceOf(state.rules, "strikeGoodsCap"),
-    ),
-  };
+  return mostValuableGood(
+    state.rules,
+    mortal.inventory,
+    petitionBalanceOf(state.rules, "strikeGoodsCap"),
+  );
 }
 
 /**

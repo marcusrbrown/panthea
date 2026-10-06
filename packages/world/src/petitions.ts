@@ -72,6 +72,16 @@ export const DEFAULT_PETITION_BALANCE: Readonly<Record<string, number>> = {
    * a 300-tick episode (a test holds it).
    */
   defectionAffinity: 1,
+  /** Fewest ticks between two wrongs one mortal draws: a temperament sets the odds in a tick, so this keeps one from wronging every tick. */
+  wrongCooldownTicks: 30,
+  /** What an open need multiplies a mortal's odds of wronging by. */
+  wrongNeedMultiplier: 2,
+  /** Most units one wrong takes or spoils: what one answered prayer gives (`blessResourceAmount`), so a prayer can make it good. */
+  wrongLossCap: 2,
+  /** Ticks a credit trade runs before it is judged. */
+  creditDeadlineTicks: 100,
+  /** Ticks after a wrong in which its victim may still take revenge: the answer window (150, when a prayer lapses and a lapse makes its victim eligible) and a further 150. */
+  revengeWindowTicks: 300,
 };
 
 /** A petition tunable from `rules`, or its default. */
@@ -95,6 +105,7 @@ export const MAX_CAUSES = 8;
  *   not who did it, so the offender is dropped;
  * - its own unmet need, or its own grudge, which it always knows;
  * - a god's strike on it, which it always knows, and who struck;
+ * - another mortal's wrong to it, which it always knows, and who did it;
  * - its own stolen or spoiled stock, which it always knows it lost.
  */
 export function knownCause(
@@ -106,7 +117,8 @@ export function knownCause(
   if (
     cause.kind === "need" ||
     cause.kind === "grudge" ||
-    cause.kind === "harm"
+    cause.kind === "harm" ||
+    cause.kind === "wrong"
   ) {
     return cause;
   }
@@ -199,7 +211,7 @@ export function applyLossNoticed(
 /** What a cause is about, for the one-open-petition rule: a resource, or a building. A grudge, or a cause with neither, is about nothing and blocks nothing. */
 function subjectOfCause(cause: PetitionCause): string | undefined {
   // A harm by a god is its own matter: it never waits behind a prayer about the goods it took.
-  if (cause.kind === "harm") return undefined;
+  if (cause.kind === "harm" || cause.kind === "wrong") return undefined;
   if (cause.building !== undefined) return `building:${cause.building}`;
   if (cause.resource !== undefined) return `resource:${cause.resource}`;
   return undefined;
@@ -410,6 +422,25 @@ export function requestFor(
         ? { kind: "punish", offender: offender.id, buildings: [] }
         : undefined;
     }
+    case "wrong": {
+      const offender =
+        cause.offender === undefined
+          ? undefined
+          : getActor(state, cause.offender);
+      if (offender?.alive === true && offender.isDeity !== true) {
+        return { kind: "punish", offender: offender.id, buildings: [] };
+      }
+      return cause.resource === undefined
+        ? undefined
+        : {
+            kind: "help",
+            need: {
+              kind: "resource",
+              resource: cause.resource,
+              ...(cause.amount === undefined ? {} : { amount: cause.amount }),
+            },
+          };
+    }
     case "harm":
       if (cause.resource !== undefined && (cause.amount ?? 0) > 0) {
         return {
@@ -601,6 +632,17 @@ export function prayerStep(
 
 // --- Reducers ----------------------------------------------------------------------------
 
+/** Whether the memory that moved this feeling rests on a wrong between mortals. */
+function fromWrong(
+  state: WorldState,
+  event: Extract<WorldEvent, { kind: "relationship-changed" }>,
+): boolean {
+  const memory = getMemories(state, event.entityId).find(
+    (held) => held.id === event.memoryEventId,
+  );
+  return memory !== undefined && state.wrongs.has(memory.sourceEventId);
+}
+
 /** Records `cause` for `owner`, keeping only the newest `MAX_CAUSES`. */
 function recordCause(
   state: WorldState,
@@ -658,6 +700,16 @@ export function recordCauses(state: WorldState, event: WorldEvent): WorldState {
         resource: event.resource,
         amount: event.amount,
       });
+    case "wrong":
+      return recordCause(state, event.victim, {
+        eventId: event.id,
+        tick: event.tick,
+        kind: "wrong",
+        offender: event.entityId,
+        resource: event.resource,
+        amount: event.amount,
+        wrong: event.wrong,
+      });
     case "mortal-struck":
       return recordCause(state, event.entityId, {
         eventId: event.id,
@@ -669,7 +721,8 @@ export function recordCauses(state: WorldState, event: WorldEvent): WorldState {
           : { resource: event.resource, amount: event.amount }),
       });
     case "relationship-changed":
-      return event.grudgeDelta > 0
+      // A grudge a wrong left is that wrong's own cause, prayed about once: not a second prayer.
+      return event.grudgeDelta > 0 && !fromWrong(state, event)
         ? recordCause(state, event.entityId, {
             eventId: event.id,
             tick: event.tick,

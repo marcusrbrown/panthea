@@ -114,6 +114,12 @@ import {
 } from "./state";
 import { validateProposal } from "./validate";
 import { answeredWorshipDraft, applyWorshipPerformed } from "./worship";
+import {
+  applyCreditExtended,
+  applyCreditSettled,
+  applyWrong,
+  planWrongStep,
+} from "./wrongs";
 
 /** Moves an actor to `to`, bumping the actor's and both locations' revisions. */
 function moveActor(
@@ -326,6 +332,15 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
       break;
     case "patron-changed":
       next = applyPatronChanged(state, event);
+      break;
+    case "wrong":
+      next = applyWrong(state, event);
+      break;
+    case "credit-extended":
+      next = applyCreditExtended(state, event);
+      break;
+    case "credit-settled":
+      next = applyCreditSettled(state, event);
       break;
     case "practice-opened":
       next = applyPracticeOpened(state, event);
@@ -774,7 +789,14 @@ export function runTick(
   );
   working = applyEvents(working, incomeEvents);
 
-  const fireStep = planFireStep(working, prng);
+  // Wrongs between mortals draw first, then fire, then the director, so a replay draws the same values.
+  const wrongStep = planWrongStep(working, prng);
+  const wrongEvents = wrongStep.events.map((draft) =>
+    completePrimary(draft, environmentCause),
+  );
+  working = applyEvents(working, wrongEvents);
+
+  const fireStep = planFireStep(working, wrongStep.prng);
   const fireEvents = fireStep.events.map((draft) =>
     completePrimary(draft, environmentCause),
   );
@@ -821,6 +843,7 @@ export function runTick(
       ...proposalEvents,
       ...journeyEvents,
       ...incomeEvents,
+      ...wrongEvents,
       ...fireEvents,
       ...needEvents,
       ...directorEvents,
@@ -862,6 +885,7 @@ export function runTick(
   const environmentEvents = [
     ...journeyEvents,
     ...incomeEvents,
+    ...wrongEvents,
     ...fireEvents,
     ...needEvents,
     ...directorEvents,

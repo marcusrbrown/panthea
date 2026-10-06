@@ -34,12 +34,14 @@ import type {
   Recipe,
   ResourceAmount,
   ServiceKind,
+  Temperament,
   ThreadSubject,
   Transformation,
   UnmetNeedReason,
   WitnessedEventKind,
   WorldEvent,
   WorldRules,
+  WrongKind,
 } from "@panthea/contracts";
 
 /** A location's live state: the authored graph node plus a revision counter. */
@@ -71,6 +73,8 @@ export interface ActorState {
   readonly alive: boolean;
   /** Whether this actor is an authored deity, authorized to be worshipped and to strike. Absent means it is not. */
   readonly isDeity?: boolean;
+  /** How this mortal is disposed to wrong others, from its authored temperament. Absent means honest. */
+  readonly temperament?: Temperament;
   /**
    * Capabilities this actor actually holds, as granted by world state (not
    * self-declared by a proposal). A restricted location's
@@ -373,7 +377,9 @@ export type PetitionCauseKind =
   | "need"
   | "grudge"
   /** A god's strike took goods from the mortal, or struck it with nothing to take. The offender is that god. */
-  | "harm";
+  | "harm"
+  /** Another mortal wronged it. The offender is that mortal, and `wrong` says how. */
+  | "wrong";
 
 export interface PetitionCause {
   readonly eventId: EventId;
@@ -385,6 +391,36 @@ export interface PetitionCause {
   readonly resource?: string;
   /** How much was lost, for a theft or spoiled stock. */
   readonly amount?: number;
+  /** How the offender wronged it, for a `wrong`. */
+  readonly wrong?: WrongKind;
+}
+
+/** A wrong one mortal did another, kept so a revenge can find it and answer it once. */
+export interface WrongRecord {
+  /** The `wrong` event's id. */
+  readonly id: EventId;
+  readonly wrongdoer: EntityId;
+  readonly victim: EntityId;
+  readonly kind: WrongKind;
+  readonly tick: number;
+  /** The wrong this one avenged, when it is a revenge: it is never avenged in turn. */
+  readonly revenge?: EventId;
+  /** The revenge taken for this wrong: at most one. */
+  readonly avenged?: EventId;
+}
+
+/** A credit trade: one side handed over, the other owed by the deadline. */
+export interface Credit {
+  /** The `credit-extended` event's id. */
+  readonly id: EventId;
+  readonly seller: EntityId;
+  readonly buyer: EntityId;
+  readonly goods: ResourceAmount;
+  readonly price: ResourceAmount;
+  readonly deferred: "payment" | "delivery";
+  /** The last tick it may be kept in. */
+  readonly deadline: number;
+  readonly status: "open" | "settled" | "defaulted";
 }
 
 /** One loss an owner has noticed. */
@@ -538,6 +574,10 @@ export interface WorldState {
   readonly memories: ReadonlyMap<EntityId, readonly MemoryEntry[]>;
   /** How actors feel toward one another, keyed by `relationshipKey`. */
   readonly relationships: ReadonlyMap<string, RelationshipState>;
+  /** Every wrong one mortal did another, by its event id. */
+  readonly wrongs: ReadonlyMap<EventId, WrongRecord>;
+  /** Every credit trade struck, by its event id. */
+  readonly credits: ReadonlyMap<EventId, Credit>;
   /** The god each mortal belongs to, seeded from its authored devotion. Absent for a mortal built outside a content pack, which prays by feeling and standing. */
   readonly patrons: ReadonlyMap<EntityId, EntityId>;
   /**
@@ -656,6 +696,9 @@ export function createInitialWorldState(pack: ContentPack): WorldState {
       locationId: toEntityId(inhabitant.locationId),
       alive: true,
       ...(inhabitant.deity ? { isDeity: true } : {}),
+      ...(inhabitant.temperament === undefined
+        ? {}
+        : { temperament: inhabitant.temperament }),
       ...(inhabitant.drives === undefined
         ? {}
         : { home: toEntityId(inhabitant.locationId) }),
@@ -721,6 +764,8 @@ export function createInitialWorldState(pack: ContentPack): WorldState {
     legends: new Map(),
     memories: new Map(),
     relationships,
+    wrongs: new Map(),
+    credits: new Map(),
     patrons,
     goals: new Map(),
     journeys: new Map(),
