@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -71,6 +71,7 @@ const path = require("node:path");
 const dir = __dirname;
 const behavior = JSON.parse(fs.readFileSync(path.join(dir, "behavior.json"), "utf8"));
 const args = process.argv.slice(2);
+if (args[0] === "--warm") process.exit(behavior.warmExit || 0);
 fs.appendFileSync(path.join(dir, "calls.jsonl"), JSON.stringify({ pid: process.pid, argv: args, envKeys: Object.keys(process.env) }) + "\\n");
 if (behavior.exit) { console.error("the fake editor failed on purpose"); process.exit(behavior.exit); }
 if (behavior.hang) setInterval(() => {}, 1000);
@@ -101,7 +102,11 @@ interface Fake {
   calls(): { pid: number; argv: string[]; envKeys: string[] }[];
 }
 
-function fakeEditor(parent = scratchDir(), name = "aseprite"): Fake {
+function fakeEditor(
+  parent = scratchDir(),
+  name = "aseprite",
+  warmExit = 0,
+): Fake {
   mkdirSync(parent, { recursive: true });
   writeFileSync(join(parent, "fake.js"), FAKE);
   const executable = join(parent, name);
@@ -110,6 +115,20 @@ function fakeEditor(parent = scratchDir(), name = "aseprite"): Fake {
     `#!/bin/sh\nexec '${process.execPath}' '${join(parent, "fake.js")}' "$@"\n`,
   );
   chmodSync(executable, 0o755);
+  writeFileSync(join(parent, "behavior.json"), JSON.stringify({ warmExit }));
+  // The first exec of a freshly written wrapper can take hundreds of
+  // milliseconds on the host; take that cost here, not inside a timeout the
+  // fake's first real call is measured against.
+  const warmed = spawnSync(executable, ["--warm"], {
+    env: {},
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+    encoding: "utf8",
+  });
+  if (warmed.status !== 0)
+    throw new Error(
+      `fake editor warm-up failed: ${warmed.error?.message ?? `exit ${warmed.status}, signal ${warmed.signal}`}`,
+    );
   const fake: Fake = {
     dir: parent,
     executable,
@@ -234,6 +253,53 @@ const readyAdapter = async (
   fake.set(behavior);
   return adapter;
 };
+
+describe("the fake editor's warm-up", () => {
+  const dead = (pid: number | undefined) => {
+    try {
+      process.kill(pid ?? 0, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  test("--warm exits 0 at once, records no call and leaves nothing running", () => {
+    const fake = fakeEditor();
+    fake.reset();
+
+    const result = spawnSync(fake.executable, ["--warm"], {
+      env: {},
+      timeout: 5000,
+      killSignal: "SIGKILL",
+      encoding: "utf8",
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(fake.calls()).toEqual([]);
+    expect(dead(result.pid)).toBe(true);
+  });
+
+  test("staging runs the warm-up and does not ignore its failure", () => {
+    expect(() => fakeEditor(scratchDir(), "aseprite", 5)).toThrow(/warm-up/);
+  });
+
+  test("a staged fake has no calls until its first real one, which is then the only recorded call", () => {
+    const fake = fakeEditor();
+    expect(fake.calls()).toEqual([]);
+
+    const result = spawnSync(fake.executable, ["--version"], {
+      env: {},
+      timeout: 5000,
+      killSignal: "SIGKILL",
+    });
+
+    expect(result.status).toBe(0);
+    expect(fake.calls().map((c) => c.argv)).toEqual([["--version"]]);
+  });
+});
 
 describe("finding the editor", () => {
   const timeoutMs = 1000;

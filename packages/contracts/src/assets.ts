@@ -493,17 +493,24 @@ interface ProvenanceCommon {
   readonly ownerException?: OwnerException;
 }
 
-export interface GeneratedProvenance extends ProvenanceCommon {
-  readonly method: "generated";
-  /** The succeeded job whose outputs produced this asset. */
+/** One succeeded job that contributed to an asset, with the exact narrowed request and engine that ran it. */
+export interface GenerationRef {
   readonly jobId: string;
   readonly request: GenerationRequest;
   readonly runtime: RuntimeRef;
   readonly model: ModelRef;
   readonly loras: readonly ModelRef[];
+  readonly encoder: ModelRef | null;
+  readonly vae: ModelRef | null;
   readonly seed: number;
   readonly settings: Readonly<Record<string, SettingValue>>;
-  readonly resultHashes: readonly Sha256[];
+  /** The job outputs this asset actually uses; a non-empty subset of the job's outputs. */
+  readonly used: readonly Sha256[];
+}
+
+export interface GeneratedProvenance extends ProvenanceCommon {
+  readonly method: "generated";
+  readonly generations: readonly GenerationRef[];
 }
 
 export interface HandProvenance extends ProvenanceCommon {
@@ -709,7 +716,7 @@ export function parseGenerationRequest(
 
 // --- Provenance -------------------------------------------------------------------
 
-function parseLicence(
+export function parseLicence(
   value: unknown,
   path: string,
 ): ParseResult<LicenceRecord> {
@@ -813,7 +820,10 @@ function parseRevisionRef(
   });
 }
 
-function parseModelRef(value: unknown, path: string): ParseResult<ModelRef> {
+export function parseModelRef(
+  value: unknown,
+  path: string,
+): ParseResult<ModelRef> {
   return parseStrictRecord(value, path, ["id", "sha256"], (record) => {
     const id = parseString(record.id, `${path}.id`);
     if (!id.ok) return id;
@@ -823,7 +833,7 @@ function parseModelRef(value: unknown, path: string): ParseResult<ModelRef> {
   });
 }
 
-function parseRuntimeRef(
+export function parseRuntimeRef(
   value: unknown,
   path: string,
 ): ParseResult<RuntimeRef> {
@@ -841,7 +851,7 @@ const SECRET_KEY =
 const URL_VALUE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /** Generation settings are scalars; credential-like keys and endpoint-like values never enter a record. */
-function parseSettings(
+export function parseGenerationSettings(
   value: unknown,
   path: string,
 ): ParseResult<Readonly<Record<string, SettingValue>>> {
@@ -888,16 +898,7 @@ export function parseProvenance(
   const method = parseEnum(input.method, `${path}.method`, PROVENANCE_METHODS);
   if (!method.ok) return { ...method, reason: "unknown-kind" };
   const extraKeys = {
-    generated: [
-      "jobId",
-      "request",
-      "runtime",
-      "model",
-      "loras",
-      "seed",
-      "settings",
-      "resultHashes",
-    ],
+    generated: ["generations"],
     hand: ["editor"],
     derived: ["operation", "runtime", "resultHashes"],
   }[method.value];
@@ -973,15 +974,14 @@ export function parseProvenance(
     });
   }
 
-  const resultHashes = parseSha256List(
-    input.resultHashes,
-    `${path}.resultHashes`,
-  );
-  if (!resultHashes.ok) return resultHashes;
-  const runtime = parseRuntimeRef(input.runtime, `${path}.runtime`);
-  if (!runtime.ok) return runtime;
-
   if (method.value === "derived") {
+    const resultHashes = parseSha256List(
+      input.resultHashes,
+      `${path}.resultHashes`,
+    );
+    if (!resultHashes.ok) return resultHashes;
+    const runtime = parseRuntimeRef(input.runtime, `${path}.runtime`);
+    if (!runtime.ok) return runtime;
     if (sourceAssets.value.length === 0) {
       return fail(
         `${path}.sourceAssets`,
@@ -999,64 +999,145 @@ export function parseProvenance(
     });
   }
 
-  const jobId = parseSlug(input.jobId, `${path}.jobId`);
-  if (!jobId.ok) return jobId;
-  const request = parseGenerationRequest(input.request, `${path}.request`);
-  if (!request.ok) return request;
-  const model = parseModelRef(input.model, `${path}.model`);
-  if (!model.ok) return model;
-  const loras = parseArray(input.loras, `${path}.loras`, parseModelRef);
-  if (!loras.ok) return loras;
-  const seed = parseIntegerAtLeast(input.seed, `${path}.seed`, 0);
-  if (!seed.ok) return seed;
-  const settings = parseSettings(input.settings, `${path}.settings`);
-  if (!settings.ok) return settings;
-
-  const source = relatedJobs.value.find((job) => job.jobId === jobId.value);
-  if (source === undefined) {
-    return fail(
-      `${path}.jobId`,
-      `source job "${jobId.value}" is not in relatedJobs`,
-    );
-  }
-  if (source.status !== "succeeded") {
-    return fail(
-      `${path}.jobId`,
-      `source job "${jobId.value}" is ${source.status}, not succeeded`,
-    );
-  }
-  const outputs = new Set<string>(source.outputs ?? []);
-  const results = new Set<string>(resultHashes.value);
-  if (
-    outputs.size !== results.size ||
-    [...results].some((hash) => !outputs.has(hash))
-  ) {
-    return fail(
-      `${path}.resultHashes`,
-      "result hashes differ from the source job's outputs",
-    );
-  }
-  const licensed = new Set(licences.value.map((licence) => licence.subject));
-  for (const component of [model.value, ...loras.value]) {
-    if (!licensed.has(component.id)) {
+  const generations = parseArray(
+    input.generations,
+    `${path}.generations`,
+    parseGenerationRef,
+  );
+  if (!generations.ok) return generations;
+  if (generations.value.length === 0)
+    return fail(`${path}.generations`, "expected at least one generation");
+  const duplicate = uniqueBy(
+    generations.value,
+    (generation) => generation.jobId,
+    `${path}.generations`,
+  );
+  if (duplicate) return duplicate;
+  for (const [index, generation] of generations.value.entries()) {
+    const at = `${path}.generations[${index}]`;
+    const job = relatedJobs.value.find((ref) => ref.jobId === generation.jobId);
+    if (job === undefined)
       return fail(
-        `${path}.licences`,
-        `no licence record for "${component.id}"`,
+        `${at}.jobId`,
+        `job "${generation.jobId}" is not in relatedJobs`,
       );
+    if (job.status !== "succeeded")
+      return fail(
+        `${at}.jobId`,
+        `job "${generation.jobId}" is ${job.status}, not succeeded`,
+      );
+    const outputs = new Set<string>(job.outputs ?? []);
+    const stray = generation.used.find((hash) => !outputs.has(hash));
+    if (stray !== undefined)
+      return fail(
+        `${at}.used`,
+        `used hash ${stray} is not an output of job "${generation.jobId}"`,
+      );
+    const licensed = (subject: string, role: LicenceRole) =>
+      licences.value.some(
+        (licence) => licence.subject === subject && licence.role === role,
+      );
+    const needs: [string, LicenceRole][] = [
+      [generation.runtime.name, "runtime"],
+      [generation.model.id, "model"],
+      ...generation.loras.map((ref): [string, LicenceRole] => [ref.id, "lora"]),
+      ...(generation.encoder === null
+        ? []
+        : [[generation.encoder.id, "encoder"] as [string, LicenceRole]]),
+      ...(generation.vae === null
+        ? []
+        : [[generation.vae.id, "vae"] as [string, LicenceRole]]),
+    ];
+    for (const [subject, role] of needs) {
+      if (!licensed(subject, role))
+        return fail(
+          `${path}.licences`,
+          `no ${role} licence record for "${subject}"`,
+        );
     }
   }
   return ok({
     method: "generated",
-    jobId: jobId.value,
-    request: request.value,
-    runtime: runtime.value,
-    model: model.value,
-    loras: loras.value,
-    seed: seed.value,
-    settings: settings.value,
-    resultHashes: resultHashes.value,
+    generations: generations.value,
     ...common,
   });
+}
+
+function parseGenerationRef(
+  value: unknown,
+  path: string,
+): ParseResult<GenerationRef> {
+  return parseStrictRecord(
+    value,
+    path,
+    [
+      "jobId",
+      "request",
+      "runtime",
+      "model",
+      "loras",
+      "encoder",
+      "vae",
+      "seed",
+      "settings",
+      "used",
+    ],
+    (record) => {
+      const jobId = parseSlug(record.jobId, `${path}.jobId`);
+      if (!jobId.ok) return jobId;
+      const request = parseGenerationRequest(record.request, `${path}.request`);
+      if (!request.ok) return request;
+      if (request.value.slots.length !== 1 || request.value.batch !== 1)
+        return fail(
+          `${path}.request`,
+          "a generation records the narrowed request: one slot, batch 1",
+        );
+      if (request.value.seed === undefined)
+        return fail(`${path}.request`, "a generation records the seed it ran");
+      const runtime = parseRuntimeRef(record.runtime, `${path}.runtime`);
+      if (!runtime.ok) return runtime;
+      const model = parseModelRef(record.model, `${path}.model`);
+      if (!model.ok) return model;
+      const loras = parseArray(record.loras, `${path}.loras`, parseModelRef);
+      if (!loras.ok) return loras;
+      const encoder = parseOptionalModelRef(record.encoder, `${path}.encoder`);
+      if (!encoder.ok) return encoder;
+      const vae = parseOptionalModelRef(record.vae, `${path}.vae`);
+      if (!vae.ok) return vae;
+      const seed = parseIntegerAtLeast(record.seed, `${path}.seed`, 0);
+      if (!seed.ok) return seed;
+      if (seed.value !== request.value.seed)
+        return fail(`${path}.seed`, "the seed differs from the request's seed");
+      const settings = parseGenerationSettings(
+        record.settings,
+        `${path}.settings`,
+      );
+      if (!settings.ok) return settings;
+      const used = parseSha256List(record.used, `${path}.used`);
+      if (!used.ok) return used;
+      if (new Set(used.value).size !== used.value.length)
+        return fail(`${path}.used`, "expected unique hashes");
+      return ok({
+        jobId: jobId.value,
+        request: request.value,
+        runtime: runtime.value,
+        model: model.value,
+        loras: loras.value,
+        encoder: encoder.value,
+        vae: vae.value,
+        seed: seed.value,
+        settings: settings.value,
+        used: used.value,
+      });
+    },
+  );
+}
+
+function parseOptionalModelRef(
+  value: unknown,
+  path: string,
+): ParseResult<ModelRef | null> {
+  return value === null ? ok(null) : parseModelRef(value, path);
 }
 
 export function parseOwnerException(

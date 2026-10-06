@@ -25,6 +25,7 @@ import { SELECTED_PROFILE, type SelectedProfile } from "./provider";
 import { adapterInput, buildSpec, type StudioContent } from "./request";
 import type { CommandResult, StudioSession } from "./session";
 import type { JobRecord } from "./store";
+import { parseEngineFacts } from "./workspace";
 
 export interface RuntimeDeadlines {
   readonly httpMs: number;
@@ -543,6 +544,71 @@ function unsettled(refusal: Extract<CommandResult, { ok: false }>): Attempt {
   return { kind: "skipped" };
 }
 
+const ENGINE_ROLES: Record<string, "model" | "encoder" | "vae"> = {
+  "diffusion-model": "model",
+  "text-encoder": "encoder",
+  vae: "vae",
+};
+
+/** The scalar settings the server was actually sent; the seed lives on the request. */
+interface SentBody {
+  readonly prompt: string;
+  readonly negative_prompt: string;
+  readonly width: number;
+  readonly height: number;
+  readonly batch_count: number;
+  readonly sample_params: {
+    readonly sample_method: string;
+    readonly sample_steps: number;
+    readonly guidance: { readonly txt_cfg: number };
+  };
+  readonly output_format: string;
+}
+
+/** Facts about the engine this runtime launched, whose artifacts it hash-verified before the launch. */
+function engineFor(profile: SelectedProfile, body: SentBody) {
+  const ref = (role: string) => {
+    const component = profile.components.find((c) => c.role === role);
+    return component === undefined
+      ? null
+      : { id: component.id, sha256: component.sha256 };
+  };
+  return parseEngineFacts(
+    {
+      runtime: { name: profile.runtime.id, version: profile.runtime.commit },
+      runtimeBinarySha256: profile.runtime.binary.sha256,
+      model: ref("diffusion-model"),
+      loras: [],
+      encoder: ref("text-encoder"),
+      vae: ref("vae"),
+      licences: [
+        {
+          subject: profile.runtime.id,
+          role: "runtime",
+          licence: profile.runtime.license,
+        },
+        ...profile.components.map((c) => ({
+          subject: c.id,
+          role: ENGINE_ROLES[c.role],
+          licence: c.license,
+        })),
+      ],
+      settings: {
+        prompt: body.prompt,
+        negative_prompt: body.negative_prompt,
+        width: body.width,
+        height: body.height,
+        batch_count: body.batch_count,
+        sample_method: body.sample_params.sample_method,
+        sample_steps: body.sample_params.sample_steps,
+        txt_cfg: body.sample_params.guidance.txt_cfg,
+        output_format: body.output_format,
+      },
+    },
+    "engine",
+  );
+}
+
 export function openRuntime(
   session: StudioSession,
   config: RuntimeConfig,
@@ -651,6 +717,21 @@ export function openRuntime(
     const input = adapterInput(spec.value, source.slotKey, seed);
     if (!input.ok) return fail(JSON.stringify(input.error));
 
+    const body = {
+      prompt: input.value.prompt,
+      negative_prompt: input.value.negativePrompt,
+      width: input.value.width,
+      height: input.value.height,
+      seed: input.value.seed,
+      batch_count: 1,
+      sample_params: {
+        sample_method: input.value.sampleMethod,
+        sample_steps: input.value.sampleSteps,
+        guidance: { txt_cfg: input.value.txtCfg },
+      },
+      lora: [] as string[],
+      output_format: "png",
+    };
     const mine = {
       id: job.id,
       controller: new AbortController(),
@@ -661,21 +742,7 @@ export function openRuntime(
     try {
       generated = await generate(
         config.port,
-        {
-          prompt: input.value.prompt,
-          negative_prompt: input.value.negativePrompt,
-          width: input.value.width,
-          height: input.value.height,
-          seed: input.value.seed,
-          batch_count: 1,
-          sample_params: {
-            sample_method: input.value.sampleMethod,
-            sample_steps: input.value.sampleSteps,
-            guidance: { txt_cfg: input.value.txtCfg },
-          },
-          lora: [],
-          output_format: "png",
-        },
+        body,
         config,
         mine.controller.signal,
       );
@@ -706,7 +773,10 @@ export function openRuntime(
       return fail(`could not store the image: ${(error as Error).message}`);
     }
     const output: ImageOutput = { medium: "image", hash, width, height };
-    const done = session.succeed(job.id, [output]);
+    const engine = engineFor(profile, body);
+    if (!engine.ok)
+      return fail(`the engine facts cannot be recorded: ${engine.message}`);
+    const done = session.succeed(job.id, [output], engine.value);
     if (!done.ok) return unsettled(done);
     return {
       kind: "result",

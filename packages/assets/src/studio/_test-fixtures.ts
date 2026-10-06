@@ -1,21 +1,33 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseGodProfile, parseGodVisualProfiles } from "@panthea/content";
 import {
+  type AssetId,
+  type AssetRecord,
+  type ConformanceReport,
+  canonicalManifestText,
   type GenerationJob,
   type GenerationRequest,
+  newCandidate,
   type ParseResult,
   parseAssetVocabulary,
+  type Sha256,
+  transitionAsset,
 } from "@panthea/contracts";
 import type { ConformanceMetrics, RgbaImage } from "../conformance";
+import { paletteFixture, spriteFixture } from "../fixtures";
 import { sha256Hex } from "../hash";
-import { parsePalette } from "../palette";
+import { type Palette, parsePalette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateRecord, ConformParams } from "./candidates";
+import { sheetJson } from "./export-import";
+import { SELECTED_PROFILE } from "./provider";
 import type { StudioContent } from "./request";
-import type { StudioSession } from "./session";
+import { newRequestRecord } from "./request";
+import { openStudioSession, type StudioSession } from "./session";
 import type { AuthoredFrames, Keyframe, WorkingSetRecord } from "./working-set";
+import type { EngineFacts, StudioAssetRecord } from "./workspace";
 
 export const HOLDER = join(import.meta.dir, "_test-holder.ts");
 
@@ -64,6 +76,37 @@ export function succeededJob(id: string): GenerationJob {
         height: 8,
       },
     ],
+  };
+}
+
+/** Engine facts for a fixture profile; the values are the fixture's own, not the selected production profile's. */
+export function engineFacts(overrides: Partial<EngineFacts> = {}): EngineFacts {
+  const h = (n: number) => sha256Hex(new Uint8Array([n]));
+  return {
+    runtime: { name: "fixture-sd-server", version: "fixture-commit" },
+    runtimeBinarySha256: h(90),
+    model: { id: "fixture-diffusion", sha256: h(91) },
+    loras: [],
+    encoder: { id: "fixture-encoder", sha256: h(92) },
+    vae: { id: "fixture-vae", sha256: h(93) },
+    licences: [
+      { subject: "fixture-sd-server", role: "runtime", licence: "fixture" },
+      { subject: "fixture-diffusion", role: "model", licence: "fixture" },
+      { subject: "fixture-encoder", role: "encoder", licence: "fixture" },
+      { subject: "fixture-vae", role: "vae", licence: "fixture" },
+    ],
+    settings: {
+      prompt: "pixel art",
+      negative_prompt: "blurry",
+      width: 512,
+      height: 640,
+      batch_count: 1,
+      sample_method: "euler",
+      sample_steps: 8,
+      txt_cfg: 1,
+      output_format: "png",
+    },
+    ...overrides,
   };
 }
 
@@ -443,12 +486,15 @@ export function succeedWithImage(
   jobId: string,
   png: Uint8Array,
   size = { w: 512, h: 640 },
+  engine: EngineFacts = engineFacts(),
 ) {
   if (!session.start(jobId).ok) throw new Error(`cannot start ${jobId}`);
   const hash = session.store.putBlob(png);
-  const done = session.succeed(jobId, [
-    { medium: "image", hash, width: size.w, height: size.h },
-  ]);
+  const done = session.succeed(
+    jobId,
+    [{ medium: "image", hash, width: size.w, height: size.h }],
+    engine,
+  );
   if (!done.ok) throw new Error(`cannot succeed ${jobId}`);
   return hash;
 }
@@ -503,4 +549,270 @@ export function withAncillaryChunk(png: Uint8Array): Uint8Array {
   out.set(chunk, at);
   out.set(png.subarray(at), at + chunk.length);
   return out;
+}
+
+/** A packed asset in the draft state, built on the sprite fixture's real manifest. */
+export function studioAsset(
+  id = "asset-a",
+  overrides: Partial<StudioAssetRecord> = {},
+): StudioAssetRecord {
+  const fixture = spriteFixture(id === "asset-a" ? "placeholder-zeus" : id, 1);
+  const report: ConformanceReport = {
+    schemaVersion: 1,
+    status: "pass",
+    checks: [{ check: "binary-alpha", status: "pass" }],
+  };
+  const picked = transitionAsset(newCandidate(fixture.manifest, report), {
+    type: "pick",
+  });
+  if (!picked.ok) throw new Error(picked.message);
+  const record: AssetRecord = picked.value;
+  const revision = sha256Hex(
+    new TextEncoder().encode(canonicalManifestText(fixture.manifest)),
+  );
+  return {
+    schemaVersion: 1,
+    id,
+    workingSetId: "w",
+    assetId: fixture.manifest.id as AssetId,
+    prior: null,
+    record,
+    manifestRevision: revision,
+    reportBasis: {
+      atlasHash: fixture.manifest.atlas.blob,
+      paletteDigest: sha256Hex(new Uint8Array([5])),
+    },
+    licenceReview: {
+      manifestRevision: revision,
+      entries: [
+        {
+          subject: "fixture-diffusion",
+          role: "model",
+          source: "pinned-terms",
+          status: "compatible",
+          reason: "Apache-2.0 is MIT-compatible",
+        },
+      ],
+    },
+    licenceAssessments: [],
+    published: null,
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A working studio, built through the real session: jobs with engine facts,
+// conformed candidates, a working set with picks and finished edits.
+// ---------------------------------------------------------------------------
+
+export interface AssetRig {
+  readonly root: string;
+  readonly session: StudioSession;
+  /** The real Greek content with the approved fixture palette standing in for the master. */
+  readonly content: StudioContent;
+  readonly palette: Palette;
+  readonly registryRoot: string;
+  /** What the rig's jobs record as having run them. */
+  readonly engine: EngineFacts;
+}
+
+/** A figure in the cell, painted only with the content palette's olympus ramps; `marker` moves one visible pixel so frames differ. */
+export function paintFigure(
+  content: StudioContent,
+  cell: { w: number; h: number },
+  marker = 0,
+): RgbaImage {
+  const ramps =
+    content.palette.families.find((f) => f.id === "olympus")?.ramps ?? [];
+  const shade = (ramp: number, index: number) =>
+    ramps[ramp]?.shades[index] ?? [0, 0, 0];
+  const rgba = new Uint8Array(cell.w * cell.h * 4);
+  const paint = (
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    rgb: readonly number[],
+  ) => {
+    for (let y = y0; y < y1; y += 1)
+      for (let x = x0; x < x1; x += 1)
+        rgba.set(
+          [rgb[0] as number, rgb[1] as number, rgb[2] as number, 255],
+          (y * cell.w + x) * 4,
+        );
+  };
+  const u = Math.floor(cell.w / 8);
+  paint(3 * u, 2 * u, 5 * u, 4 * u, shade(0, 3));
+  paint(3 * u, 4 * u, 5 * u, 7 * u, shade(1, 2));
+  paint(3 * u, 7 * u, 4 * u, cell.h - 2 * u, shade(0, 1));
+  paint(4 * u, 7 * u, 5 * u, cell.h - 2 * u, shade(0, 1));
+  const at = 3 * u + (marker % (2 * u));
+  paint(at, 2 * u, at + 1, 2 * u + 1, shade(1, 3));
+  return { rgba, width: cell.w, height: cell.h };
+}
+
+export function assetRig(
+  options: { engine?: EngineFacts; registryRoot?: string } = {},
+): AssetRig {
+  const base = loadContent();
+  const palette = paletteFixture().palette;
+  const content: StudioContent = { ...base, palette };
+  const root = tempRoot();
+  const opened = openStudioSession(root);
+  if (opened.kind === "busy") throw new Error("busy");
+  const registryRoot = options.registryRoot ?? join(dirname(root), "registry");
+  return {
+    root,
+    session: opened.session,
+    content,
+    palette,
+    registryRoot,
+    engine: options.engine ?? engineFacts(),
+  };
+}
+
+/** A 1-slot-per-job request run to success: one blob, one conformed candidate. Returns the job ids in slot order. */
+export function runSlots(
+  rig: AssetRig,
+  requestId: string,
+  kind: "sprite" | "portrait",
+  slots: readonly { state?: string; direction?: string; expression?: string }[],
+  seed = 100,
+): string[] {
+  const { session, content } = rig;
+  const built = newRequestRecord(
+    content,
+    { id: requestId, subject: "zeus", kind, slots, batch: 1, seed },
+    () => 0,
+  );
+  if (!built.ok) throw new Error(JSON.stringify(built.error));
+  const submitted = session.submitRequest(built.value.record);
+  if (!submitted.ok) throw new Error(submitted.message);
+  const cell = kind === "sprite" ? { w: 64, h: 80 } : { w: 96, h: 96 };
+  return submitted.jobIds.map((jobId, index) => {
+    const png = pngOf(upscale(paintFigure(content, cell, index), 8));
+    succeedWithImage(
+      session,
+      jobId,
+      png,
+      { w: cell.w * 8, h: cell.h * 8 },
+      rig.engine,
+    );
+    const done = session.conform(jobId, content, PROVISIONAL_TEST_PARAMS);
+    if (!done.ok) throw new Error(`conform ${jobId}: ${done.message}`);
+    return jobId;
+  });
+}
+
+/** A sheet of native frames, one strip: slots in order, each with its frame images, durations and pivot. */
+export function sheetOf(
+  cell: { w: number; h: number },
+  specs: readonly {
+    slot: string;
+    frames: readonly RgbaImage[];
+    durations?: readonly number[];
+    pivot?: { x: number; y: number } | null;
+  }[],
+): { png: Uint8Array; json: string } {
+  const frames = specs.flatMap((s) => s.frames);
+  const rgba = new Uint8Array(cell.w * frames.length * cell.h * 4);
+  frames.forEach((image, index) => {
+    for (let y = 0; y < cell.h; y += 1)
+      rgba.set(
+        image.rgba.subarray(y * cell.w * 4, (y + 1) * cell.w * 4),
+        (y * cell.w * frames.length + index * cell.w) * 4,
+      );
+  });
+  return {
+    png: encodeRgbaPng(rgba, cell.w * frames.length, cell.h),
+    json: sheetJson(
+      specs.map((s) => ({
+        slot: s.slot,
+        durations: s.durations ?? s.frames.map(() => 167),
+        pivot: s.pivot ?? null,
+      })),
+      cell,
+    ),
+  };
+}
+
+/** Opens and finishes one edit over the given slots with the given frames. */
+export function finishSheet(
+  rig: AssetRig,
+  editId: string,
+  setId: string,
+  cell: { w: number; h: number },
+  specs: Parameters<typeof sheetOf>[1],
+) {
+  const { session, content } = rig;
+  const opened = session.openEdit(
+    editId,
+    setId,
+    specs.map((s) => s.slot),
+    content,
+  );
+  if (!opened.ok) throw new Error(`open ${editId}: ${opened.message}`);
+  const sheet = sheetOf(cell, specs);
+  const done = session.finishEdit(editId, sheet.png, sheet.json, content);
+  if (!done.ok) throw new Error(`finish ${editId}: ${done.message}`);
+  return sheet;
+}
+
+/** The sprite path: one idle/south job, its candidate, a picked working set "w", and four hand-finished frames. */
+export function spriteSet(
+  rig: AssetRig,
+  pivot: { x: number; y: number } | null = null,
+) {
+  const [jobId] = runSlots(rig, "zeus-idle", "sprite", [
+    { state: "idle", direction: "south" },
+  ]);
+  const { session, content } = rig;
+  if (!session.openWorkingSet("w", "zeus-idle", content).ok)
+    throw new Error("open set");
+  if (!session.pick("w", jobId as string).ok) throw new Error("pick");
+  const cell = { w: 64, h: 80 };
+  const frames = [0, 1, 2, 3].map((i) => paintFigure(content, cell, i));
+  finishSheet(rig, "e1", "w", cell, [
+    { slot: "idle/south", frames, durations: [167, 167, 167, 167], pivot },
+  ]);
+  return { jobId: jobId as string, cell, frames };
+}
+
+/**
+ * Engine facts declared from the selected production profile's pins: the
+ * runtime, model, text encoder and VAE ids, hashes and licences as
+ * `SELECTED_PROFILE` records them. A schema-valid fixture, not evidence that
+ * any model ran.
+ */
+export function selectedProfileFacts(): EngineFacts {
+  const profile = SELECTED_PROFILE;
+  const ref = (role: string) => {
+    const c = profile.components.find((x) => x.role === role);
+    if (c === undefined) throw new Error(`no ${role} in the selected profile`);
+    return { id: c.id, sha256: c.sha256 as Sha256 };
+  };
+  const roles = {
+    "diffusion-model": "model",
+    "text-encoder": "encoder",
+    vae: "vae",
+  } as const;
+  return engineFacts({
+    runtime: { name: profile.runtime.id, version: profile.runtime.commit },
+    runtimeBinarySha256: profile.runtime.binary.sha256 as Sha256,
+    model: ref("diffusion-model"),
+    encoder: ref("text-encoder"),
+    vae: ref("vae"),
+    licences: [
+      {
+        subject: profile.runtime.id,
+        role: "runtime",
+        licence: profile.runtime.license,
+      },
+      ...profile.components.map((c) => ({
+        subject: c.id,
+        role: roles[c.role as keyof typeof roles],
+        licence: c.license,
+      })),
+    ],
+  });
 }

@@ -32,23 +32,43 @@ const request = {
   batch: 4,
 };
 
-function generated() {
+const narrowed = {
+  schemaVersion: 1,
+  subject: "zeus",
+  kind: "sprite",
+  slots: [{ state: "idle", direction: "south" }],
+  batch: 1,
+  seed: 20261003,
+};
+
+function generation() {
   return {
-    method: "generated",
     jobId: "job-1",
-    request,
+    request: JSON.parse(JSON.stringify(narrowed)),
     runtime: { name: "stable-diffusion.cpp", version: "master-929-3f8527a" },
     model: { id: "z-image-turbo", sha256: H("a") },
     loras: [{ id: "pixel-lora", sha256: H("b") }],
+    encoder: { id: "qwen3-4b", sha256: H("1") },
+    vae: { id: "z-image-ae", sha256: H("2") },
     seed: 20261003,
     settings: { sample_method: "euler", sample_steps: 8, guidance: 1 },
-    resultHashes: [H("c")],
+    used: [H("c")],
+  };
+}
+
+function generated() {
+  return {
+    method: "generated",
+    generations: [generation()],
     licences: [
+      { subject: "stable-diffusion.cpp", role: "runtime", licence: "MIT" },
       { subject: "z-image-turbo", role: "model", licence: "Apache-2.0" },
       { subject: "pixel-lora", role: "lora", licence: "Apache-2.0" },
+      { subject: "qwen3-4b", role: "encoder", licence: "Apache-2.0" },
+      { subject: "z-image-ae", role: "vae", licence: "Apache-2.0" },
     ],
     relatedJobs: [
-      { jobId: "job-1", status: "succeeded", outputs: [H("c")] },
+      { jobId: "job-1", status: "succeeded", outputs: [H("c"), H("8")] },
       { jobId: "job-0", status: "cancelled" },
     ],
     handEdits: [],
@@ -606,45 +626,181 @@ describe("provenance", () => {
     /licences/,
   );
   provenanceRejects(
-    "a model with no licence record",
+    "no generations",
     generated,
     (v) => {
-      v.licences = [v.licences[1]];
+      v.generations = [];
     },
-    /licences.*z-image-turbo/,
+    /generations/,
   );
   provenanceRejects(
-    "a LoRA with no licence record",
+    "the old single-job fields",
     generated,
     (v) => {
-      v.licences = [v.licences[0]];
-    },
-    /licences.*pixel-lora/,
-  );
-  provenanceRejects(
-    "a source job missing from the job refs",
-    generated,
-    (v) => {
-      v.jobId = "job-9";
+      v.jobId = "job-1";
     },
     /jobId/,
   );
   provenanceRejects(
-    "a cancelled source job",
+    "old result hashes beside generations",
     generated,
     (v) => {
-      v.jobId = "job-0";
-    },
-    /jobId/,
-  );
-  provenanceRejects(
-    "result hashes that differ from the job outputs",
-    generated,
-    (v) => {
-      v.resultHashes = [H("9")];
+      v.resultHashes = [H("c")];
     },
     /resultHashes/,
   );
+  provenanceRejects(
+    "a duplicate generation job id",
+    generated,
+    (v) => {
+      v.generations.push(JSON.parse(JSON.stringify(v.generations[0])));
+    },
+    /generations\[1\].*duplicate/,
+  );
+  provenanceRejects(
+    "a generation whose job is missing from the job refs",
+    generated,
+    (v) => {
+      v.generations[0].jobId = "job-9";
+    },
+    /generations\[0\]\.jobId/,
+  );
+  provenanceRejects(
+    "a generation whose job was cancelled",
+    generated,
+    (v) => {
+      v.generations[0].jobId = "job-0";
+    },
+    /generations\[0\]\.jobId/,
+  );
+  provenanceRejects(
+    "a generation that uses no outputs",
+    generated,
+    (v) => {
+      v.generations[0].used = [];
+    },
+    /generations\[0\]\.used/,
+  );
+  provenanceRejects(
+    "a generation that lists a used hash twice",
+    generated,
+    (v) => {
+      v.generations[0].used = [H("c"), H("c")];
+    },
+    /generations\[0\]\.used/,
+  );
+  provenanceRejects(
+    "a used hash the job never output",
+    generated,
+    (v) => {
+      v.generations[0].used = [H("9")];
+    },
+    /generations\[0\]\.used/,
+  );
+  provenanceRejects(
+    "a request with two slots",
+    generated,
+    (v) => {
+      v.generations[0].request.slots.push({
+        state: "idle",
+        direction: "north",
+      });
+    },
+    /generations\[0\]\.request/,
+  );
+  provenanceRejects(
+    "a request that asks for a batch",
+    generated,
+    (v) => {
+      v.generations[0].request.batch = 4;
+    },
+    /generations\[0\]\.request/,
+  );
+  provenanceRejects(
+    "a request without a seed",
+    generated,
+    (v) => {
+      delete v.generations[0].request.seed;
+    },
+    /generations\[0\]\.request/,
+  );
+  provenanceRejects(
+    "a seed that is not the request's seed",
+    generated,
+    (v) => {
+      v.generations[0].seed = 1;
+    },
+    /generations\[0\]\.seed/,
+  );
+  for (const [label, role, subject, change] of [
+    ["the runtime", "runtime", "stable-diffusion.cpp", undefined],
+    ["the model", "model", "z-image-turbo", undefined],
+    ["a LoRA", "lora", "pixel-lora", undefined],
+    ["the text encoder", "encoder", "qwen3-4b", undefined],
+    ["the VAE", "vae", "z-image-ae", undefined],
+  ] as const) {
+    void change;
+    provenanceRejects(
+      `${label} with no licence record`,
+      generated,
+      (v) => {
+        v.licences = v.licences.filter(
+          (licence: { subject: string }) => licence.subject !== subject,
+        );
+      },
+      new RegExp(`licences.*${subject.replace(".", "\\.")}`),
+    );
+    provenanceRejects(
+      `${label} licensed under the wrong role`,
+      generated,
+      (v) => {
+        for (const licence of v.licences)
+          if (licence.subject === subject)
+            licence.role = role === "runtime" ? "model" : "runtime";
+      },
+      new RegExp(
+        `licences.*${role} licence record for "${subject.replace(".", "\\.")}"`,
+      ),
+    );
+  }
+  provenanceRejects(
+    "a runtime licensed by its version instead of its name",
+    generated,
+    (v) => {
+      v.licences[0].subject = "master-929-3f8527a";
+    },
+    /licences.*stable-diffusion\.cpp/,
+  );
+
+  it("accepts a generation without an encoder or a VAE, and several generations", () => {
+    const bare = generated();
+    bare.generations[0].encoder = null as never;
+    bare.generations[0].vae = null as never;
+    bare.licences = bare.licences.filter(
+      (l) => l.role !== "encoder" && l.role !== "vae",
+    );
+    expect(parseProvenance(bare).ok).toBe(true);
+
+    const two = generated();
+    const second = generation();
+    second.jobId = "job-2";
+    second.request = { ...narrowed, seed: 20261004 };
+    second.seed = 20261004;
+    second.used = [H("d")];
+    two.generations.push(second);
+    two.relatedJobs.push({
+      jobId: "job-2",
+      status: "succeeded",
+      outputs: [H("d")],
+    });
+    const parsed = parseProvenance(two);
+    expect(
+      parsed.ok &&
+        parsed.value.method === "generated" &&
+        parsed.value.generations.map((g) => g.jobId),
+    ).toEqual(["job-1", "job-2"]);
+  });
+
   provenanceRejects(
     "a cancelled job that carries outputs",
     generated,
@@ -681,25 +837,25 @@ describe("provenance", () => {
     "a credential-looking setting key",
     generated,
     (v) => {
-      v.settings.apiKey = "abc";
+      v.generations[0].settings.apiKey = "abc";
     },
-    /settings\.apiKey/,
+    /generations\[0\]\.settings\.apiKey/,
   );
   provenanceRejects(
     "an endpoint in a setting value",
     generated,
     (v) => {
-      v.settings.server = "http://127.0.0.1:8080";
+      v.generations[0].settings.server = "http://127.0.0.1:8080";
     },
-    /settings\.server/,
+    /generations\[0\]\.settings\.server/,
   );
   provenanceRejects(
     "a non-scalar setting",
     generated,
     (v) => {
-      v.settings.nested = { a: 1 };
+      v.generations[0].settings.nested = { a: 1 };
     },
-    /settings\.nested/,
+    /generations\[0\]\.settings\.nested/,
   );
   provenanceRejects(
     "a hand record without edit steps",

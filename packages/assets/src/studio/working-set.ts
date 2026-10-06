@@ -498,10 +498,17 @@ export function newWorkingSet(
   const { kind, subject, slots } = request.request;
   if (kind !== "sprite" && kind !== "portrait")
     return refuse(`a ${kind} request has no working set`);
+  const chosen = slots.map(slotKey);
+  const unknown =
+    kind === "portrait"
+      ? chosen.find((slot) => !content.vocabulary.expressions.includes(slot))
+      : undefined;
+  if (unknown !== undefined)
+    return refuse(`expression ${unknown} is not in the vocabulary`);
   const required =
     kind === "portrait"
-      ? [...content.vocabulary.expressions]
-      : slots.map(slotKey);
+      ? content.vocabulary.expressions.filter((slot) => chosen.includes(slot))
+      : chosen;
   const limits: Record<string, FrameLimits> = {};
   for (const slot of required) {
     if (kind === "portrait") {

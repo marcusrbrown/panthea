@@ -25,7 +25,13 @@ export type {
   EditRecord,
   PreviewSlot,
 } from "./export-import";
+export type { PackInput } from "./packing";
 export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
+export type {
+  ApproveOptions,
+  AssetFailure,
+  AssetOpResult,
+} from "./publish";
 export {
   reportOnly,
   type SheetSlot,
@@ -98,4 +104,11 @@ export type {
   SlotBasis,
   WorkingSetRecord,
 } from "./working-set";
-export { STUDIO_SCHEMA_VERSION, studioPaths } from "./workspace";
+export {
+  type EngineFacts,
+  type LicenceAssessment,
+  type LicenceReviewEntry,
+  STUDIO_SCHEMA_VERSION,
+  type StudioAssetRecord,
+  studioPaths,
+} from "./workspace";

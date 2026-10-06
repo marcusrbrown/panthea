@@ -12,7 +12,11 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadRegistry, paletteRefusal } from "@panthea/assets/registry";
+import {
+  loadRegistry,
+  paletteRefusal,
+  readRevision,
+} from "@panthea/assets/registry";
 import {
   type GodProfile,
   type GodVisualProfile,
@@ -178,6 +182,19 @@ export function validateAssets(contentRoot: string): AssetValidation {
     const refusal =
       palette === undefined ? undefined : paletteRefusal(manifest, palette);
     if (refusal !== undefined) report(file, refusal);
+    for (const source of manifest.provenance.sourceAssets) {
+      const read = readRevision(
+        registryDir,
+        source.assetId,
+        source.revision,
+        vocabulary,
+      );
+      if (!read.ok)
+        report(
+          file,
+          `source revision ${source.assetId} ${source.revision} cannot be read: ${read.message}`,
+        );
+    }
     const owner = spriteOwners.get(entry.assetId);
     if (owner !== undefined && manifest.kind !== "sprite") {
       report(

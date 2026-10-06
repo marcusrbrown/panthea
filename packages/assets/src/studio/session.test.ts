@@ -13,6 +13,7 @@ import { join, relative } from "node:path";
 import { sha256Hex } from "../hash";
 import {
   doneCandidate,
+  engineFacts,
   jobSource,
   keyframe,
   loadContent,
@@ -24,6 +25,7 @@ import {
   request,
   runningJob,
   spawnHolder,
+  studioAsset,
   succeededJob,
   TEST_PALETTE,
   tempRoot,
@@ -147,6 +149,7 @@ describe("recovery", () => {
         schemaVersion: 1,
         source: jobSource("r1", ordinal++),
         job,
+        ...(job.status === "succeeded" ? { engine: engineFacts() } : {}),
       });
     put(queuedJob("waiting"));
     put(runningJob("busy"));
@@ -521,6 +524,7 @@ describe("a closed session's store", () => {
             preview: null,
           }),
       ],
+      ["putAsset", (s) => s.putAsset(studioAsset("stale-asset"))],
       [
         "putEditFile",
         (s) => s.putEditFile("stale-edit", "sheet.png", new Uint8Array([1])),
@@ -844,7 +848,9 @@ describe("job transitions", () => {
       session.enqueue(jobSource("r1", ordinal), queuedJob(id));
 
     expect(session.start("job-a")).toEqual({ ok: true });
-    expect(session.succeed("job-a", [image])).toEqual({ ok: true });
+    expect(session.succeed("job-a", [image], engineFacts())).toEqual({
+      ok: true,
+    });
     expect(session.start("job-b")).toEqual({ ok: true });
     expect(session.fail("job-b", "server said no")).toEqual({ ok: true });
     expect(session.unavailable("job-c", "no runtime", "stage it")).toEqual({
@@ -894,12 +900,80 @@ describe("job transitions", () => {
     session.close();
   });
 
+  test("a success stores its engine facts with its outputs, and no other state carries them", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    for (const [ordinal, id] of ["job-a", "job-b", "job-c"].entries())
+      session.enqueue(jobSource("r1", ordinal), queuedJob(id));
+    const engine = engineFacts({
+      loras: [{ id: "pixel-lora", sha256: sha256Hex(new Uint8Array([7])) }],
+    });
+    session.start("job-a");
+    session.start("job-b");
+    session.start("job-c");
+
+    expect(session.succeed("job-a", [image], engine)).toEqual({ ok: true });
+    session.fail("job-b", "x");
+    session.abort("job-c");
+
+    const jobs = Object.fromEntries(
+      readStudioStatus(root).jobs.map((r) => [r.job.id, r]),
+    );
+    expect(jobs["job-a"]?.engine).toEqual(engine);
+    expect(jobs["job-b"]).not.toHaveProperty("engine");
+    expect(jobs["job-c"]).not.toHaveProperty("engine");
+    expect(readStudioStatus(root).invalid).toEqual([]);
+    session.close();
+  });
+
+  test("a success whose engine facts could not be read back is refused and leaves the job running", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.enqueue(jobSource(), queuedJob("job-a"));
+    session.start("job-a");
+    const before = snapshot(root);
+    const bad = [
+      engineFacts({ settings: { apiKey: "x" } }),
+      engineFacts({ settings: { server: "http://127.0.0.1:1" } }),
+      { ...engineFacts(), extra: 1 } as never,
+      { ...engineFacts(), runtimeBinarySha256: "xyz" } as never,
+    ];
+
+    for (const engine of bad)
+      expect(session.succeed("job-a", [image], engine)).toMatchObject({
+        ok: false,
+        reason: "invalid-params",
+      });
+
+    expect(snapshot(root)).toEqual(before);
+    expect(readStudioStatus(root).jobs[0]?.job.status).toBe("running");
+    session.close();
+  });
+
+  test("a success whose record cannot be written is not acknowledged and stores no engine facts", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.enqueue(jobSource(), queuedJob("job-a"));
+    session.start("job-a");
+    mkdirSync(join(root, "commands", "00000003.json"));
+
+    expect(session.succeed("job-a", [image], engineFacts())).toMatchObject({
+      ok: false,
+      reason: "write-failed",
+    });
+
+    const record = readStudioStatus(root).jobs[0];
+    expect(record?.job.status).toBe("running");
+    expect(record).not.toHaveProperty("engine");
+    session.close();
+  });
+
   test("a transition that does not fit the job's state is refused and not ledgered", () => {
     const root = tempRoot();
     const session = openOrFail(root);
     session.enqueue(jobSource(), queuedJob("job-a"));
 
-    expect(session.succeed("job-a", [image])).toMatchObject({
+    expect(session.succeed("job-a", [image], engineFacts())).toMatchObject({
       ok: false,
       reason: "wrong-state",
     });
@@ -913,7 +987,7 @@ describe("job transitions", () => {
       reason: "wrong-state",
     });
     session.abort("job-a");
-    expect(session.succeed("job-a", [image])).toMatchObject({
+    expect(session.succeed("job-a", [image], engineFacts())).toMatchObject({
       ok: false,
       reason: "wrong-state",
     });
@@ -942,7 +1016,7 @@ describe("job transitions", () => {
 
     for (const result of [
       stale.start("job-a"),
-      stale.succeed("job-b", [image]),
+      stale.succeed("job-b", [image], engineFacts()),
       stale.fail("job-b", "x"),
       stale.unavailable("job-a", "x", "y"),
     ])
@@ -1010,7 +1084,7 @@ describe("working sets", () => {
       ...extra,
     });
 
-  test("opening a portrait set requires every vocabulary expression; a sprite set requires the request's slots", () => {
+  test("opening a set from a six-expression portrait request requires all six; a sprite set requires the request's slots", () => {
     const root = tempRoot();
     const session = portraitSession(root);
     session.submitRequest(request("walk-a", "sprite", spriteSlots));
@@ -1094,6 +1168,79 @@ describe("working sets", () => {
     expect(Object.keys(setOf(root, "zeus-faces")?.picks ?? {})).toEqual([
       ...names,
     ]);
+    session.close();
+  });
+
+  test("a portrait set requires the expressions its request selected, in vocabulary order, and is complete when exactly those are picked", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    const names = content.vocabulary.expressions;
+    const chosen = [names[4] as string, names[1] as string];
+    session.submitRequest(
+      request(
+        "faces-two",
+        "portrait",
+        chosen.map((expression) => ({ expression })),
+      ),
+    );
+
+    expect(session.openWorkingSet("two-faces", "faces-two", content)).toEqual({
+      ok: true,
+    });
+
+    const wanted = names.filter((name) => chosen.includes(name));
+    expect(setOf(root, "two-faces")).toMatchObject({
+      required: wanted,
+      limits: Object.fromEntries(
+        wanted.map((slot) => [slot, { min: 1, max: 1 }]),
+      ),
+      status: "open",
+    });
+    for (const [index, expression] of chosen.entries())
+      session.store.putCandidate(
+        faceCandidate(`two-${index}`, expression, "faces-two", {
+          ordinal: index,
+        }),
+      );
+    expect(session.pick("two-faces", "two-0")).toEqual({ ok: true });
+    expect(setOf(root, "two-faces")?.status).toBe("open");
+    expect(session.pick("two-faces", "two-1")).toEqual({ ok: true });
+    expect(setOf(root, "two-faces")?.status).toBe("complete");
+    session.store.putCandidate(
+      faceCandidate(
+        "other",
+        names.find((n) => !chosen.includes(n)) as string,
+        "faces-two",
+        { ordinal: 9 },
+      ),
+    );
+    expect(session.pick("two-faces", "other")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    session.close();
+  });
+
+  test("a stored portrait request with an expression the vocabulary does not have is refused, never trimmed to the rest", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    const good = request("faces-bad", "portrait", [
+      { expression: content.vocabulary.expressions[0] as string },
+    ]);
+    session.store.putRequest({
+      ...good,
+      request: {
+        ...good.request,
+        slots: [...good.request.slots, { expression: "bored" }],
+      },
+    });
+    const before = readStudioStatus(root).workingSets;
+
+    const result = session.openWorkingSet("bad-faces", "faces-bad", content);
+
+    expect(result).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(!result.ok && result.message).toMatch(/bored/);
+    expect(readStudioStatus(root).workingSets).toEqual(before);
     session.close();
   });
 

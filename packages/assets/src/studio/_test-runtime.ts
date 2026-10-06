@@ -4,7 +4,7 @@
 // behavior file on every request, and every event is appended to log.jsonl
 // beside it, so tests can see what the process was asked and what it did.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
@@ -37,6 +37,8 @@ export interface Behavior {
   exitOnStart?: number;
   startupDelayMs?: number;
   ignoreTerm?: boolean;
+  /** The exit code of the `--warm` run that staging makes once. */
+  warmExit?: number;
   grandchild?: boolean;
   jobDelayMs?: number;
   /** A PNG file served as the image of every "ok" job instead of the generated pattern. */
@@ -169,6 +171,9 @@ function main(): void {
   const behavior = (): Behavior =>
     JSON.parse(readFileSync(behaviorPath, "utf8"));
   const port = Number(flags[flags.indexOf("--listen-port") + 1]);
+
+  // A warm-up run only loads the fixture: no handlers, no log, no listener.
+  if (flags.includes("--warm")) process.exit(behavior().warmExit ?? 0);
 
   if (behavior().ignoreTerm) process.on("SIGTERM", () => log("term-ignored"));
   else
@@ -318,6 +323,19 @@ export function stageFixtureRuntime(
   const binary = join(dir, "bin", "sd-server");
   writeFileSync(binary, wrapper);
   chmodSync(binary, 0o755);
+  // The first exec of a freshly written wrapper can take hundreds of
+  // milliseconds on the host; take that cost here, not inside a startup
+  // deadline the fixture's first real start is measured against.
+  const warmed = spawnSync(binary, ["--warm"], {
+    env: {},
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+    encoding: "utf8",
+  });
+  if (warmed.status !== 0)
+    throw new Error(
+      `fixture warm-up failed: ${warmed.error?.message ?? `exit ${warmed.status}, signal ${warmed.signal}`}`,
+    );
   const component = (role: string, id: string, file: string, text: string) => {
     const bytes = new TextEncoder().encode(text);
     writeFileSync(join(dir, file), bytes);

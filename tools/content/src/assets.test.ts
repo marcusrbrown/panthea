@@ -334,6 +334,80 @@ describe("broken registry", () => {
   });
 });
 
+describe("source asset revisions", () => {
+  /** An older revision of zeus, then a portrait whose provenance names it as a source, with zeus republished since. */
+  function withSource() {
+    const root = contentRoot();
+    const older = publish(root, spriteFixture("placeholder-zeus", 1));
+    publish(root, spriteFixture("placeholder-zeus", 2));
+    const portrait = portraitFixture();
+    const sourced = {
+      blobs: portrait.blobs,
+      manifest: {
+        ...portrait.manifest,
+        provenance: {
+          ...portrait.manifest.provenance,
+          sourceAssets: [
+            { assetId: "placeholder-zeus" as AssetId, revision: older },
+          ],
+        },
+      },
+    } as FixtureAsset;
+    const revision = publish(root, sourced);
+    return { root, older, revision };
+  }
+
+  it("accepts a source revision that is older than the one the index selects, without any authoring ledger", () => {
+    const { root } = withSource();
+
+    expect(diagnosticsOf(root)).toEqual([]);
+  });
+
+  it("reports a source revision whose manifest is missing, against the manifest that names it", () => {
+    const { root, older, revision } = withSource();
+    rmSync(join(registryOf(root), "manifests", `${older}.json`));
+
+    expect(files(root)).toEqual([`assets/registry/manifests/${revision}.json`]);
+    expect(diagnosticsOf(root)[0]?.message).toMatch(/source revision/);
+  });
+
+  it("reports a source revision that is corrupt, and a source blob that is missing", () => {
+    const { root, older, revision } = withSource();
+    const manifestFile = join(registryOf(root), "manifests", `${older}.json`);
+    const good = readFileSync(manifestFile);
+    writeFileSync(manifestFile, "{}");
+    expect(files(root)).toEqual([`assets/registry/manifests/${revision}.json`]);
+    writeFileSync(manifestFile, good);
+    expect(diagnosticsOf(root)).toEqual([]);
+
+    const blob = spriteFixture("placeholder-zeus", 1).manifest.atlas.blob;
+    rmSync(join(registryOf(root), "blobs", `${blob}.png`));
+    expect(files(root)).toEqual([`assets/registry/manifests/${revision}.json`]);
+  });
+
+  it("reports a source revision of an asset the registry never had", () => {
+    const root = contentRoot();
+    const portrait = portraitFixture();
+    publish(root, {
+      blobs: portrait.blobs,
+      manifest: {
+        ...portrait.manifest,
+        provenance: {
+          ...portrait.manifest.provenance,
+          sourceAssets: [
+            {
+              assetId: "never-published" as AssetId,
+              revision: "b".repeat(64) as never,
+            },
+          ],
+        },
+      },
+    } as FixtureAsset);
+
+    expect(diagnosticsOf(root)).toHaveLength(1);
+  });
+});
+
 describe("a blob that is only a PNG header", () => {
   it("is reported against the blob file, not accepted", () => {
     const root = contentRoot();

@@ -36,6 +36,7 @@ import type { Palette } from "./palette";
 import {
   loadRegistry,
   publishAsset,
+  readRevision,
   selectRevision,
   writeRevision,
 } from "./registry";
@@ -832,5 +833,130 @@ describe("publishing needs the approved palette the manifest names", () => {
       asset,
       "only approved assets publish",
     );
+  });
+});
+
+describe("reading one published revision", () => {
+  it("returns an older revision's manifest and its exact stored PNG bytes after the index has moved on", () => {
+    const dir = root();
+    const first = spriteFixture("placeholder-zeus", 1);
+    const older = publish(dir, first);
+    const second = spriteFixture("placeholder-zeus", 2);
+    const newer = publish(dir, second);
+    expect(
+      loadRegistry(dir, vocabulary).snapshot.entries.get("placeholder-zeus")
+        ?.revision,
+    ).toBe(newer.revision);
+
+    const read = readRevision(
+      dir,
+      "placeholder-zeus" as AssetId,
+      older.revision,
+      vocabulary,
+    );
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value.manifest).toEqual(first.manifest);
+    expect(read.value.atlas).toEqual(
+      first.blobs.get(first.manifest.atlas.blob) as Uint8Array,
+    );
+    expect(sha256Hex(read.value.atlas)).toBe(first.manifest.atlas.blob);
+    expect(read.value.atlas).toEqual(
+      new Uint8Array(
+        readFileSync(join(dir, "blobs", `${first.manifest.atlas.blob}.png`)),
+      ),
+    );
+    const current = readRevision(
+      dir,
+      "placeholder-zeus" as AssetId,
+      newer.revision,
+      vocabulary,
+    );
+    expect(current.ok && current.value.manifest).toEqual(second.manifest);
+  });
+
+  it("writes nothing and does not select the revision it reads", () => {
+    const dir = root();
+    const older = publish(dir, spriteFixture("placeholder-zeus", 1));
+    publish(dir, spriteFixture("placeholder-zeus", 2));
+    const before = {
+      index: textOf(join(dir, "index.json")),
+      manifests: listing(join(dir, "manifests")),
+      blobs: listing(join(dir, "blobs")),
+    };
+
+    readRevision(
+      dir,
+      "placeholder-zeus" as AssetId,
+      older.revision,
+      vocabulary,
+    );
+
+    expect({
+      index: textOf(join(dir, "index.json")),
+      manifests: listing(join(dir, "manifests")),
+      blobs: listing(join(dir, "blobs")),
+    }).toEqual(before);
+  });
+
+  const read = (dir: string, revision: string, id = "placeholder-zeus") =>
+    readRevision(dir, id as AssetId, revision as Sha256, vocabulary);
+
+  it("refuses a missing revision, one that is not valid hex and one for another asset", () => {
+    const dir = root();
+    const first = publish(dir, spriteFixture("placeholder-zeus", 1));
+
+    for (const result of [
+      read(dir, "9".repeat(64)),
+      read(dir, "not-a-hash"),
+      read(dir, first.revision, "zeus-portrait"),
+    ])
+      expect(result.ok).toBe(false);
+  });
+
+  it("refuses a tampered, non-canonical, missing or corrupt older revision, each by its own code", () => {
+    const dir = root();
+    const older = publish(dir, spriteFixture("placeholder-zeus", 1));
+    publish(dir, spriteFixture("placeholder-zeus", 2));
+    const manifestPath = join(dir, "manifests", `${older.revision}.json`);
+    const good = textOf(manifestPath);
+    const blobPath = join(
+      dir,
+      "blobs",
+      `${spriteFixture("placeholder-zeus", 1).manifest.atlas.blob}.png`,
+    );
+    const goodBlob = new Uint8Array(readFileSync(blobPath));
+
+    writeFileSync(manifestPath, "{}");
+    const tampered = read(dir, older.revision);
+    expect(!tampered.ok && tampered.code).toBe("corrupt-manifest");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify(spriteFixture("placeholder-zeus", 1).manifest, null, 2),
+    );
+    expect(read(dir, older.revision).ok).toBe(false);
+    writeFileSync(manifestPath, good);
+    expect(read(dir, older.revision).ok).toBe(true);
+
+    writeFileSync(blobPath, "corrupt");
+    const corrupt = read(dir, older.revision);
+    expect(corrupt.ok).toBe(false);
+    rmSync(blobPath);
+    const missing = read(dir, older.revision);
+    expect(!missing.ok && missing.code).toBe("missing-blob");
+    writeFileSync(blobPath, goodBlob);
+    expect(read(dir, older.revision).ok).toBe(true);
+  });
+
+  it("refuses a hash-consistent blob that is not a whole PNG", () => {
+    const dir = root();
+    const asset = spriteFixture("placeholder-zeus", 1);
+    const older = publish(dir, asset);
+    const blobPath = join(dir, "blobs", `${asset.manifest.atlas.blob}.png`);
+    const bytes = new Uint8Array(readFileSync(blobPath));
+    writeFileSync(blobPath, bytes.slice(0, 40));
+
+    expect(read(dir, older.revision).ok).toBe(false);
   });
 });

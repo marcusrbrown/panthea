@@ -11,6 +11,7 @@ import { sha256Hex } from "../hash";
 import {
   authoredFrames,
   doneCandidate,
+  engineFacts,
   jobSource,
   keyframe,
   needsScaleCandidate,
@@ -18,6 +19,8 @@ import {
   queuedJob,
   removeTempRoots,
   request,
+  runningJob,
+  studioAsset,
   succeededJob,
   TEST_PALETTE,
   tempRoot,
@@ -50,6 +53,7 @@ describe("authoring root", () => {
       candidates: [],
       workingSets: [],
       edits: [],
+      assets: [],
       commands: [],
       invalid: [],
     });
@@ -76,6 +80,7 @@ describe("records", () => {
       schemaVersion: 1,
       source: jobSource("r1", 2),
       job: succeededJob("job-a"),
+      engine: engineFacts(),
     } as const;
     const candidate = doneCandidate("job-a", { ordinal: 2 });
     const stuck = needsScaleCandidate("job-b", { ordinal: 3 });
@@ -105,6 +110,7 @@ describe("records", () => {
       candidates: [candidate, stuck],
       workingSets: [set],
       edits: [],
+      assets: [],
       commands: [command],
       invalid: [],
     });
@@ -247,6 +253,7 @@ describe("records", () => {
       schemaVersion: 1,
       source: jobSource("r1"),
       job: succeededJob("job-a"),
+      engine: engineFacts(),
     });
 
     expect(store.status().jobs.map((r) => r.job.status)).toEqual(["succeeded"]);
@@ -996,4 +1003,401 @@ describe("edit records and files", () => {
 
     expect(readdirSync(join(root, "edits", "e1"))).toEqual(["sheet.png"]);
   });
+});
+
+describe("engine facts on job records", () => {
+  const readOne = (root: string) => openStore(root).status();
+  const put = (root: string, record: unknown, id = "job-a") => {
+    mkdirSync(join(root, "jobs"), { recursive: true });
+    writeFileSync(join(root, "jobs", `${id}.json`), JSON.stringify(record));
+  };
+  const succeededRecord = (extra: object = {}) => ({
+    schemaVersion: 1,
+    source: jobSource("r1"),
+    job: succeededJob("job-a"),
+    engine: engineFacts(),
+    ...extra,
+  });
+
+  test("a succeeded job carries its engine facts and reads back unchanged", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    const record = {
+      schemaVersion: 1 as const,
+      source: jobSource("r1"),
+      job: succeededJob("job-a"),
+      engine: engineFacts({
+        loras: [{ id: "pixel-lora", sha256: sha256Hex(new Uint8Array([7])) }],
+      }),
+    };
+
+    store.putJob(record);
+
+    expect(readOne(root).jobs).toEqual([record]);
+    expect(readOne(root).invalid).toEqual([]);
+  });
+
+  test("a succeeded job without engine facts is invalid", () => {
+    const root = tempRoot();
+    put(root, {
+      schemaVersion: 1,
+      source: jobSource("r1"),
+      job: succeededJob("job-a"),
+    });
+
+    const status = readOne(root);
+
+    expect(status.jobs).toEqual([]);
+    expect(status.invalid.map((p) => [p.file, p.message])).toEqual([
+      ["jobs/job-a.json", expect.stringMatching(/engine/)],
+    ]);
+  });
+
+  for (const [name, job] of [
+    ["queued", queuedJob("job-a")],
+    ["running", runningJob("job-a")],
+    ["failed", { ...queuedJob("job-a"), status: "failed", error: "x" }],
+    [
+      "unavailable",
+      {
+        ...queuedJob("job-a"),
+        status: "unavailable",
+        reason: "r",
+        staging: "s",
+      },
+    ],
+    [
+      "cancelled",
+      { ...queuedJob("job-a"), status: "cancelled", cancelledBy: "aborted" },
+    ],
+  ] as const)
+    test(`a ${name} job with engine facts is invalid`, () => {
+      const root = tempRoot();
+      put(root, {
+        schemaVersion: 1,
+        source: jobSource("r1"),
+        job,
+        engine: engineFacts(),
+      });
+
+      expect(readOne(root).invalid.map((p) => p.file)).toEqual([
+        "jobs/job-a.json",
+      ]);
+      expect(readOne(root).jobs).toEqual([]);
+    });
+
+  const bad: [string, (e: Json) => void][] = [
+    [
+      "an unknown key",
+      (e) => {
+        e.endpoint = "http://127.0.0.1:1";
+      },
+    ],
+    [
+      "a file path key",
+      (e) => {
+        e.path = "/models/x.gguf";
+      },
+    ],
+    [
+      "a missing runtime",
+      (e) => {
+        delete e.runtime;
+      },
+    ],
+    [
+      "a runtime with an extra key",
+      (e) => {
+        e.runtime.commit = "x";
+      },
+    ],
+    [
+      "a non-hex binary hash",
+      (e) => {
+        e.runtimeBinarySha256 = "xyz";
+      },
+    ],
+    [
+      "a missing binary hash",
+      (e) => {
+        delete e.runtimeBinarySha256;
+      },
+    ],
+    [
+      "a model with a short hash",
+      (e) => {
+        e.model.sha256 = "ab";
+      },
+    ],
+    [
+      "a model without an id",
+      (e) => {
+        delete e.model.id;
+      },
+    ],
+    [
+      "loras that are not an array",
+      (e) => {
+        e.loras = {};
+      },
+    ],
+    [
+      "an encoder that is undefined instead of null",
+      (e) => {
+        delete e.encoder;
+      },
+    ],
+    [
+      "a vae that is a string",
+      (e) => {
+        e.vae = "z-image-ae";
+      },
+    ],
+    [
+      "licences with an unknown role",
+      (e) => {
+        e.licences[0].role = "owner";
+      },
+    ],
+    [
+      "licences that are not an array",
+      (e) => {
+        e.licences = "MIT";
+      },
+    ],
+    [
+      "a credential-looking setting key",
+      (e) => {
+        e.settings.apiKey = "x";
+      },
+    ],
+    [
+      "an endpoint in a setting value",
+      (e) => {
+        e.settings.server = "http://127.0.0.1:8080";
+      },
+    ],
+    [
+      "a nested setting",
+      (e) => {
+        e.settings.sample_params = { a: 1 };
+      },
+    ],
+    [
+      "a missing settings object",
+      (e) => {
+        delete e.settings;
+      },
+    ],
+  ];
+  for (const [name, change] of bad)
+    test(`engine facts with ${name} are invalid`, () => {
+      const root = tempRoot();
+      const record = JSON.parse(JSON.stringify(succeededRecord()));
+      change(record.engine);
+      put(root, record);
+
+      expect(readOne(root).invalid.map((p) => p.file)).toEqual([
+        "jobs/job-a.json",
+      ]);
+    });
+
+  test("an unknown key on the job record is still invalid", () => {
+    const root = tempRoot();
+    put(root, succeededRecord({ extra: 1 }));
+
+    expect(readOne(root).invalid).toHaveLength(1);
+  });
+});
+
+describe("studio asset records", () => {
+  const put = (root: string, record: unknown, id = "asset-a") => {
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", `${id}.json`), JSON.stringify(record));
+  };
+
+  test("a packed asset reads back as written and is listed by status", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    const draft = studioAsset("asset-a");
+    const published = studioAsset("asset-b", {
+      published: { revision: sha256Hex(new Uint8Array([9])) },
+      licenceAssessments: [
+        {
+          record: { subject: "x", role: "input", licence: "Custom" },
+          disposition: "mit-compatible",
+          reason: "owner read the terms",
+        },
+      ],
+    });
+
+    store.putAsset(draft);
+    store.putAsset(published);
+
+    expect(store.readAsset("asset-a")).toEqual({ kind: "found", value: draft });
+    expect(store.status().assets).toEqual([draft, published]);
+    expect(store.status().invalid).toEqual([]);
+  });
+
+  const bad: [string, (r: Json) => void][] = [
+    [
+      "an unknown key",
+      (r) => {
+        r.extra = 1;
+      },
+    ],
+    [
+      "schema version 2",
+      (r) => {
+        r.schemaVersion = 2;
+      },
+    ],
+    [
+      "a non-slug local id",
+      (r) => {
+        r.id = "Not A Slug";
+      },
+    ],
+    [
+      "a non-slug asset id",
+      (r) => {
+        r.assetId = "Zeus";
+      },
+    ],
+    [
+      "a prior that is not a hash",
+      (r) => {
+        r.prior = "x";
+      },
+    ],
+    [
+      "a missing prior",
+      (r) => {
+        delete r.prior;
+      },
+    ],
+    [
+      "an unknown record state",
+      (r) => {
+        r.record.state = "weird";
+      },
+    ],
+    [
+      "a record without a manifest",
+      (r) => {
+        delete r.record.manifest;
+      },
+    ],
+    [
+      "a draft without its edit state",
+      (r) => {
+        delete r.record.edit;
+      },
+    ],
+    [
+      "a candidate record carrying a basis",
+      (r) => {
+        r.record = {
+          state: "candidate",
+          manifest: r.record.manifest,
+          report: { schemaVersion: 1, status: "pass", checks: [] },
+          basis: { type: "report-pass" },
+        };
+      },
+    ],
+    [
+      "an approved record without a basis",
+      (r) => {
+        r.record = { state: "approved", manifest: r.record.manifest };
+      },
+    ],
+    [
+      "a report whose status disagrees with its checks",
+      (r) => {
+        r.record.report.status = "fail";
+      },
+    ],
+    [
+      "a manifest revision that is not a hash",
+      (r) => {
+        r.manifestRevision = "x";
+      },
+    ],
+    [
+      "a report basis without a palette digest",
+      (r) => {
+        delete r.reportBasis.paletteDigest;
+      },
+    ],
+    [
+      "a licence review entry with an unknown status",
+      (r) => {
+        r.licenceReview.entries[0].status = "fine";
+      },
+    ],
+    [
+      "a licence review entry with an unknown source",
+      (r) => {
+        r.licenceReview.entries[0].source = "guess";
+      },
+    ],
+    [
+      "a licence review without its revision",
+      (r) => {
+        delete r.licenceReview.manifestRevision;
+      },
+    ],
+    [
+      "an assessment with an unknown disposition",
+      (r) => {
+        r.licenceAssessments = [
+          {
+            record: { subject: "x", role: "input", licence: "L" },
+            disposition: "legal",
+            reason: "r",
+          },
+        ];
+      },
+    ],
+    [
+      "an assessment without a reason",
+      (r) => {
+        r.licenceAssessments = [
+          {
+            record: { subject: "x", role: "input", licence: "L" },
+            disposition: "incompatible",
+            reason: "",
+          },
+        ];
+      },
+    ],
+    [
+      "a published marker that is not a revision",
+      (r) => {
+        r.published = { revision: "x" };
+      },
+    ],
+    [
+      "a missing published marker",
+      (r) => {
+        delete r.published;
+      },
+    ],
+  ];
+  for (const [name, change] of bad)
+    test(`a record with ${name} is reported invalid and its neighbours still read`, () => {
+      const root = tempRoot();
+      const store = openStore(root);
+      store.putAsset(studioAsset("asset-b"));
+      const record = clone(studioAsset("asset-a"));
+      change(record);
+      put(root, record);
+
+      const status = store.status();
+
+      expect(status.assets.map((a) => a.id)).toEqual(["asset-b"]);
+      expect(status.invalid.map((p) => p.file)).toEqual([
+        "assets/asset-a.json",
+      ]);
+    });
 });

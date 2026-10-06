@@ -29,23 +29,33 @@ const request = {
   subject: "zeus",
   kind: "sprite",
   slots: [{ state: "idle", direction: "south" }],
-  batch: 4,
+  batch: 1,
+  seed: 1,
 };
 
 function provenance(): Provenance {
   const parsed = parseProvenance({
     method: "generated",
-    jobId: "job-1",
-    request,
-    runtime: { name: "sd", version: "1" },
-    model: { id: "m", sha256: H("a") },
-    loras: [],
-    seed: 1,
-    settings: {},
-    resultHashes: [H("c")],
-    licences: [{ subject: "m", role: "model", licence: "Apache-2.0" }],
+    generations: [
+      {
+        jobId: "job-1",
+        request,
+        runtime: { name: "sd", version: "1" },
+        model: { id: "m", sha256: H("a") },
+        loras: [],
+        encoder: null,
+        vae: null,
+        seed: 1,
+        settings: {},
+        used: [H("c")],
+      },
+    ],
+    licences: [
+      { subject: "sd", role: "runtime", licence: "MIT" },
+      { subject: "m", role: "model", licence: "Apache-2.0" },
+    ],
     relatedJobs: [
-      { jobId: "job-1", status: "succeeded", outputs: [H("c")] },
+      { jobId: "job-1", status: "succeeded", outputs: [H("c"), H("7")] },
       { jobId: "job-0", status: "cancelled" },
     ],
     handEdits: [],
@@ -494,11 +504,17 @@ describe("provenance against job records", () => {
     request: request as unknown as GenerationRequest,
     provider: { id: "local-image", medium: "image", hosting: "local" },
   };
+  const out = (hash: string) => ({
+    medium: "image",
+    hash,
+    width: 64,
+    height: 80,
+  });
   const succeeded = {
     ...base,
     id: "job-1",
     status: "succeeded",
-    outputs: [{ medium: "image", hash: H("c"), width: 64, height: 80 }],
+    outputs: [out(H("c")), out(H("7"))],
   };
   const cancelled = {
     ...base,
@@ -512,53 +528,219 @@ describe("provenance against job records", () => {
       if (!parsed.ok) throw new Error(parsed.message);
       return parsed.value as GenerationJob;
     });
+  const code = (result: ReturnType<typeof checkProvenanceAgainstJobs>) =>
+    result.ok ? "ok" : result.code;
 
   it("accepts a ledger that agrees with the provenance", () => {
     expect(
-      checkProvenanceAgainstJobs(prov, jobs(succeeded, cancelled)).ok,
-    ).toBe(true);
+      code(checkProvenanceAgainstJobs(prov, jobs(succeeded, cancelled))),
+    ).toBe("ok");
   });
 
-  it("rejects a missing job, a changed status and different output hashes", () => {
-    const missing = checkProvenanceAgainstJobs(prov, jobs(succeeded));
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.code).toBe("job-mismatch");
-
-    const flipped = checkProvenanceAgainstJobs(
-      prov,
-      jobs(succeeded, { ...base, id: "job-0", status: "failed", error: "x" }),
+  it("rejects a missing job and a changed status", () => {
+    expect(code(checkProvenanceAgainstJobs(prov, jobs(succeeded)))).toBe(
+      "job-mismatch",
     );
-    expect(flipped.ok).toBe(false);
-
-    const otherHash = checkProvenanceAgainstJobs(
-      prov,
-      jobs(
-        {
-          ...succeeded,
-          outputs: [{ medium: "image", hash: H("9"), width: 64, height: 80 }],
-        },
-        cancelled,
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          prov,
+          jobs(succeeded, {
+            ...base,
+            id: "job-0",
+            status: "failed",
+            error: "x",
+          }),
+        ),
       ),
-    );
-    expect(otherHash.ok).toBe(false);
-    if (!otherHash.ok) expect(otherHash.code).toBe("hash-mismatch");
+    ).toBe("job-mismatch");
   });
 
-  it("rejects a source job that did not succeed in the ledger", () => {
-    const running = checkProvenanceAgainstJobs(
-      prov,
-      jobs({ ...base, id: "job-1", status: "running" }, cancelled),
-    );
-    expect(running.ok).toBe(false);
-    if (!running.ok) expect(running.code).toBe("job-not-succeeded");
+  it("needs the whole output set to match, not just the hashes the asset uses", () => {
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          prov,
+          jobs({ ...succeeded, outputs: [out(H("c"))] }, cancelled),
+        ),
+      ),
+    ).toBe("hash-mismatch");
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          prov,
+          jobs(
+            { ...succeeded, outputs: [out(H("c")), out(H("7")), out(H("6"))] },
+            cancelled,
+          ),
+        ),
+      ),
+    ).toBe("hash-mismatch");
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          prov,
+          jobs(
+            { ...succeeded, outputs: [out(H("c")), out(H("9"))] },
+            cancelled,
+          ),
+        ),
+      ),
+    ).toBe("hash-mismatch");
   });
 
-  it("rejects a request that differs from the job's", () => {
-    const different = checkProvenanceAgainstJobs(
-      prov,
-      jobs({ ...succeeded, request: { ...request, batch: 8 } }, cancelled),
-    );
-    expect(different.ok).toBe(false);
-    if (!different.ok) expect(different.code).toBe("job-mismatch");
+  it("rejects a generation whose job did not succeed in the ledger", () => {
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          prov,
+          jobs({ ...base, id: "job-1", status: "running" }, cancelled),
+        ),
+      ),
+    ).toBe("job-not-succeeded");
+  });
+
+  it("rejects a request that differs from the job's, and a used hash outside the job's outputs", () => {
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          prov,
+          jobs({ ...succeeded, request: { ...request, seed: 2 } }, cancelled),
+        ),
+      ),
+    ).toBe("job-mismatch");
+    const stray =
+      prov.method === "generated"
+        ? {
+            ...prov,
+            generations: [{ ...prov.generations[0], used: [H("9")] }],
+          }
+        : prov;
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          stray as Provenance,
+          jobs(succeeded, cancelled),
+        ),
+      ),
+    ).toBe("hash-mismatch");
+  });
+
+  it("checks every generation and every related job, and ignores source assets", () => {
+    const twoJobs = {
+      ...(prov as object),
+      generations: [
+        (prov as unknown as { generations: object[] }).generations[0],
+        {
+          ...(prov as unknown as { generations: object[] }).generations[0],
+          jobId: "job-2",
+          request: { ...request, seed: 2 },
+          seed: 2,
+          used: [H("d")],
+        },
+      ],
+      relatedJobs: [
+        ...(prov as unknown as { relatedJobs: object[] }).relatedJobs,
+        { jobId: "job-2", status: "succeeded", outputs: [H("d")] },
+      ],
+      sourceAssets: [{ assetId: "older-zeus", revision: H("5") }],
+    } as unknown as Provenance;
+    const second = {
+      ...succeeded,
+      id: "job-2",
+      request: { ...request, seed: 2 },
+      outputs: [out(H("d"))],
+    };
+
+    expect(
+      code(
+        checkProvenanceAgainstJobs(twoJobs, jobs(succeeded, second, cancelled)),
+      ),
+    ).toBe("ok");
+    expect(
+      code(checkProvenanceAgainstJobs(twoJobs, jobs(succeeded, cancelled))),
+    ).toBe("job-mismatch");
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          twoJobs,
+          jobs(
+            succeeded,
+            { ...second, request: { ...request, seed: 3 } },
+            cancelled,
+          ),
+        ),
+      ),
+    ).toBe("job-mismatch");
+  });
+
+  it("holds failed, cancelled and unavailable refs to a ledger with no outputs", () => {
+    const refs = (status: string) =>
+      ({
+        ...(prov as object),
+        relatedJobs: [
+          ...(
+            prov as unknown as { relatedJobs: { jobId: string }[] }
+          ).relatedJobs.filter((r) => r.jobId === "job-1"),
+          { jobId: "job-x", status },
+        ],
+      }) as unknown as Provenance;
+    const ledgerOf = (extra: object) =>
+      jobs(succeeded, { ...base, id: "job-x", ...extra });
+
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          refs("failed"),
+          ledgerOf({ status: "failed", error: "x" }),
+        ),
+      ),
+    ).toBe("ok");
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          refs("unavailable"),
+          ledgerOf({ status: "unavailable", reason: "r", staging: "s" }),
+        ),
+      ),
+    ).toBe("ok");
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          refs("failed"),
+          ledgerOf({ status: "queued" }),
+        ),
+      ),
+    ).toBe("job-mismatch");
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          refs("cancelled"),
+          ledgerOf({ status: "cancelled", cancelledBy: "removed" }),
+        ),
+      ),
+    ).toBe("ok");
+  });
+
+  it("does not look at hand or derived provenance for generations", () => {
+    const hand = {
+      method: "hand",
+      licences: [{ subject: "o", role: "original-work", licence: "MIT" }],
+      relatedJobs: [
+        { jobId: "job-1", status: "succeeded", outputs: [H("c"), H("7")] },
+      ],
+      handEdits: [{ description: "drew it" }],
+      sourceAssets: [{ assetId: "older", revision: H("5") }],
+    } as unknown as Provenance;
+
+    expect(code(checkProvenanceAgainstJobs(hand, jobs(succeeded)))).toBe("ok");
+    expect(
+      code(
+        checkProvenanceAgainstJobs(
+          hand,
+          jobs({ ...succeeded, outputs: [out(H("c"))] }),
+        ),
+      ),
+    ).toBe("hash-mismatch");
   });
 });

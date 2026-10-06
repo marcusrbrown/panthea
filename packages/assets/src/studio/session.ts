@@ -7,6 +7,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import type { GenerationJob, JobOutput } from "@panthea/contracts";
 import { parseSlug } from "@panthea/contracts";
+import type { Palette } from "../palette";
 import {
   type CandidateRecord,
   type ConformParams,
@@ -17,6 +18,12 @@ import {
   type EditCommandResult,
   type EditResult,
 } from "./edit-session";
+import type { PackInput } from "./packing";
+import {
+  type ApproveOptions,
+  type AssetOpResult,
+  createAssetOps,
+} from "./publish";
 import { planJobs, type StudioContent } from "./request";
 import {
   type CommandType,
@@ -28,7 +35,12 @@ import {
   type Store,
 } from "./store";
 import { newWorkingSet, pickKeyframe, replaceSheetOf } from "./working-set";
-import { STUDIO_SCHEMA_VERSION, studioPaths } from "./workspace";
+import {
+  type EngineFacts,
+  parseEngineFacts,
+  STUDIO_SCHEMA_VERSION,
+  studioPaths,
+} from "./workspace";
 
 export interface StudioSession {
   readonly id: string;
@@ -43,7 +55,11 @@ export interface StudioSession {
   /** Queued jobs in durable enqueue order. */
   queued(): QueuedResult;
   start(jobId: string): CommandResult;
-  succeed(jobId: string, outputs: readonly JobOutput[]): CommandResult;
+  succeed(
+    jobId: string,
+    outputs: readonly JobOutput[],
+    engine: EngineFacts,
+  ): CommandResult;
   fail(jobId: string, error: string): CommandResult;
   unavailable(jobId: string, reason: string, staging: string): CommandResult;
   /** Conforms a succeeded job's original image into a candidate; the original bytes are never rewritten. */
@@ -86,6 +102,27 @@ export interface StudioSession {
   ): EditResult;
   /** Ends an edit and leaves the working set exactly as it was. */
   discardEdit(id: string): EditCommandResult;
+  /** Packs a complete working set into a draft asset record; never approves. */
+  pack(
+    input: PackInput,
+    content: StudioContent,
+    palette: Palette,
+    registryRoot: string,
+  ): AssetOpResult;
+  /** The separate, explicit approval of a draft's exact manifest and atlas. */
+  approveAsset(
+    id: string,
+    options: ApproveOptions,
+    content: StudioContent,
+    palette: Palette,
+  ): AssetOpResult;
+  /** Publishes an approved asset through the registry; every gate runs before canon is written. */
+  publishAsset(
+    id: string,
+    content: StudioContent,
+    palette: Palette,
+    registryRoot: string,
+  ): AssetOpResult;
   remove(jobId: string): CommandResult;
   /** Cancels a running job. The owner of the runtime kills its child. */
   abort(jobId: string): CommandResult;
@@ -242,6 +279,7 @@ export function openStudioSession(root: string): StudioOpen {
       type: CommandType,
       from: readonly GenerationJob["status"][],
       next: (job: GenerationJob) => GenerationJob,
+      engine?: EngineFacts,
     ): CommandResult => {
       if (closed) return closedRefusal();
       const read = store.readJob(jobId);
@@ -263,6 +301,7 @@ export function openStudioSession(root: string): StudioOpen {
           schemaVersion: STUDIO_SCHEMA_VERSION,
           source,
           job: next(job),
+          ...(engine === undefined ? {} : { engine }),
         }),
       );
     };
@@ -349,6 +388,14 @@ export function openStudioSession(root: string): StudioOpen {
       hasLedgered: (type, id) =>
         store.status().commands.some((c) => c.type === type && c.jobId === id),
     });
+    const assetOps = createAssetOps({
+      store,
+      isClosed: () => closed,
+      ledgered,
+      write: writeRecord,
+      hasLedgered: (type, id) =>
+        store.status().commands.some((c) => c.type === type && c.jobId === id),
+    });
     const closedWrite = <A extends unknown[], R>(write: (...args: A) => R) => {
       return (...args: A): R => {
         if (closed) throw new Error(CLOSED);
@@ -363,6 +410,7 @@ export function openStudioSession(root: string): StudioOpen {
       putCandidate: closedWrite(store.putCandidate),
       putWorkingSet: closedWrite(store.putWorkingSet),
       putEdit: closedWrite(store.putEdit),
+      putAsset: closedWrite(store.putAsset),
       putEditFile: closedWrite(store.putEditFile),
       putCommand: closedWrite(store.putCommand),
       putBlob: closedWrite(store.putBlob),
@@ -416,12 +464,19 @@ export function openStudioSession(root: string): StudioOpen {
             ...jobBase(job),
             status: "running",
           })),
-        succeed: (jobId, outputs) =>
-          transition(jobId, "succeed", ["running"], (job) => ({
-            ...jobBase(job),
-            status: "succeeded",
-            outputs,
-          })),
+        succeed(jobId, outputs, engine) {
+          if (closed) return closedRefusal();
+          const facts = parseEngineFacts(engine, "engine");
+          if (!facts.ok)
+            return refused("invalid-params", `${facts.path}: ${facts.message}`);
+          return transition(
+            jobId,
+            "succeed",
+            ["running"],
+            (job) => ({ ...jobBase(job), status: "succeeded", outputs }),
+            facts.value,
+          );
+        },
         fail: (jobId, error) =>
           transition(jobId, "fail", ["running"], (job) => ({
             ...jobBase(job),
@@ -506,6 +561,9 @@ export function openStudioSession(root: string): StudioOpen {
         importEdit: editOps.importEdit,
         finishEdit: editOps.finishEdit,
         discardEdit: editOps.discardEdit,
+        pack: assetOps.pack,
+        approveAsset: assetOps.approveAsset,
+        publishAsset: assetOps.publishAsset,
         remove: (jobId) =>
           transition(jobId, "remove", ["queued"], (job) => ({
             ...jobBase(job),

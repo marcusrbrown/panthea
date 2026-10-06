@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import {
+  fail,
   type GenerationJob,
   type GenerationRequest,
   ok,
@@ -33,9 +34,13 @@ import { type CandidateRecord, parseCandidateRecord } from "./candidates";
 import { type EditRecord, parseEditRecord } from "./export-import";
 import { parseWorkingSetRecord, type WorkingSetRecord } from "./working-set";
 import {
+  type EngineFacts,
   type JobSource,
+  parseEngineFacts,
   parseJobSource,
+  parseStudioAssetRecord,
   parseStudioVersion,
+  type StudioAssetRecord,
   studioPaths,
 } from "./workspace";
 
@@ -69,6 +74,8 @@ export interface JobRecord {
   readonly schemaVersion: 1;
   readonly source: JobSource;
   readonly job: GenerationJob;
+  /** What ran the job; present exactly when the job succeeded. */
+  readonly engine?: EngineFacts;
 }
 
 export const COMMAND_TYPES = [
@@ -83,6 +90,9 @@ export const COMMAND_TYPES = [
   "open-edit",
   "finish-edit",
   "discard-edit",
+  "pack",
+  "approve",
+  "publish",
 ] as const;
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
@@ -107,6 +117,7 @@ export interface StudioStatus {
   readonly candidates: readonly CandidateRecord[];
   readonly workingSets: readonly WorkingSetRecord[];
   readonly edits: readonly EditRecord[];
+  readonly assets: readonly StudioAssetRecord[];
   readonly commands: readonly CommandRecord[];
   readonly invalid: readonly StoreProblem[];
 }
@@ -182,10 +193,10 @@ const parseRequestRecord: Parse<RequestRecord> = (input) =>
   );
 
 const parseJobRecord: Parse<JobRecord> = (input) =>
-  parseStrictRecord(
+  parseStrictRecord<JobRecord>(
     input,
     "jobRecord",
-    ["schemaVersion", "source", "job"],
+    ["schemaVersion", "source", "job", "engine"],
     (record) => {
       const version = parseStudioVersion(record.schemaVersion, "jobRecord");
       if (!version.ok) return version;
@@ -193,10 +204,25 @@ const parseJobRecord: Parse<JobRecord> = (input) =>
       if (!source.ok) return source;
       const job = parseGenerationJob(record.job, "jobRecord.job");
       if (!job.ok) return job;
+      if (job.value.status !== "succeeded") {
+        if (record.engine !== undefined)
+          return fail(
+            "jobRecord.engine",
+            "only a succeeded job has engine facts",
+          );
+        return ok({
+          schemaVersion: version.value,
+          source: source.value,
+          job: job.value,
+        });
+      }
+      const engine = parseEngineFacts(record.engine, "jobRecord.engine");
+      if (!engine.ok) return engine;
       return ok({
         schemaVersion: version.value,
         source: source.value,
         job: job.value,
+        engine: engine.value,
       });
     },
   );
@@ -265,6 +291,7 @@ export interface Store {
   putCandidate(record: CandidateRecord): void;
   putWorkingSet(record: WorkingSetRecord): void;
   putEdit(record: EditRecord): void;
+  putAsset(record: StudioAssetRecord): void;
   /** Writes one of the three files an edit keeps beside its record. */
   putEditFile(id: string, name: EditFileName, bytes: Uint8Array): void;
   putCommand(record: CommandRecord): void;
@@ -276,6 +303,7 @@ export interface Store {
   readCandidate(id: string): Read<CandidateRecord>;
   readWorkingSet(id: string): Read<WorkingSetRecord>;
   readEdit(id: string): Read<EditRecord>;
+  readAsset(id: string): Read<StudioAssetRecord>;
   readEditFile(id: string, name: EditFileName): Uint8Array | undefined;
   /** The highest sequence number in the command ledger, by file name. */
   lastCommandSeq(): number;
@@ -314,6 +342,8 @@ export function openStore(root: string): Store {
       writeJson(join(paths.candidates, `${record.id}.json`), record),
     putWorkingSet: (record) =>
       writeJson(join(paths.workingSets, `${record.id}.json`), record),
+    putAsset: (record) =>
+      writeJson(join(paths.assets, `${record.id}.json`), record),
     putEdit: (record) =>
       writeJson(join(paths.edits, `${record.id}.json`), record),
     putEditFile(id, name, bytes) {
@@ -338,6 +368,8 @@ export function openStore(root: string): Store {
       readRecord(join(paths.requests, `${id}.json`), parseRequestRecord),
     readCandidate: (id) =>
       readRecord(join(paths.candidates, `${id}.json`), parseCandidateRecord),
+    readAsset: (id) =>
+      readRecord(join(paths.assets, `${id}.json`), parseStudioAssetRecord),
     readEdit: (id) =>
       readRecord(join(paths.edits, `${id}.json`), parseEditRecord),
     readEditFile(id, name) {
@@ -366,6 +398,7 @@ export function openStore(root: string): Store {
         candidates: list(paths.candidates, parseCandidateRecord, invalid),
         workingSets: list(paths.workingSets, parseWorkingSetRecord, invalid),
         edits: list(paths.edits, parseEditRecord, invalid),
+        assets: list(paths.assets, parseStudioAssetRecord, invalid),
         commands: list(paths.commands, parseCommandRecord, invalid),
         invalid,
       };

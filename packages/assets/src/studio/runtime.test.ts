@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
+import type { Sha256 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
 import { loadContent, removeTempRoots, tempRoot } from "./_test-fixtures";
 import {
@@ -219,6 +220,49 @@ afterEach(async () => {
   expect(leaked).toEqual([]);
 });
 
+describe("the fixture's warm-up", () => {
+  const staged = (behavior: Behavior = {}) => {
+    const dir = join(dirname(tempRoot()), "artifacts");
+    mkdirSync(dir, { recursive: true });
+    stageFixtureRuntime(dir, behavior);
+    return dir;
+  };
+
+  test("--warm exits 0 at once, logs nothing, listens on nothing and leaves nothing running", () => {
+    const dir = staged();
+    const started = Date.now();
+
+    const result = spawnSync(join(dir, "bin", "sd-server"), ["--warm"], {
+      env: {},
+      timeout: 5000,
+      killSignal: "SIGKILL",
+      encoding: "utf8",
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(readLog(dir)).toEqual([]);
+    expect(alive(result.pid)).toBe(false);
+  });
+
+  test("staging runs the warm-up and does not ignore its failure", () => {
+    expect(() => staged({ warmExit: 5 })).toThrow(/warm-up/);
+  });
+
+  test("a staged fixture's log is empty until its first real start, which is its only start marker", async () => {
+    const r = await rig({});
+    expect(readLog(r.dir)).toEqual([]);
+    submit(r, "zeus-idle");
+
+    await drain(r);
+
+    expect(events(r, "start")).toHaveLength(1);
+    await r.runtime.close();
+  });
+});
+
 describe("native API mapping and durable results", () => {
   test("a job becomes one img_gen request, a stored blob and a succeeded record with its source", async () => {
     const r = await rig({});
@@ -298,6 +342,114 @@ describe("native API mapping and durable results", () => {
       [3, "succeed", "zeus-idle-0000"],
     ]);
     expect(await r.runtime.close()).toEqual({ ok: true });
+  });
+
+  test("a succeeded job records the facts of the engine that was launched and verified, not paths or the server's arguments", async () => {
+    const r = await rig({});
+    submit(r, "zeus-idle", { seed: 77 });
+
+    await drain(r);
+
+    const record = jobsById(r)["zeus-idle-0000"];
+    const sent = events(r, "img_gen")[0]?.body as {
+      prompt: string;
+      negative_prompt: string;
+      width: number;
+      height: number;
+      batch_count: number;
+      output_format: string;
+      lora: unknown[];
+      sample_params: {
+        sample_method: string;
+        sample_steps: number;
+        guidance: { txt_cfg: number };
+      };
+    };
+    const hashOf = (text: string) => sha256Hex(new TextEncoder().encode(text));
+    expect(record?.engine).toEqual({
+      runtime: { name: "fixture-sd-server", version: "fixture" },
+      runtimeBinarySha256: r.profile.runtime.binary.sha256 as Sha256,
+      model: { id: "fixture-diffusion", sha256: hashOf("diffusion") },
+      loras: [],
+      encoder: { id: "fixture-encoder", sha256: hashOf("encoder") },
+      vae: { id: "fixture-vae", sha256: hashOf("vae") },
+      licences: [
+        {
+          subject: "fixture-sd-server",
+          role: "runtime" as const,
+          licence: "fixture",
+        },
+        {
+          subject: "fixture-diffusion",
+          role: "model" as const,
+          licence: "fixture",
+        },
+        {
+          subject: "fixture-encoder",
+          role: "encoder" as const,
+          licence: "fixture",
+        },
+        { subject: "fixture-vae", role: "vae" as const, licence: "fixture" },
+      ],
+      settings: {
+        prompt: sent.prompt,
+        negative_prompt: sent.negative_prompt,
+        width: sent.width,
+        height: sent.height,
+        batch_count: sent.batch_count,
+        sample_method: sent.sample_params.sample_method,
+        sample_steps: sent.sample_params.sample_steps,
+        txt_cfg: sent.sample_params.guidance.txt_cfg,
+        output_format: sent.output_format,
+      },
+    });
+    expect(sent.lora).toEqual([]);
+    const text = JSON.stringify(record?.engine);
+    for (const private_ of [
+      r.dir,
+      String(r.port),
+      "127.0.0.1",
+      "--offload",
+      "--diffusion-fa",
+      "--listen",
+      "models/",
+      "bin/",
+    ])
+      expect(text, private_).not.toContain(private_);
+    expect<string | undefined>(record?.engine?.runtimeBinarySha256).toBe(
+      r.profile.runtime.binary.sha256,
+    );
+    await r.runtime.close();
+  });
+
+  test("the engine facts come from the profile the runtime launched, not from the selected production profile", async () => {
+    const r = await rig({});
+    submit(r, "zeus-idle");
+
+    await drain(r);
+
+    const engine = jobsById(r)["zeus-idle-0000"]?.engine;
+    expect(engine?.runtime.name).not.toBe(SELECTED_PROFILE.runtime.id);
+    expect(engine?.model.id).not.toBe(SELECTED_PROFILE.components[0]?.id);
+    expect(engine?.model.sha256).not.toBe(
+      SELECTED_PROFILE.components[0]?.sha256,
+    );
+    await r.runtime.close();
+  });
+
+  test("a failed, unavailable or aborted job stores no engine facts", async () => {
+    const r = await rig({ sequence: ["failed", "ok"] });
+    submit(r, "zeus-idle", { slots: 2 });
+
+    await drain(r);
+
+    const jobs = jobsById(r);
+    expect(jobs["zeus-idle-0000"]?.job.status).toBe("failed");
+    expect(jobs["zeus-idle-0000"]).not.toHaveProperty("engine");
+    expect(jobs["zeus-idle-0001"]?.engine?.runtime.name).toBe(
+      "fixture-sd-server",
+    );
+    await r.runtime.close();
   });
 
   test("queued jobs run in durable enqueue order, not by name, and a removed job is never submitted", async () => {
