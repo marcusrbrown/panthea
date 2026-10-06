@@ -2,7 +2,7 @@
 // as running, prints READY, then idles until SIGTERM. A busy root prints BUSY
 // and exits 3.
 
-import { runningJob } from "./_test-fixtures";
+import { jobSource, runningJob } from "./_test-fixtures";
 import { openStudioSession } from "./index";
 
 const [root, jobId] = process.argv.slice(2);
@@ -20,7 +20,7 @@ if (opened.kind === "busy") {
 const { session } = opened;
 session.store.putJob({
   schemaVersion: 1,
-  requestId: "holder-request",
+  source: jobSource("holder-request"),
   job: runningJob(jobId),
 });
 process.on("SIGTERM", () => {

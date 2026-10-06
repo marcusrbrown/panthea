@@ -47,16 +47,33 @@ export interface SessionRecord {
 export interface RequestRecord {
   readonly schemaVersion: 1;
   readonly id: string;
+  /** The root request; `seed` is the base seed every job's seed counts from. */
   readonly request: GenerationRequest;
+  /** The ordinal the next expanded job takes. */
+  readonly nextOrdinal: number;
+}
+
+export interface JobSource {
+  readonly requestId: string;
+  readonly slotKey: string;
+  readonly ordinal: number;
 }
 
 export interface JobRecord {
   readonly schemaVersion: 1;
-  readonly requestId: string;
+  readonly source: JobSource;
   readonly job: GenerationJob;
 }
 
-export const COMMAND_TYPES = ["enqueue", "remove", "abort"] as const;
+export const COMMAND_TYPES = [
+  "enqueue",
+  "start",
+  "succeed",
+  "fail",
+  "unavailable",
+  "remove",
+  "abort",
+] as const;
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
 export interface CommandRecord {
@@ -126,10 +143,16 @@ const parseRequestRecord: Parse<RequestRecord> = (input) =>
   parseStrictRecord(
     input,
     "requestRecord",
-    ["schemaVersion", "id", "request"],
+    ["schemaVersion", "id", "request", "nextOrdinal"],
     (record) => {
       const version = parseStudioVersion(record.schemaVersion, "requestRecord");
       if (!version.ok) return version;
+      const nextOrdinal = parseIntegerAtLeast(
+        record.nextOrdinal,
+        "requestRecord.nextOrdinal",
+        0,
+      );
+      if (!nextOrdinal.ok) return nextOrdinal;
       const id = parseSlug(record.id, "requestRecord.id");
       if (!id.ok) return id;
       const request = parseGenerationRequest(
@@ -141,6 +164,27 @@ const parseRequestRecord: Parse<RequestRecord> = (input) =>
         schemaVersion: version.value,
         id: id.value,
         request: request.value,
+        nextOrdinal: nextOrdinal.value,
+      });
+    },
+  );
+
+const parseJobSource = (input: unknown, path: string): ParseResult<JobSource> =>
+  parseStrictRecord(
+    input,
+    path,
+    ["requestId", "slotKey", "ordinal"],
+    (record) => {
+      const requestId = parseSlug(record.requestId, `${path}.requestId`);
+      if (!requestId.ok) return requestId;
+      const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+      if (!slotKey.ok) return slotKey;
+      const ordinal = parseIntegerAtLeast(record.ordinal, `${path}.ordinal`, 0);
+      if (!ordinal.ok) return ordinal;
+      return ok({
+        requestId: requestId.value,
+        slotKey: slotKey.value,
+        ordinal: ordinal.value,
       });
     },
   );
@@ -149,17 +193,17 @@ const parseJobRecord: Parse<JobRecord> = (input) =>
   parseStrictRecord(
     input,
     "jobRecord",
-    ["schemaVersion", "requestId", "job"],
+    ["schemaVersion", "source", "job"],
     (record) => {
       const version = parseStudioVersion(record.schemaVersion, "jobRecord");
       if (!version.ok) return version;
-      const requestId = parseSlug(record.requestId, "jobRecord.requestId");
-      if (!requestId.ok) return requestId;
+      const source = parseJobSource(record.source, "jobRecord.source");
+      if (!source.ok) return source;
       const job = parseGenerationJob(record.job, "jobRecord.job");
       if (!job.ok) return job;
       return ok({
         schemaVersion: version.value,
-        requestId: requestId.value,
+        source: source.value,
         job: job.value,
       });
     },
@@ -232,6 +276,7 @@ export interface Store {
   putBlob(bytes: Uint8Array): Sha256;
   readBlob(hash: Sha256): Uint8Array | undefined;
   readJob(id: string): Read<JobRecord>;
+  readRequest(id: string): Read<RequestRecord>;
   /** The highest sequence number in the command ledger, by file name. */
   lastCommandSeq(): number;
   status(): StudioStatus;
@@ -280,6 +325,8 @@ export function openStore(root: string): Store {
       return existsSync(path) ? new Uint8Array(readFileSync(path)) : undefined;
     },
     readJob: (id) => readRecord(join(paths.jobs, `${id}.json`), parseJobRecord),
+    readRequest: (id) =>
+      readRecord(join(paths.requests, `${id}.json`), parseRequestRecord),
     lastCommandSeq() {
       if (!existsSync(paths.commands)) return 0;
       return readdirSync(paths.commands)

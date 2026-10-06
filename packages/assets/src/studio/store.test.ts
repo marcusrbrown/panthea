@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import { sha256Hex } from "../hash";
 import {
+  jobSource,
   queuedJob,
   removeTempRoots,
   request,
@@ -55,10 +56,15 @@ describe("records", () => {
       pid: 42,
       startedAt: "2026-10-05T00:00:00.000Z",
     } as const;
-    const requestRecord = { schemaVersion: 1, id: "r1", request } as const;
+    const requestRecord = {
+      schemaVersion: 1,
+      id: "r1",
+      request,
+      nextOrdinal: 3,
+    } as const;
     const jobRecord = {
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource("r1", 2),
       job: succeededJob("job-a"),
     } as const;
     const workspace = {
@@ -94,10 +100,10 @@ describe("records", () => {
   test("a malformed record of each kind is reported by file; valid neighbours still read", () => {
     const root = tempRoot();
     const store = openStore(root);
-    store.putRequest({ schemaVersion: 1, id: "good", request });
+    store.putRequest({ schemaVersion: 1, id: "good", request, nextOrdinal: 0 });
     store.putJob({
       schemaVersion: 1,
-      requestId: "good",
+      source: jobSource("good"),
       job: queuedJob("job-a"),
     });
     store.putWorkspace({
@@ -123,6 +129,27 @@ describe("records", () => {
     );
     writeFileSync(join(root, "jobs", "bad.json"), "{");
     writeFileSync(
+      join(root, "jobs", "no-source.json"),
+      JSON.stringify({ schemaVersion: 1, job: queuedJob("no-source") }),
+    );
+    writeFileSync(
+      join(root, "jobs", "bad-ordinal.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        source: { ...jobSource("good"), ordinal: -1 },
+        job: queuedJob("bad-ordinal"),
+      }),
+    );
+    writeFileSync(
+      join(root, "requests", "bad-ordinal.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        id: "bad-ordinal",
+        request,
+        nextOrdinal: -1,
+      }),
+    );
+    writeFileSync(
       join(root, "workspaces", "bad.json"),
       JSON.stringify({
         schemaVersion: 1,
@@ -147,7 +174,10 @@ describe("records", () => {
 
     expect(status.invalid.map((p) => p.file).sort()).toEqual([
       "commands/00000002.json",
+      "jobs/bad-ordinal.json",
       "jobs/bad.json",
+      "jobs/no-source.json",
+      "requests/bad-ordinal.json",
       "requests/bad.json",
       "session.json",
       "workspaces/bad.json",
@@ -166,7 +196,7 @@ describe("records", () => {
     const store = openStore(root);
     store.putJob({
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource("r1"),
       job: queuedJob("job-a"),
     });
     writeFileSync(join(root, "jobs", "job-b.json.123.abc.tmp"), '{"half":');
@@ -185,7 +215,7 @@ describe("records", () => {
     expect(() =>
       store.putJob({
         schemaVersion: 1,
-        requestId: "r1",
+        source: jobSource("r1"),
         job: queuedJob("job-a"),
       }),
     ).toThrow();
@@ -198,12 +228,12 @@ describe("records", () => {
     const store = openStore(root);
     store.putJob({
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource("r1"),
       job: queuedJob("job-a"),
     });
     store.putJob({
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource("r1"),
       job: succeededJob("job-a"),
     });
 

@@ -1,8 +1,16 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { GenerationJob, GenerationRequest } from "@panthea/contracts";
+import { parseGodProfile, parseGodVisualProfiles } from "@panthea/content";
+import {
+  type GenerationJob,
+  type GenerationRequest,
+  type ParseResult,
+  parseAssetVocabulary,
+} from "@panthea/contracts";
 import { sha256Hex } from "../hash";
+import { parsePalette } from "../palette";
+import type { StudioContent } from "./request";
 
 export const HOLDER = join(import.meta.dir, "_test-holder.ts");
 
@@ -20,6 +28,10 @@ const provider = {
   medium: "image",
   hosting: "local",
 } as const;
+
+export function jobSource(requestId = "r1", ordinal = 0) {
+  return { requestId, slotKey: "idle/south", ordinal };
+}
 
 export function queuedJob(id: string) {
   return {
@@ -92,4 +104,54 @@ export async function reapChildren(): Promise<void> {
     if (child.exitCode === null) child.kill("SIGKILL");
     await child.exited;
   }
+}
+
+const contentRoot = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "..",
+  "..",
+  "content",
+  "greek",
+);
+const readText = (...parts: string[]) =>
+  readFileSync(join(contentRoot, ...parts), "utf8");
+const readJson = (...parts: string[]): unknown =>
+  JSON.parse(readText(...parts));
+
+function unwrap<T>(result: ParseResult<T>): T {
+  if (!result.ok) throw new Error(`${result.path}: ${result.message}`);
+  return result.value;
+}
+
+/** The authored Greek content, parsed through the production parsers. */
+export function loadContent(): StudioContent {
+  const vocabulary = unwrap(
+    parseAssetVocabulary(readJson("assets", "vocabulary.json")),
+  );
+  const gods = readdirSync(join(contentRoot, "gods"))
+    .filter((f) => f.endsWith(".json"))
+    .sort()
+    .map((f) => unwrap(parseGodProfile(readJson("gods", f), f)));
+  const visuals = unwrap(
+    parseGodVisualProfiles(
+      readdirSync(join(contentRoot, "assets", "subjects"))
+        .sort()
+        .map((f) => ({ label: f, value: readJson("assets", "subjects", f) })),
+      gods,
+      vocabulary.paletteFamilies,
+    ),
+  );
+  const palette = unwrap(
+    parsePalette(
+      {
+        json: readJson("palette", "palette.json"),
+        gpl: readText("palette", "master.gpl"),
+        hex: readText("palette", "master.hex"),
+      },
+      vocabulary.paletteFamilies,
+    ),
+  );
+  return { vocabulary, gods, visuals, palette };
 }

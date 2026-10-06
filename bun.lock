@@ -65,6 +65,7 @@
       "name": "@panthea/assets",
       "version": "0.1.0",
       "dependencies": {
+        "@panthea/content": "workspace:*",
         "@panthea/contracts": "workspace:*",
       },
     },

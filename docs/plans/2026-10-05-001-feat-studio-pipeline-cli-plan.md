@@ -322,7 +322,7 @@ flowchart TB
 
 ### U2. Content-driven request builder and local runtime adapter
 
-- [ ] **Goal:** Convert content definitions into generation jobs and execute them through the selected local runtime with production cancellation semantics.
+- [x] **Goal:** Convert content definitions into generation jobs and execute them through the selected local runtime with production cancellation semantics.
 - **Requirements:** R5, R6, R7, R8, R20; F1; AE5; U06, U07, X02.
 - **Dependencies:** U1; Unit 1 selected Z-Image-Turbo no-LoRA runtime profile; existing staged binary/weights are configured, not downloaded automatically.
 - **Files:**
@@ -347,6 +347,7 @@ flowchart TB
   - Failure path: Ctrl-C in one-shot generate aborts that session's own running job, records `cancelledBy: "aborted"`, restarts the owned child before the next job and creates no candidate from late output.
   - Integration: fake runtime process tests prove kill+await teardown; real selected runtime readiness, abort, restart and teardown are measured on host hardware before the adapter is considered production-ready.
 - **Verification:** A content-derived request can produce durable job records and decoded candidate bytes through the adapter. Runtime unavailability, removal and cancellation are observable states, not exceptions hidden from the queue.
+- **Evidence (macOS only, qualified):** the full workspace check passed (3041 pass, 1 skip, 0 fail; all saved exits 0) with the 20 U2 source hashes unchanged. One real run of the selected runtime produced a content-derived 512x640 sprite (seed `Number.MAX_SAFE_INTEGER`, accepted by the server, not a seed-range proof) and a 768x768 portrait (seed 0), with sent bodies, stored hashes and decoder lengths matching. Abort during `generating` was ledgered with no output and no blob, and a fresh replacement child became ready and completed. Normal shutdown reopened the root, and a corrected rerun of the throwing-caller `finally` case returned `shutdown` ok in 60 ms with the job cancelled and no image. Unproven: sampling depth at abort, a real late payload, a clean replacement-ready time, Linux, and event-loop responsiveness through abort (U6/U7). The harness's process-group checks were invalid; see `tools/probes/studio-runtime/README.md`. This is runtime correctness only, not image quality, palette conformance, coexistence or canon. U3–U7 and parent Unit 5 remain incomplete.
 
 ### U3. Candidate ingestion, conformance and working sets
 
@@ -486,7 +487,7 @@ flowchart TB
   - Happy path: Zeus idle-south final atlas/manifest publishes with complete provenance and passes content validation.
   - Happy path: all six portrait expressions publish or remain as explicit draft artifacts with owner disposition recorded.
   - Edge case: edited hand pixels can be deliberately imported and stored despite a failing report; automatic replacement/requantization remains forbidden.
-  - Failure path: three-job queue supports remove, abort/restart and third-job continuation while discarding cancelled late result.
+  - Failure path: three-job queue supports remove, abort/restart and third-job continuation while discarding cancelled late result. Responsiveness check (AE6): a timer heartbeat on the session's event loop runs through abort and replacement with no synchronous `ps` or similar blocking call in between, and its worst gap is recorded against R8's stay-responsive requirement.
   - Integration: actual Aseprite round-trip preserves tags/slices/pivots/durations/cell geometry; fake Aseprite controls are labelled as controls, not editor proof.
   - Integration: actual selected runtime timings, readiness and cancellation behavior are recorded; fake adapter tests are labelled as control evidence only.
 - **Verification:** Unit 5 is complete only when the CLI/library path proves Zeus idle-south and six-expression portrait authoring with complete provenance, cancellation evidence, editor round-trip evidence and owner approval for any canon publication. App parity remains parent Unit 7; packaged game parity remains parent Unit 8.

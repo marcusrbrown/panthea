@@ -9,7 +9,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, relative } from "node:path";
+import { sha256Hex } from "../hash";
 import {
+  jobSource,
+  loadContent,
   queuedJob,
   reapChildren,
   removeTempRoots,
@@ -21,6 +24,7 @@ import {
 } from "./_test-fixtures";
 import * as studio from "./index";
 import { openStudioSession, readStudioStatus } from "./index";
+import { newRequestRecord } from "./request";
 
 afterEach(async () => {
   await reapChildren();
@@ -130,8 +134,13 @@ describe("recovery", () => {
   test("interrupted queued and running jobs fail with a reason; other records are preserved", () => {
     const root = tempRoot();
     const first = openOrFail(root);
+    let ordinal = 0;
     const put = (job: Parameters<typeof first.store.putJob>[0]["job"]) =>
-      first.store.putJob({ schemaVersion: 1, requestId: "r1", job });
+      first.store.putJob({
+        schemaVersion: 1,
+        source: jobSource("r1", ordinal++),
+        job,
+      });
     put(queuedJob("waiting"));
     put(runningJob("busy"));
     put(succeededJob("done"));
@@ -145,6 +154,7 @@ describe("recovery", () => {
       schemaVersion: 1,
       id: "r1",
       request: queuedJob("x").request,
+      nextOrdinal: 0,
     });
     first.close();
     const preserved = ["done", "failed-before", "removed-before"].map((id) =>
@@ -159,6 +169,15 @@ describe("recovery", () => {
     expect(second.recovered.slice().sort()).toEqual(["busy", "waiting"]);
     second.close();
 
+    expect(
+      readStudioStatus(root).jobs.map((r) => [r.job.id, r.source]),
+    ).toEqual([
+      ["busy", jobSource("r1", 1)],
+      ["done", jobSource("r1", 2)],
+      ["failed-before", jobSource("r1", 3)],
+      ["removed-before", jobSource("r1", 4)],
+      ["waiting", jobSource("r1", 0)],
+    ]);
     const jobs = Object.fromEntries(
       readStudioStatus(root).jobs.map((r) => [r.job.id, r.job]),
     );
@@ -182,14 +201,18 @@ describe("recovery", () => {
     const first = openOrFail(root);
     first.store.putJob({
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource(),
       job: runningJob("busy"),
     });
     first.close();
     writeFileSync(join(root, "jobs", "broken.json"), "{ not json");
     writeFileSync(
       join(root, "jobs", "wrong-shape.json"),
-      JSON.stringify({ schemaVersion: 1, requestId: "r1", job: { id: "x" } }),
+      JSON.stringify({
+        schemaVersion: 1,
+        source: jobSource(),
+        job: { id: "x" },
+      }),
     );
 
     const second = openOrFail(root);
@@ -220,11 +243,13 @@ describe("commands", () => {
   test("enqueue, remove and abort stay in the ledger and the status", () => {
     const root = tempRoot();
     const session = openOrFail(root);
-    for (const id of ["job-a", "job-b", "job-c"])
-      expect(session.enqueue("r1", queuedJob(id))).toEqual({ ok: true });
+    for (const [ordinal, id] of ["job-a", "job-b", "job-c"].entries())
+      expect(session.enqueue(jobSource("r1", ordinal), queuedJob(id))).toEqual({
+        ok: true,
+      });
     session.store.putJob({
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource("r1", 2),
       job: runningJob("job-c"),
     });
 
@@ -252,6 +277,13 @@ describe("commands", () => {
       cancelledBy: "aborted",
     });
     expect(jobs["job-c"]).not.toHaveProperty("progress");
+    expect(
+      readStudioStatus(root).jobs.map((r) => [r.job.id, r.source]),
+    ).toEqual([
+      ["job-a", jobSource("r1", 0)],
+      ["job-b", jobSource("r1", 1)],
+      ["job-c", jobSource("r1", 2)],
+    ]);
 
     session.close();
     const reopened = openOrFail(root);
@@ -264,10 +296,10 @@ describe("commands", () => {
   test("a command continues the ledger sequence after reopen", () => {
     const root = tempRoot();
     const first = openOrFail(root);
-    first.enqueue("r1", queuedJob("job-a"));
+    first.enqueue(jobSource(), queuedJob("job-a"));
     first.close();
     const second = openOrFail(root);
-    second.enqueue("r1", queuedJob("job-b"));
+    second.enqueue(jobSource(), queuedJob("job-b"));
     second.close();
     expect(ledger(root)).toEqual([
       [1, "enqueue", "job-a"],
@@ -278,7 +310,7 @@ describe("commands", () => {
   test("commands that do not fit the job's state are refused and not ledgered", () => {
     const root = tempRoot();
     const session = openOrFail(root);
-    session.enqueue("r1", queuedJob("job-a"));
+    session.enqueue(jobSource(), queuedJob("job-a"));
 
     expect(session.abort("job-a")).toMatchObject({
       ok: false,
@@ -288,7 +320,7 @@ describe("commands", () => {
       ok: false,
       reason: "not-found",
     });
-    expect(session.enqueue("r1", queuedJob("job-a"))).toMatchObject({
+    expect(session.enqueue(jobSource(), queuedJob("job-a"))).toMatchObject({
       ok: false,
       reason: "wrong-state",
     });
@@ -310,7 +342,7 @@ describe("commands", () => {
     const session = openOrFail(root);
     writeFileSync(join(root, "jobs"), "not a directory");
 
-    const result = session.enqueue("r1", queuedJob("job-a"));
+    const result = session.enqueue(jobSource(), queuedJob("job-a"));
 
     expect(result).toMatchObject({ ok: false, reason: "write-failed" });
     expect(session.store.readJob("job-a").kind).toBe("missing");
@@ -322,7 +354,7 @@ describe("commands", () => {
     const session = openOrFail(root);
     mkdirSync(join(root, "commands", "00000001.json"), { recursive: true });
 
-    const result = session.enqueue("r1", queuedJob("job-a"));
+    const result = session.enqueue(jobSource(), queuedJob("job-a"));
 
     expect(result).toMatchObject({ ok: false, reason: "write-failed" });
     expect(existsSync(join(root, "jobs", "job-a.json"))).toBe(false);
@@ -332,7 +364,7 @@ describe("commands", () => {
   test("remove is not acknowledged when the cancelled record cannot be written", () => {
     const root = tempRoot();
     const session = openOrFail(root);
-    session.enqueue("r1", queuedJob("job-a"));
+    session.enqueue(jobSource(), queuedJob("job-a"));
     const before = readFileSync(join(root, "jobs", "job-a.json"), "utf8");
     mkdirSync(join(root, "commands", "00000002.json"), { recursive: true });
 
@@ -352,17 +384,19 @@ describe("a closed session", () => {
     const stale = openOrFail(root);
     stale.close();
     const owner = openOrFail(root);
-    expect(owner.enqueue("r1", queuedJob("new-owner-job"))).toEqual({
+    expect(owner.enqueue(jobSource(), queuedJob("new-owner-job"))).toEqual({
       ok: true,
     });
     owner.store.putJob({
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource(),
       job: runningJob("running-job"),
     });
     const before = snapshot(root);
 
-    expect(stale.enqueue("r1", queuedJob("closed-owner-job"))).toMatchObject({
+    expect(
+      stale.enqueue(jobSource(), queuedJob("closed-owner-job")),
+    ).toMatchObject({
       ok: false,
       reason: "closed",
     });
@@ -377,7 +411,9 @@ describe("a closed session", () => {
     expect(() => stale.close()).not.toThrow();
 
     expect(snapshot(root)).toEqual(before);
-    expect(owner.enqueue("r1", queuedJob("later-job"))).toEqual({ ok: true });
+    expect(owner.enqueue(jobSource(), queuedJob("later-job"))).toEqual({
+      ok: true,
+    });
     expect(
       readStudioStatus(root).commands.map((c) => [c.seq, c.type, c.jobId]),
     ).toEqual([
@@ -392,9 +428,9 @@ describe("a closed session", () => {
     const stale = openOrFail(root);
     stale.close();
     const owner = openOrFail(root);
-    owner.enqueue("r1", queuedJob("new-owner-job"));
+    owner.enqueue(jobSource(), queuedJob("new-owner-job"));
 
-    stale.enqueue("r1", queuedJob("closed-owner-job"));
+    stale.enqueue(jobSource(), queuedJob("closed-owner-job"));
 
     const status = readStudioStatus(root);
     expect(status.jobs.map((r) => r.job.id)).toEqual(["new-owner-job"]);
@@ -410,12 +446,12 @@ describe("a closed session's store", () => {
     const retained = { ...stale.store };
     stale.close();
     const owner = openOrFail(root);
-    owner.enqueue("r1", queuedJob("b-job"));
+    owner.enqueue(jobSource(), queuedJob("b-job"));
     owner.store.putBlob(new Uint8Array([1, 2, 3]));
     const before = snapshot(root);
     const failed = {
       schemaVersion: 1,
-      requestId: "r1",
+      source: jobSource(),
       job: { ...queuedJob("b-job"), status: "failed", error: "stale" },
     } as const;
     const attempts: [string, (s: typeof stale.store) => unknown][] = [
@@ -431,7 +467,8 @@ describe("a closed session's store", () => {
       ],
       [
         "putRequest",
-        (s) => s.putRequest({ schemaVersion: 1, id: "r1", request }),
+        (s) =>
+          s.putRequest({ schemaVersion: 1, id: "r1", request, nextOrdinal: 0 }),
       ],
       ["putJob", (s) => s.putJob(failed)],
       [
@@ -464,7 +501,9 @@ describe("a closed session's store", () => {
     }
 
     expect(snapshot(root)).toEqual(before);
-    expect(owner.enqueue("r1", queuedJob("later-job"))).toEqual({ ok: true });
+    expect(owner.enqueue(jobSource(), queuedJob("later-job"))).toEqual({
+      ok: true,
+    });
     expect(readStudioStatus(root).commands.map((c) => c.seq)).toEqual([1, 2]);
     owner.close();
   });
@@ -472,7 +511,7 @@ describe("a closed session's store", () => {
   test("reads stay available after close", () => {
     const root = tempRoot();
     const session = openOrFail(root);
-    session.enqueue("r1", queuedJob("job-a"));
+    session.enqueue(jobSource(), queuedJob("job-a"));
     const hash = session.store.putBlob(new Uint8Array([1, 2, 3]));
     session.close();
 
@@ -498,10 +537,363 @@ describe("a closed session's store", () => {
 describe("public surface", () => {
   test("the studio subpath exposes the host and the lock-free reader, not the unlocked store factory", () => {
     expect(Object.keys(studio).sort()).toEqual([
+      "DEFAULT_BATCH",
+      "PROVIDER",
+      "SELECTED_PROFILE",
       "STUDIO_SCHEMA_VERSION",
+      "adapterInput",
+      "buildSpec",
+      "newRequestRecord",
+      "openRuntime",
       "openStudioSession",
+      "planJobs",
       "readStudioStatus",
+      "slotKey",
       "studioPaths",
     ]);
+  });
+});
+
+describe("request submission", () => {
+  const content = loadContent();
+  const refuseDraw = () => {
+    throw new Error("the seed supplier must not be called");
+  };
+  const faces = (
+    id: string,
+    seed?: number,
+    draw: () => number = refuseDraw,
+  ) => {
+    const built = newRequestRecord(
+      content,
+      {
+        id,
+        subject: "zeus",
+        kind: "portrait",
+        slots: content.vocabulary.expressions.map((expression) => ({
+          expression,
+        })),
+        ...(seed === undefined ? {} : { seed }),
+      },
+      draw,
+    );
+    if (!built.ok) throw new Error(JSON.stringify(built.error));
+    return built.value.record;
+  };
+  const sources = (root: string) =>
+    readStudioStatus(root).jobs.map((r) => [r.job.id, r.source]);
+
+  test("six expressions persist the request and 24 narrowed jobs before acknowledging", () => {
+    const root = tempRoot();
+    let draws = 0;
+    const record = faces("zeus-faces", undefined, () => {
+      draws += 1;
+      return 5000;
+    });
+    const session = openOrFail(root);
+
+    const result = session.submitRequest(record);
+
+    expect(result.ok).toBe(true);
+    const status = readStudioStatus(root);
+    expect(status.requests).toEqual([{ ...record, nextOrdinal: 24 }]);
+    expect(status.requests[0]?.request.seed).toBe(5000);
+    expect(status.jobs).toHaveLength(24);
+    expect(new Set(status.jobs.map((r) => r.job.id)).size).toBe(24);
+    for (const [index, { source, job }] of status.jobs.entries()) {
+      expect(job.status).toBe("queued");
+      expect(job.request.batch).toBe(1);
+      expect(job.request.slots).toHaveLength(1);
+      expect(job.request.seed).toBe(5000 + index);
+      expect(source).toEqual({
+        requestId: "zeus-faces",
+        slotKey: content.vocabulary.expressions[Math.floor(index / 4)],
+        ordinal: index,
+      });
+    }
+    expect(result.ok && result.jobIds).toEqual(
+      status.jobs.map((r) => r.job.id),
+    );
+    expect(status.commands.map((c) => [c.seq, c.type])).toEqual(
+      [...Array(24).keys()].map((n) => [n + 1, "enqueue"]),
+    );
+    expect(draws).toBe(1);
+    session.close();
+  });
+
+  test("seed, ordinal and sources survive reopen and recovery; a reroll continues and keeps other records", () => {
+    const root = tempRoot();
+    const first = openOrFail(root);
+    first.submitRequest(faces("zeus-faces", 5000));
+    first.store.putWorkspace({
+      schemaVersion: 1,
+      id: "picked",
+      requestId: "zeus-faces",
+      status: "open",
+    });
+    const before = sources(root);
+    first.close();
+
+    const second = openOrFail(root);
+    expect(second.recovered).toHaveLength(24);
+    expect(sources(root)).toEqual(before);
+    expect(readStudioStatus(root).requests[0]).toMatchObject({
+      nextOrdinal: 24,
+      request: { seed: 5000 },
+    });
+    const workspaceBytes = readFileSync(
+      join(root, "workspaces", "picked.json"),
+      "utf8",
+    );
+
+    const result = second.reroll("zeus-faces", 2);
+
+    expect(result.ok && result.jobIds).toHaveLength(12);
+    const status = readStudioStatus(root);
+    expect(status.jobs).toHaveLength(36);
+    const rerolled = status.jobs.filter((r) => r.source.ordinal >= 24);
+    expect(rerolled.map((r) => r.source.ordinal).sort((a, b) => a - b)).toEqual(
+      [...Array(12).keys()].map((n) => 24 + n),
+    );
+    for (const { source, job } of rerolled)
+      expect(job.request.seed).toBe(5000 + source.ordinal);
+    expect(status.requests[0]?.nextOrdinal).toBe(36);
+    expect(readFileSync(join(root, "workspaces", "picked.json"), "utf8")).toBe(
+      workspaceBytes,
+    );
+    second.close();
+  });
+
+  test("a request that cannot be written acknowledges and enqueues nothing", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    writeFileSync(join(root, "requests"), "not a directory");
+
+    const result = session.submitRequest(faces("zeus-faces", 1));
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "write-failed",
+      enqueued: [],
+    });
+    expect(existsSync(join(root, "jobs"))).toBe(false);
+    expect(existsSync(join(root, "commands"))).toBe(false);
+    session.close();
+  });
+
+  test("a job that cannot be written reports what was enqueued and keeps its ordinals reserved", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    mkdirSync(join(root, "commands", "00000003.json"), { recursive: true });
+
+    const result = session.submitRequest(faces("zeus-faces", 1));
+
+    expect(result).toMatchObject({ ok: false, reason: "write-failed" });
+    expect(!result.ok && result.enqueued).toEqual([
+      "zeus-faces-0000",
+      "zeus-faces-0001",
+    ]);
+    expect(readStudioStatus(root).jobs.map((r) => r.job.id)).toEqual([
+      "zeus-faces-0000",
+      "zeus-faces-0001",
+    ]);
+    expect(readStudioStatus(root).requests[0]?.nextOrdinal).toBe(24);
+    session.close();
+  });
+
+  test("duplicate, unknown, empty and overflowing requests are refused before any write", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.submitRequest(faces("zeus-faces", 1));
+    const before = snapshot(root);
+
+    expect(session.submitRequest(faces("zeus-faces", 2))).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    expect(session.reroll("nobody", 1)).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(session.reroll("zeus-faces", 0)).toMatchObject({
+      ok: false,
+      reason: "invalid-request",
+    });
+    expect(
+      session.submitRequest(faces("zeus-edge", Number.MAX_SAFE_INTEGER - 5)),
+    ).toMatchObject({ ok: false, reason: "seed-overflow", enqueued: [] });
+
+    expect(snapshot(root)).toEqual(before);
+    session.close();
+  });
+
+  test("a closed session cannot submit or reroll into a new owner's store", () => {
+    const root = tempRoot();
+    const stale = openOrFail(root);
+    stale.close();
+    const owner = openOrFail(root);
+    owner.submitRequest(faces("owner-faces", 1));
+    const before = snapshot(root);
+
+    expect(stale.submitRequest(faces("stale-faces", 2))).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(stale.reroll("owner-faces", 1)).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+
+    expect(snapshot(root)).toEqual(before);
+    owner.close();
+  });
+});
+
+describe("job transitions", () => {
+  const ledgerTypes = (root: string) =>
+    readStudioStatus(root).commands.map((c) => [c.seq, c.type, c.jobId]);
+  const image = {
+    medium: "image",
+    hash: sha256Hex(new Uint8Array([1])),
+    width: 8,
+    height: 8,
+  } as const;
+
+  test("queued lists jobs in durable enqueue order, not by name, and drops started or removed jobs", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    for (const [ordinal, id] of [
+      "zz-first",
+      "aa-second",
+      "mm-third",
+      "bb-fourth",
+    ].entries())
+      session.enqueue(jobSource("r1", ordinal), queuedJob(id));
+    session.remove("mm-third");
+    session.start("zz-first");
+
+    const queued = session.queued();
+
+    expect(queued.ok && queued.jobs.map((r) => r.job.id)).toEqual([
+      "aa-second",
+      "bb-fourth",
+    ]);
+    session.close();
+  });
+
+  test("start, succeed, fail and unavailable persist the job, keep its source and extend the one ledger", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    for (const [ordinal, id] of ["job-a", "job-b", "job-c", "job-d"].entries())
+      session.enqueue(jobSource("r1", ordinal), queuedJob(id));
+
+    expect(session.start("job-a")).toEqual({ ok: true });
+    expect(session.succeed("job-a", [image])).toEqual({ ok: true });
+    expect(session.start("job-b")).toEqual({ ok: true });
+    expect(session.fail("job-b", "server said no")).toEqual({ ok: true });
+    expect(session.unavailable("job-c", "no runtime", "stage it")).toEqual({
+      ok: true,
+    });
+    expect(session.start("job-d")).toEqual({ ok: true });
+    expect(session.unavailable("job-d", "runtime vanished", "restage")).toEqual(
+      {
+        ok: true,
+      },
+    );
+
+    const jobs = Object.fromEntries(
+      readStudioStatus(root).jobs.map((r) => [r.job.id, r]),
+    );
+    expect(jobs["job-a"]?.job).toMatchObject({
+      status: "succeeded",
+      outputs: [image],
+    });
+    expect(jobs["job-b"]?.job).toMatchObject({
+      status: "failed",
+      error: "server said no",
+    });
+    expect(jobs["job-c"]?.job).toMatchObject({
+      status: "unavailable",
+      reason: "no runtime",
+      staging: "stage it",
+    });
+    expect(jobs["job-d"]?.job).toMatchObject({ status: "unavailable" });
+    expect(jobs["job-a"]?.job.request).toEqual(queuedJob("job-a").request);
+    expect(readStudioStatus(root).jobs.map((r) => r.source.ordinal)).toEqual([
+      0, 1, 2, 3,
+    ]);
+    expect(ledgerTypes(root)).toEqual([
+      [1, "enqueue", "job-a"],
+      [2, "enqueue", "job-b"],
+      [3, "enqueue", "job-c"],
+      [4, "enqueue", "job-d"],
+      [5, "start", "job-a"],
+      [6, "succeed", "job-a"],
+      [7, "start", "job-b"],
+      [8, "fail", "job-b"],
+      [9, "unavailable", "job-c"],
+      [10, "start", "job-d"],
+      [11, "unavailable", "job-d"],
+    ]);
+    session.close();
+  });
+
+  test("a transition that does not fit the job's state is refused and not ledgered", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.enqueue(jobSource(), queuedJob("job-a"));
+
+    expect(session.succeed("job-a", [image])).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    expect(session.fail("job-a", "x")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    session.start("job-a");
+    expect(session.start("job-a")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    session.abort("job-a");
+    expect(session.succeed("job-a", [image])).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    expect(session.start("nope")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+
+    expect(ledgerTypes(root)).toEqual([
+      [1, "enqueue", "job-a"],
+      [2, "start", "job-a"],
+      [3, "abort", "job-a"],
+    ]);
+    session.close();
+  });
+
+  test("a closed session refuses every transition and the queue, leaving a new owner's store untouched", () => {
+    const root = tempRoot();
+    const stale = openOrFail(root);
+    stale.close();
+    const owner = openOrFail(root);
+    owner.enqueue(jobSource(), queuedJob("job-a"));
+    owner.enqueue(jobSource("r1", 1), queuedJob("job-b"));
+    owner.start("job-b");
+    const before = snapshot(root);
+
+    for (const result of [
+      stale.start("job-a"),
+      stale.succeed("job-b", [image]),
+      stale.fail("job-b", "x"),
+      stale.unavailable("job-a", "x", "y"),
+    ])
+      expect(result).toMatchObject({ ok: false, reason: "closed" });
+    expect(stale.queued()).toMatchObject({ ok: false, reason: "closed" });
+
+    expect(snapshot(root)).toEqual(before);
+    owner.close();
   });
 });

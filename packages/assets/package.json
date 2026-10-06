@@ -15,6 +15,7 @@
     "./studio": "./src/studio/index.ts"
   },
   "dependencies": {
+    "@panthea/content": "workspace:*",
     "@panthea/contracts": "workspace:*"
   }
 }

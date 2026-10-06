@@ -48,7 +48,8 @@ test("conformance and palette have no platform imports, randomness or clock", ()
   }
 });
 
-const FORBIDDEN_BEYOND_ROOT = /^(?:\.\/studio|bun:sqlite|node:child_process)/;
+const FORBIDDEN_BEYOND_ROOT =
+  /^(?:\.\/studio|bun:sqlite|node:child_process|@panthea\/content)/;
 
 /** Module specifiers reachable from `entry` through relative imports. */
 function reachableSpecifiers(entry: string, dir: string): string[] {
@@ -83,7 +84,7 @@ function forbidden(specifiers: string[]): string[] {
   );
 }
 
-test("the root and the registry never reach the studio host, SQLite or child processes", () => {
+test("the root and the registry never reach the studio host, content, SQLite or child processes", () => {
   for (const entry of ["index.ts", "registry.ts"]) {
     const reached = reachableSpecifiers(
       join(import.meta.dir, entry),
@@ -93,14 +94,14 @@ test("the root and the registry never reach the studio host, SQLite or child pro
   }
 });
 
-test("the import-boundary walk does flag a studio, SQLite or child-process import", () => {
+test("the import-boundary walk does flag a studio, content, SQLite or child-process import", () => {
   const dir = mkdtempSync(join(tmpdir(), "boundary-"));
   try {
     mkdirSync(join(dir, "studio"));
     writeFileSync(join(dir, "root.ts"), 'export * from "./middle";\n');
     writeFileSync(
       join(dir, "middle.ts"),
-      'import "./studio";\nimport { x } from "bun:sqlite";\n',
+      'import "./studio";\nimport { x } from "bun:sqlite";\nimport "@panthea/content";\n',
     );
     writeFileSync(
       join(dir, "studio", "index.ts"),
@@ -108,7 +109,12 @@ test("the import-boundary walk does flag a studio, SQLite or child-process impor
     );
     expect(
       forbidden(reachableSpecifiers(join(dir, "root.ts"), dir)).sort(),
-    ).toEqual(["bun:sqlite", "node:child_process", "studio"]);
+    ).toEqual([
+      "@panthea/content",
+      "bun:sqlite",
+      "node:child_process",
+      "studio",
+    ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
