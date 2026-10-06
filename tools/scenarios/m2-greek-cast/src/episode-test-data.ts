@@ -107,6 +107,78 @@ export function act(
   return { proposal, request, event };
 }
 
+/**
+ * A committed bless by `actor` and the event it caused, as the world's log
+ * holds it: a blessing-granted event on the proposal's own correlation.
+ */
+export function blessAct(
+  actor: string,
+  petition: string,
+  sequence: number,
+  recipient = "farmer",
+) {
+  const made = act(actor, { kind: "bless", petition }, sequence);
+  return {
+    ...made,
+    event: {
+      ...made.event,
+      kind: "blessing-granted",
+      entityId: actor,
+      recipient,
+      petitionId: petition,
+      resource: "food",
+      amount: 2,
+    },
+  };
+}
+
+/**
+ * The sign `petitioner` remembers of `god` answering (or leaving unanswered) a
+ * petition, as the world derives it: sourced from the answering (or lapsing)
+ * event, never from a proposal's observation.
+ */
+export const signMemoryEvent = (
+  id: string,
+  sequence: number,
+  petitioner: string,
+  god: string,
+  sourceEventId: string,
+  petitionId: string,
+  outcome: "answered" | "lapsed" = "answered",
+) =>
+  memoryEvent(id, sequence, {
+    memoryKind: "sign",
+    entityId: petitioner,
+    sourceEventId,
+    god,
+    outcome,
+    petitionId,
+    subjects: [god],
+    consequence: {
+      effect: outcome === "answered" ? "kindness" : "harm",
+      agent: god,
+      target: petitioner,
+    },
+  });
+
+/** `entityId` now feels differently toward `toward`, because of the memory `memoryEventId`. */
+export const relationshipChangedEvent = (
+  id: string,
+  sequence: number,
+  entityId: string,
+  toward: string,
+  memoryEventId: string,
+  affinityDelta = 1,
+) => ({
+  ...envelope(id, sequence, 1),
+  kind: "relationship-changed",
+  entityId,
+  toward,
+  affinityDelta,
+  grudgeDelta: 0,
+  memoryEventId,
+});
+
 export function input(
   acts: ReturnType<typeof act>[],
   extraEvents: Record<string, unknown>[] = [],

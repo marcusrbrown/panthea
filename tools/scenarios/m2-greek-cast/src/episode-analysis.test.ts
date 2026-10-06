@@ -6,6 +6,7 @@ import {
 } from "./episode-analysis";
 import {
   act,
+  blessAct,
   goalEndedEvent,
   goalRefusedEvent,
   goalSetEvent,
@@ -14,7 +15,10 @@ import {
   memoryEvent,
   move,
   petitionAnsweredEvent,
+  petitionLapsedEvent,
   petitionOpenedEvent,
+  relationshipChangedEvent,
+  signMemoryEvent,
 } from "./episode-test-data";
 
 const check = (
@@ -392,6 +396,131 @@ test("influence: a relationship change counts through the told belief it cites; 
   expect(check(told, "zeus", "influence")?.detail).toContain(
     "relationship-changed",
   );
+});
+
+test("influence: a bless the petitioner answers with a sign and a changed feeling toward the god counts for that god, and for no other", () => {
+  // The world's chain: bless > petition-answered > sign memory > relationship-changed.
+  // Only the bless is a proposal's own event; the rest are derived on the tick's correlation.
+  const bless = blessAct("hera", "evt-8-169", 225);
+  const answered = petitionAnsweredEvent(
+    "evt-225-226",
+    226,
+    "farmer",
+    "hera",
+    "evt-8-169",
+    bless.event.id,
+    225,
+  );
+  const sign = signMemoryEvent(
+    "evt-225-227",
+    227,
+    "farmer",
+    "hera",
+    answered.id,
+    "evt-8-169",
+  );
+  const change = relationshipChangedEvent(
+    "evt-225-228",
+    228,
+    "farmer",
+    "hera",
+    sign.id,
+  );
+  const chain = [answered, sign, change];
+  const gods = ["zeus", "hera"];
+
+  const episode = analyzeEpisode(
+    input([bless, move("zeus", "a", 230)], chain),
+    identities,
+    gods,
+  );
+  expect(check(episode, "hera", "influence")?.ok).toBe(true);
+  // The change is counted once, as a feeling: the sign is neither a told belief nor a second change.
+  expect(check(episode, "hera", "influence")?.detail).toBe(
+    "1 caused (relationship-changed)",
+  );
+  expect(episode.gods.find((g) => g.god === "hera")?.influence).toBe(1);
+  // Zeus acted that tick, but nothing he proposed caused the farmer's feeling.
+  expect(check(episode, "zeus", "influence")?.ok).toBe(false);
+
+  // Control: the same chain with the bless not among Hera's proposals credits her with nothing.
+  const without = analyzeEpisode(
+    input([move("hera", "a", 224)], chain),
+    identities,
+    ["hera"],
+  );
+  expect(check(without, "hera", "influence")?.ok).toBe(false);
+
+  // Control: a feeling that rests on another god's answer does not count for Hera, who also blessed.
+  const zeusBless = blessAct("zeus", "evt-9-170", 240);
+  const zeusAnswered = petitionAnsweredEvent(
+    "evt-240-241",
+    241,
+    "woodcutter",
+    "zeus",
+    "evt-9-170",
+    zeusBless.event.id,
+    240,
+  );
+  const zeusSign = signMemoryEvent(
+    "evt-240-242",
+    242,
+    "woodcutter",
+    "zeus",
+    zeusAnswered.id,
+    "evt-9-170",
+  );
+  const zeusChange = relationshipChangedEvent(
+    "evt-240-243",
+    243,
+    "woodcutter",
+    "zeus",
+    zeusSign.id,
+  );
+  const heraBlessedAlone = blessAct("hera", "evt-8-171", 250);
+  const other = analyzeEpisode(
+    input([zeusBless, heraBlessedAlone], [zeusAnswered, zeusSign, zeusChange]),
+    identities,
+    gods,
+  );
+  expect(check(other, "zeus", "influence")?.ok).toBe(true);
+  expect(check(other, "hera", "influence")?.ok).toBe(false);
+
+  // Control: a petition that lapsed unanswered leaves a harm sign, which no god's proposal caused.
+  const lapsed = petitionLapsedEvent(
+    "evt-260-261",
+    261,
+    "farmer",
+    "hera",
+    "evt-8-172",
+    260,
+  );
+  const lapsedSign = signMemoryEvent(
+    "evt-260-262",
+    262,
+    "farmer",
+    "hera",
+    lapsed.id,
+    "evt-8-172",
+    "lapsed",
+  );
+  const lapsedChange = relationshipChangedEvent(
+    "evt-260-263",
+    263,
+    "farmer",
+    "hera",
+    lapsedSign.id,
+    -1,
+  );
+  const neglect = analyzeEpisode(
+    input(
+      [blessAct("hera", "evt-8-173", 255)],
+      [lapsed, lapsedSign, lapsedChange],
+    ),
+    identities,
+    ["hera"],
+  );
+  expect(check(neglect, "hera", "influence")?.ok).toBe(false);
 });
 
 test("the episode is ok only when every check of every god holds", () => {

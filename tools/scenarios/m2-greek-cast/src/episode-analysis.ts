@@ -200,7 +200,11 @@ export function parseEvents(
  * `report-told` or `legend-recorded` is its `sourceEventId` (a legend gives each
  * hearer one, so it is the narrator's influence, never the hearer's); a
  * relationship change belongs to the action that caused the belief its
- * `memoryEventId` names. A witnessed memory is not among them, and
+ * `memoryEventId` names, or the action whose event answered the petition behind
+ * the sign its `memoryEventId` names (`petition-answered.answeredBy`: a bless,
+ * or a strike that answered a prayer). A sign is not itself a told belief, and
+ * a sign of a lapsed petition belongs to no action. A witnessed memory is not
+ * among them, and
  * `report-told.linkedEventId` is never followed, so a report that cites another
  * god's event credits only its own teller.
  */
@@ -217,11 +221,26 @@ export function influencedBy(
     event?.kind === "memory-recorded" &&
     event.memoryKind === "told" &&
     reportIds.has(event.sourceEventId);
+  const causedIds = new Set(caused.map((e) => e.id));
+  // A sign rests on a petition-answered event, which names the event of the
+  // answering action: the god's own bless or strike, sharing the proposal's
+  // correlation. The sign, the answer, and the change are derived, so none of
+  // them shares it; the link is `answeredBy`.
+  const isSignOfOwnAnswer = (event: WorldEvent | undefined): boolean => {
+    if (event?.kind !== "memory-recorded" || event.memoryKind !== "sign") {
+      return false;
+    }
+    const answer = parsed.get(event.sourceEventId);
+    return (
+      answer?.kind === "petition-answered" && causedIds.has(answer.answeredBy)
+    );
+  };
   return [...parsed.values()].filter(
     (event) =>
       isReportedBelief(event) ||
       (event.kind === "relationship-changed" &&
-        isReportedBelief(parsed.get(event.memoryEventId))),
+        (isReportedBelief(parsed.get(event.memoryEventId)) ||
+          isSignOfOwnAnswer(parsed.get(event.memoryEventId)))),
   );
 }
 
