@@ -766,3 +766,82 @@ test("the trouble-kind table names a god of the pack for each known kind: a typo
     if (!result.ok) expect(result.path).toBe(path);
   }
 });
+
+test("a temperament is one of a closed set, authored on a mortal, and absent means honest", () => {
+  const withTemperament = (temperament: unknown) => {
+    const pack = validPack();
+    (pack.inhabitants as Record<string, unknown>[])[0].temperament =
+      temperament;
+    return parseContentPack(pack);
+  };
+  for (const temperament of ["greedy", "quarrelsome", "proud", "honest"]) {
+    const result = withTemperament(temperament);
+    expect(result.ok ? result.value.inhabitants[0]?.temperament : "").toBe(
+      temperament,
+    );
+  }
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.inhabitants[0]?.temperament).toBeUndefined();
+  for (const bad of ["wicked", 3, ""]) {
+    const result = withTemperament(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe("inhabitants[0].temperament");
+  }
+});
+
+test("the temperament odds are per-mille whole numbers for known temperaments and kinds; a typo in either, a fraction, or odds above 1000 are refused", () => {
+  const withOdds = (odds: unknown) => {
+    const pack = validPack();
+    (pack.rules as Record<string, unknown>).temperamentOdds = odds;
+    return parseContentPack(pack);
+  };
+  const good = {
+    greedy: { theft: 2, "unpaid-debt": 150, revenge: 20 },
+    honest: {},
+  };
+  const parsed = withOdds(good);
+  expect(parsed.ok && parsed.value.rules.temperamentOdds).toEqual(good);
+  for (const edge of [0, 1, 1000]) {
+    expect(withOdds({ greedy: { theft: edge } }).ok).toBe(true);
+  }
+  for (const [bad, path] of [
+    [{ grasping: { theft: 1 } }, "rules.temperamentOdds.grasping"],
+    [{ greedy: { arson: 1 } }, "rules.temperamentOdds.greedy.arson"],
+    [{ greedy: { theft: 1001 } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: { theft: -1 } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: { theft: 0.5 } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: { theft: "often" } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: 3 }, "rules.temperamentOdds.greedy"],
+    [["greedy"], "rules.temperamentOdds"],
+  ] as const) {
+    const result = withOdds(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe(path);
+  }
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.rules.temperamentOdds === undefined).toBe(
+    true,
+  );
+});
+
+test("the wrong tunables are positive whole numbers", () => {
+  const keys = [
+    "wrongCooldownTicks",
+    "wrongNeedMultiplier",
+    "wrongLossCap",
+    "creditDeadlineTicks",
+    "revengeWindowTicks",
+  ];
+  for (const key of keys) {
+    expect(parseContentPack(packWithPetitionBalance({ [key]: 1 })).ok).toBe(
+      true,
+    );
+    for (const bad of [0, -1, 1.5, "3"]) {
+      expect([
+        key,
+        bad,
+        parseContentPack(packWithPetitionBalance({ [key]: bad })).ok,
+      ]).toEqual([key, bad, false]);
+    }
+  }
+});

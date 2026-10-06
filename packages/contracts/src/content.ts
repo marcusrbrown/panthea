@@ -5,7 +5,12 @@
 // instantiates a pack. Invalid content fails loudly at load, so every
 // field here is parsed, never assumed.
 
-import { WITNESSED_EVENT_KINDS } from "./event";
+import {
+  TEMPERAMENTS,
+  type Temperament,
+  WITNESSED_EVENT_KINDS,
+  WRONG_KINDS,
+} from "./event";
 import {
   fail,
   isRecord,
@@ -84,6 +89,8 @@ export interface Inhabitant {
   readonly gathers?: string;
   /** A resource this inhabitant seeks to buy when it lacks some and can afford it. Absent means it wants nothing in particular. */
   readonly wants?: string;
+  /** How it is disposed to wrong others, which sets the odds of each wrong (`rules.temperamentOdds`). Absent means honest: it never wrongs anyone. */
+  readonly temperament?: Temperament;
   /** Whether this inhabitant is a deity, authorized to be worshipped and to strike. Absent means it is not. */
   readonly deity?: boolean;
   /** Inventory this inhabitant holds at genesis. Absent means it starts with nothing. */
@@ -133,6 +140,10 @@ export interface WorldRules {
   readonly practiceStakes?: Readonly<Record<string, Transformation>>;
   /** The god each trouble kind is prayed about, by god id: a trouble with no mortal doer goes to the god of its domain, not to the mortal's patron. Absent, or a kind it lacks, means the patron. */
   readonly troubleKinds?: Readonly<Record<string, string>>;
+  /** Per-mille odds each tick that a mortal of a temperament commits each kind of wrong (or, for `revenge`, takes it): temperament, then kind. Absent, or a temperament or kind it lacks, means no odds. */
+  readonly temperamentOdds?: Readonly<
+    Record<string, Readonly<Record<string, number>>>
+  >;
 }
 
 export interface ContentPack {
@@ -320,6 +331,11 @@ function parseInhabitant(
       ? ok<Devotion | undefined>(undefined)
       : parseDevotion(value.devotion, `${path}.devotion`);
   if (!devotion.ok) return devotion;
+  const temperament =
+    value.temperament === undefined
+      ? ok<Temperament | undefined>(undefined)
+      : parseEnum(value.temperament, `${path}.temperament`, TEMPERAMENTS);
+  if (!temperament.ok) return temperament;
   const rivals =
     value.rivals === undefined
       ? ok<readonly string[] | undefined>(undefined)
@@ -337,6 +353,9 @@ function parseInhabitant(
       ? {}
       : { startingInventory: startingInventory.value }),
     ...(devotion.value === undefined ? {} : { devotion: devotion.value }),
+    ...(temperament.value === undefined
+      ? {}
+      : { temperament: temperament.value }),
     ...(rivals.value === undefined || rivals.value.length === 0
       ? {}
       : { rivals: rivals.value }),
@@ -437,6 +456,11 @@ export const PETITION_BALANCE_KEYS = [
   "goalLockTicks",
   "strikeGoodsCap",
   "defectionAffinity",
+  "wrongCooldownTicks",
+  "wrongNeedMultiplier",
+  "wrongLossCap",
+  "creditDeadlineTicks",
+  "revengeWindowTicks",
 ] as const;
 
 /**
@@ -567,6 +591,44 @@ export function parseTroubleKinds(
   return ok(table);
 }
 
+/** The kinds a temperament has odds for: the wrongs, and the revenge a victim may take. */
+export const ODDS_KINDS = [...WRONG_KINDS, "revenge"] as const;
+
+/**
+ * `rules.temperamentOdds`: for each known temperament and kind, odds in per-mille (a whole number from 0 to
+ * 1000) of committing it in a tick. An unknown temperament or kind is refused, so a typo cannot silently leave a
+ * mortal honest. Used for authored content and when a stored world's rules are decoded.
+ */
+export function parseTemperamentOdds(
+  value: unknown,
+  path: string,
+): ParseResult<Readonly<Record<string, Readonly<Record<string, number>>>>> {
+  if (!isRecord(value))
+    return fail(path, "expected an object of odds by temperament");
+  const table: Record<string, Record<string, number>> = {};
+  for (const [temperament, kinds] of Object.entries(value)) {
+    const at = `${path}.${temperament}`;
+    if (!(TEMPERAMENTS as readonly string[]).includes(temperament)) {
+      return fail(at, "not a temperament");
+    }
+    if (!isRecord(kinds)) return fail(at, "expected odds by kind");
+    const row: Record<string, number> = {};
+    for (const [kind, entry] of Object.entries(kinds)) {
+      const kindAt = `${at}.${kind}`;
+      if (!(ODDS_KINDS as readonly string[]).includes(kind)) {
+        return fail(kindAt, "not a kind of wrong");
+      }
+      const odds = parseNonNegativeInteger(entry, kindAt);
+      if (!odds.ok) return odds;
+      if (odds.value > 1000)
+        return fail(kindAt, "expected odds of at most 1000 per mille");
+      row[kind] = odds.value;
+    }
+    table[temperament] = row;
+  }
+  return ok(table);
+}
+
 function parseBalanceRecord(
   value: unknown,
   path: string,
@@ -641,6 +703,13 @@ function parseWorldRules(
       ? ok<Readonly<Record<string, string>> | undefined>(undefined)
       : parseTroubleKinds(value.troubleKinds, `${path}.troubleKinds`);
   if (!troubleKinds.ok) return troubleKinds;
+  const temperamentOdds =
+    value.temperamentOdds === undefined
+      ? ok<
+          Readonly<Record<string, Readonly<Record<string, number>>>> | undefined
+        >(undefined)
+      : parseTemperamentOdds(value.temperamentOdds, `${path}.temperamentOdds`);
+  if (!temperamentOdds.ok) return temperamentOdds;
   return ok({
     catchUpCapMs: catchUpCapMs.value,
     catchUpChunkMs: catchUpChunkMs.value,
@@ -663,6 +732,9 @@ function parseWorldRules(
     ...(troubleKinds.value === undefined
       ? {}
       : { troubleKinds: troubleKinds.value }),
+    ...(temperamentOdds.value === undefined
+      ? {}
+      : { temperamentOdds: temperamentOdds.value }),
   });
 }
 

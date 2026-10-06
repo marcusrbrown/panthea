@@ -295,3 +295,34 @@ test("every resource a livelihood gathers, wants, or makes is declared and price
     expect(pack.rules.economyBalance[`value_${resource}`]).toBeGreaterThan(0);
   }
 });
+
+test("every mortal of the Greek town is authored a temperament, the odds table covers each, and the honest have none", () => {
+  const { pack } = loaded();
+  const mortals = pack.inhabitants.filter((i) => i.deity !== true);
+  for (const mortal of mortals) {
+    expect([mortal.id, mortal.temperament !== undefined]).toEqual([
+      mortal.id,
+      true,
+    ]);
+  }
+  // The town has each temperament, so each row of the table is used.
+  expect(new Set(mortals.map((m) => m.temperament))).toEqual(
+    new Set(["greedy", "quarrelsome", "proud", "honest"]),
+  );
+  const odds = pack.rules.temperamentOdds ?? {};
+  expect(Object.keys(odds).sort()).toEqual([
+    "greedy",
+    "honest",
+    "proud",
+    "quarrelsome",
+  ]);
+  expect(Object.values(odds.honest ?? {}).every((value) => value === 0)).toBe(
+    true,
+  );
+  // Gods have none.
+  expect(
+    pack.inhabitants.filter(
+      (i) => i.deity === true && i.temperament !== undefined,
+    ),
+  ).toEqual([]);
+});

@@ -1100,12 +1100,15 @@ function socialSeed(memoryBalance?: Record<string, number>): WorldState {
     inventory: new Map(),
     revision: 0,
   });
+  // These stories are about what gods and reports do; the town's own wrongs are tested apart.
+  const { temperamentOdds: _wrongs, ...rules } = seeded.rules;
+  const quiet = { ...seeded, rules };
   return memoryBalance === undefined
-    ? seeded
+    ? quiet
     : {
-        ...seeded,
+        ...quiet,
         rules: {
-          ...seeded.rules,
+          ...quiet.rules,
           memoryBalance: { ...DEFAULT_MEMORY_BALANCE, ...memoryBalance },
         },
       };
@@ -2663,4 +2666,75 @@ test("a defection and the threshold behind it survive commit, reopen, rebuild, a
     run(3, 2), // 1 is below 2: goes
     run(10, 100), // 8 is below 100: goes
   ]).toEqual([0, 1, 0, 1, 1]);
+});
+
+test("the town's wrongs, credit trades, temperaments, and the loss cap survive commit, reopen, rebuild, and archive import, at the cap's boundary values: no wrong takes more than the cap, and every one is rebuilt from the log", () => {
+  const run = (cap: number) => {
+    const storeDir = tempDir("panthea-sim-wrongs-");
+    const exportDir = tempDir("panthea-sim-wrongs-export-");
+    const slotsDir = tempDir("panthea-sim-wrongs-slots-");
+    try {
+      const storePath = join(storeDir, "world.sqlite");
+      const base = loadGreekWorldState();
+      const seed: WorldState = {
+        ...base,
+        rules: {
+          ...base.rules,
+          petitionBalance: { ...base.rules.petitionBalance, wrongLossCap: cap },
+        },
+      };
+      const world = liveWorld(storePath, seed);
+      for (let tick = 0; tick < 150; tick += 1) world.run();
+      const state = world.state;
+      const events = listEvents(world.store.db);
+      const wrongs = eventOfKindAll(events, "wrong");
+      expect(wrongs.length).toBeGreaterThan(0);
+      expect(state.wrongs.size).toBe(wrongs.length);
+      // The cap bounds what a theft, a cheat, or a feud takes; a failed credit owes its price, which it does not bound.
+      for (const w of wrongs.filter((e) => e.credit === undefined)) {
+        expect(w.amount).toBeLessThanOrEqual(cap);
+      }
+      expect(eventOfKindAll(events, "credit-extended").length).toBe(
+        state.credits.size,
+      );
+      expect(state.actors.get(id("market-trader-iris"))?.temperament).toBe(
+        "greedy",
+      );
+
+      closeStore(world.store);
+      const fresh = createWorldProjectionReducers(seed);
+      const reopened = openStore(storePath, fresh);
+      const clock = readClock(reopened.db);
+      expect(
+        restoreWorldTime(readLiveProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      expect(
+        restoreWorldTime(rebuildProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      const exportPath = join(exportDir, "archive.sqlite");
+      exportArchive(reopened, exportPath);
+      const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+      const branch = openStore(join(imported.slotPath, "world.sqlite"), fresh);
+      expect(
+        restoreWorldTime(
+          readLiveProjections(branch, fresh),
+          readClock(branch.db),
+        ),
+      ).toEqual(state);
+      closeStore(branch);
+      closeStore(reopened);
+      return Math.max(
+        ...wrongs.filter((e) => e.credit === undefined).map((e) => e.amount),
+      );
+    } finally {
+      rmSync(storeDir, { recursive: true, force: true });
+      rmSync(exportDir, { recursive: true, force: true });
+      rmSync(slotsDir, { recursive: true, force: true });
+    }
+  };
+  // A cap of 1 takes one unit at a time; the authored 2 and a cap far above what is held take more.
+  const largest = [run(1), run(2), run(1000)];
+  expect(largest[0]).toBe(1);
+  expect(largest[1]).toBeLessThanOrEqual(2);
+  expect(largest[2]).toBeGreaterThan(largest[0] ?? 0);
 });

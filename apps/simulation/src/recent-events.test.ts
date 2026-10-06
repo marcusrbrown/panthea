@@ -202,7 +202,7 @@ test("the window never returns more than the cap, keeping the newest events", ()
       { windowTicks: 100, cap: 4 },
     );
 
-    const all = chain.eventsByTick.flat();
+    const all = placed(chain.eventsByTick.flat());
     expect(capped.map((event) => event.sequence)).toEqual(
       all.slice(-4).map((event) => event.sequence),
     );

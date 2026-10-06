@@ -363,6 +363,8 @@ function describeCause(petition: Petition): string {
       return cause.resource === undefined
         ? `${cause.offender} struck it`
         : `${cause.offender} struck it and took its ${cause.resource}`;
+    case "wrong":
+      return `${cause.offender} wronged it: ${cause.wrong}`;
   }
 }
 

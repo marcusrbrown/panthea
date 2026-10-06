@@ -4,6 +4,7 @@
 // the building: report, travel, legend, and bless pin nothing, so they are never
 // stale (the validator judges their conditions at commit time instead).
 
+import { toEntityId } from "@panthea/world";
 import { outcomeOf } from "../../../m1-living-world/src/steps/api";
 import { eventsOf } from "../../../m1-living-world/src/steps/direct";
 import type { Recorder, Story } from "./context";
@@ -13,22 +14,31 @@ import {
   lastInputOrder,
   locationOf,
   postFixture,
+  stateOf,
   waitForConsumed,
   waitForModelProposal,
   within,
 } from "./support";
 
-/** Hera's held turn: a light strike on the old oak (no one's, so no one prays about it), which pins her, her location, and the building. */
-const STRIKE = JSON.stringify({
-  action: "strike",
-  target: "old-oak",
-  power: 1,
-});
+/**
+ * Hera's held turn: a light strike, which pins her, her location, and the building. The old oak is no one's, so no
+ * one prays about it; the fire of an earlier step may have taken it (the town's own wrongs move what the fire
+ * draws), and then the woodshed beside it is struck.
+ */
+async function strikeAtSquare(story: Story): Promise<string> {
+  const state = await stateOf(story);
+  const target =
+    ["old-oak", "woodshed"].find(
+      (building) =>
+        state.buildings.get(toEntityId(building))?.status === "operational",
+    ) ?? "woodshed";
+  return JSON.stringify({ action: "strike", target, power: 1 });
+}
 
 /** Holds a Hera strike turn in flight, optionally changes the world, releases it, and returns how it ended. */
 async function heldTurn(story: Story, changeWorld: boolean) {
   const after = lastInputOrder(story);
-  const held = story.provider.hold("hera", STRIKE);
+  const held = story.provider.hold("hera", await strikeAtSquare(story));
   await within("hera's turn is in flight", held.arrived, 30_000);
   if (changeWorld) {
     // While the model thinks, Hera is moved by a fixture: her revision and her

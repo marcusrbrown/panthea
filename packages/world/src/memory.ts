@@ -57,6 +57,8 @@ export const DEFAULT_MEMORY_BALANCE: Readonly<Record<string, number>> = {
   /** Most memories one actor keeps. */
   capacity: 24,
   "salience_building-damaged": 5,
+  /** A wrong between mortals: whoever was beside it remembers who did it to whom. */
+  salience_wrong: 6,
   /** A strike on a mortal: the struck mortal, and anyone at its place, remembers the god that did it. */
   "salience_mortal-struck": 5,
   "salience_building-ignited": 8,
@@ -326,6 +328,8 @@ function consequenceOf(
       return { effect: "harm", agent: event.entityId, target: event.victim };
     case "mortal-struck":
       return { effect: "harm", agent: event.actor, target: event.entityId };
+    case "wrong":
+      return { effect: "harm", agent: event.entityId, target: event.victim };
     default:
       return undefined;
   }
