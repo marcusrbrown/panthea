@@ -127,6 +127,7 @@
     "memoryBalance": {
       "capacity": 24,
       "salience_building-damaged": 5,
+      "salience_mortal-struck": 5,
       "salience_building-ignited": 8,
       "salience_building-destroyed": 9,
       "salience_building-repaired": 4,
@@ -152,7 +153,8 @@
       "blessResourceAmount": 2,
       "blessResourceCap": 4,
       "directorQuietTicks": 120,
-      "goalLockTicks": 40
+      "goalLockTicks": 40,
+      "strikeGoodsCap": 2
     },
     "practiceBalance": {
       "negotiationTicks": 200,
@@ -168,6 +170,11 @@
       "contestActTicks": 120,
       "contestLedgerMax": 48,
       "contestStanding": 1
+    },
+    "troubleKinds": {
+      "fire": "hephaestus",
+      "spoilage": "hades",
+      "theft": "hermes"
     },
     "practiceStakes": {
       "wolf": {

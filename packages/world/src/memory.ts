@@ -57,6 +57,8 @@ export const DEFAULT_MEMORY_BALANCE: Readonly<Record<string, number>> = {
   /** Most memories one actor keeps. */
   capacity: 24,
   "salience_building-damaged": 5,
+  /** A strike on a mortal: the struck mortal, and anyone at its place, remembers the god that did it. */
+  "salience_mortal-struck": 5,
   "salience_building-ignited": 8,
   "salience_building-destroyed": 9,
   "salience_building-repaired": 4,
@@ -311,6 +313,8 @@ function consequenceOf(
       return { effect: "kindness", agent: event.entityId, target: event.deity };
     case "theft":
       return { effect: "harm", agent: event.entityId, target: event.victim };
+    case "mortal-struck":
+      return { effect: "harm", agent: event.actor, target: event.entityId };
     default:
       return undefined;
   }
@@ -574,9 +578,16 @@ export function noticedMemory(
  */
 export function signMemory(
   after: WorldState,
-  event: Extract<WorldEvent, { kind: "petition-answered" | "petition-lapsed" }>,
+  event: Extract<
+    WorldEvent,
+    { kind: "petition-answered" | "petition-lapsed" | "petition-refused" }
+  >,
 ): DerivedDraft | undefined {
-  if (!after.actors.get(event.entityId)?.alive) return undefined;
+  // A refusal is the god's own event: its petitioner is the one who remembers it.
+  const refused = event.kind === "petition-refused";
+  const petitioner = refused ? event.petitioner : event.entityId;
+  const god = refused ? event.entityId : event.god;
+  if (!after.actors.get(petitioner)?.alive) return undefined;
   const salience = balanceOf(after, "salience_sign");
   if (salience < 1) return undefined;
   const answered = event.kind === "petition-answered";
@@ -585,17 +596,17 @@ export function signMemory(
     draft: {
       kind: "memory-recorded",
       memoryKind: "sign",
-      entityId: event.entityId,
+      entityId: petitioner,
       sourceEventId: event.id,
-      god: event.god,
-      outcome: answered ? "answered" : "lapsed",
+      god,
+      outcome: answered ? "answered" : refused ? "refused" : "lapsed",
       petitionId: event.petitionId,
-      subjects: [event.god],
+      subjects: [god],
       salience,
       consequence: {
         effect: answered ? "kindness" : "harm",
-        agent: event.god,
-        target: event.entityId,
+        agent: god,
+        target: petitioner,
       },
     },
   };

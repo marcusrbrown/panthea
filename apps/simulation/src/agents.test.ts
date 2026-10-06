@@ -1573,7 +1573,7 @@ describe("a god's own recent actions", () => {
   test("a petition addressed to the god is in its turn prompt, and one addressed to the other god is not", async () => {
     const world = newWorld();
     const provider = startProvider();
-    // The farmer prays about a theft; the petition goes to Hera (fewest petitions, then id).
+    // The farmer prays about a director's theft, a trouble in Hermes's domain: the petition goes to Hermes, not to the farmer's patron Hera.
     const theft = {
       schemaVersion: 1,
       id: "evt-1-901",
@@ -1613,8 +1613,9 @@ describe("a god's own recent actions", () => {
 
     provider.respond = () => '{"action":"wait"}';
     for (const [god, mine] of [
-      ["hera", true],
+      ["hermes", true],
       ["zeus", false],
+      ["hera", false],
     ] as const) {
       const runner = runnerFor(world, provider, [god]);
       expect(runner.dispatch()).toBe(true);
@@ -1623,7 +1624,7 @@ describe("a god's own recent actions", () => {
       expect(body.includes("Prayers to you")).toBe(mine);
       expect(body.includes(String(opened.id))).toBe(mine);
     }
-    expect(String(opened.god)).toBe("hera");
+    expect(String(opened.god)).toBe("hermes");
   });
 
   test("after the world refuses a goal change, the god's next prompt says so and why", async () => {

@@ -538,6 +538,8 @@ test("a contest decided for Athena: her services reach five mortals and Poseidon
   for (const mortal of MORTALS) {
     expect(String(routePetition(town.state, id(mortal)))).toBe("hera");
   }
+  // A patron holds its mortals whatever the standing; the old route by feeling and standing is what a mortal with no patron follows.
+  const unpatroned = () => ({ ...town.state, patrons: new Map() });
   for (const mortal of ["m1", "m2", "m3", "m4", "m5"]) {
     town.blessing("athena", mortal);
   }
@@ -587,12 +589,16 @@ test("a contest decided for Athena: her services reach five mortals and Poseidon
       cause: ending?.id,
     },
   ]);
-  // The mortals Athena served pray to her; those Poseidon served keep to Hera, who owes the place nothing.
+  // Their patron is still Hera: standing alone does not change it.
+  for (const mortal of ["m1", "m2", "m3", "m4", "m5", "m6", "m7"]) {
+    expect(String(routePetition(town.state, id(mortal)))).toBe("hera");
+  }
+  // Without a patron, the mortals Athena served pray to her; those Poseidon served keep to Hera, who owes the place nothing.
   for (const mortal of ["m1", "m2", "m3", "m4", "m5"]) {
-    expect(String(routePetition(town.state, id(mortal)))).toBe("athena");
+    expect(String(routePetition(unpatroned(), id(mortal)))).toBe("athena");
   }
   for (const mortal of ["m6", "m7"]) {
-    expect(String(routePetition(town.state, id(mortal)))).toBe("hera");
+    expect(String(routePetition(unpatroned(), id(mortal)))).toBe("hera");
   }
   // Standing is the god's own at that place and nowhere else.
   expect(town.standing("athena", "far")).toBe(0);
@@ -617,6 +623,48 @@ test("a mortal's weights follow the god that served it more: a strike it suffere
   // m2 favours Athena; the others, harmed by Poseidon, favour no one he served.
   expect(plain(ending.favoured)).toEqual([{ mortal: "m2", god: "athena" }]);
   expect(String(ending.winner)).toBe("athena");
+});
+
+test("a strike on a mortal is a rival act too: the world keeps it where the mortal stood, with the others there who experienced it and the gods who perceived it, and a god that saw it can contest it", () => {
+  const town = new Town();
+  const ran = town.tick({
+    actor: "poseidon",
+    kind: "strike",
+    target: "m1",
+    power: 1,
+  });
+  expect(town.rejected()).toEqual([]);
+  const harm = ran.events.find((e) => e.kind === "mortal-struck");
+  if (harm === undefined) throw new Error("no strike");
+  expect(plain(town.state.services)).toEqual([
+    {
+      id: harm.id,
+      kind: "strike",
+      god: "poseidon",
+      place: "square",
+      tick: harm.tick,
+      sequence: harm.sequence,
+      reached: MORTALS,
+      perceivedBy: ["athena", "hera"],
+    },
+  ]);
+  town.tick(town.contest("athena", harm.id as EventId));
+  expect(town.rejected()).toEqual([]);
+  expect(town.contests()).toHaveLength(1);
+});
+
+test("a strike on a mortal during an open contest weighs against the god that struck, for every mortal at the place", () => {
+  const { town, contest } = opened();
+  town.tick({ actor: "poseidon", kind: "strike", target: "m1", power: 1 });
+  expect(town.rejected()).toEqual([]);
+  expect(plain(town.state.contests.get(contest.id)?.tallies)).toEqual(
+    MORTALS.map((mortal) => ({ god: "poseidon", mortal, weight: -1 })),
+  );
+  // A strike elsewhere is not at this place and adds nothing to it.
+  town.tick({ actor: "poseidon", kind: "strike", target: "far-one", power: 1 });
+  expect(town.state.contests.get(contest.id)?.tallies).toHaveLength(
+    MORTALS.length,
+  );
 });
 
 test("a window with no god favoured over the other changes no one's standing: it expires", () => {
@@ -1086,7 +1134,7 @@ test("the codec refuses a stored standing outside the pack's own limit, and hold
 
 // --- Standing routes a mortal's prayers ----------------------------------------------------------
 
-test("a mortal with no affinity of its own who lives at the place prays to the god with the most standing there; a mortal devoted to another god keeps to it", () => {
+test("a mortal with no patron and no affinity of its own who lives at the place prays to the god with the most standing there; a patron's mortal keeps to it", () => {
   const base = pack();
   const town = new Town();
   town.state = createInitialWorldState({
@@ -1106,11 +1154,13 @@ test("a mortal with no affinity of its own who lives at the place prays to the g
   expect(String(routePetition(town.state, id("m8")))).toBe("athena");
   standingMotif(town, "poseidon", 2);
   expect(String(routePetition(town.state, id("m8")))).toBe("poseidon");
-  // Control: m1 is devoted to Hera at affinity 3, and Poseidon's 2 does not move it.
+  // Control: m1's patron is Hera, and Poseidon's standing, however great, does not move it.
   expect(String(routePetition(town.state, id("m1")))).toBe("hera");
-  // Enough standing outweighs the devotion.
   standingMotif(town, "poseidon", 2);
-  expect(String(routePetition(town.state, id("m1")))).toBe("poseidon");
+  expect(String(routePetition(town.state, id("m1")))).toBe("hera");
+  // Without the patron, the feeling for Hera (3) is outweighed by enough standing (4).
+  const unpatroned = { ...town.state, patrons: new Map() };
+  expect(String(routePetition(unpatroned, id("m1")))).toBe("poseidon");
   // Standing is the place's: a mortal who lives elsewhere is not moved by it.
   expect(String(routePetition(town.state, id("far-one")))).toBe("athena");
 });

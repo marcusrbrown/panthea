@@ -100,6 +100,7 @@ test("the Greek pack gives the woodcutter a woodshed at the square, so a theft b
       "directorQuietTicks",
       "goalLockTicks",
       "prayerCooldownTicks",
+      "strikeGoodsCap",
     ].sort(),
   );
 });

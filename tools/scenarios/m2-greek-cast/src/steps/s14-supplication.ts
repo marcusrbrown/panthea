@@ -178,14 +178,14 @@ export async function stepSupplication(
   return recorder.run(
     "S16",
     "Supplication: terms kept are fulfilled; terms broken cost the stake, and the mortal keeps its memory and identity",
-    "Two mortals have prayed. A god answers one prayer by offering terms (its boon for one offering of currency by the mortal, no counteroffers); the mortal's routine accepts, the god blesses it, and the mortal makes its offering: the thread is fulfilled, its ending cites the half that came last (the offering or the boon), and the blessing and the offering are each recorded as seen. A god answers the other with the same terms and a stake, the wolf; the mortal accepts and is blessed, then cannot make its offering by the deadline: the thread is breached, the stake changes the mortal's form and capabilities, citing the breach, and its memories, feelings, and identity are kept.",
+    "Two mortals have prayed. A god answers one prayer by offering terms (its boon for one offering by the mortal of a unit of what it gathers, no counteroffers); the mortal's routine accepts, the god blesses it, and the mortal makes its offering: the thread is fulfilled, its ending cites the half that came last (the offering or the boon), and the blessing and the offering are each recorded as seen. A god answers the other with the same terms and a stake, the wolf; the mortal accepts and is blessed, then cannot make its offering by the deadline: the thread is breached, the stake changes the mortal's form and capabilities, citing the breach, and its memories, feelings, and identity are kept.",
     async (step) => {
       // The town is twenty mortals and seven gods, and the story scripts only Zeus and Hera, so
       // the step answers the prayers made to them. The term to be broken is a promise of nearly
       // all that its mortal could hold by the deadline of what it gathers, which no wealth in
-      // the town changes; the term to be kept is one coin.
+      // the town changes; the term to be kept is one unit of what its mortal gathers.
       const { first, second } = await waitFor(
-        "two prayers wait for an answer from two mortals, one of whom gathers something and the other holds a coin",
+        "two prayers wait for an answer from two mortals who each gather something",
         async () => {
           const state = await stateOf(story);
           // Only a prayer the god's latest prompt offers terms on: one answered or lapsed since is not worth a turn.
@@ -210,14 +210,20 @@ export async function stepSupplication(
             .sort((a, b) => b.tick - a.tick);
           const gathers = (mortal: string) =>
             state.actors.get(id(mortal))?.gathers;
-          const purse = (mortal: string) =>
-            state.actors.get(id(mortal))?.inventory.get("currency") ?? 0;
           const breaker = prayers.find(
             (p) => gathers(p.petitioner) !== undefined,
           );
+          // Mortals pray to their patrons, so Zeus and Hera hear only their own few, some of them poor: the
+          // keeper is asked for a unit of what it gathers, not a coin: a poor mortal spends its coins eating and
+          // buying between the god's turn and its own, and a gatherer always has the unit by the deadline. It must
+          // be pious enough to take the terms at all.
           const keeper = prayers.find(
             (p) =>
-              p.petitioner !== breaker?.petitioner && purse(p.petitioner) >= 1,
+              p.petitioner !== breaker?.petitioner &&
+              gathers(p.petitioner) !== undefined &&
+              Math.round(
+                (state.actors.get(p.petitioner)?.drives?.piety ?? 0) * 100,
+              ) >= 10,
           );
           return breaker === undefined || keeper === undefined
             ? undefined
@@ -226,8 +232,23 @@ export async function stepSupplication(
         { timeoutMs: 240_000, intervalMs: 500 },
       );
 
-      // Terms kept.
-      const keptThread = await offerTerms(story, first, 1, 40);
+      // Terms kept: one unit of what the mortal gathers.
+      const keptGood = (await stateOf(story)).actors.get(
+        id(first.petitioner),
+      )?.gathers;
+      check(
+        keptGood !== undefined,
+        `${first.petitioner} gathers something to offer`,
+        String(keptGood),
+      );
+      const keptThread = await offerTerms(
+        story,
+        first,
+        1,
+        40,
+        undefined,
+        keptGood,
+      );
       const keptBoon = await giveBoon(
         story,
         first,

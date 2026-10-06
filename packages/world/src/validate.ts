@@ -24,6 +24,7 @@ import type {
   ProduceProposal,
   Proposal,
   RealmTransitionProposal,
+  RefuseProposal,
   RejectionReasonCode,
   RepairProposal,
   ReportProposal,
@@ -38,6 +39,7 @@ import {
   gatherAmountOf,
   getResourceAmount,
   NEUTRAL_DRIVES,
+  resourceValue,
 } from "./economy";
 import { igniteThresholdOf } from "./fire";
 import {
@@ -54,10 +56,12 @@ import {
   canPray,
   petitionBalanceOf,
   petitionFor,
+  refusability,
 } from "./petitions";
 import { talkAroundThread, validatePractice } from "./practices";
 import { REPAIR_RESOURCE, repairAmountPerTickOf, repairCostOf } from "./repair";
 import {
+  type ActorState,
   getActor,
   getBuilding,
   getEntityRevision,
@@ -419,6 +423,70 @@ function handleTrade(state: WorldState, proposal: TradeProposal): RuleOutcome {
   ]);
 }
 
+/**
+ * The good a strike on `mortal` takes: its most valuable carried one (by value per unit, then by how much it
+ * holds, then by name), up to the strike cap. Nothing when it carries nothing.
+ */
+function goodsStruck(
+  state: WorldState,
+  mortal: ActorState,
+): { resource: string; amount: number } | undefined {
+  let best: { resource: string; held: number; value: number } | undefined;
+  for (const [resource, held] of mortal.inventory) {
+    if (held <= 0) continue;
+    const value = resourceValue(state.rules, resource);
+    if (
+      best === undefined ||
+      value > best.value ||
+      (value === best.value &&
+        (held > best.held || (held === best.held && resource < best.resource)))
+    ) {
+      best = { resource, held, value };
+    }
+  }
+  if (best === undefined) return undefined;
+  return {
+    resource: best.resource,
+    amount: Math.min(
+      best.held,
+      petitionBalanceOf(state.rules, "strikeGoodsCap"),
+    ),
+  };
+}
+
+/**
+ * A strike on a living mortal: the world takes its most valuable carried good up to the cap, so the god chooses
+ * nothing but the target, and the harm is credited to the god. A mortal carrying nothing is still struck.
+ */
+function strikeMortal(
+  state: WorldState,
+  proposal: StrikeProposal,
+  mortal: ActorState,
+): RuleOutcome {
+  if (mortal.isDeity === true) {
+    return reject("unauthorized-claim", "a god is not struck, only a mortal");
+  }
+  if (!mortal.alive) {
+    return reject("dead-actor", `${proposal.target} is no longer living`);
+  }
+  const taken = goodsStruck(state, mortal);
+  return commit([
+    {
+      kind: "resource-consumed",
+      entityId: proposal.actor,
+      resource: DIVINE_CAPACITY_RESOURCE,
+      amount: proposal.power,
+    },
+    {
+      kind: "mortal-struck",
+      entityId: mortal.id,
+      actor: proposal.actor,
+      amount: taken?.amount ?? 0,
+      ...(taken === undefined ? {} : { resource: taken.resource }),
+    },
+  ]);
+}
+
 function handleStrike(
   state: WorldState,
   proposal: StrikeProposal,
@@ -442,7 +510,11 @@ function handleStrike(
   }
   const target = getBuilding(state, proposal.target);
   if (!target) {
-    return reject("malformed", `unknown strike target: ${proposal.target}`);
+    const mortal = getActor(state, proposal.target);
+    if (mortal === undefined) {
+      return reject("malformed", `unknown strike target: ${proposal.target}`);
+    }
+    return strikeMortal(state, proposal, mortal);
   }
   if (
     target.status === "burning" ||
@@ -720,6 +792,30 @@ function handleBless(state: WorldState, proposal: BlessProposal): RuleOutcome {
   ]);
 }
 
+/** A god refuses one open petition addressed to it: it closes, and the petitioner remembers the refusal as harm by the god. */
+function handleRefuse(
+  state: WorldState,
+  proposal: RefuseProposal,
+): RuleOutcome {
+  if (!getActor(state, proposal.actor)?.isDeity) {
+    return reject("unauthorized-claim", "only a deity may refuse a prayer");
+  }
+  const refusable = refusability(state, proposal.petition, proposal.actor);
+  if (!refusable.ok) return reject("malformed", refusable.message);
+  const { petition } = refusable;
+  if (!getActor(state, petition.petitioner)?.alive) {
+    return reject("dead-actor", "the petitioner is no longer living");
+  }
+  return commit([
+    {
+      kind: "petition-refused",
+      entityId: proposal.actor,
+      petitioner: petition.petitioner,
+      petitionId: petition.id,
+    },
+  ]);
+}
+
 function handleReport(
   state: WorldState,
   proposal: ReportProposal,
@@ -845,6 +941,8 @@ export function validateProposal(
       return handlePray(state, proposal);
     case "bless":
       return handleBless(state, proposal);
+    case "refuse":
+      return handleRefuse(state, proposal);
     case "practice":
       return validatePractice(state, proposal);
     default: {

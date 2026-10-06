@@ -53,7 +53,9 @@ function validPack(): Record<string, unknown> {
         name: "Tavernkeeper",
         locationId: "agora",
         drives: { thrift: 0.5, appetite: 0.2, greed: 0.1, piety: 0.3 },
+        devotion: { god: "athena", affinity: 2 },
       },
+      { id: "athena", name: "Athena", locationId: "agora", deity: true },
     ],
     rules: validRules(),
   };
@@ -236,7 +238,9 @@ test("an inhabitant without gathers, wants, deity, or startingInventory parses w
 
 test("an inhabitant may be authored as a deity", () => {
   const pack = validPack();
-  (pack.inhabitants as Record<string, unknown>[])[0].deity = true;
+  const first = (pack.inhabitants as Record<string, unknown>[])[0];
+  first.deity = true;
+  delete first.devotion;
   const result = parseContentPack(pack);
   expect(result.ok).toBe(true);
   if (result.ok) {
@@ -276,12 +280,6 @@ test("a building owner referencing an unknown inhabitant fails referential integ
 function packWithDevotion(devotion: unknown): Record<string, unknown> {
   const pack = validPack();
   const inhabitants = pack.inhabitants as Record<string, unknown>[];
-  inhabitants.push({
-    id: "athena",
-    name: "Athena",
-    locationId: "agora",
-    deity: true,
-  });
   inhabitants[0] = { ...inhabitants[0], devotion };
   return pack;
 }
@@ -296,6 +294,24 @@ test("an inhabitant may revere one god: the god it prays to first, with the star
       devotion: { god: "athena", affinity: 3 },
     });
   }
+  expect(parseContentPack(validPack()).ok).toBe(true);
+});
+
+test("every mortal needs an authored devotion, its patron: a mortal without one fails parse, and a god needs none", () => {
+  const pack = validPack();
+  const inhabitants = pack.inhabitants as Record<string, unknown>[];
+  const { devotion: _patron, ...stateless } = inhabitants[0] as Record<
+    string,
+    unknown
+  >;
+  inhabitants[0] = stateless;
+  const result = parseContentPack(pack);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.path).toBe("inhabitants[0].devotion");
+    expect(result.message).toContain("patron");
+  }
+  // Control: with its devotion back it parses, and the god beside it has none.
   expect(parseContentPack(validPack()).ok).toBe(true);
 });
 
@@ -377,8 +393,8 @@ function packWithRivals(
 ) {
   const pack = validPack();
   const inhabitants = pack.inhabitants as Record<string, unknown>[];
+  inhabitants[1] = { ...inhabitants[1], rivals };
   inhabitants.push(
-    { id: "athena", name: "Athena", locationId: "agora", deity: true, rivals },
     { id: "poseidon", name: "Poseidon", locationId: "agora", deity: true },
     ...extra,
   );
@@ -413,12 +429,6 @@ test("a rival must be another god in the pack, named once; a mortal has no rival
   const pack = validPack();
   const inhabitants = pack.inhabitants as Record<string, unknown>[];
   inhabitants[0] = { ...inhabitants[0], rivals: ["athena"] };
-  inhabitants.push({
-    id: "athena",
-    name: "Athena",
-    locationId: "agora",
-    deity: true,
-  });
   const mortal = parseContentPack(pack);
   expect(mortal.ok).toBe(false);
   if (!mortal.ok) expect(mortal.path).toBe("inhabitants[0].rivals");
@@ -578,13 +588,17 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
     blessResourceCap: 4,
     directorQuietTicks: 120,
     goalLockTicks: 40,
+    strikeGoodsCap: 2,
   };
   const parsed = parseContentPack(packWithPetitionBalance(good));
   expect(parsed.ok).toBe(true);
   if (parsed.ok) expect(parsed.value.rules.petitionBalance).toEqual(good);
-  // A partial record is fine: the rest take their defaults.
+  // A partial record is fine: the rest take their defaults. The cap's smallest value parses.
   expect(
     parseContentPack(packWithPetitionBalance({ goalLockTicks: 10 })).ok,
+  ).toBe(true);
+  expect(
+    parseContentPack(packWithPetitionBalance({ strikeGoodsCap: 1 })).ok,
   ).toBe(true);
   // Without one, nothing changes for packs that never had it.
   const plain = parseContentPack(validPack());
@@ -594,6 +608,11 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
 
   for (const bad of [
     { answerWindowTicks: 0 },
+    // A strike takes at least one unit: a cap of 0, or one that is not a whole number, is no cap.
+    { strikeGoodsCap: 0 },
+    { strikeGoodsCap: -1 },
+    { strikeGoodsCap: 1.5 },
+    { strikeGoodsCap: "2" },
     { answerWindowTicks: -5 },
     { answerWindowTicks: 2.5 },
     { directorQuietTicks: "soon" },
@@ -705,5 +724,34 @@ test("the stakes a god may set on terms are authored in the rules and parsed str
       JSON.stringify(bad),
       parseContentPack(packWithStakes(bad)).ok,
     ]).toEqual([JSON.stringify(bad), false]);
+  }
+});
+
+test("the trouble-kind table names a god of the pack for each known kind: a typo'd kind, a mortal, or an unknown god is refused", () => {
+  const withTable = (table: unknown) => {
+    const pack = validPack();
+    (pack.rules as Record<string, unknown>).troubleKinds = table;
+    return parseContentPack(pack);
+  };
+  const good = withTable({ fire: "athena", theft: "athena" });
+  expect(good.ok).toBe(true);
+  if (good.ok) {
+    expect(good.value.rules.troubleKinds).toEqual({
+      fire: "athena",
+      theft: "athena",
+    });
+  }
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.rules.troubleKinds === undefined).toBe(true);
+  for (const [bad, path] of [
+    [{ fyre: "athena" }, "rules.troubleKinds.fyre"],
+    [{ fire: "npc-1" }, "rules.troubleKinds.fire"],
+    [{ fire: "nike" }, "rules.troubleKinds.fire"],
+    [{ fire: 3 }, "rules.troubleKinds.fire"],
+    [["athena"], "rules.troubleKinds"],
+  ] as const) {
+    const result = withTable(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe(path);
   }
 });
