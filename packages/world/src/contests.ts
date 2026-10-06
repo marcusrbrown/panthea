@@ -77,7 +77,7 @@ const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 // --- The ledger: acts a rival can contest ----------------------------------------------------------
 
 /**
- * The act `event` is, if it is a god's bless, strike, or legend where mortals
+ * The act `event` is, if it is a god's bless, strike (on a building or a mortal), or legend where mortals
  * were: who did it, where, who experienced it, and which other gods perceived
  * it. `before` is the world as it stood before the event. An act that reached
  * no mortal is none the world keeps.
@@ -109,16 +109,19 @@ function serviceOf(
       break;
     }
     case "building-damaged":
-    case "building-ignited": {
+    case "building-ignited":
+    case "mortal-struck": {
       kind = "strike";
-      if (event.kind === "building-damaged") {
-        god = event.actor;
-      } else if (event.cause.kind === "strike") {
+      if (event.kind === "building-ignited") {
+        if (event.cause.kind !== "strike") return undefined;
         god = event.cause.actor;
       } else {
-        return undefined;
+        god = event.actor;
       }
-      place = getBuilding(before, event.entityId)?.locationId;
+      place =
+        event.kind === "mortal-struck"
+          ? getActor(before, event.entityId)?.locationId
+          : getBuilding(before, event.entityId)?.locationId;
       reached =
         place === undefined
           ? []

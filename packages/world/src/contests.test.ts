@@ -625,6 +625,48 @@ test("a mortal's weights follow the god that served it more: a strike it suffere
   expect(String(ending.winner)).toBe("athena");
 });
 
+test("a strike on a mortal is a rival act too: the world keeps it where the mortal stood, with the others there who experienced it and the gods who perceived it, and a god that saw it can contest it", () => {
+  const town = new Town();
+  const ran = town.tick({
+    actor: "poseidon",
+    kind: "strike",
+    target: "m1",
+    power: 1,
+  });
+  expect(town.rejected()).toEqual([]);
+  const harm = ran.events.find((e) => e.kind === "mortal-struck");
+  if (harm === undefined) throw new Error("no strike");
+  expect(plain(town.state.services)).toEqual([
+    {
+      id: harm.id,
+      kind: "strike",
+      god: "poseidon",
+      place: "square",
+      tick: harm.tick,
+      sequence: harm.sequence,
+      reached: MORTALS,
+      perceivedBy: ["athena", "hera"],
+    },
+  ]);
+  town.tick(town.contest("athena", harm.id as EventId));
+  expect(town.rejected()).toEqual([]);
+  expect(town.contests()).toHaveLength(1);
+});
+
+test("a strike on a mortal during an open contest weighs against the god that struck, for every mortal at the place", () => {
+  const { town, contest } = opened();
+  town.tick({ actor: "poseidon", kind: "strike", target: "m1", power: 1 });
+  expect(town.rejected()).toEqual([]);
+  expect(plain(town.state.contests.get(contest.id)?.tallies)).toEqual(
+    MORTALS.map((mortal) => ({ god: "poseidon", mortal, weight: -1 })),
+  );
+  // A strike elsewhere is not at this place and adds nothing to it.
+  town.tick({ actor: "poseidon", kind: "strike", target: "far-one", power: 1 });
+  expect(town.state.contests.get(contest.id)?.tallies).toHaveLength(
+    MORTALS.length,
+  );
+});
+
 test("a window with no god favoured over the other changes no one's standing: it expires", () => {
   const { town, contest } = opened();
   town.until(() => town.state.contests.get(contest.id)?.status !== "open");
