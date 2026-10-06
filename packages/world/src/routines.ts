@@ -144,9 +144,10 @@ export function foodWant(
   if (seller !== undefined) {
     return { resource: "food", deal: { counterparty: seller, give, receive } };
   }
-  // Nobody here sells. A producer at this very place restocks within a tick,
-  // so the buyer waits for it; with none here, a hungry mortal walks to the
-  // nearest producer's workplace rather than failing in place every tick.
+  // Nobody here sells. A producer who works this place restocks or comes
+  // back, so the buyer waits for it and stays where its own trade is; with
+  // none working here, a hungry mortal walks to the nearest producer's
+  // workplace rather than failing in place every tick.
   const trip = hasProducerHere(state, actorId, actor)
     ? undefined
     : tripToFoodSeller(state, actor, give, receive);
@@ -155,20 +156,23 @@ export function foodWant(
     : { resource: "food", trip };
 }
 
-/** Whether another living food producer works where `actor` stands. */
+/** Whether a living food producer works where `actor` stands: one standing here, or one whose home this is and who is away only to pray. */
 function hasProducerHere(
   state: WorldState,
   actorId: EntityId,
   actor: ActorState,
 ): boolean {
-  return (
-    findCounterparty(
-      state,
-      actorId,
-      actor,
-      (candidate) => candidate.gathers === "food",
-    ) !== undefined
-  );
+  for (const [candidateId, candidate] of state.actors) {
+    if (candidateId === actorId || !candidate.alive) continue;
+    if (candidate.gathers !== "food") continue;
+    if (
+      candidate.locationId === actor.locationId ||
+      candidate.home === actor.locationId
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** The first step toward the nearest food producer who would sell `receive` for `give`, or `undefined` when none holds food or none can be reached. */

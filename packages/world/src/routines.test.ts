@@ -591,7 +591,7 @@ test("a hungry mortal where no producer works walks toward the nearest one inste
   });
 });
 
-test("no walk when it would lead nowhere: no producer holds food, none is reachable, or one already works here and will restock", () => {
+test("no walk when it would lead nowhere: no producer holds food, none is reachable, or one already works here (or calls here home) and will restock", () => {
   const hungry = () => mortal("hungry", "square", { currency: 10 });
   const wantOf = (state: WorldState) =>
     foodWant(
@@ -616,6 +616,22 @@ test("no walk when it would lead nowhere: no producer holds food, none is reacha
       lineWorld(undefined, [
         hungry(),
         mortal("farmer", "nowhere", { food: 4 }, { gathers: "food" }),
+      ]),
+    ),
+  ).toMatchObject({ unmet: "no-seller" });
+
+  // The place's producer is away praying: it works here and comes home, so its buyers wait instead of settling somewhere else.
+  expect(
+    wantOf(
+      lineWorld(undefined, [
+        hungry(),
+        mortal(
+          "local",
+          "path",
+          { food: 4 },
+          { gathers: "food", home: toEntityId("square") },
+        ),
+        mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
       ]),
     ),
   ).toMatchObject({ unmet: "no-seller" });
