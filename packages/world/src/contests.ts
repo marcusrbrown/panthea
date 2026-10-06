@@ -335,6 +335,48 @@ function validateDefection(
   };
 }
 
+/** A mortal that left `god` for `to`, which `god` may still open a contest over: its own memory of the change of patron, as the world would take it. */
+export interface ContestableDefection {
+  /** The `patron-changed` event, which is what a contest over it cites. */
+  readonly id: EventId;
+  readonly mortal: EntityId;
+  readonly home: EntityId;
+  readonly to: EntityId;
+}
+
+/** The defections `god` lost a worshipper in and may open a contest over right now, newest first: each one the world would accept. */
+export function contestableDefections(
+  state: WorldState,
+  god: EntityId,
+): readonly ContestableDefection[] {
+  return getMemories(state, god)
+    .filter(
+      (memory): memory is Extract<MemoryEntry, { kind: "patronage" }> =>
+        memory.kind === "patronage" && memory.from === god,
+    )
+    .sort((a, b) => b.recordedAt - a.recordedAt)
+    .filter(
+      (memory) =>
+        validateContest(state, {
+          schemaVersion: 1,
+          actor: god,
+          targets: [],
+          expectedRevisions: [],
+          source: "model",
+          observationId: createObservationId(),
+          kind: "practice",
+          move: "contest",
+          cause: memory.sourceEventId,
+        }).ok,
+    )
+    .map((memory) => ({
+      id: memory.sourceEventId,
+      mortal: memory.mortal,
+      home: memory.home,
+      to: memory.to,
+    }));
+}
+
 /** The events a contest proposal would commit, or why the world refuses it. */
 export function validateContest(
   state: WorldState,

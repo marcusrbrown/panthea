@@ -22,6 +22,7 @@ export const CONTEXT_ACTIONS: readonly string[] = [
   "travel",
   "report",
   "bless",
+  "refuse",
   "practice",
 ];
 
@@ -98,6 +99,7 @@ export function primaryTarget(proposal: Record<string, unknown>): string {
         ? proposal.linkedEventId
         : "legend";
     case "bless":
+    case "refuse":
       return String(proposal.petition);
     case "practice":
       // A demand is told apart by its cause, an offer by its prayer, an answer by its thread: two moves on one thread are two choices.

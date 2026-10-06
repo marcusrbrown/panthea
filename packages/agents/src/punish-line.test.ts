@@ -161,9 +161,12 @@ test("a god without the power to strike is told why and given no object: no abil
       schema: view.schema,
     };
   };
+  // The building's own line: the strike on the mortal who owns it is a choice of its own, shown beside it.
+  const buildingLine = (entry: string) =>
+    entry.split("\n").find((l) => l.includes("punish freely")) ?? "";
   const noObject = (entry: string) => {
     expect(entry).toContain("punish freely");
-    expect(entry).not.toMatch(/\{"action":"strike"/);
+    expect(buildingLine(entry)).not.toMatch(/\{"action":"strike"/);
     expect(entry).toContain("cannot strike it now");
   };
 
@@ -211,5 +214,7 @@ test("a god that is away is shown travel to the building's place, and no strike 
   expect(entry).toContain("punish freely: if you choose this, travel to");
   expect(entry).toContain("once you are there, strike woodshed");
   expect(entry).toMatch(/\{"action":"travel","to":"[^"]+"\}/);
-  expect(entry).not.toMatch(/\{"action":"strike"/);
+  // No strike object on the building until the god is there; the mortal who owns it may be struck wherever it is.
+  const building = entry.split("\n").find((l) => l.includes("punish freely"));
+  expect(building).not.toMatch(/\{"action":"strike"/);
 });

@@ -160,8 +160,10 @@ test("a god with a prayer to answer may offer terms on it: practice is offered, 
   ).properties;
   expect(properties.move?.enum).toContain("offer");
   expect(properties.prayer?.enum).toEqual([petition]);
-  // The prayer is its own field: a bless's `petition` is not widened by it.
-  expect(properties.petition).toBeUndefined();
+  // The prayer is its own field: a bless's `petition` is not widened by it. `petition` now names the prayers a
+  // refusal may name, and a bless is not on offer to a god whose petitioner is away.
+  expect(properties.petition?.enum).toEqual([petition]);
+  expect(properties.action?.enum).not.toContain("bless");
   expect(properties.stake?.enum).toEqual(["wolf"]);
   expect(properties.term?.properties?.party?.enum).toContain("farmer");
   expect(JSON.stringify(schema.jsonSchema)).not.toContain("anyOf");

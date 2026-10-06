@@ -201,7 +201,26 @@ export function buildModelProposal(
         (building) => building.id === intent.target,
       );
       if (!target) {
-        return refuse(`${intent.target} is not a building in the snapshot`);
+        // Not a building here: the mortal a shown prayer asks the god to punish. The world takes its goods wherever it
+        // is, so nothing pins its place or its revision (a routine moves it every tick); the prayer is the fact.
+        const prayer = remembered.petitions.find(
+          (candidate) => candidate.strikeMortal?.target === intent.target,
+        );
+        if (prayer === undefined) {
+          return refuse(
+            `${intent.target} is not a building in the snapshot or the offender of a prayer shown`,
+          );
+        }
+        factsRead.push(`petition:${prayer.id}`);
+        expectedRevisions.push(selfPin);
+        proposal = {
+          ...base,
+          targets: [intent.target],
+          kind: "strike",
+          target: intent.target,
+          power: intent.power,
+        };
+        break;
       }
       factsRead.push(`building:${target.id}.status`);
       expectedRevisions.push(selfPin, locationPin, {
@@ -273,6 +292,24 @@ export function buildModelProposal(
       };
       break;
     }
+    case "refuse": {
+      const petition = remembered.petitions.find(
+        (candidate) => candidate.id === intent.petition,
+      );
+      if (petition === undefined) {
+        return refuse(`${intent.petition} is not a prayer the god was shown`);
+      }
+      factsRead.push(`petition:${petition.id}`);
+      // A refusal pins nothing: the world judges again that the prayer is open, addressed to the god, and inside its window.
+      proposal = {
+        ...base,
+        expectedRevisions: [],
+        targets: [],
+        kind: "refuse",
+        petition: petition.id,
+      };
+      break;
+    }
     case "practice": {
       if (intent.move === "offer") {
         const prayer = remembered.practice.offerable.find(
@@ -329,7 +366,7 @@ export function buildModelProposal(
         // A demand opens a thread, so there is nothing to pin: whether the god
         // knows the cause, the other god lives, and the term can be performed
         // are all judged when it commits.
-        factsRead.push(`memory:${cause.memoryId}`);
+        factsRead.push(cause.fact ?? `memory:${cause.memoryId}`);
         proposal = {
           ...base,
           targets: [],

@@ -259,10 +259,18 @@ test("bless is offered only for a petitioner who is present, naming one of its o
   const blessProps = (g: string) => {
     const schema = run.schema(g).jsonSchema as {
       properties: Record<string, { enum?: string[] }>;
+      allOf?: {
+        if: { properties: { action?: { const?: string } } };
+        then: { properties?: { petition?: { enum?: string[] } } };
+      }[];
     };
+    // A bless names its own ids: the condition on the bless action, apart from the refusal's.
+    const bless = schema.allOf?.find(
+      (condition) => condition.if.properties.action?.const === "bless",
+    );
     return {
       actions: schema.properties.action?.enum ?? [],
-      petitions: schema.properties.petition?.enum,
+      petitions: bless?.then.properties?.petition?.enum,
     };
   };
   // The god is in the hall; the farmer is at the altar: not present, so no bless.
