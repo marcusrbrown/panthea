@@ -60,7 +60,13 @@ export const DEFAULT_PETITION_BALANCE: Readonly<Record<string, number>> = {
   /** Most a bless returns of stock a mortal lost to theft or spoilage. */
   blessResourceCap: 4,
   /** Ticks without a consequential event before the director causes trouble. */
-  directorQuietTicks: 120,
+  directorIntervalTicks: 120,
+  /** Ticks in a season: spring at tick 0, then summer, autumn, winter. At most 300, so a 5-minute episode always sees a season turn, and 200 so the hour's 3,600 ticks turn 18 times. */
+  seasonTicks: 200,
+  /** The window in which each god's domain trouble fires at least once, at a tick the persisted PRNG picks: half a 300-tick episode, so every episode holds a whole window. */
+  troubleFloorTicks: 150,
+  /** Most units one domain trouble takes: what one answered prayer gives (`blessResourceAmount`), so a prayer can make it good. */
+  troubleLossCap: 2,
   /** Ticks a goal stays unreplaceable without a reason. */
   goalLockTicks: 40,
   /** Most units a god's strike takes of the struck mortal's most valuable carried good: what one answered prayer gives (`blessResourceAmount`), so a punishment costs about as much as help is worth. */
@@ -118,7 +124,8 @@ export function knownCause(
     cause.kind === "need" ||
     cause.kind === "grudge" ||
     cause.kind === "harm" ||
-    cause.kind === "wrong"
+    cause.kind === "wrong" ||
+    cause.trouble !== undefined
   ) {
     return cause;
   }
@@ -210,8 +217,15 @@ export function applyLossNoticed(
 
 /** What a cause is about, for the one-open-petition rule: a resource, or a building. A grudge, or a cause with neither, is about nothing and blocks nothing. */
 function subjectOfCause(cause: PetitionCause): string | undefined {
-  // A harm by a god is its own matter: it never waits behind a prayer about the goods it took.
-  if (cause.kind === "harm" || cause.kind === "wrong") return undefined;
+  // A harm by a god, a wrong, and a trouble in a god's domain are each their own matter: none waits behind a prayer
+  // about the goods it took (a trouble's prayer goes to its domain god, an open need's to the patron).
+  if (
+    cause.kind === "harm" ||
+    cause.kind === "wrong" ||
+    cause.trouble !== undefined
+  ) {
+    return undefined;
+  }
   if (cause.building !== undefined) return `building:${cause.building}`;
   if (cause.resource !== undefined) return `resource:${cause.resource}`;
   return undefined;
@@ -492,6 +506,10 @@ function domainGod(
   state: WorldState,
   cause: PetitionCause,
 ): EntityId | undefined {
+  if (cause.trouble !== undefined) {
+    const god = state.rules.troubleKinds?.[cause.trouble];
+    return god === undefined ? undefined : livingGod(state, god as EntityId);
+  }
   if (
     cause.kind !== "fire" &&
     cause.kind !== "spoilage" &&
@@ -699,6 +717,19 @@ export function recordCauses(state: WorldState, event: WorldEvent): WorldState {
         kind: "spoilage",
         resource: event.resource,
         amount: event.amount,
+      });
+    case "trouble":
+      return recordCause(state, event.entityId, {
+        eventId: event.id,
+        tick: event.tick,
+        trouble: event.trouble,
+        ...(event.loss.kind === "building"
+          ? { kind: "damage" as const, building: event.loss.building }
+          : {
+              kind: "spoilage" as const,
+              resource: event.loss.resource,
+              amount: event.loss.amount,
+            }),
       });
     case "wrong":
       return recordCause(state, event.victim, {

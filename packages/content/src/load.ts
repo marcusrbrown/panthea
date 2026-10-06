@@ -130,7 +130,7 @@ export function loadGodProfiles(
     if (!raw.ok) return raw;
     inputs.push({ label: file, value: raw.value });
   }
-  return parseGodProfiles(inputs, pack.inhabitants);
+  return parseGodProfiles(inputs, pack.inhabitants, pack.rules);
 }
 
 /** Loads and parses the motif catalogue at `file` (e.g. `content/greek/lore/motifs.json`). */

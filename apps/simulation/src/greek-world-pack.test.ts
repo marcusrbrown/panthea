@@ -97,11 +97,14 @@ test("the Greek pack gives the woodcutter a woodshed at the square, so a theft b
       "blessResourceAmount",
       "blessResourceCap",
       "causePrayableTicks",
-      "directorQuietTicks",
+      "directorIntervalTicks",
       "goalLockTicks",
       "prayerCooldownTicks",
       "revengeWindowTicks",
+      "seasonTicks",
       "strikeGoodsCap",
+      "troubleFloorTicks",
+      "troubleLossCap",
       "wrongCooldownTicks",
       "wrongLossCap",
       "wrongNeedMultiplier",
@@ -137,11 +140,11 @@ test("PANTHEA_PRACTICE_BALANCE overrides practice tunables over the authored one
   // The petition tunables are untouched by it, and the two overrides combine.
   const both = loadEmbeddedGreekWorldPack({
     PANTHEA_PRACTICE_BALANCE: JSON.stringify({ contestWindowTicks: 25 }),
-    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorQuietTicks: 100000 }),
+    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorIntervalTicks: 100000 }),
   });
   if (!both.ok) throw new Error(both.message);
   expect(both.value.rules.practiceBalance?.contestWindowTicks).toBe(25);
-  expect(both.value.rules.petitionBalance?.directorQuietTicks).toBe(100000);
+  expect(both.value.rules.petitionBalance?.directorIntervalTicks).toBe(100000);
   // Without it, or empty, the authored tunables stand.
   const unset = loadEmbeddedGreekWorldPack({ PANTHEA_PRACTICE_BALANCE: "" });
   expect(unset.ok && unset.value.rules.practiceBalance).toEqual(
@@ -164,12 +167,12 @@ test("PANTHEA_PETITION_BALANCE overrides petition tunables over the authored one
   const authored = loadEmbeddedGreekWorldPack({});
   if (!authored.ok) throw new Error(authored.message);
   const quiet = loadEmbeddedGreekWorldPack({
-    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorQuietTicks: 100000 }),
+    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorIntervalTicks: 100000 }),
   });
   if (!quiet.ok) throw new Error(quiet.message);
   expect(quiet.value.rules.petitionBalance).toEqual({
     ...authored.value.rules.petitionBalance,
-    directorQuietTicks: 100000,
+    directorIntervalTicks: 100000,
   });
   // Without it, or empty, the authored tunables stand.
   const unset = loadEmbeddedGreekWorldPack({ PANTHEA_PETITION_BALANCE: "" });
@@ -179,7 +182,7 @@ test("PANTHEA_PETITION_BALANCE overrides petition tunables over the authored one
   // Control: a tunable that does not exist, a non-positive value, and text that is not JSON are refused.
   for (const bad of [
     '{"directorQuiet": 5}',
-    '{"directorQuietTicks": 0}',
+    '{"directorIntervalTicks": 0}',
     "not json",
     "[1]",
   ]) {

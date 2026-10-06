@@ -555,7 +555,7 @@ test("WORLD_EVENT_KINDS lists every kind parseEvent accepts", () => {
   expect(WORLD_EVENT_KINDS).toContain("memory-recorded");
   expect(WORLD_EVENT_KINDS).toContain("report-told");
   expect(WORLD_EVENT_KINDS).toContain("relationship-changed");
-  expect(WORLD_EVENT_KINDS).toHaveLength(47);
+  expect(WORLD_EVENT_KINDS).toHaveLength(49);
 });
 
 test("an unknown event kind is rejected with reason unknown-kind", () => {
@@ -987,7 +987,7 @@ test("only kinds someone can perceive are witnessable: a memory of a report, a m
   for (const eventKind of WITNESSED_EVENT_KINDS) {
     expect(parseEvent(envelope({ ...WITNESSED, eventKind })).ok).toBe(true);
   }
-  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 26);
+  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 28);
 });
 
 // --- Legend tellings: a claim and the recorded hearers ------------------------------------
@@ -2752,4 +2752,95 @@ test("a credit trade names its seller, buyer, goods, price, which side is deferr
   for (const kind of ["credit-extended", "credit-settled"]) {
     expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain(kind);
   }
+});
+
+test("a season-turned event names the season it turns into and the one it leaves, which must follow it; it is unplaced and has no subjects", () => {
+  const turn = (season: string, previous: string) =>
+    parseEvent(envelope({ kind: "season-turned", season, previous }));
+  for (const [season, previous] of [
+    ["summer", "spring"],
+    ["autumn", "summer"],
+    ["winter", "autumn"],
+    ["spring", "winter"],
+  ]) {
+    expect([season, turn(season as string, previous as string).ok]).toEqual([
+      season,
+      true,
+    ]);
+  }
+  const parsed = turn("summer", "spring");
+  if (parsed.ok) expect(eventSubjects(parsed.value)).toEqual([]);
+  for (const [season, previous] of [
+    ["spring", "spring"],
+    ["autumn", "spring"],
+    ["summer", "winter"],
+    ["monsoon", "spring"],
+    ["summer", "never"],
+  ]) {
+    expect([
+      season,
+      previous,
+      turn(season as string, previous as string).ok,
+    ]).toEqual([season, previous, false]);
+  }
+  expect(
+    parseEvent(envelope({ kind: "season-turned", season: "summer" })).ok,
+  ).toBe(false);
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain(
+    "season-turned",
+  );
+});
+
+test("a trouble names the afflicted mortal, the trouble, its god, the season, what set it off, and what it took", () => {
+  const raw = {
+    kind: "trouble",
+    entityId: "lykos",
+    trouble: "squall",
+    god: "zeus",
+    season: "autumn",
+    source: "floor",
+    loss: { kind: "building", building: "shop" },
+  };
+  const parsed = parseEvent(envelope(raw));
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok) {
+    expect(eventSubjects(parsed.value).map(String)).toEqual([
+      "lykos",
+      "zeus",
+      "shop",
+    ]);
+    expect(eventCause(parsed.value)).toBeUndefined();
+  }
+  const resource = parseEvent(
+    envelope({
+      ...raw,
+      source: "season",
+      loss: { kind: "resource", resource: "food", amount: 2 },
+    }),
+  );
+  expect(resource.ok).toBe(true);
+  if (resource.ok)
+    expect(eventSubjects(resource.value).map(String)).toEqual([
+      "lykos",
+      "zeus",
+    ]);
+  for (const bad of [
+    { ...raw, entityId: undefined },
+    { ...raw, trouble: undefined },
+    { ...raw, god: undefined },
+    { ...raw, season: "monsoon" },
+    { ...raw, source: "luck" },
+    { ...raw, loss: undefined },
+    { ...raw, loss: { kind: "plague" } },
+    { ...raw, loss: { kind: "building" } },
+    { ...raw, loss: { kind: "resource", resource: "food", amount: 0 } },
+    { ...raw, loss: { kind: "resource", resource: "food", amount: 1.5 } },
+    { ...raw, loss: { kind: "resource", amount: 1 } },
+  ]) {
+    expect([JSON.stringify(bad), parseEvent(envelope(bad)).ok]).toEqual([
+      JSON.stringify(bad),
+      false,
+    ]);
+  }
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain("trouble");
 });

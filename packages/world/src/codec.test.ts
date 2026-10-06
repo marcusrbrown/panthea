@@ -659,3 +659,110 @@ test("wrongs, credits, and a mortal's temperament round-trip through the codec, 
   actors.find(([id]: [string]) => id === "farmer")[1].temperament = "wicked";
   refused({ actors });
 });
+
+test("the trouble table, each god's last trouble, and the director's own clock round-trip through the codec, and decode holds them to the world's gods and kinds", () => {
+  const base = patronPack();
+  const state = createInitialWorldState({
+    ...base,
+    rules: {
+      ...base.rules,
+      troubles: {
+        squall: {
+          effect: "building",
+          buildings: ["shop"],
+          seasons: { autumn: 3, winter: 3 },
+        },
+        leak: {
+          effect: "resource",
+          resources: ["food"],
+          seasons: { winter: 1000 },
+        },
+      },
+      troubleKinds: { fire: "zeus", squall: "zeus", leak: "hera" },
+    },
+  });
+  const withClock = {
+    ...state,
+    director: { lastFireTick: 17 },
+    lastTrouble: new Map([
+      [toEntityId("hera"), 40],
+      [toEntityId("zeus"), 12],
+    ]),
+  };
+  const encoded = JSON.parse(JSON.stringify(encode(withClock)));
+  expect(encoded.director).toEqual({ lastFireTick: 17 });
+  expect(encoded.lastTrouble).toEqual([
+    ["hera", 40],
+    ["zeus", 12],
+  ]);
+  const decoded = decode(encoded);
+  expect(decoded).toEqual(withClock);
+  expect(decoded.director.lastFireTick).toBe(17);
+  expect(decoded.lastTrouble.get(toEntityId("hera"))).toBe(40);
+  expect(decoded.rules.troubles?.squall?.seasons).toEqual({
+    autumn: 3,
+    winter: 3,
+  });
+
+  const refused = (patch: Record<string, unknown>) =>
+    expect(() => decode({ ...encoded, ...patch })).toThrow();
+  const rules = encoded.rules;
+  // A last trouble is a god's, once, at a whole tick.
+  refused({ lastTrouble: [["farmer", 4]] });
+  refused({ lastTrouble: [["nobody", 4]] });
+  refused({ lastTrouble: [["zeus", -1]] });
+  refused({ lastTrouble: [["zeus", 1.5]] });
+  refused({
+    lastTrouble: [
+      ["zeus", 4],
+      ["zeus", 5],
+    ],
+  });
+  refused({ lastTrouble: "zeus" });
+  refused({ lastTrouble: undefined });
+  // The director's clock is a whole tick.
+  refused({ director: { lastFireTick: -1 } });
+  refused({ director: { lastFireTick: 1.5 } });
+  refused({ director: { lastConsequentialTick: 3 } });
+  refused({ director: undefined });
+  // A trouble belongs to a god in this world, and its table is the pack's shape.
+  refused({
+    rules: {
+      ...rules,
+      troubleKinds: { fire: "zeus", squall: "zeus", leak: "farmer" },
+    },
+  });
+  refused({
+    rules: { ...rules, troubleKinds: { fire: "zeus", squall: "zeus" } },
+  });
+  refused({
+    rules: {
+      ...rules,
+      troubleKinds: {
+        fire: "zeus",
+        squall: "zeus",
+        leak: "hera",
+        plague: "hera",
+      },
+    },
+  });
+  refused({
+    rules: {
+      ...rules,
+      troubles: {
+        ...rules.troubles,
+        leak: { ...rules.troubles.leak, effect: "plague" },
+      },
+    },
+  });
+  refused({
+    rules: {
+      ...rules,
+      troubles: {
+        ...rules.troubles,
+        leak: { ...rules.troubles.leak, seasons: { winter: 1001 } },
+      },
+    },
+  });
+  refused({ rules: { ...rules, troubles: { fire: rules.troubles.leak } } });
+});

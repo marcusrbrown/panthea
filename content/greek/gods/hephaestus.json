@@ -161,6 +161,11 @@
   ],
   "inventions": [
     {
+      "id": "domain-troubles",
+      "statement": "Hephaestus's domain troubles are the game's own.",
+      "reason": "A forge flare that damages the forge, and cracked tools that spoil smithwork, are troubles the game draws on a season's odds and a floor, damaging the forge or taking goods. The sources attest his forge and craft; no source tells these episodes."
+    },
+    {
       "id": "fire-as-strike",
       "statement": "His fire is a damaging strike on structures.",
       "reason": "The world has no craft or fire action but strike; it is the one place his fire can show. A game stand-in."
@@ -184,6 +189,30 @@
       "id": "authored-tuning",
       "statement": "The drive weights and the starting dispositions of Hephaestus are authored tuning.",
       "reason": "The sources describe temperament in prose; the numbers are a design choice to be revised against play."
+    }
+  ],
+  "troubles": [
+    {
+      "id": "forge-flare",
+      "statement": "A forge flares: the forge is damaged. Summer.",
+      "cites": [
+        {
+          "source": "hymn-20-hephaestus",
+          "locator": "lines 1-8"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "cracked-tools",
+      "statement": "Tools crack and smithwork is spoiled: tools or ore are lost. Autumn and winter.",
+      "cites": [
+        {
+          "source": "iliad-18",
+          "locator": "lines 468-477"
+        }
+      ],
+      "invention": "domain-troubles"
     }
   ],
   "sprite": "placeholder-hephaestus"

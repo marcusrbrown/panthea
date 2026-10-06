@@ -87,7 +87,7 @@ function content(
       fireBalance: {},
       economyBalance: { consumeAmount: 1, value_food: 3 },
       petitionBalance: {
-        directorQuietTicks: 100000,
+        directorIntervalTicks: 100000,
         ...options.petitionBalance,
       },
       practiceBalance: { contestWindowTicks: options.contestWindowTicks ?? 10 },

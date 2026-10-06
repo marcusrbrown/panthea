@@ -1,13 +1,12 @@
-// The quiet-world director: when nothing real has happened for the quiet
-// window, it causes attributed trouble among mortals, so the world gives gods
-// something to answer.
+// The quiet-world director: on its own clock, every `directorIntervalTicks`
+// since it last fired, it causes attributed trouble among mortals, so the world
+// gives gods something to answer. Nothing a god or a mortal does resets it.
 //
 // It is an environmental step of the tick, beside income, fire, and the need
 // scan. It uses the persisted PRNG, so a replay chooses the same trouble. Its
 // trouble is theft, spoiled stock, or a fire in a victim's building, each
 // recorded with the director as its cause (never a god, never a mortal's
-// choice). It only takes, spoils, or burns; it never undoes damage. Talk,
-// goals, and prayers are not consequential and do not reset its timer.
+// choice). It only takes, spoils, or burns; it never undoes damage.
 //
 // It prefers the people of places where something is open (an open thread, a
 // contest no god has served yet) for its trouble, so the world's pressure lands
@@ -27,40 +26,32 @@ import {
   type WorldState,
 } from "./state";
 
-/** The state the director keeps: the tick of the last consequential event. */
+/** The state the director keeps: the tick it last fired. Nothing but its own firing moves it. */
 export interface DirectorState {
-  readonly lastConsequentialTick: number;
+  readonly lastFireTick: number;
 }
 
-/**
- * Whether `event` is something that really happened in the world, and so
- * counts as activity: a strike, a fire, a theft or spoilage, a trade, a bless,
- * or an answered petition. Prayers, goals, reports, and legends are not.
- */
-export function isConsequential(event: WorldEvent): boolean {
+/** Whether `event` is the director's own trouble: a theft, spoiled stock, or a fire it caused. */
+function isDirectorFire(event: WorldEvent): boolean {
   switch (event.kind) {
-    case "building-damaged":
-    case "mortal-struck":
-    case "building-ignited":
     case "theft":
     case "stock-spoiled":
-    case "resource-traded":
-    case "blessing-granted":
-    case "petition-answered":
-      return true;
+      return event.cause === "director";
+    case "building-ignited":
+      return event.cause.kind === "director";
     default:
       return false;
   }
 }
 
-/** Notes `event` in the director's timer. */
-export function noteConsequential(
+/** Notes `event` in the director's clock: only its own trouble moves it. */
+export function noteDirectorFire(
   state: WorldState,
   event: WorldEvent,
 ): WorldState {
-  if (!isConsequential(event)) return state;
-  if (state.director.lastConsequentialTick >= event.tick) return state;
-  return { ...state, director: { lastConsequentialTick: event.tick } };
+  if (!isDirectorFire(event)) return state;
+  if (state.director.lastFireTick >= event.tick) return state;
+  return { ...state, director: { lastFireTick: event.tick } };
 }
 
 /** The living mortals, in id order: who the director may rob or burn. */
@@ -102,8 +93,8 @@ export interface DirectorStep {
 }
 
 /**
- * The trouble this tick's director step causes, if the quiet window has
- * passed: it draws a victim from the eligible mortals in id order, then one of
+ * The trouble this tick's director step causes, if its interval has
+ * passed since it last fired: it draws a victim from the eligible mortals in id order, then one of
  * the troubles that victim can suffer. With fewer than two mortals eligible it
  * skips. `tick` is the tick the step runs in.
  */
@@ -112,8 +103,8 @@ export function planDirectorStep(
   prng: PrngState,
   tick: number = state.tick,
 ): DirectorStep {
-  const quiet = petitionBalanceOf(state.rules, "directorQuietTicks");
-  if (tick - state.director.lastConsequentialTick < quiet) {
+  const interval = petitionBalanceOf(state.rules, "directorIntervalTicks");
+  if (tick - state.director.lastFireTick < interval) {
     return { events: [], prng };
   }
   const mortals = eligibleMortals(state);

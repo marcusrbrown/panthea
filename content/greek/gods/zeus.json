@@ -171,6 +171,11 @@
   ],
   "inventions": [
     {
+      "id": "domain-troubles",
+      "statement": "Zeus's domain troubles are the game's own.",
+      "reason": "The squalls and lightning fires of Zeus's sky are troubles the game draws on a season's odds and a floor, each taking goods or damaging a building. The sources attest the domain (the sky and its storms and lightning); no source tells these episodes."
+    },
+    {
       "id": "thunderbolt-on-structures",
       "statement": "Zeus's thunderbolt strikes structures such as trees and buildings in play.",
       "reason": "The world's strike action targets structures. The myths cite his lightning against monsters and Titans, not buildings."
@@ -184,6 +189,38 @@
       "id": "authored-tuning",
       "statement": "The drive weights and the starting disposition toward Hera are authored tuning.",
       "reason": "The sources describe temperament in prose; the numbers are a design choice to be revised against play."
+    }
+  ],
+  "troubles": [
+    {
+      "id": "squall",
+      "statement": "A squall tears awnings and roofs: a building a mortal owns is damaged. Autumn and winter.",
+      "cites": [
+        {
+          "source": "iliad",
+          "locator": "15.187-193"
+        },
+        {
+          "source": "works-and-days",
+          "locator": "lines 488"
+        },
+        {
+          "source": "works-and-days",
+          "locator": "lines 624-628"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "lightning-fire",
+      "statement": "Lightning takes stored wood or grain. Summer.",
+      "cites": [
+        {
+          "source": "theogony",
+          "locator": "lines 687-710"
+        }
+      ],
+      "invention": "domain-troubles"
     }
   ],
   "sprite": "placeholder-zeus"

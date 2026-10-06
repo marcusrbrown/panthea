@@ -155,7 +155,10 @@
       "blessPlanks": 3,
       "blessResourceAmount": 2,
       "blessResourceCap": 4,
-      "directorQuietTicks": 120,
+      "directorIntervalTicks": 120,
+      "seasonTicks": 200,
+      "troubleFloorTicks": 150,
+      "troubleLossCap": 2,
       "goalLockTicks": 40,
       "strikeGoodsCap": 2,
       "defectionAffinity": 1,
@@ -202,10 +205,140 @@
       },
       "honest": {}
     },
+    "troubles": {
+      "squall": {
+        "effect": "building",
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "lightning-fire": {
+        "effect": "resource",
+        "resources": ["wood", "food"],
+        "seasons": {
+          "summer": 3
+        }
+      },
+      "roof-leak": {
+        "effect": "resource",
+        "resources": ["food"],
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "damp": {
+        "effect": "resource",
+        "resources": ["cloth", "food"],
+        "seasons": {
+          "winter": 3
+        }
+      },
+      "loom-break": {
+        "effect": "building",
+        "seasons": {
+          "winter": 3
+        },
+        "buildings": ["loom-house"]
+      },
+      "tool-flaw": {
+        "effect": "resource",
+        "resources": ["tools", "planks"],
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "vanished-goods": {
+        "effect": "resource",
+        "resources": ["fish", "olives", "wine", "food"],
+        "seasons": {
+          "spring": 3,
+          "summer": 3
+        }
+      },
+      "crossing-loss": {
+        "effect": "resource",
+        "resources": ["fish", "wool", "ore", "olives"],
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "forge-flare": {
+        "effect": "building",
+        "seasons": {
+          "summer": 3
+        },
+        "buildings": ["the-forge"]
+      },
+      "cracked-tools": {
+        "effect": "resource",
+        "resources": ["tools", "ore"],
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "harbour-surge": {
+        "effect": "building",
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        },
+        "buildings": ["fish-landing"]
+      },
+      "quake": {
+        "effect": "building",
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "hoard-swallowed": {
+        "effect": "resource",
+        "resources": ["currency"],
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "dig-collapse": {
+        "effect": "resource",
+        "resources": ["ore"],
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "ore-seam-lost": {
+        "effect": "resource",
+        "resources": ["ore", "tools"],
+        "seasons": {
+          "winter": 3
+        }
+      }
+    },
     "troubleKinds": {
       "fire": "hephaestus",
-      "spoilage": "hades",
-      "theft": "hermes"
+      "spoilage": "hera",
+      "theft": "hermes",
+      "squall": "zeus",
+      "lightning-fire": "zeus",
+      "roof-leak": "hera",
+      "damp": "hera",
+      "loom-break": "athena",
+      "tool-flaw": "athena",
+      "vanished-goods": "hermes",
+      "crossing-loss": "hermes",
+      "forge-flare": "hephaestus",
+      "cracked-tools": "hephaestus",
+      "harbour-surge": "poseidon",
+      "quake": "poseidon",
+      "hoard-swallowed": "hades",
+      "dig-collapse": "hades",
+      "ore-seam-lost": "hades"
     },
     "practiceStakes": {
       "wolf": {

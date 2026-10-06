@@ -145,7 +145,8 @@ function worldOf(
     standing: new Map(),
     repairGrants: new Map(),
     noticed: new Map(),
-    director: { lastConsequentialTick: 0 },
+    director: { lastFireTick: 0 },
+    lastTrouble: new Map(),
     rules: RULES,
     recipes: {},
   };

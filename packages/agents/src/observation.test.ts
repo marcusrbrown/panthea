@@ -417,7 +417,7 @@ test("a model-built travel across realms commits through the real tick from the 
   ]);
   expect(
     tick.environmentEvents
-      .filter((event) => event.entityId === id("zeus"))
+      .filter((event) => "entityId" in event && event.entityId === id("zeus"))
       .map((event) => event.kind),
   ).toEqual(["realm-transitioned", "journey-ended"]);
   expect(getActor(tick.state, id("zeus"))?.locationId).toBe(id("olympus-gate"));

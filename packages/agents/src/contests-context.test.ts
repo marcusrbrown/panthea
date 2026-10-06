@@ -442,8 +442,9 @@ test("a busy world with rival acts, open contests, and a crowd of prayers still 
     prng = result.prng;
     log.push(...result.events);
   }
-  // The gods meet at the dock; each of Poseidon's acts and Athena's is real, and one contest is held.
-  for (const god of ["athena", "hera", "poseidon"]) {
+  // The gods meet at the dock, where the fishers are (set here, not left to where the town's own day took them);
+  // each of Poseidon's acts and Athena's is real, and one contest is held.
+  for (const god of ["athena", "hera", "poseidon", ...FISHERS]) {
     const actor = getActor(state, id(god));
     if (actor)
       state = withActor(state, { ...actor, locationId: id("ferry-dock") });
