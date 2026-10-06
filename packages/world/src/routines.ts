@@ -309,14 +309,23 @@ type ProposalDetails = DistributiveOmit<
   keyof ProposalBase
 >;
 
-/** Utility of a meal at mealtime in a world with a meal interval: above every ordinary trade and prayer, so a busy market does not starve a mortal who holds food. Repair and answering a god (1 and up) still come first. A world with no interval keeps the older rule: eat whenever food is held, ranked by the mortal's appetite. */
-const MEAL_UTILITY = 0.9;
+/**
+ * Rank classes: a candidate in a higher class beats any in a lower one, and
+ * utility only orders candidates within a class, so no choice of drive weights
+ * can lift an ordinary sale above a scheduled meal.
+ */
+const ORDINARY = 0;
+/** A meal at mealtime in a world with a meal interval: ahead of every ordinary trade, production, and prayer, so a busy market does not starve a mortal who holds food. A world with no interval keeps the older rule: eat whenever food is held, as an ordinary choice ranked by the mortal's appetite. */
+const SCHEDULED_MEAL = 1;
+/** Repair, answering a god, and an offering near its deadline: ahead of a meal. */
+const PRESSING = 2;
 /** Utility of praying and of walking to the altar: above idle gathering (0.1). */
 const PRAYER_UTILITY = 0.15;
 /** Utility of walking home after praying. */
 const HOME_UTILITY = 0.2;
 
 interface Candidate {
+  readonly rank?: number;
   readonly utility: number;
   readonly urgent?: boolean;
   readonly factsRead: readonly string[];
@@ -356,7 +365,8 @@ export function decideRoutineProposal(
   const heldFood = getResourceAmount(actor.inventory, "food");
   if (heldFood >= consumeAmount && isMealtime(state, actorId)) {
     candidates.push({
-      utility: mealIntervalOf(state.rules) > 1 ? MEAL_UTILITY : drives.appetite,
+      ...(mealIntervalOf(state.rules) > 1 ? { rank: SCHEDULED_MEAL } : {}),
+      utility: drives.appetite,
       factsRead: [`actor:${actorId}.inventory`],
       build: () => ({
         kind: "consume",
@@ -463,6 +473,7 @@ export function decideRoutineProposal(
   if (repairable && actorHoldsEnoughToRepair(state, actorId)) {
     const structureId = repairable.id;
     candidates.push({
+      rank: PRESSING,
       utility: 1 + drives.thrift,
       factsRead: [
         `actor:${actorId}.inventory`,
@@ -479,6 +490,7 @@ export function decideRoutineProposal(
   const practice = mortalPractice(state, actorId);
   if (practice?.kind === "answer") {
     candidates.push({
+      rank: PRESSING,
       utility: 1,
       factsRead: [`actor:${actorId}.inventory`, `thread:${practice.thread}`],
       build: () => ({
@@ -489,6 +501,7 @@ export function decideRoutineProposal(
     });
   } else if (practice?.kind === "offer") {
     candidates.push({
+      ...(practice.urgent ? { rank: PRESSING } : {}),
       utility: practice.urgent ? 3 : 0.5,
       urgent: practice.urgent,
       factsRead: [`actor:${actorId}.inventory`, `thread:${practice.thread}`],
@@ -529,8 +542,12 @@ export function decideRoutineProposal(
 
   if (candidates.length === 0) return undefined;
 
+  const rankOf = (candidate: Candidate) => candidate.rank ?? ORDINARY;
   const chosen = candidates.reduce((best, candidate) =>
-    candidate.utility > best.utility ? candidate : best,
+    rankOf(candidate) > rankOf(best) ||
+    (rankOf(candidate) === rankOf(best) && candidate.utility > best.utility)
+      ? candidate
+      : best,
   );
 
   const observation: ObservationRecord = {

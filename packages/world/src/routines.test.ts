@@ -520,6 +520,74 @@ test("with a meal interval, a mortal holding food eats once every interval and n
   expect(eatingTicks[2]).toBe((eatingTicks[0] as number) + 10);
 });
 
+test("a scheduled meal outranks any ordinary trade, whatever the drives: a mortal whose sale scores above the meal still eats at its mealtime", () => {
+  // greed 1, thrift 1: a surplus sale scores 1 (0.6 + 0.4), above the 0.9 a meal once carried.
+  const base = lineWorld(5, [
+    mortal(
+      "diner",
+      "square",
+      { food: 9, wood: 4 },
+      {
+        gathers: "wood",
+        drives: { thrift: 1, appetite: 0.12, greed: 1, piety: 0 },
+      },
+    ),
+    mortal("buyer", "square", { currency: 50 }),
+  ]);
+  const kinds = [...Array(15).keys()].map(
+    (tick) =>
+      decideRoutineProposal(atTick(base, tick), toEntityId("diner"))?.proposal
+        .kind,
+  );
+  const meals = kinds.flatMap((kind, tick) =>
+    kind === "consume" ? [tick] : [],
+  );
+  expect(meals).toHaveLength(3);
+  expect(meals[1]).toBe((meals[0] as number) + 5);
+  // Off its mealtime it sells its wood, so the sale really was in the running.
+  expect(kinds.filter((kind) => kind === "trade")).toHaveLength(12);
+});
+
+test("a meal still yields to repair: only ordinary choices rank below it", () => {
+  let state = createInitialWorldState(
+    pack({
+      locations: LINE,
+      rules: rules({
+        ...MEAL_RULES,
+        mealIntervalTicks: 5,
+        repairCostPlanks: 2,
+        repairAmountPerTick: 1,
+      }),
+      buildings: [
+        {
+          id: "workshop",
+          locationId: "square",
+          name: "Workshop",
+          material: "wood",
+          combustible: true,
+          services: [],
+          inventory: [],
+          owner: "owner",
+        },
+      ],
+    }),
+  );
+  const workshop = state.buildings.get(toEntityId("workshop"));
+  if (!workshop) throw new Error("expected the workshop fixture building");
+  state = withBuilding(state, {
+    ...buildingBase(workshop),
+    status: "destroyed",
+  });
+  state = withActor(state, mortal("owner", "square", { food: 9, planks: 3 }));
+  const mealtime = [...Array(5).keys()].find((tick) =>
+    isMealtime(atTick(state, tick), toEntityId("owner")),
+  ) as number;
+  expect(
+    decideRoutineProposal(atTick(state, mealtime), toEntityId("owner"))
+      ?.proposal.kind,
+  ).toBe("repair");
+});
+
 test("mortals do not all sit down at once: mealtime is offset by who they are", () => {
   const state = lineWorld(7, []);
   const names = ["woodcutter", "farmer", "iris", "kallias", "ismene", "damon"];
