@@ -148,11 +148,76 @@ test("mortals who go short pray to the god they revere, so the day's prayers nam
   }
 });
 
-test("Hades hears prayers: over the scripted day a mortal who reveres him prays to him, so he can enter a practice (R20)", () => {
+test("Hades hears prayers: over the scripted day a mortal prays to him, so he can enter a practice (R20)", () => {
   const toHades = of("petition-opened").filter(
     (e) => String(e.god) === "hades",
   );
   expect(toHades.length).toBeGreaterThan(0);
-  // The ferryman, who keeps his rites at the dock, is one of them: a prayer reaches the god its mortal reveres.
-  expect(toHades.some((e) => String(e.entityId) === "ferryman")).toBe(true);
+  // The ferryman, who reveres him, now feeds himself and rarely goes short, so he is no longer the one who prays: whoever does reaches Hades through what they feel for him.
+});
+
+// --- Occasional hunger (R17, SC1) -------------------------------------------------------------
+
+/** The plan's scripted day for hunger: 300 ticks, no god acting. */
+const FOOD_DAY = day(300);
+const foodDay = <K extends WorldEvent["kind"]>(kind: K) =>
+  FOOD_DAY.events.filter(
+    (e): e is Extract<WorldEvent, { kind: K }> => e.kind === kind,
+  );
+const foodAmount = (events: readonly { amount: number }[]) =>
+  events.reduce((sum, e) => sum + e.amount, 0);
+
+test("hunger is occasional: a scripted 300-tick day logs at most 250 'cannot get food' lines, down from about 1,250", () => {
+  const cannotGetFood = foodDay("unmet-need").filter(
+    (e) => e.resource === "food",
+  );
+  expect(cannotGetFood.length).toBeLessThanOrEqual(250);
+});
+
+test("food prayers are fewer than half of all prayers in the scripted day", () => {
+  const prayers = foodDay("petition-opened");
+  expect(prayers.length).toBeGreaterThan(0);
+  const foodPrayers = prayers.filter(
+    (e) =>
+      e.request.kind === "help" &&
+      e.request.need.kind === "resource" &&
+      e.request.need.resource === "food",
+  );
+  expect(foodPrayers.length * 2).toBeLessThan(prayers.length);
+});
+
+test("production meets consumption: producers gather at least as much food as the town eats", () => {
+  const gatheredFood = foodAmount(
+    foodDay("resource-gathered").filter((e) => e.resource === "food"),
+  );
+  const eaten = foodAmount(
+    foodDay("resource-consumed").filter((e) => e.resource === "food"),
+  );
+  expect(eaten).toBeGreaterThan(0);
+  expect(gatheredFood).toBeGreaterThanOrEqual(eaten);
+});
+
+test("food is sold only by its producers, and no pair of mortals trades it in both directions", () => {
+  const producers = new Set(
+    [...FOOD_DAY.state.actors.values()]
+      .filter((a) => a.gathers === "food")
+      .map((a) => String(a.id)),
+  );
+  expect(producers.size).toBeGreaterThan(0);
+  const sales = new Set<string>();
+  for (const trade of foodDay("resource-traded")) {
+    const sold = trade.give.some((line) => line.resource === "food");
+    const bought = trade.receive.some((line) => line.resource === "food");
+    if (sold === bought) continue;
+    const [seller, buyer] = sold
+      ? [String(trade.entityId), String(trade.counterpartyId)]
+      : [String(trade.counterpartyId), String(trade.entityId)];
+    expect(producers.has(seller)).toBe(true);
+    sales.add(`${seller}>${buyer}`);
+  }
+  expect(sales.size).toBeGreaterThan(0);
+  for (const sale of sales) {
+    const [seller, buyer] = sale.split(">");
+    expect(sales.has(`${buyer}>${seller}`)).toBe(false);
+  }
 });

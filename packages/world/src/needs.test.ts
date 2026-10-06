@@ -210,6 +210,63 @@ test("a mortal with everything it needs has no unmet need; a dead mortal records
   ).toEqual([]);
 });
 
+test("a hungry mortal with a food producer a walk away has no unmet need: the walk is its answer; with no producer left to walk to, the shortfall is recorded", () => {
+  const base = pack();
+  const joined: ContentPack = {
+    ...base,
+    locations: [
+      {
+        id: "square",
+        realm: "mortal",
+        name: "Square",
+        edges: [{ to: "yard", transport: "path", bidirectional: true }],
+      },
+      { id: "yard", realm: "mortal", name: "Yard", edges: [] },
+    ],
+    inhabitants: base.inhabitants.map((inhabitant) =>
+      // The woodcutter at the yard has eaten its food; the farmer, a food producer, holds some at the square.
+      inhabitant.id === "woodcutter"
+        ? {
+            ...inhabitant,
+            startingInventory: [{ resource: "currency", amount: 5 }],
+          }
+        : inhabitant.id === "farmer"
+          ? {
+              ...inhabitant,
+              startingInventory: [
+                { resource: "currency", amount: 10 },
+                { resource: "planks", amount: 1 },
+                { resource: "food", amount: 4 },
+              ],
+            }
+          : inhabitant,
+    ),
+  };
+  const foodNeeds = (state: WorldState) =>
+    needsOf(runTick(state, createPrng(1), []).events).filter(
+      (e) =>
+        (e as { entityId: string; resource: string }).entityId ===
+          "woodcutter" && (e as { resource: string }).resource === "food",
+    );
+
+  expect(foodNeeds(createInitialWorldState(joined))).toEqual([]);
+
+  // The farmer is gone: nobody sells, and the woodcutter's hunger is a recorded need.
+  const alone = createInitialWorldState(joined);
+  const farmer = getActor(alone, id("farmer"));
+  if (!farmer) throw new Error("farmer");
+  const stranded: WorldState = {
+    ...alone,
+    actors: new Map(alone.actors).set(id("farmer"), {
+      ...farmer,
+      alive: false,
+    }),
+  };
+  expect(foodNeeds(stranded)).toMatchObject([
+    { entityId: "woodcutter", resource: "food", reason: "no-seller" },
+  ]);
+});
+
 test("recording a need takes no action slot: the farmer's routine still acts that tick", () => {
   const world = new World();
   const proposal = decideRoutineProposal(world.state, id("farmer"));

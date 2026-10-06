@@ -16,6 +16,7 @@ import {
   type ProposalBase,
   type ResourceAmount,
   type UnmetNeedReason,
+  type WorldRules,
 } from "@panthea/contracts";
 import {
   consumeAmountOf,
@@ -25,6 +26,7 @@ import {
   NEUTRAL_DRIVES,
   resourceValue,
 } from "./economy";
+import { nextHop, routeLengths } from "./geography";
 import { prayerStep } from "./petitions";
 import { mortalPractice } from "./practices";
 import { actorHoldsEnoughToRepair, findRepairableBuilding } from "./repair";
@@ -83,7 +85,29 @@ export interface Deal {
  */
 export type Want =
   | { readonly resource: string; readonly deal: Deal }
+  /** Nothing to trade for here, but a seller is a walk away: the first step. Not an unmet need. */
+  | { readonly resource: string; readonly trip: EntityId }
   | { readonly resource: string; readonly unmet: UnmetNeedReason };
+
+/** Ticks between one mortal's meals, from `rules.economyBalance.mealIntervalTicks`; 1 (a meal whenever food is held) when unset. */
+export function mealIntervalOf(rules: WorldRules): number {
+  return Math.max(1, Math.floor(rules.economyBalance.mealIntervalTicks ?? 1));
+}
+
+/**
+ * Whether it is this mortal's turn to eat: one tick in every meal interval,
+ * offset by the mortal's id so the town does not sit down together. Hunger
+ * is occasional, so a mortal that holds food still eats only at mealtime; one
+ * that misses it (a prayer, a trade) eats at the next.
+ */
+export function isMealtime(state: WorldState, actorId: EntityId): boolean {
+  const interval = mealIntervalOf(state.rules);
+  if (interval === 1) return true;
+  let offset = 0;
+  for (const char of actorId)
+    offset = (offset * 31 + char.charCodeAt(0)) % interval;
+  return (state.tick + offset) % interval === 0;
+}
 
 /** The food the mortal needs to eat: absent when it already holds enough. */
 export function foodWant(
@@ -106,6 +130,9 @@ export function foodWant(
     actorId,
     actor,
     (candidate) =>
+      // Only a producer sells food: someone who merely holds a meal keeps it,
+      // or two mortals would pass one meal back and forth.
+      candidate.gathers === "food" &&
       getResourceAmount(candidate.inventory, "food") >= consumeAmount &&
       evaluateTradeAcceptance(
         state.rules,
@@ -114,9 +141,70 @@ export function foodWant(
         receive,
       ),
   );
-  return seller === undefined
+  if (seller !== undefined) {
+    return { resource: "food", deal: { counterparty: seller, give, receive } };
+  }
+  // Nobody here sells. A producer at this very place restocks within a tick,
+  // so the buyer waits for it; with none here, a hungry mortal walks to the
+  // nearest producer's workplace rather than failing in place every tick.
+  const trip = hasProducerHere(state, actorId, actor)
+    ? undefined
+    : tripToFoodSeller(state, actor, give, receive);
+  return trip === undefined
     ? { resource: "food", unmet: "no-seller" }
-    : { resource: "food", deal: { counterparty: seller, give, receive } };
+    : { resource: "food", trip };
+}
+
+/** Whether another living food producer works where `actor` stands. */
+function hasProducerHere(
+  state: WorldState,
+  actorId: EntityId,
+  actor: ActorState,
+): boolean {
+  return (
+    findCounterparty(
+      state,
+      actorId,
+      actor,
+      (candidate) => candidate.gathers === "food",
+    ) !== undefined
+  );
+}
+
+/** The first step toward the nearest food producer who would sell `receive` for `give`, or `undefined` when none holds food or none can be reached. */
+function tripToFoodSeller(
+  state: WorldState,
+  actor: ActorState,
+  give: readonly ResourceAmount[],
+  receive: readonly ResourceAmount[],
+): EntityId | undefined {
+  const lengths = routeLengths(state, actor.locationId, actor.capabilities);
+  let nearest:
+    | { readonly place: EntityId; readonly length: number }
+    | undefined;
+  for (const candidate of state.actors.values()) {
+    if (!candidate.alive || candidate.gathers !== "food") continue;
+    const length = lengths.get(candidate.locationId);
+    if (length === undefined || (nearest && length >= nearest.length)) continue;
+    const stocked = receive.every(
+      (line) =>
+        getResourceAmount(candidate.inventory, line.resource) >= line.amount,
+    );
+    if (
+      stocked &&
+      evaluateTradeAcceptance(
+        state.rules,
+        candidate.drives ?? NEUTRAL_DRIVES,
+        give,
+        receive,
+      )
+    ) {
+      nearest = { place: candidate.locationId, length };
+    }
+  }
+  return nearest === undefined
+    ? undefined
+    : nextHop(state, actor.locationId, nearest.place, actor.capabilities);
 }
 
 /** The one resource the mortal cannot produce or gather itself, when it holds none. */
@@ -161,6 +249,10 @@ export function surplusWant(
 ): Want | undefined {
   const gatherAmount = gatherAmountOf(state.rules);
   const resource = actor.gathers;
+  // A food producer sells to whoever comes hungry (`foodWant`), one meal at a
+  // time. Pushing food onto buyers who are not hungry only drains the producer
+  // the hungry depend on, and unsold food is its own meals, not a shortfall.
+  if (resource === "food") return undefined;
   if (
     !resource ||
     getResourceAmount(actor.inventory, resource) < gatherAmount
@@ -203,6 +295,8 @@ type ProposalDetails = DistributiveOmit<
   keyof ProposalBase
 >;
 
+/** Utility of a meal at mealtime in a world with a meal interval: above every ordinary trade and prayer, so a busy market does not starve a mortal who holds food. Repair and answering a god (1 and up) still come first. A world with no interval keeps the older rule: eat whenever food is held, ranked by the mortal's appetite. */
+const MEAL_UTILITY = 0.9;
 /** Utility of praying and of walking to the altar: above idle gathering (0.1). */
 const PRAYER_UTILITY = 0.15;
 /** Utility of walking home after praying. */
@@ -246,9 +340,9 @@ export function decideRoutineProposal(
   const candidates: Candidate[] = [];
 
   const heldFood = getResourceAmount(actor.inventory, "food");
-  if (heldFood >= consumeAmount) {
+  if (heldFood >= consumeAmount && isMealtime(state, actorId)) {
     candidates.push({
-      utility: drives.appetite,
+      utility: mealIntervalOf(state.rules) > 1 ? MEAL_UTILITY : drives.appetite,
       factsRead: [`actor:${actorId}.inventory`],
       build: () => ({
         kind: "consume",
@@ -265,6 +359,15 @@ export function decideRoutineProposal(
       utility: drives.appetite,
       factsRead: [`actor:${actorId}.inventory`, `actor:${seller}.inventory`],
       build: () => ({ kind: "trade", counterparty: seller, give, receive }),
+    });
+  }
+
+  if (food && "trip" in food) {
+    const step = food.trip;
+    candidates.push({
+      utility: drives.appetite,
+      factsRead: [`actor:${actorId}.location`, `actor:${actorId}.inventory`],
+      build: () => ({ kind: "move", to: step }),
     });
   }
 
