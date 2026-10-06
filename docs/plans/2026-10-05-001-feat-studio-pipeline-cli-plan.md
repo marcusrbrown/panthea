@@ -447,7 +447,7 @@ flowchart TB
 
 ### U6. Headless CLI command surface
 
-- [ ] **Goal:** Expose the shared pipeline through a foreground CLI with JSON machine results and stderr progress.
+- [x] **Goal:** Expose the shared pipeline through a foreground CLI with JSON machine results and stderr progress.
 - **Requirements:** R5, R8, R10, R12, R18, R20; F1, F2, F4; AE3, AE5, AE6; U07, U08, X02.
 - **Dependencies:** U1–U5.
 - **Files:**
@@ -456,8 +456,17 @@ flowchart TB
   - Create: `tools/studio/src/index.ts`
   - Create: `tools/studio/src/commands.ts`
   - Create: `tools/studio/src/format.ts`
+  - Create: `tools/studio/src/host.ts`
+  - Create: `tools/studio/src/config.ts`
+  - Create: `tools/studio/README.md`
   - Create: `tools/studio/src/index.test.ts`
   - Create: `tools/studio/src/commands.test.ts`
+  - Create: `tools/studio/src/config.test.ts`
+  - Create: `tools/studio/src/format.test.ts`
+  - Create: `tools/studio/src/generate.test.ts`
+  - Create: `tools/studio/src/lifecycle.test.ts`
+  - Create: `tools/studio/src/assets.test.ts`
+  - Create: `tools/studio/src/edits.test.ts`
   - Modify: `bun.lock`
 - **Approach:** Implement verbs for session, generate, list/status, remove, abort, conform, pick, reject, open, finish, discard, export, import, pack, approve, approve-with-exception, publish and unsupported derive. One-shot generate can open/run/close a session; Ctrl-C aborts its own running job. CLI open keeps the session alive while edits are watched until explicit finish or discard. A separate process attempting a mutation against an active session gets busy. `abort` records `cancelledBy: "aborted"`; `remove` records `cancelledBy: "removed"`; real runtime errors and recovery interruptions are failed jobs, not ambiguous cancellations. Exit codes are 0 success, 1 runtime/workflow failure and 64 usage/config errors. CLI never invents owner approval. Any workspace package/lockfile update is an implementation-time owner gate; no external dependency is planned here.
 - **Execution note:** Start with command contract tests for machine-readable outputs and busy-root refusal before connecting real runtime/editor calls.
@@ -471,6 +480,7 @@ flowchart TB
   - Failure path: invalid args return 64; unavailable runtime/editor returns 1 with staging or editor guidance; headless conform on a hand-edited draft where the proposal would replace pixels exits 1 with a structured diff, leaves hand pixels untouched, and does not silently approve or replace; approval without explicit owner action fails.
   - Integration: CLI and direct library fixtures for the same request/seed produce identical adapter inputs, deterministic transforms, reports and final records; actual CLI/app parity remains a parent Unit 7 gate.
 - **Verification:** The CLI can exercise every Unit 5 action headlessly through shared functions, and future app code can call the same exported business functions.
+- **Evidence (fixtures only, 2026-10-06):** the [studio CLI](../../tools/studio/README.md) runs one-shot commands and a stdio session through one shared command dispatcher over the SDK. The [session](../../tools/studio/src/index.test.ts), [command](../../tools/studio/src/commands.test.ts) and [lifecycle](../../tools/studio/src/lifecycle.test.ts) tests cover explicit revision confirmations for approval and publication, fresh read-only hand reports under the current palette, exit 1 when a session's work fails, and keeping the writer lock until the owned server is gone. 147 CLI and 759 assets tests; the full workspace check passed: 3656 tests, 1 skipped, 0 failures across 202 files, with install, check, validate, diff and chain exits all 0. No real model or editor was run through the CLI; the Unit 7 acceptance run is pending.
 
 ### U7. Unit 5 acceptance evidence
 

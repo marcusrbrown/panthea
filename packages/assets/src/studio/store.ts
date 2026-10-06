@@ -93,6 +93,7 @@ export const COMMAND_TYPES = [
   "pack",
   "approve",
   "publish",
+  "reject",
 ] as const;
 export type CommandType = (typeof COMMAND_TYPES)[number];
 

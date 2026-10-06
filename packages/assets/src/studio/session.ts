@@ -123,6 +123,8 @@ export interface StudioSession {
     palette: Palette,
     registryRoot: string,
   ): AssetOpResult;
+  /** Rejects an idle draft; the record keeps its manifest, and a rejected asset is never approved or published. */
+  rejectAsset(id: string, reason?: string): AssetOpResult;
   remove(jobId: string): CommandResult;
   /** Cancels a running job. The owner of the runtime kills its child. */
   abort(jobId: string): CommandResult;
@@ -564,6 +566,7 @@ export function openStudioSession(root: string): StudioOpen {
         pack: assetOps.pack,
         approveAsset: assetOps.approveAsset,
         publishAsset: assetOps.publishAsset,
+        rejectAsset: assetOps.rejectAsset,
         remove: (jobId) =>
           transition(jobId, "remove", ["queued"], (job) => ({
             ...jobBase(job),

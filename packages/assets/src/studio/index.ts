@@ -14,6 +14,11 @@ export type {
   CandidateTarget,
   ConformParams,
 } from "./candidates";
+export {
+  type ContentDiagnostic,
+  type LoadedContent,
+  loadStudioContent,
+} from "./content";
 export type {
   EditCommandResult,
   EditFailure,
@@ -37,7 +42,10 @@ export {
   type SheetSlot,
   type SheetSummary,
   type SheetView,
+  type SlotConformance,
+  type SlotConformanceFailure,
   sheet,
+  slotConformance,
   sortSheet,
   summarizeSheet,
 } from "./reports";

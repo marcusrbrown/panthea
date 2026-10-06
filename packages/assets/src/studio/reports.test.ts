@@ -1,16 +1,38 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join, relative } from "node:path";
+import { parsePalette } from "../palette";
+import {
+  assetRig,
   doneCandidate,
+  finishSheet,
   keyframe,
   loadContent,
   nativeFigure,
   needsScaleCandidate,
+  olympusMovedPaletteFiles,
   PROVISIONAL_TEST_PARAMS,
+  paintFigure,
+  removeTempRoots,
+  runSlots,
+  spriteSet,
   upscale,
   withHiddenRgb,
   workingSet,
 } from "./_test-fixtures";
-import { reportOnly, sheet, sortSheet, summarizeSheet } from "./reports";
+import {
+  reportOnly,
+  sheet,
+  slotConformance,
+  sortSheet,
+  summarizeSheet,
+} from "./reports";
 import { buildSpec } from "./request";
 
 const content = loadContent();
@@ -211,5 +233,186 @@ describe("reportOnly", () => {
     expect(result.metrics.resize.factor).toBe(1);
     expect(Buffer.compare(result.image.rgba, figure.rgba)).toBe(0);
     expect(result.report.status).toBe("pass");
+  });
+});
+
+describe("slotConformance", () => {
+  afterEach(removeTempRoots);
+
+  const tree = (root: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (!name.startsWith("session.lock"))
+          out[relative(root, path)] = readFileSync(path).toString("base64");
+      }
+    };
+    walk(root);
+    return out;
+  };
+
+  const moved = (rig: ReturnType<typeof assetRig>) => {
+    const files = olympusMovedPaletteFiles();
+    const palette = parsePalette(
+      {
+        json: JSON.parse(files["palette.json"]),
+        gpl: files["master.gpl"],
+        hex: files["master.hex"],
+      },
+      rig.content.vocabulary.paletteFamilies,
+    );
+    if (!palette.ok) throw new Error(palette.message);
+    return { ...rig.content, palette: palette.value };
+  };
+
+  test("a clean hand-finished slot reports every frame against the current palette with no diff", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+
+    const result = slotConformance(rig.root, "w", "idle/south", rig.content);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.source).toBe("hand");
+    expect(result.frames.map((f) => f.index)).toEqual([0, 1, 2, 3]);
+    expect(
+      result.frames.every(
+        (f) => f.report.status === "pass" && f.diff.length === 0,
+      ),
+    ).toBe(true);
+    rig.session.close();
+  });
+
+  test("the same stored frames under a changed approved palette are reported fresh, with the replacing diff, and every stored byte is left alone", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const before = tree(rig.root);
+
+    const result = slotConformance(rig.root, "w", "idle/south", moved(rig));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frames.every((f) => f.report.status === "fail")).toBe(true);
+    expect(result.frames.every((f) => f.diff.length > 0)).toBe(true);
+    expect(tree(rig.root)).toEqual(before);
+    rig.session.close();
+  });
+
+  test("a stored off-palette pixel is still reported with its own diff, from the stored params and not the stored report", () => {
+    const rig = assetRig();
+    const [id] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.openWorkingSet("w", "zeus-idle", rig.content);
+    rig.session.pick("w", id as string);
+    const frames = [0, 1, 2, 3].map((i) =>
+      paintFigure(rig.content, { w: 64, h: 80 }, i),
+    );
+    frames[1]?.rgba.set([255, 0, 255, 255], (20 * 64 + 20) * 4);
+    finishSheet(rig, "e1", "w", { w: 64, h: 80 }, [
+      { slot: "idle/south", frames },
+    ]);
+
+    const result = slotConformance(rig.root, "w", "idle/south", rig.content);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.frames.map((f) => f.diff.length > 0)).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
+    expect(result.frames[1]?.diff.some((d) => d.x === 20 && d.y === 20)).toBe(
+      true,
+    );
+    rig.session.close();
+  });
+
+  test("a slot that is only picked is reported from the picked native image", () => {
+    const rig = assetRig();
+    const [id] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.openWorkingSet("w", "zeus-idle", rig.content);
+    rig.session.pick("w", id as string);
+
+    const clean = slotConformance(rig.root, "w", "idle/south", rig.content);
+    const changed = slotConformance(rig.root, "w", "idle/south", moved(rig));
+
+    expect(clean).toMatchObject({ ok: true, source: "pick" });
+    expect(clean.ok && clean.frames).toHaveLength(1);
+    expect(changed.ok && changed.frames[0]?.report.status).toBe("fail");
+    expect(changed.ok && (changed.frames[0]?.diff.length ?? 0) > 0).toBe(true);
+    rig.session.close();
+  });
+
+  test("it reads a root another session owns and leaves it open", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+
+    const result = slotConformance(rig.root, "w", "idle/south", rig.content);
+
+    expect(result.ok).toBe(true);
+    rig.session.close();
+  });
+
+  test("an unknown working set or slot, and a slot with nothing stored, are not found", () => {
+    const rig = assetRig();
+    const [id] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.openWorkingSet("w", "zeus-idle", rig.content);
+    void id;
+
+    expect(
+      slotConformance(rig.root, "nope", "idle/south", rig.content),
+    ).toMatchObject({ ok: false, reason: "not-found" });
+    expect(
+      slotConformance(rig.root, "w", "idle/west", rig.content),
+    ).toMatchObject({ ok: false, reason: "not-found" });
+    expect(
+      slotConformance(rig.root, "w", "idle/south", rig.content),
+    ).toMatchObject({ ok: false, reason: "not-found" });
+    rig.session.close();
+  });
+
+  test("a missing, altered or undecodable stored frame is a typed failure, never a throw", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const set = rig.session.store.status().workingSets[0];
+    const hash = set?.frames["idle/south"]?.frames[2]?.hash as string;
+    const file = join(rig.root, "blobs", `${hash}.png`);
+    const good = readFileSync(file);
+
+    writeFileSync(file, "no longer the stored image");
+    const altered = slotConformance(rig.root, "w", "idle/south", rig.content);
+    rmSync(file);
+    const missing = slotConformance(rig.root, "w", "idle/south", rig.content);
+    writeFileSync(file, good);
+    const restored = slotConformance(rig.root, "w", "idle/south", rig.content);
+
+    expect(altered).toMatchObject({ ok: false, reason: "corrupt-blob" });
+    expect(missing).toMatchObject({ ok: false, reason: "corrupt-blob" });
+    expect(JSON.stringify([altered, missing])).not.toContain(
+      "no longer the stored image",
+    );
+    expect(restored.ok).toBe(true);
+    rig.session.close();
+  });
+
+  test("content that cannot build the slot's spec is a typed failure", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+
+    const result = slotConformance(rig.root, "w", "idle/south", {
+      ...rig.content,
+      visuals: [],
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: "invalid" });
+    rig.session.close();
   });
 });

@@ -246,6 +246,7 @@ function parseAssetState(
     "draft",
     "approved",
     "canon",
+    "rejected",
   ] as const);
   if (!state.ok) return state;
   const keys = {
@@ -253,6 +254,7 @@ function parseAssetState(
     draft: ["state", "manifest", "report", "edit", "edits"],
     approved: ["state", "manifest", "basis"],
     canon: ["state", "manifest", "basis"],
+    rejected: ["state", "manifest", "rejectedFrom", "reason"],
   }[state.value];
   return parseStrictRecord<AssetRecord>(value, path, keys, (record) => {
     const manifest = record.manifest;
@@ -290,6 +292,23 @@ function parseAssetState(
         ...(parsed === undefined ? {} : { report: parsed.value }),
         edit: edit.value,
         edits: edits.value,
+      });
+    }
+    if (state.value === "rejected") {
+      const from = parseEnum(record.rejectedFrom, `${path}.rejectedFrom`, [
+        "candidate",
+        "draft",
+      ] as const);
+      if (!from.ok) return from;
+      if (record.reason === undefined)
+        return ok({ state: "rejected", ...body, rejectedFrom: from.value });
+      const reason = parseString(record.reason, `${path}.reason`);
+      if (!reason.ok) return reason;
+      return ok({
+        state: "rejected",
+        ...body,
+        rejectedFrom: from.value,
+        reason: reason.value,
       });
     }
     const basis = parseStrictRecord<ApprovalBasis>(

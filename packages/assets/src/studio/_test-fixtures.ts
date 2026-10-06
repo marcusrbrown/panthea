@@ -1,7 +1,6 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { parseGodProfile, parseGodVisualProfiles } from "@panthea/content";
 import {
   type AssetId,
   type AssetRecord,
@@ -10,17 +9,20 @@ import {
   type GenerationJob,
   type GenerationRequest,
   newCandidate,
-  type ParseResult,
-  parseAssetVocabulary,
   type Sha256,
   transitionAsset,
 } from "@panthea/contracts";
 import type { ConformanceMetrics, RgbaImage } from "../conformance";
-import { paletteFixture, spriteFixture } from "../fixtures";
+import {
+  type FixturePalette,
+  paletteFixture,
+  spriteFixture,
+} from "../fixtures";
 import { sha256Hex } from "../hash";
-import { type Palette, parsePalette } from "../palette";
+import { type Palette, paletteDigest, parsePalette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateRecord, ConformParams } from "./candidates";
+import { loadStudioContent } from "./content";
 import { sheetJson } from "./export-import";
 import { SELECTED_PROFILE } from "./provider";
 import type { StudioContent } from "./request";
@@ -163,45 +165,14 @@ const contentRoot = join(
   "content",
   "greek",
 );
-const readText = (...parts: string[]) =>
-  readFileSync(join(contentRoot, ...parts), "utf8");
-const readJson = (...parts: string[]): unknown =>
-  JSON.parse(readText(...parts));
-
-function unwrap<T>(result: ParseResult<T>): T {
-  if (!result.ok) throw new Error(`${result.path}: ${result.message}`);
-  return result.value;
-}
-
 /** The authored Greek content, parsed through the production parsers. */
 export function loadContent(): StudioContent {
-  const vocabulary = unwrap(
-    parseAssetVocabulary(readJson("assets", "vocabulary.json")),
-  );
-  const gods = readdirSync(join(contentRoot, "gods"))
-    .filter((f) => f.endsWith(".json"))
-    .sort()
-    .map((f) => unwrap(parseGodProfile(readJson("gods", f), f)));
-  const visuals = unwrap(
-    parseGodVisualProfiles(
-      readdirSync(join(contentRoot, "assets", "subjects"))
-        .sort()
-        .map((f) => ({ label: f, value: readJson("assets", "subjects", f) })),
-      gods,
-      vocabulary.paletteFamilies,
-    ),
-  );
-  const palette = unwrap(
-    parsePalette(
-      {
-        json: readJson("palette", "palette.json"),
-        gpl: readText("palette", "master.gpl"),
-        hex: readText("palette", "master.hex"),
-      },
-      vocabulary.paletteFamilies,
-    ),
-  );
-  return { vocabulary, gods, visuals, palette };
+  const loaded = loadStudioContent(contentRoot);
+  if (!loaded.ok)
+    throw new Error(
+      loaded.diagnostics.map((d) => `${d.file}: ${d.message}`).join("; "),
+    );
+  return loaded.content;
 }
 
 /** Provisional fixture values for conformance tests: not owner defaults. */
@@ -815,4 +786,40 @@ export function selectedProfileFacts(): EngineFacts {
       })),
     ],
   });
+}
+
+/**
+ * The fixture palette's three files with the olympus family moved onto other
+ * master colours and the approval digest recomputed, so the files parse as an
+ * approved palette that no longer holds the colours `paintFigure` uses.
+ */
+export function olympusMovedPaletteFiles(): FixturePalette["files"] {
+  const base = paletteFixture().files;
+  const json = JSON.parse(base["palette.json"]) as {
+    approval: unknown;
+    families: { id: string; ramps: { id: string; shades: string[] }[] }[];
+  };
+  const master = base["master.hex"]
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => `#${line}`);
+  const olympus = json.families.find((f) => f.id === "olympus");
+  if (olympus === undefined) throw new Error("no olympus family");
+  olympus.ramps = [
+    { id: "marble", shades: master.slice(0, 4) },
+    { id: "gold", shades: master.slice(4, 8) },
+  ];
+  const families = loadContent().vocabulary.paletteFamilies;
+  json.approval = { status: "draft" };
+  const draft = parsePalette(
+    { json, gpl: base["master.gpl"], hex: base["master.hex"] },
+    families,
+  );
+  if (!draft.ok) throw new Error(`${draft.path}: ${draft.message}`);
+  json.approval = { status: "approved", digest: paletteDigest(draft.value) };
+  return {
+    "palette.json": JSON.stringify(json),
+    "master.gpl": base["master.gpl"],
+    "master.hex": base["master.hex"],
+  };
 }

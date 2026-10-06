@@ -76,6 +76,7 @@ export interface AssetOps {
     palette: Palette,
     registryRoot: string,
   ): AssetOpResult;
+  rejectAsset(id: string, reason?: string): AssetOpResult;
 }
 
 const refused = (reason: AssetFailure, message: string) =>
@@ -521,5 +522,24 @@ export function createAssetOps(host: EditHost): AssetOps {
     return written.ok ? { ok: true, asset: done } : written;
   }
 
-  return { pack, approveAsset, publishAsset };
+  function rejectAsset(id: string, reason?: string): AssetOpResult {
+    if (host.isClosed()) return refused("closed", CLOSED);
+    const asset = load(id);
+    if ("ok" in asset) return asset;
+    if (asset.record.state !== "draft" || asset.record.edit !== "idle")
+      return refused(
+        "wrong-state",
+        `asset ${id} is ${asset.record.state}, not an idle draft`,
+      );
+    const moved = transitionAsset(asset.record, {
+      type: "reject",
+      ...(reason === undefined ? {} : { reason }),
+    });
+    if (!moved.ok) return refused("wrong-state", moved.message);
+    const rejected: StudioAssetRecord = { ...asset, record: moved.value };
+    const written = host.ledgered("reject", id, () => store.putAsset(rejected));
+    return written.ok ? { ok: true, asset: rejected } : written;
+  }
+
+  return { pack, approveAsset, publishAsset, rejectAsset };
 }

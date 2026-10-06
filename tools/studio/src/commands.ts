@@ -1,0 +1,881 @@
+// One dispatcher for every verb: the one-shot CLI and the session host both
+// call `execute`, so a command means the same thing in either. Every handler
+// calls the SDK; nothing here keeps a private pipeline or its own state.
+
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  type ApproveOptions,
+  type AssetOpResult,
+  type CommandResult,
+  type EditResult,
+  newRequestRecord,
+  type PackInput,
+  type RequestInput,
+  type StudioAssetRecord,
+  type StudioContent,
+  sheet,
+  slotConformance,
+  summarizeSheet,
+} from "@panthea/assets/studio";
+import { parseConformParams } from "./config";
+import {
+  assetSummary,
+  candidateSummary,
+  done,
+  editSummary,
+  type Json,
+  jobSummary,
+  type Outcome,
+  refuse,
+  requestSummary,
+  safeMessage,
+  setSummary,
+  statusSummary,
+} from "./format";
+import { isOutcome, type Studio } from "./host";
+
+type Kind = "string" | "int" | "json";
+export type Spec = Record<string, { t: Kind; req?: true }>;
+type Args = Record<string, unknown>;
+
+interface OpDef {
+  readonly spec: Spec;
+  /** The one argument a bare word on the command line fills. */
+  readonly positional?: string;
+  readonly run: (studio: Studio, args: Args) => Promise<Outcome> | Outcome;
+}
+
+const str = (name: string, req = false): Spec => ({
+  [name]: { t: "string", ...(req ? { req: true as const } : {}) },
+});
+
+/** Checks an op's arguments against its spec: every key known, every type exact, required keys present. */
+export function readArgs(args: unknown, spec: Spec): Args | Outcome {
+  if (typeof args !== "object" || args === null || Array.isArray(args))
+    return refuse("invalid-arguments", "arguments must be an object");
+  const found = args as Args;
+  for (const [key, value] of Object.entries(found)) {
+    const field = spec[key];
+    if (field === undefined)
+      return refuse("invalid-arguments", `unknown argument "${key}"`);
+    const okType =
+      field.t === "string"
+        ? typeof value === "string" && value !== ""
+        : field.t === "int"
+          ? typeof value === "number" && Number.isInteger(value) && value >= 0
+          : value !== undefined;
+    if (!okType)
+      return refuse(
+        "invalid-arguments",
+        `argument "${key}" must be a ${field.t === "int" ? "whole number" : field.t === "string" ? "non-empty string" : "JSON value"}`,
+      );
+  }
+  for (const [key, field] of Object.entries(spec))
+    if (field.req && found[key] === undefined)
+      return refuse("invalid-arguments", `argument "${key}" is required`);
+  return found;
+}
+
+const fromCommand = (
+  result: CommandResult | EditResult | AssetOpResult,
+): Outcome | undefined =>
+  result.ok ? undefined : refuse(result.reason, safeMessage(result.message));
+
+const j = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
+
+function parseSlots(value: unknown): RequestInput["slots"] | Outcome {
+  if (!Array.isArray(value) || value.length === 0)
+    return refuse("invalid-arguments", "slots must be a non-empty array");
+  const allowed = ["state", "direction", "ability", "expression"];
+  for (const slot of value)
+    if (
+      typeof slot !== "object" ||
+      slot === null ||
+      Object.entries(slot).some(
+        ([k, v]) => !allowed.includes(k) || typeof v !== "string",
+      )
+    )
+      return refuse(
+        "invalid-arguments",
+        "each slot is an object of state, direction, ability or expression strings",
+      );
+  return value as RequestInput["slots"];
+}
+
+function strictObject(
+  value: unknown,
+  name: string,
+  keys: readonly string[],
+): Record<string, unknown> | Outcome {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return refuse("invalid-arguments", `${name} must be an object`);
+  const extra = Object.keys(value).find((k) => !keys.includes(k));
+  return extra === undefined
+    ? (value as Record<string, unknown>)
+    : refuse("invalid-arguments", `${name} has an unknown key "${extra}"`);
+}
+
+function readFiles(
+  png: unknown,
+  json: unknown,
+): { png: Uint8Array; json: string } | undefined | Outcome {
+  if (png === undefined && json === undefined) return undefined;
+  if (png === undefined || json === undefined)
+    return refuse(
+      "invalid-arguments",
+      "give both --png and --json, or neither",
+    );
+  try {
+    return {
+      png: new Uint8Array(readFileSync(png as string)),
+      json: readFileSync(json as string, "utf8"),
+    };
+  } catch {
+    return refuse(
+      "invalid-arguments",
+      "the sheet or metadata file cannot be read",
+    );
+  }
+}
+
+/** Runs the queued drain to its end in a one-shot command; in a session it answers at once. */
+async function afterEnqueue(
+  studio: Studio,
+  requestId: string,
+  jobIds: readonly string[],
+): Promise<Outcome> {
+  studio.kick();
+  if (studio.mode === "session")
+    return done({ state: "queued", requestId, jobIds: [...jobIds] });
+  await studio.idle();
+  const jobs = studio.jobsOf(jobIds);
+  const bad = jobs.filter(
+    (job) => (job as { status: string }).status !== "succeeded",
+  );
+  const refusal = studio.drainRefusal();
+  if (bad.length === 0 && refusal === undefined)
+    return done({ state: "completed", requestId, jobs });
+  return refuse(
+    "generation-failed",
+    refusal ?? `${bad.length} of ${jobs.length} jobs did not succeed`,
+    { requestId, jobs },
+  );
+}
+
+const unsupported = (): Outcome =>
+  refuse(
+    "unsupported",
+    "derive is not supported: no frames are made or changed",
+    {
+      verb: "derive",
+    },
+  );
+
+function resolveParams(studio: Studio, a: Args) {
+  if ((a.set === undefined) === (a.params === undefined))
+    return refuse("invalid-arguments", "give exactly one of --set or --params");
+  if (a.set !== undefined) {
+    const named = studio.config.conform?.[a.set as string];
+    return (
+      named ??
+      refuse(
+        "invalid-config",
+        `no conform set named "${a.set as string}" in the config`,
+      )
+    );
+  }
+  const parsed = parseConformParams(a.params, "params");
+  return parsed.ok ? parsed.value : refuse("invalid-arguments", parsed.message);
+}
+
+function reviewOf(record: StudioAssetRecord): Record<string, Json> {
+  return { review: assetSummary(record) };
+}
+
+/** The confirm-by-revision gate: nothing changes unless the owner names the exact revision they reviewed. */
+function confirmation(
+  record: StudioAssetRecord,
+  confirm: unknown,
+  needs: "draft" | "approved",
+): Outcome | undefined {
+  if (record.record.state !== needs)
+    return refuse(
+      "wrong-state",
+      `asset ${record.id} is ${record.record.state}, not ${needs === "draft" ? "a draft" : "approved"}`,
+    );
+  if (confirm === undefined)
+    return refuse(
+      "confirmation_required",
+      `review the asset, then repeat the command with --confirm ${record.manifestRevision}`,
+      reviewOf(record),
+    );
+  if (confirm !== record.manifestRevision)
+    return refuse(
+      "revision-mismatch",
+      "the confirmed revision is not the asset's current revision",
+      { expected: record.manifestRevision, ...reviewOf(record) },
+    );
+  return undefined;
+}
+
+function assetOf(studio: Studio, id: string): StudioAssetRecord | Outcome {
+  const status = studio.readOnly();
+  if (isOutcome(status)) return status;
+  const record = status.assets.find((a) => a.id === id);
+  return record ?? refuse("not-found", `no asset record ${id}`);
+}
+
+function parseAssessments(
+  value: unknown,
+): ApproveOptions["assessments"] | Outcome {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value))
+    return refuse("invalid-arguments", "assessments must be an array");
+  const items: NonNullable<ApproveOptions["assessments"]>[number][] = [];
+  for (const entry of value) {
+    const item = strictObject(entry, "an assessment", [
+      "record",
+      "disposition",
+      "reason",
+    ]);
+    if (isOutcome(item)) return item;
+    const record = strictObject(item.record, "an assessment record", [
+      "subject",
+      "role",
+      "licence",
+      "attribution",
+    ]);
+    if (isOutcome(record)) return record;
+    if (
+      (item.disposition !== "mit-compatible" &&
+        item.disposition !== "incompatible") ||
+      typeof item.reason !== "string" ||
+      typeof record.subject !== "string" ||
+      typeof record.role !== "string" ||
+      typeof record.licence !== "string" ||
+      (record.attribution !== undefined &&
+        typeof record.attribution !== "string")
+    )
+      return refuse(
+        "invalid-arguments",
+        "an assessment needs a record, a disposition of mit-compatible or incompatible, and a reason",
+      );
+    items.push({
+      record: record as never,
+      disposition: item.disposition,
+      reason: item.reason,
+    });
+  }
+  return items;
+}
+
+/** A fresh report-only check of one slot's stored pixels against the current content; it reads without the writer lock and writes nothing. */
+function reportSlot(
+  root: string,
+  content: StudioContent,
+  setId: string,
+  slot: string,
+): Outcome {
+  const result = slotConformance(root, setId, slot, content);
+  if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+  const frames = result.frames.map((f) => ({
+    index: f.index,
+    report: f.report.status,
+    failedChecks: f.report.checks
+      .filter((c) => c.status === "fail")
+      .map((c) => c.check),
+    pixelsChanged: f.diff.length,
+    diff: j(f.diff),
+  }));
+  const detail = {
+    workingSetId: setId,
+    slot,
+    source: result.source,
+    frames: j(frames),
+  };
+  if (frames.some((f) => f.pixelsChanged > 0))
+    return refuse(
+      "proposal-would-replace",
+      "conforming would change the stored pixels; nothing was changed",
+      detail,
+    );
+  if (frames.some((f) => f.report !== "pass"))
+    return refuse("report-failed", "the report fails", detail);
+  return done(detail);
+}
+
+const LIST_KINDS = [
+  "requests",
+  "jobs",
+  "candidates",
+  "working-sets",
+  "edits",
+  "assets",
+] as const;
+
+const OPS: Record<string, OpDef> = {
+  status: {
+    spec: {},
+    run: (studio) => {
+      const status = studio.readOnly();
+      return isOutcome(status) ? status : done(statusSummary(status));
+    },
+  },
+  list: {
+    spec: str("kind", true),
+    positional: "kind",
+    run: (studio, a) => {
+      const status = studio.readOnly();
+      if (isOutcome(status)) return status;
+      switch (a.kind) {
+        case "requests":
+          return done(status.requests.map(requestSummary));
+        case "jobs":
+          return done(status.jobs.map(jobSummary));
+        case "candidates":
+          return done(status.candidates.map(candidateSummary));
+        case "working-sets":
+          return done(status.workingSets.map(setSummary));
+        case "edits":
+          return done(status.edits.map(editSummary));
+        case "assets":
+          return done(status.assets.map(assetSummary));
+        default:
+          return refuse(
+            "invalid-arguments",
+            `kind must be one of ${LIST_KINDS.join(", ")}`,
+          );
+      }
+    },
+  },
+  sheet: {
+    spec: str("workingSetId", true),
+    run: (studio, a) => {
+      const status = studio.readOnly();
+      if (isOutcome(status)) return status;
+      const view = sheet(status, a.workingSetId as string);
+      return view === undefined
+        ? refuse("not-found", `no working set ${a.workingSetId as string}`)
+        : done(j(summarizeSheet(view)));
+    },
+  },
+  report: {
+    spec: { ...str("workingSetId", true), ...str("slot", true) },
+    run: (studio, a) => {
+      const root = studio.root;
+      if (root === undefined) return studio.missing("studioRoot");
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      return reportSlot(
+        root,
+        content,
+        a.workingSetId as string,
+        a.slot as string,
+      );
+    },
+  },
+  derive: { spec: {}, run: () => unsupported() },
+
+  generate: {
+    spec: {
+      ...str("id", true),
+      ...str("subject", true),
+      ...str("kind", true),
+      slots: { t: "json", req: true },
+      batch: { t: "int" },
+      seed: { t: "int" },
+      ...str("styleNote"),
+    },
+    run: async (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const runtime = studio.runtimeFor(session);
+      if (isOutcome(runtime)) return runtime;
+      const slots = parseSlots(a.slots);
+      if (isOutcome(slots)) return slots;
+      if (a.kind !== "sprite" && a.kind !== "portrait")
+        return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
+      const built = newRequestRecord(
+        content,
+        {
+          id: a.id as string,
+          subject: a.subject as string,
+          kind: a.kind,
+          slots,
+          ...(a.batch === undefined ? {} : { batch: a.batch as number }),
+          ...(a.seed === undefined ? {} : { seed: a.seed as number }),
+          ...(a.styleNote === undefined
+            ? {}
+            : { styleNote: a.styleNote as string }),
+        },
+        studio.deps.drawSeed,
+      );
+      if (!built.ok)
+        return refuse("invalid-request", "the request is not valid", {
+          error: j(built.error),
+        });
+      const ack = session.submitRequest(built.value.record);
+      if (!ack.ok)
+        return refuse(ack.reason, safeMessage(ack.message), {
+          requestId: a.id as string,
+          enqueued: [...ack.enqueued],
+        });
+      return afterEnqueue(studio, a.id as string, ack.jobIds);
+    },
+  },
+  reroll: {
+    spec: { ...str("requestId", true), perSlot: { t: "int", req: true } },
+    run: async (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const runtime = studio.runtimeFor(session);
+      if (isOutcome(runtime)) return runtime;
+      const ack = session.reroll(a.requestId as string, a.perSlot as number);
+      if (!ack.ok)
+        return refuse(ack.reason, safeMessage(ack.message), {
+          requestId: a.requestId as string,
+          enqueued: [...ack.enqueued],
+        });
+      return afterEnqueue(studio, a.requestId as string, ack.jobIds);
+    },
+  },
+  remove: {
+    spec: str("jobId", true),
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      return (
+        fromCommand(session.remove(a.jobId as string)) ??
+        done({ jobId: a.jobId as string, state: "removed" })
+      );
+    },
+  },
+  abort: {
+    spec: str("jobId", true),
+    run: async (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const runtime = studio.runtimeIfStarted();
+      if (runtime === undefined)
+        return refuse(
+          "not-running",
+          "no job is running in this process; only the owning session can abort",
+        );
+      const result = await runtime.abort(a.jobId as string);
+      if (result.ok)
+        return done({ jobId: a.jobId as string, state: "aborted" });
+      return refuse(result.reason, safeMessage(result.message));
+    },
+  },
+  conform: {
+    spec: { ...str("jobId", true), ...str("set"), params: { t: "json" } },
+    run: (studio, a) => {
+      const params = resolveParams(studio, a);
+      if (isOutcome(params)) return params;
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const result = session.conform(a.jobId as string, content, params);
+      return result.ok
+        ? done(candidateSummary(result.candidate))
+        : refuse(result.reason, safeMessage(result.message));
+    },
+  },
+  "set-create": {
+    spec: { ...str("id", true), ...str("requestId", true) },
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      return (
+        fromCommand(
+          session.openWorkingSet(
+            a.id as string,
+            a.requestId as string,
+            content,
+          ),
+        ) ?? done({ id: a.id as string, state: "open" })
+      );
+    },
+  },
+  "set-replace-sheet": {
+    spec: { ...str("workingSetId", true), ...str("requestId", true) },
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      return (
+        fromCommand(
+          session.replaceSheet(a.workingSetId as string, a.requestId as string),
+        ) ??
+        done({
+          workingSetId: a.workingSetId as string,
+          sheetRequestId: a.requestId as string,
+        })
+      );
+    },
+  },
+  pick: {
+    spec: { ...str("workingSetId", true), ...str("candidateId", true) },
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      return (
+        fromCommand(
+          session.pick(a.workingSetId as string, a.candidateId as string),
+        ) ??
+        done({
+          workingSetId: a.workingSetId as string,
+          candidateId: a.candidateId as string,
+        })
+      );
+    },
+  },
+  reject: {
+    spec: { ...str("id", true), ...str("reason") },
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const result = session.rejectAsset(
+        a.id as string,
+        a.reason as string | undefined,
+      );
+      return result.ok
+        ? done(assetSummary(result.asset))
+        : refuse(result.reason, safeMessage(result.message));
+    },
+  },
+
+  open: {
+    spec: {
+      ...str("id", true),
+      ...str("workingSetId", true),
+      slots: { t: "json", req: true },
+    },
+    run: async (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const editor = studio.editorFor(session);
+      if (isOutcome(editor)) return editor;
+      const slots = a.slots;
+      if (!Array.isArray(slots) || slots.some((s) => typeof s !== "string"))
+        return refuse(
+          "invalid-arguments",
+          "slots must be an array of slot keys",
+        );
+      const opened = session.openEdit(
+        a.id as string,
+        a.workingSetId as string,
+        slots as string[],
+        content,
+      );
+      if (!opened.ok) return refuse(opened.reason, safeMessage(opened.message));
+      const built = await editor.openWorkspace(a.id as string);
+      if (!built.ok)
+        return refuse(built.reason, safeMessage(built.message), {
+          editId: a.id as string,
+          guidance:
+            "the edit is open: export its sheet with `export`, edit it by hand and bring it back with `import` or `finish` using --png and --json",
+        });
+      studio.watchEdit(a.id as string, studio.workspaceHash(a.id as string));
+      return done({
+        editId: a.id as string,
+        slots: slots as string[],
+        workspace: {
+          size: j(built.readback.size),
+          durationsMs: [...built.readback.durationsMs],
+          tags: built.readback.tags.map((t) => ({
+            name: t.name,
+            from: t.from,
+            to: t.to,
+          })),
+        },
+      });
+    },
+  },
+  import: {
+    spec: { ...str("id", true), ...str("png"), ...str("json") },
+    run: async (studio, a) => editBring(studio, a, "import"),
+  },
+  finish: {
+    spec: { ...str("id", true), ...str("png"), ...str("json") },
+    run: async (studio, a) => editBring(studio, a, "finish"),
+  },
+  discard: {
+    spec: str("id", true),
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const result = session.discardEdit(a.id as string);
+      if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+      studio.unwatchEdit(a.id as string);
+      return done({ editId: a.id as string, state: "discarded" });
+    },
+  },
+  export: {
+    spec: { ...str("id", true), ...str("dir", true) },
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const written: string[] = [];
+      try {
+        mkdirSync(a.dir as string, { recursive: true });
+        for (const name of [
+          "sheet.png",
+          "sheet.json",
+          "workspace.aseprite",
+        ] as const) {
+          const bytes = session.store.readEditFile(a.id as string, name);
+          if (bytes === undefined) {
+            if (name === "workspace.aseprite") continue;
+            return refuse("not-found", `edit ${a.id as string} has no ${name}`);
+          }
+          writeFileSync(join(a.dir as string, name), bytes);
+          written.push(name);
+        }
+      } catch {
+        return refuse("write-failed", "the export directory cannot be written");
+      }
+      return done({ editId: a.id as string, files: written });
+    },
+  },
+
+  pack: {
+    spec: {
+      ...str("id", true),
+      ...str("workingSetId", true),
+      ...str("assetId", true),
+      ...str("styleTag", true),
+      footprint: { t: "json" },
+      stillFrameMs: { t: "int" },
+      carriedParams: { t: "json" },
+      originalWork: { t: "json" },
+    },
+    run: (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const registry = studio.registryRoot();
+      if (isOutcome(registry)) return registry;
+      const input: { -readonly [K in keyof PackInput]: PackInput[K] } = {
+        id: a.id as string,
+        workingSetId: a.workingSetId as string,
+        assetId: a.assetId as string,
+        styleTag: a.styleTag as string,
+      };
+      if (a.footprint !== undefined) {
+        const f = strictObject(a.footprint, "footprint", ["w", "h"]);
+        if (isOutcome(f)) return f;
+        if (
+          !Number.isInteger(f.w) ||
+          !Number.isInteger(f.h) ||
+          (f.w as number) < 1 ||
+          (f.h as number) < 1
+        )
+          return refuse(
+            "invalid-arguments",
+            "footprint needs whole w and h of at least 1",
+          );
+        input.footprint = { w: f.w as number, h: f.h as number };
+      }
+      if (a.stillFrameMs !== undefined)
+        input.stillFrameMs = a.stillFrameMs as number;
+      if (a.carriedParams !== undefined) {
+        const p = parseConformParams(a.carriedParams, "carriedParams");
+        if (!p.ok) return refuse("invalid-arguments", p.message);
+        if (p.value.scale !== undefined)
+          return refuse("invalid-arguments", "carriedParams takes no scale");
+        input.carriedParams = {
+          background: p.value.background,
+          alphaCutoff: p.value.alphaCutoff,
+          grid: p.value.grid,
+        };
+      }
+      if (a.originalWork !== undefined) {
+        const w = strictObject(a.originalWork, "originalWork", [
+          "licence",
+          "attribution",
+        ]);
+        if (isOutcome(w)) return w;
+        if (
+          typeof w.licence !== "string" ||
+          w.licence === "" ||
+          (w.attribution !== undefined && typeof w.attribution !== "string")
+        )
+          return refuse(
+            "invalid-arguments",
+            "originalWork needs a licence and may carry an attribution",
+          );
+        input.originalWork = {
+          licence: w.licence,
+          ...(w.attribution === undefined
+            ? {}
+            : { attribution: w.attribution as string }),
+        };
+      }
+      const result = session.pack(input, content, content.palette, registry);
+      return result.ok
+        ? done(assetSummary(result.asset))
+        : refuse(result.reason, safeMessage(result.message));
+    },
+  },
+  approve: {
+    spec: approveSpec(false),
+    run: (studio, a) => approve(studio, a, false),
+  },
+  "approve-with-exception": {
+    spec: approveSpec(true),
+    run: (studio, a) => approve(studio, a, true),
+  },
+  publish: {
+    spec: { ...str("id", true), ...str("confirm") },
+    run: (studio, a) => {
+      const found = assetOf(studio, a.id as string);
+      if (isOutcome(found)) return found;
+      const gate = confirmation(found, a.confirm, "approved");
+      if (gate !== undefined) return gate;
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const registry = studio.registryRoot();
+      if (isOutcome(registry)) return registry;
+      const result = session.publishAsset(
+        a.id as string,
+        content,
+        content.palette,
+        registry,
+      );
+      return result.ok
+        ? done({
+            id: result.asset.id,
+            state: result.asset.record.state,
+            revision: result.asset.published?.revision ?? null,
+          })
+        : refuse(result.reason, safeMessage(result.message));
+    },
+  },
+};
+
+function approveSpec(withException: boolean): Spec {
+  return {
+    ...str("id", true),
+    ...str("confirm"),
+    assessments: { t: "json" },
+    ...(withException
+      ? { exception: { t: "json" as const, req: true as const } }
+      : {}),
+  };
+}
+
+function approve(
+  studio: Studio,
+  a: Args,
+  withException: boolean,
+): Outcome | Promise<Outcome> {
+  const options: { -readonly [K in keyof ApproveOptions]: ApproveOptions[K] } =
+    {};
+  if (withException) {
+    const e = strictObject(a.exception, "exception", ["reason"]);
+    if (isOutcome(e)) return e;
+    if (typeof e.reason !== "string" || e.reason.trim() === "")
+      return refuse("invalid-arguments", "an exception needs a reason");
+    options.exception = { reason: e.reason };
+  }
+  const assessments = parseAssessments(a.assessments);
+  if (isOutcome(assessments)) return assessments;
+  if (assessments !== undefined) options.assessments = assessments;
+  const found = assetOf(studio, a.id as string);
+  if (isOutcome(found)) return found;
+  const gate = confirmation(found, a.confirm, "draft");
+  if (gate !== undefined) return gate;
+  const session = studio.owner();
+  if (isOutcome(session)) return session;
+  const content = studio.loadedContent();
+  if (isOutcome(content)) return content;
+  const result = session.approveAsset(
+    a.id as string,
+    options,
+    content,
+    content.palette,
+  );
+  if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+  const state = result.asset.record;
+  return done({
+    id: result.asset.id,
+    state: state.state,
+    manifestRevision: result.asset.manifestRevision,
+    basis: state.state === "approved" ? state.basis.type : null,
+  });
+}
+
+async function editBring(
+  studio: Studio,
+  a: Args,
+  mode: "import" | "finish",
+): Promise<Outcome> {
+  const session = studio.owner();
+  if (isOutcome(session)) return session;
+  const content = studio.loadedContent();
+  if (isOutcome(content)) return content;
+  const files = readFiles(a.png, a.json);
+  if (isOutcome(files)) return files;
+  let result: EditResult | { ok: false; reason: string; message: string };
+  if (files !== undefined)
+    result =
+      mode === "import"
+        ? session.importEdit(a.id as string, files.png, files.json, content)
+        : session.finishEdit(a.id as string, files.png, files.json, content);
+  else {
+    const editor = studio.editorFor(session);
+    if (isOutcome(editor)) return editor;
+    result = await editor.refresh(a.id as string, content, mode);
+  }
+  if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+  if (mode === "finish") studio.unwatchEdit(a.id as string);
+  return done({
+    editId: a.id as string,
+    state: mode === "finish" ? "finished" : "imported",
+    changed: result.changed,
+  });
+}
+
+export const opSpec = (op: string): OpDef | undefined => OPS[op];
+export const opNames = (): string[] => Object.keys(OPS);
+
+/** The ops that read durable records and take no writer lock. */
+export const READ_ONLY = new Set([
+  "status",
+  "list",
+  "sheet",
+  "report",
+  "derive",
+]);
+
+export async function execute(
+  studio: Studio,
+  op: string,
+  args: unknown,
+): Promise<Outcome> {
+  const def = OPS[op];
+  if (def === undefined)
+    return refuse("unknown-op", `unknown command "${op}"`, {
+      known: opNames(),
+    });
+  const read = readArgs(args ?? {}, def.spec);
+  if (isOutcome(read)) return read;
+  if (studio.stopping && !READ_ONLY.has(op))
+    return refuse("shutting-down", "the session is shutting down");
+  try {
+    return await def.run(studio, read);
+  } catch {
+    return refuse("internal", "the command failed unexpectedly");
+  }
+}

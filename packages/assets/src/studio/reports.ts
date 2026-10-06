@@ -1,15 +1,20 @@
+import type { ConformanceReport, Sha256 } from "@panthea/contracts";
 import {
   type ConformanceResult,
   conformImage,
+  type PixelDiff,
   type RgbaImage,
 } from "../conformance";
+import { sha256Hex } from "../hash";
 import {
+  type CandidateParams,
   type CandidateRecord,
   type ConformParams,
   paletteColours,
 } from "./candidates";
-import type { GenerationSpec } from "./request";
-import type { StudioStatus } from "./store";
+import { decodePng } from "./png/decode";
+import { buildSpec, type GenerationSpec, type StudioContent } from "./request";
+import { openStore, type StudioStatus } from "./store";
 import type { Keyframe, WorkingSetRecord } from "./working-set";
 
 export interface SheetSlot {
@@ -124,4 +129,132 @@ export function reportOnly(
     grid: params.grid,
     ...(params.scale === undefined ? {} : { scale: params.scale }),
   });
+}
+
+export type SlotConformanceFailure =
+  | "not-found"
+  | "corrupt-blob"
+  | "corrupt-png"
+  | "unsupported-png"
+  | "invalid";
+
+export type SlotConformance =
+  | {
+      readonly ok: true;
+      readonly source: "hand" | "pick";
+      readonly frames: readonly {
+        readonly index: number;
+        readonly report: ConformanceReport;
+        readonly diff: readonly PixelDiff[];
+      }[];
+    }
+  | {
+      readonly ok: false;
+      readonly reason: SlotConformanceFailure;
+      readonly message: string;
+    };
+
+/**
+ * A fresh report-only conformance of one slot's stored pixels against the
+ * current content: the hand-finished frames, or else the picked native image,
+ * with the conformance settings stored beside them and the family colours of
+ * `content.palette`. It reads the durable records without the writer lock and
+ * writes nothing, so a changed palette shows up here and a stored report never
+ * stands in for it.
+ */
+export function slotConformance(
+  root: string,
+  workingSetId: string,
+  slot: string,
+  content: StudioContent,
+): SlotConformance {
+  const failure = (
+    reason: SlotConformanceFailure,
+    message: string,
+  ): SlotConformance => ({ ok: false, reason, message });
+  const store = openStore(root);
+  const status = store.status();
+  const set = status.workingSets.find((w) => w.id === workingSetId);
+  if (set === undefined)
+    return failure("not-found", `no working set ${workingSetId}`);
+  if (!set.required.includes(slot))
+    return failure(
+      "not-found",
+      `working set ${workingSetId} has no slot ${slot}`,
+    );
+  const request = status.requests.find((r) => r.id === set.sheetRequestId);
+  if (request === undefined)
+    return failure(
+      "invalid",
+      `the sheet request ${set.sheetRequestId} is missing`,
+    );
+  const built = buildSpec(content, request.request);
+  if (!built.ok)
+    return failure(
+      "invalid",
+      `the generation spec cannot be built: ${built.error.kind}`,
+    );
+
+  const authored = set.frames[slot];
+  const pick = set.picks[slot];
+  let source: "hand" | "pick";
+  let hashes: readonly Sha256[];
+  let params: CandidateParams | undefined;
+  let pivot = built.value.pivot;
+  if (authored !== undefined) {
+    source = "hand";
+    hashes = authored.frames.map((f) => f.hash);
+    params = status.edits.find((e) => e.id === authored.editId)?.evidence[slot]
+      ?.params;
+    if (authored.pivot !== null) pivot = authored.pivot;
+  } else if (pick !== undefined) {
+    source = "pick";
+    hashes = [pick.imageHash];
+    params = pick.params;
+  } else return failure("not-found", `${slot} has no stored frames`);
+  if (params === undefined)
+    return failure("not-found", `${slot} has no stored conformance settings`);
+
+  const spec: GenerationSpec = {
+    ...built.value,
+    ...(pivot === undefined ? {} : { pivot }),
+  };
+  const frames: {
+    index: number;
+    report: ConformanceReport;
+    diff: PixelDiff[];
+  }[] = [];
+  for (const [index, hash] of hashes.entries()) {
+    const bytes = store.readBlob(hash);
+    if (bytes === undefined || sha256Hex(bytes) !== hash)
+      return failure(
+        "corrupt-blob",
+        `frame ${index} of ${slot} is missing or does not match its hash`,
+      );
+    const decoded = decodePng(bytes);
+    if (!decoded.ok)
+      return failure(
+        decoded.code,
+        `frame ${index} of ${slot} cannot be decoded`,
+      );
+    const { width, height } = decoded.image;
+    if (width !== spec.cell.w || height !== spec.cell.h)
+      return failure(
+        "invalid",
+        `frame ${index} of ${slot} is ${width}x${height}, not the ${spec.cell.w}x${spec.cell.h} cell`,
+      );
+    const result = reportOnly(decoded.image, spec, {
+      background: params.background,
+      alphaCutoff: params.alphaCutoff,
+      grid: params.grid,
+      scale: 1,
+    });
+    if (result.status !== "done")
+      return failure(
+        "invalid",
+        `frame ${index} of ${slot} cannot be reported on`,
+      );
+    frames.push({ index, report: result.report, diff: [...result.diff] });
+  }
+  return { ok: true, source, frames };
 }

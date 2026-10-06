@@ -2059,3 +2059,292 @@ describe("carrying cells from a published atlas laid out in two rows", () => {
     );
   });
 });
+
+describe("rejecting a packed draft", () => {
+  const rejectOf = (rig: AssetRig, id = "zeus-pack", reason?: string) =>
+    rig.session.rejectAsset(id, reason);
+  const rejectLedger = (rig: AssetRig) =>
+    ledgerOf(rig).filter((l) => l.startsWith("reject:"));
+
+  test("an idle draft becomes a rejected record that keeps its exact manifest and revision, with one ledger entry", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const drafted = packOk(rig);
+
+    const result = rejectOf(rig, "zeus-pack", "the idle loop is wrong");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const asset = result.asset;
+    expect(asset.record).toEqual({
+      state: "rejected",
+      manifest: drafted.record.manifest,
+      rejectedFrom: "draft",
+      reason: "the idle loop is wrong",
+    });
+    expect(asset.manifestRevision).toBe(drafted.manifestRevision);
+    expect(asset.reportBasis).toEqual(drafted.reportBasis);
+    expect(asset.published).toBeNull();
+    expect(rejectLedger(rig)).toEqual(["reject:zeus-pack"]);
+    expect(rig.session.store.readAsset("zeus-pack")).toEqual({
+      kind: "found",
+      value: asset,
+    });
+    expect(readStudioStatus(rig.root).invalid).toEqual([]);
+  });
+
+  test("the reason is optional and absent from the record when not given", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+
+    const result = rejectOf(rig);
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.asset.record).not.toHaveProperty("reason");
+    expect(result.ok && result.asset.record).toMatchObject({
+      state: "rejected",
+      rejectedFrom: "draft",
+    });
+  });
+
+  test("a rejected asset cannot be approved, published or rejected again, and canon is untouched", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+    expect(rejectOf(rig).ok).toBe(true);
+    const before = tree(rig.root);
+
+    expect(approve(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(publish(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(rejectOf(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
+
+    expect(tree(rig.root)).toEqual(before);
+    expect(existsSync(join(rig.registryRoot, "index.json"))).toBe(false);
+  });
+
+  test("an approved or published asset cannot be rejected", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+    ready(rig);
+    const approvedBytes = tree(rig.root);
+
+    expect(rejectOf(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(tree(rig.root)).toEqual(approvedBytes);
+
+    expect(publish(rig).ok).toBe(true);
+    const index = readFileSync(join(rig.registryRoot, "index.json"), "utf8");
+    const published = tree(rig.root);
+
+    expect(rejectOf(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(tree(rig.root)).toEqual(published);
+    expect(readFileSync(join(rig.registryRoot, "index.json"), "utf8")).toBe(
+      index,
+    );
+  });
+
+  test("an unknown or malformed id is not found, an invalid record is wrong-state, and nothing is written", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+    writeFileSync(join(rig.root, "assets", "broken.json"), "{");
+    const before = tree(rig.root);
+
+    expect(rejectOf(rig, "nobody")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(rejectOf(rig, "Not A Slug")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(rejectOf(rig, "broken")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+
+    expect(tree(rig.root)).toEqual(before);
+  });
+
+  test("a reject that cannot be written is not acknowledged and leaves the draft", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+    const next = readStudioStatus(rig.root).commands.length + 1;
+    mkdirSync(
+      join(rig.root, "commands", `${String(next).padStart(8, "0")}.json`),
+    );
+
+    const result = rejectOf(rig);
+
+    expect(result).toMatchObject({ ok: false, reason: "write-failed" });
+    expect(readStudioStatus(rig.root).assets[0]?.record.state).toBe("draft");
+    expect(rejectLedger(rig)).toEqual([]);
+  });
+
+  test("a record write that fails after the ledger entry is not acknowledged and leaves the draft", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+    chmodSync(join(rig.root, "assets"), 0o500);
+    let result: ReturnType<typeof rejectOf>;
+    try {
+      result = rejectOf(rig);
+    } finally {
+      chmodSync(join(rig.root, "assets"), 0o700);
+    }
+
+    expect(result).toMatchObject({ ok: false, reason: "write-failed" });
+    expect(readStudioStatus(rig.root).assets[0]?.record.state).toBe("draft");
+  });
+
+  test("a closed session refuses before reading and a new owner's store is untouched", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+    const stale = rig.session;
+    stale.close();
+    const opened = openStudioSession(rig.root);
+    if (opened.kind === "busy") throw new Error("busy");
+    const before = tree(rig.root);
+
+    expect(stale.rejectAsset("zeus-pack", "late")).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(stale.rejectAsset("nobody")).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+
+    expect(tree(rig.root)).toEqual(before);
+    opened.session.close();
+  });
+
+  test("a stored candidate record is not a draft and is not rejected", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const drafted = packOk(rig);
+    const file = join(rig.root, "assets", "zeus-pack.json");
+    const record = JSON.parse(readFileSync(file, "utf8"));
+    record.record = {
+      state: "candidate",
+      manifest: drafted.record.manifest,
+      report: { schemaVersion: 1, status: "pass", checks: [] },
+    };
+    writeFileSync(file, JSON.stringify(record));
+    const before = tree(rig.root);
+
+    expect(rejectOf(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(tree(rig.root)).toEqual(before);
+  });
+
+  test("a draft that is being edited externally, or is still a candidate, is not an idle draft", () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const drafted = packOk(rig);
+    const file = join(rig.root, "assets", "zeus-pack.json");
+    const record = JSON.parse(readFileSync(file, "utf8"));
+    record.record.edit = "editing-externally";
+    writeFileSync(file, JSON.stringify(record));
+    const before = tree(rig.root);
+
+    expect(rejectOf(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(tree(rig.root)).toEqual(before);
+    void drafted;
+  });
+});
+
+// biome-ignore lint/suspicious/noExplicitAny: the tests edit parsed JSON in place
+type Json = Record<string, any>;
+
+describe("a rejected record is strict", () => {
+  const put = (root: string, record: unknown) => {
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bad.json"), JSON.stringify(record));
+  };
+  const base = () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    packOk(rig);
+    expect(rig.session.rejectAsset("zeus-pack", "no").ok).toBe(true);
+    return {
+      rig,
+      record: JSON.parse(
+        readFileSync(join(rig.root, "assets", "zeus-pack.json"), "utf8"),
+      ),
+    };
+  };
+  const bad: [string, (r: Json) => void][] = [
+    [
+      "an unknown key",
+      (r) => {
+        r.record.extra = 1;
+      },
+    ],
+    [
+      "no rejectedFrom",
+      (r) => {
+        delete r.record.rejectedFrom;
+      },
+    ],
+    [
+      "a rejectedFrom that is not candidate or draft",
+      (r) => {
+        r.record.rejectedFrom = "approved";
+      },
+    ],
+    [
+      "a reason that is not a string",
+      (r) => {
+        r.record.reason = 3;
+      },
+    ],
+    [
+      "a basis on a rejected record",
+      (r) => {
+        r.record.basis = { type: "report-pass" };
+      },
+    ],
+    [
+      "a report on a rejected record",
+      (r) => {
+        r.record.report = { schemaVersion: 1, status: "pass", checks: [] };
+      },
+    ],
+    [
+      "the manifest of another asset",
+      (r) => {
+        r.record.manifest.id = "someone-else";
+      },
+    ],
+  ];
+  for (const [name, change] of bad)
+    test(`a rejected record with ${name} is reported invalid`, () => {
+      const { rig, record } = base();
+      change(record);
+      put(rig.root, record);
+
+      const status = readStudioStatus(rig.root);
+
+      expect(status.invalid.map((p) => p.file)).toEqual(["assets/bad.json"]);
+      expect(status.assets.map((a) => a.id)).toEqual(["zeus-pack"]);
+    });
+
+  test("a rejected record from a candidate reads back as written", () => {
+    const { rig, record } = base();
+    record.id = "from-candidate";
+    record.record.rejectedFrom = "candidate";
+    delete record.record.reason;
+    put(rig.root, record);
+
+    const status = readStudioStatus(rig.root);
+
+    expect(status.invalid).toEqual([]);
+    expect(status.assets.map((a) => a.id)).toEqual([
+      "from-candidate",
+      "zeus-pack",
+    ]);
+  });
+});
