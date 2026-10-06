@@ -368,10 +368,8 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
   }
   // The world kept prayers the prompt could not hold, so the cap was exercised.
   expect(crowded).toBeGreaterThan(0);
-  // At about 3.3 characters a token (measured on qwen3-8b-4k) this is under 2.7K tokens of a 4K context
-  // that Ollama truncates silently past about 4,090. The bound was 8,500 before a god's way out became a
-  // line naming every place it can travel to (ids and steps, about 250 characters for the authored map), and the
-  // seeded run's worst prompt moved from 8,700 to about 8,750 when the director took its own clock (the run is
-  // another trajectory, not a longer section: every section keeps its own budget). 9,000 is still about 2.7K tokens.
-  expect(worst.chars).toBeLessThanOrEqual(9000);
+  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`, 2026-10-05): the busiest routine-town prompt, 8,845
+  // characters, was 2,554 tokens (3.46 a token), and the busiest crowded one (all of the world's wrongs and troubles in) 10,046 and 2,870. At 3.3 a token 10,500
+  // characters is under 3,200 tokens, some 900 under the 4,090 past which Ollama silently drops the start of a prompt.
+  expect(worst.chars).toBeLessThanOrEqual(10500);
 });

@@ -111,6 +111,7 @@ export const GOD_ACTIONS: ReadonlySet<string> = new Set([
   "legend",
   "report",
   "bless",
+  "refuse",
   "practice",
   "goal",
 ]);
