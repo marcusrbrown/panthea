@@ -399,7 +399,7 @@ flowchart TB
 
 **Verification:** existing and new tests pass; `bun run check` passes.
 
-- [ ] **Unit 6: Practices scenario and the Zeus and Hera gate**
+- [x] **Unit 6: Practices scenario and the Zeus and Hera gate**
 
 **Goal:** prove settlement and supplication end to end and run the next rated gate.
 
@@ -434,15 +434,19 @@ flowchart TB
 
 Status (2026-10-03): the scenario and harness are done (34159f4). The gate ran three times with fixes between runs (cbd8c76, 81f2be1, 46ca1ea): 0 practice moves in 115 requests on 34159f4; 12 threads and 43 of 91 requests exhausted on cbd8c76; 28 threads, 27 ended (25 supplications fulfilled, 1 expired, 1 open at the end, 1 Zeus–Hera settlement fulfilled), nothing refused or breached, and 5 of 103 requests exhausted on 46ca1ea. The "supplication and settlement with at least one refused or breached" property failed in every episode, and Zeus failed influence in all three. The owner did not rate the gate, so Unit 6's verification stays open; Phase B proceeds by owner decision (2026-10-03), where rivals and stakes are expected to produce settlements and refusals. Evidence: `tools/scenarios/m2-greek-cast/episodes/2026-10-02T21-45-43/`, `2026-10-02T22-50-35/`, `2026-10-03T00-38-55/`.
 
+Status (2026-10-05): the owner rated the seven-god gate "continue, not passing". It ran 3 × 300 s on qwen3-8b-4k with reasoning off, on main 662f7a8 with the scheduler, travel, and the full cast. Results: 43 journeys, all arrived; no knowledge leaks; 88 of 91 requests answered; 14 supplications, of which 8 were fulfilled, 4 expired after the mortal paid, and 2 were open at the end; 0 settlements, 0 refusals, 0 breaches; 0 goals set; Zeus answered none of 13 prayers; 35 failed checks. The gate's Hera influence check undercounts, because her blesses were followed by affinity +1; a separate fix corrects it. The owner chose to brainstorm the pressure gap (the gods have no reason to act toward each other) before planning M2 Unit 13. Evidence: `tools/scenarios/m2-greek-cast/episodes/2026-10-05T14-16-36/`.
+
 ### Phase B — Cast, contest, and scheduler
 
-- [ ] **Unit 7: Five gods, their places, and twenty inhabitants**
+- [x] **Unit 7: Five gods, their places, and twenty inhabitants**
 
 **Goal:** the world gives every god something at stake.
 
 **Requirements:** R20, R21; W01, W02, W06.
 
 **Dependencies:** Unit 6 and the owner's continue rating on its gate.
+
+Status (2026-10-05): the five gods, their places, and twenty inhabitants landed and run in the full-cast scenario and the gate. The dependency, the owner's continue rating on Unit 6's gate, is now met.
 
 **Files:**
 - Create: `content/greek/gods/{athena,hermes,hephaestus,poseidon,hades}.json`, their lore sources under `content/greek/lore/`
