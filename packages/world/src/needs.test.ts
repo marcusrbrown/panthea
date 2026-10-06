@@ -210,24 +210,16 @@ test("a mortal with everything it needs has no unmet need; a dead mortal records
   ).toEqual([]);
 });
 
-test("a hungry mortal with a food producer a walk away has no unmet need: the walk is its answer; with no producer left to walk to, the shortfall is recorded", () => {
+test("a hungry mortal buys from a stocked producer at its place and records no need; with the producer gone, the shortfall is recorded", () => {
   const base = pack();
-  const joined: ContentPack = {
+  const together: ContentPack = {
     ...base,
-    locations: [
-      {
-        id: "square",
-        realm: "mortal",
-        name: "Square",
-        edges: [{ to: "yard", transport: "path", bidirectional: true }],
-      },
-      { id: "yard", realm: "mortal", name: "Yard", edges: [] },
-    ],
     inhabitants: base.inhabitants.map((inhabitant) =>
-      // The woodcutter at the yard has eaten its food; the farmer, a food producer, holds some at the square.
+      // The woodcutter has eaten its food and stands with the farmer, a food producer holding some.
       inhabitant.id === "woodcutter"
         ? {
             ...inhabitant,
+            locationId: "square",
             startingInventory: [{ resource: "currency", amount: 5 }],
           }
         : inhabitant.id === "farmer"
@@ -249,10 +241,10 @@ test("a hungry mortal with a food producer a walk away has no unmet need: the wa
           "woodcutter" && (e as { resource: string }).resource === "food",
     );
 
-  expect(foodNeeds(createInitialWorldState(joined))).toEqual([]);
+  expect(foodNeeds(createInitialWorldState(together))).toEqual([]);
 
   // The farmer is gone: nobody sells, and the woodcutter's hunger is a recorded need.
-  const alone = createInitialWorldState(joined);
+  const alone = createInitialWorldState(together);
   const farmer = getActor(alone, id("farmer"));
   if (!farmer) throw new Error("farmer");
   const stranded: WorldState = {

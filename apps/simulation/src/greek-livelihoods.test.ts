@@ -148,12 +148,15 @@ test("mortals who go short pray to the god they revere, so the day's prayers nam
   }
 });
 
-test("Hades hears prayers: over the scripted day a mortal prays to him, so he can enter a practice (R20)", () => {
-  const toHades = of("petition-opened").filter(
-    (e) => String(e.god) === "hades",
+test("Hades hears prayers: over a longer scripted day a mortal prays to him, so he can enter a practice (R20)", () => {
+  // Mortals pray when they go short, and they go short rarely now (R17): the ferryman, who reveres Hades, feeds himself,
+  // so Hades's first prayer comes from a mortal whose feelings have moved toward him, later than the 400-tick day.
+  const longer = day(700);
+  const toHades = longer.events.filter(
+    (e): e is Extract<WorldEvent, { kind: "petition-opened" }> =>
+      e.kind === "petition-opened" && String(e.god) === "hades",
   );
   expect(toHades.length).toBeGreaterThan(0);
-  // The ferryman, who reveres him, now feeds himself and rarely goes short, so he is no longer the one who prays: whoever does reaches Hades through what they feel for him.
 });
 
 // --- Occasional hunger (R17, SC1) -------------------------------------------------------------

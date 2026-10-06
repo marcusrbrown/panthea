@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { ContentPack, WorldEvent } from "@panthea/contracts";
+import type { ContentPack, EventId, WorldEvent } from "@panthea/contracts";
 import { runTick } from "./actions";
 import {
   decideRoutineProposal,
@@ -13,6 +13,7 @@ import {
   createInitialWorldState,
   createPrng,
   getActor,
+  needKey,
   toEntityId,
   type WorldState,
   withActor,
@@ -574,31 +575,62 @@ test("a food producer does not push its food on buyers who are not hungry: it ke
   expect(decideRoutineProposal(state, farmer.id)?.proposal.kind).toBe("gather");
 });
 
+/** `state` with the mortal's food shortfall open since `since`, as the need scan records it. */
+function hungryFor(state: WorldState, since: number): WorldState {
+  const needs = new Map(state.needs);
+  needs.set(needKey(toEntityId("hungry"), "food"), {
+    actor: toEntityId("hungry"),
+    resource: "food",
+    reason: "no-seller",
+    eventId: "evt-1-1" as EventId,
+    tick: since,
+  });
+  return { ...state, needs };
+}
+
+const wantOf = (state: WorldState, name = "hungry") =>
+  foodWant(
+    state,
+    toEntityId(name),
+    getActor(state, toEntityId(name)) as ActorState,
+  );
+
 test("a hungry mortal where no producer works walks toward the nearest one instead of failing in place", () => {
   const state = lineWorld(undefined, [
     mortal("hungry", "square", { currency: 10 }),
     mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
   ]);
-  const hungry = getActor(state, toEntityId("hungry")) as ActorState;
-  // Two steps away: the first is the path.
-  expect(foodWant(state, hungry.id, hungry)).toMatchObject({
+  // Two steps away: the first is the path. The shortfall is still real, so it is still an unmet need.
+  expect(wantOf(state)).toMatchObject({
     resource: "food",
+    unmet: "no-seller",
     trip: "path",
   });
-  expect(decideRoutineProposal(state, hungry.id)?.proposal).toMatchObject({
-    kind: "move",
-    to: "path",
-  });
+  expect(
+    decideRoutineProposal(state, toEntityId("hungry"))?.proposal,
+  ).toMatchObject({ kind: "move", to: "path" });
 });
 
-test("no walk when it would lead nowhere: no producer holds food, none is reachable, or one already works here (or calls here home) and will restock", () => {
+test("with a meal interval a mortal first waits that long, less a tick, for a producer to turn up where it stands, then walks", () => {
+  const base = atTick(
+    lineWorld(5, [
+      mortal("hungry", "square", { currency: 10 }),
+      mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
+    ]),
+    10,
+  );
+  // The shortfall opened 2 ticks ago: still patient (it waits 4 ticks).
+  expect(wantOf(hungryFor(base, 8))).toEqual({
+    resource: "food",
+    unmet: "no-seller",
+  });
+  // Opened 4 ticks ago: it walks.
+  expect(wantOf(hungryFor(base, 6))).toMatchObject({ trip: "path" });
+});
+
+test("no walk when it would lead nowhere: no producer holds food, none is reachable, or one stands here and will restock", () => {
   const hungry = () => mortal("hungry", "square", { currency: 10 });
-  const wantOf = (state: WorldState) =>
-    foodWant(
-      state,
-      toEntityId("hungry"),
-      getActor(state, toEntityId("hungry")) as ActorState,
-    );
+  const noTrip = { resource: "food", unmet: "no-seller" } as const;
 
   // The only producer is out of food.
   expect(
@@ -608,7 +640,7 @@ test("no walk when it would lead nowhere: no producer holds food, none is reacha
         mortal("farmer", "field", {}, { gathers: "food" }),
       ]),
     ),
-  ).toMatchObject({ unmet: "no-seller" });
+  ).toEqual(noTrip);
 
   // The only producer is on an island no route reaches.
   expect(
@@ -618,34 +650,15 @@ test("no walk when it would lead nowhere: no producer holds food, none is reacha
         mortal("farmer", "nowhere", { food: 4 }, { gathers: "food" }),
       ]),
     ),
-  ).toMatchObject({ unmet: "no-seller" });
+  ).toEqual(noTrip);
 
-  // The place's producer is away praying: it works here and comes home, so its buyers wait instead of settling somewhere else.
-  expect(
-    wantOf(
-      lineWorld(undefined, [
-        hungry(),
-        mortal(
-          "local",
-          "path",
-          { food: 4 },
-          { gathers: "food", home: toEntityId("square") },
-        ),
-        mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
-      ]),
-    ),
-  ).toMatchObject({ unmet: "no-seller" });
-
-  // A producer works here but is momentarily out: waiting beats wandering off, even with food elsewhere.
-  expect(
-    wantOf(
-      lineWorld(undefined, [
-        hungry(),
-        mortal("local", "square", {}, { gathers: "food" }),
-        mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
-      ]),
-    ),
-  ).toMatchObject({ unmet: "no-seller" });
+  // A producer stands here but is momentarily out: waiting beats wandering off, however long the wait, even with food elsewhere.
+  const crowded = lineWorld(undefined, [
+    hungry(),
+    mortal("local", "square", {}, { gathers: "food" }),
+    mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
+  ]);
+  expect(wantOf(hungryFor(atTick(crowded, 500), 1))).toEqual(noTrip);
 });
 
 /** Runs `ticks` ticks of the routines of every mortal in `state`. */
@@ -666,13 +679,13 @@ function runDay(state: WorldState, ticks: number) {
   return { state: current, events };
 }
 
-test("a hungry mortal with no producer at hand walks to one, buys a meal, and eats: it fails once at most, not every tick", () => {
+test("a hungry mortal with no producer at hand walks to one, buys a meal, and eats: its shortfall is recorded once and closes when it is fed, not every tick", () => {
   const { state, events } = runDay(
     lineWorld(4, [
       mortal("hungry", "square", { currency: 10 }),
       mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
     ]),
-    12,
+    16,
   );
   expect(getActor(state, toEntityId("hungry"))?.locationId).toBe(
     toEntityId("field"),
@@ -691,15 +704,17 @@ test("a hungry mortal with no producer at hand walks to one, buys a meal, and ea
       (e) => e.kind === "resource-consumed" && e.entityId === "hungry",
     ),
   ).toBe(true);
-  // It never lacked a seller: the walk was its answer to that. (It does run out of money after three meals.)
+  // One shortfall while it walked (the other, at the very end, is it running out of money after three meals), closed once it was fed.
+  const noSeller = events.filter(
+    (e) =>
+      e.kind === "unmet-need" &&
+      e.entityId === "hungry" &&
+      e.reason === "no-seller",
+  );
+  expect(noSeller).toHaveLength(1);
   expect(
-    events.filter(
-      (e) =>
-        e.kind === "unmet-need" &&
-        e.entityId === "hungry" &&
-        e.reason === "no-seller",
-    ),
-  ).toHaveLength(0);
+    events.some((e) => e.kind === "need-met" && e.entityId === "hungry"),
+  ).toBe(true);
 });
 
 test("no meal passes back and forth: over a long stretch, food moves only from a producer to someone who asked, never the other way, and never between the same pair in both directions", () => {

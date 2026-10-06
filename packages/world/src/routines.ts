@@ -30,7 +30,7 @@ import { nextHop, routeLengths } from "./geography";
 import { prayerStep } from "./petitions";
 import { mortalPractice } from "./practices";
 import { actorHoldsEnoughToRepair, findRepairableBuilding } from "./repair";
-import { type ActorState, getActor, type WorldState } from "./state";
+import { type ActorState, getActor, needKey, type WorldState } from "./state";
 
 export interface RoutineResult {
   readonly observation: ObservationRecord;
@@ -85,9 +85,12 @@ export interface Deal {
  */
 export type Want =
   | { readonly resource: string; readonly deal: Deal }
-  /** Nothing to trade for here, but a seller is a walk away: the first step. Not an unmet need. */
-  | { readonly resource: string; readonly trip: EntityId }
-  | { readonly resource: string; readonly unmet: UnmetNeedReason };
+  /** Short of it; `trip` is the first step toward a seller, taken once the mortal has waited long enough for one to turn up here. */
+  | {
+      readonly resource: string;
+      readonly unmet: UnmetNeedReason;
+      readonly trip?: EntityId;
+    };
 
 /** Ticks between one mortal's meals, from `rules.economyBalance.mealIntervalTicks`; 1 (a meal whenever food is held) when unset. */
 export function mealIntervalOf(rules: WorldRules): number {
@@ -144,35 +147,42 @@ export function foodWant(
   if (seller !== undefined) {
     return { resource: "food", deal: { counterparty: seller, give, receive } };
   }
-  // Nobody here sells. A producer who works this place restocks or comes
-  // back, so the buyer waits for it and stays where its own trade is; with
-  // none working here, a hungry mortal walks to the nearest producer's
-  // workplace rather than failing in place every tick.
-  const trip = hasProducerHere(state, actorId, actor)
-    ? undefined
-    : tripToFoodSeller(state, actor, give, receive);
-  return trip === undefined
-    ? { resource: "food", unmet: "no-seller" }
-    : { resource: "food", trip };
+  // Nobody here sells. A producer standing here restocks within a tick, so
+  // the buyer waits for it. With none here, a mortal waits one meal interval
+  // for one to come back (a producer away praying returns) and then walks to
+  // the nearest producer's workplace rather than failing in place for good.
+  const trip =
+    hasProducerHere(state, actorId, actor) ||
+    hasWaitedForFood(state, actorId) < mealIntervalOf(state.rules) - 1
+      ? undefined
+      : tripToFoodSeller(state, actor, give, receive);
+  return {
+    resource: "food",
+    unmet: "no-seller",
+    ...(trip === undefined ? {} : { trip }),
+  };
 }
 
-/** Whether a living food producer works where `actor` stands: one standing here, or one whose home this is and who is away only to pray. */
+/** Ticks the mortal's food shortfall has been open; 0 before the scan has recorded it. */
+function hasWaitedForFood(state: WorldState, actorId: EntityId): number {
+  const open = state.needs.get(needKey(actorId, "food"));
+  return open === undefined ? 0 : state.tick - open.tick;
+}
+
+/** Whether another living food producer stands where `actor` does. */
 function hasProducerHere(
   state: WorldState,
   actorId: EntityId,
   actor: ActorState,
 ): boolean {
-  for (const [candidateId, candidate] of state.actors) {
-    if (candidateId === actorId || !candidate.alive) continue;
-    if (candidate.gathers !== "food") continue;
-    if (
-      candidate.locationId === actor.locationId ||
-      candidate.home === actor.locationId
-    ) {
-      return true;
-    }
-  }
-  return false;
+  return (
+    findCounterparty(
+      state,
+      actorId,
+      actor,
+      (candidate) => candidate.gathers === "food",
+    ) !== undefined
+  );
 }
 
 /** The first step toward the nearest food producer who would sell `receive` for `give`, or `undefined` when none holds food or none can be reached. */
@@ -366,7 +376,7 @@ export function decideRoutineProposal(
     });
   }
 
-  if (food && "trip" in food) {
+  if (food && "unmet" in food && food.trip !== undefined) {
     const step = food.trip;
     candidates.push({
       utility: drives.appetite,
