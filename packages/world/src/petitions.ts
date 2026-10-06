@@ -40,12 +40,13 @@ import {
 /** Defaults for `rules.petitionBalance`, in simulation ticks unless a count. */
 export const DEFAULT_PETITION_BALANCE: Readonly<Record<string, number>> = {
   /**
-   * How long after a petition opens a god's answer still counts. At least
-   * twice the longest route from the great hall to a petition target, plus the
-   * answering action, at the slowest god pace measured (one action per 25
-   * ticks): 2 x (4 + 1) x 25. A test holds it to the map.
+   * How long after a petition opens a god's answer still counts. Owner
+   * decision 2026-10-05 (SC6): 150, so every devotion (2 to 4) can defect inside
+   * a 300-tick episode. It covers one trip from the great hall to a petition
+   * target plus the answering action at the slowest god pace measured (one
+   * action per 25 ticks): (4 + 1) x 25 = 125.
    */
-  answerWindowTicks: 250,
+  answerWindowTicks: 150,
   /** How long after it happened an event stays something a mortal will pray about. */
   causePrayableTicks: 150,
   /** Fewest ticks between two prayers by one mortal. */

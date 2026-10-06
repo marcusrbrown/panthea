@@ -6,6 +6,7 @@ import type { ContentPack, EventId, WorldEvent } from "@panthea/contracts";
 import { applyEvent, applyEvents, runTick, submitProposal } from "./actions";
 import { decode, encode } from "./codec";
 import { getMemories, getRelationship } from "./memory";
+import { petitionBalanceOf } from "./petitions";
 import { decideRoutineProposal } from "./routines";
 import {
   createInitialWorldState,
@@ -272,7 +273,11 @@ test("a neglected mortal defects to the god that answered it (AE2): the lapse of
     answered: helped.id,
     unanswered: [ignored.id],
   });
-  expect(change?.tick).toBe(ignored.tick + 251);
+  expect(change?.tick).toBe(
+    ignored.tick +
+      petitionBalanceOf(world.state.rules, "answerWindowTicks") +
+      1,
+  );
   expect(world.patron("fisher")).toBe("athena");
   expect(world.affinity("fisher", "poseidon")).toBe(0);
 });
@@ -437,26 +442,35 @@ test("there is no cooldown: a mortal that left a patron leaves the next one the 
   expect(world.patron("fisher")).toBe("poseidon");
 });
 
-test("SC6: a mortal whose patron ignores its prayers defects within a 300-tick episode, on ticks alone", () => {
-  // A devotion of 2: one ignored prayer, opened as soon as it could be, is enough.
-  const one = neglected({ affinity: 2 });
-  one.world.until(() => one.world.changes().length > 0, 300);
-  expect(one.world.changes()[0]?.tick).toBeLessThanOrEqual(300);
-  expect(one.world.state.tick).toBeLessThanOrEqual(300);
-
-  // A devotion of 3: two ignored prayers, both opened in the first 50 ticks (the prayer cooldown is 20).
-  const world = new Flock({ affinity: 3 });
-  const helped = world.spoil("fisher");
-  const ignored = [world.grudge("fisher"), world.grudge("fisher")];
-  const asked = world.prayer("fisher", helped);
-  world.bless("athena", asked.id);
-  const prayed = ignored.map((cause) => world.prayer("fisher", cause));
-  expect(Math.max(...prayed.map((p) => p.tick))).toBeLessThan(50);
-  world.until(() => world.changes().length > 0, 300);
-  const [change] = world.changes();
-  expect(change?.tick).toBeLessThan(300);
-  expect(change?.unanswered).toHaveLength(2);
-  expect(world.patron("fisher")).toBe("athena");
+test("SC6: with the Greek pack's 150-tick answer window, a mortal of any authored devotion (2 to 4) whose patron ignores its prayers defects within a 300-tick episode, on ticks alone", () => {
+  const window = 150;
+  for (const [affinity, ignoredPrayers] of [
+    [2, 1],
+    [3, 2],
+    [4, 2],
+  ] as const) {
+    const world = new Flock({
+      affinity,
+      petitionBalance: { answerWindowTicks: window },
+    });
+    const helped = world.spoil("fisher");
+    const ignored = Array.from({ length: ignoredPrayers }, () =>
+      world.grudge("fisher"),
+    );
+    world.bless("athena", world.prayer("fisher", helped).id);
+    const prayed = ignored.map((cause) => world.prayer("fisher", cause));
+    // The prayer cooldown is 20 ticks, so the last one opens inside the first 50.
+    expect(Math.max(...prayed.map((p) => p.tick))).toBeLessThan(50);
+    world.until(() => world.changes().length > 0, 300);
+    const [change] = world.changes();
+    // A prayer lapses a window and a tick after it opens; the last lapse tips the mortal.
+    expect(change?.tick).toBe(
+      Math.max(...prayed.map((p) => p.tick)) + window + 1,
+    );
+    expect(change?.tick).toBeLessThan(300);
+    expect(change?.unanswered).toHaveLength(ignoredPrayers);
+    expect(world.patron("fisher")).toBe("athena");
+  }
 });
 
 test("the same inputs defect identically: replaying the log from the start gives the same patrons, memories, and standing, which survive the codec", () => {
