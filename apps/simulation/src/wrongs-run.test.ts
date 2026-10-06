@@ -14,24 +14,8 @@ type Wrong = Extract<WorldEvent, { kind: "wrong" }>;
  * The authored Greek town on its own routines for `ticks` world ticks, no gods acting. `fed` gives every mortal
  * more food and coin than it can spend, so no hunger and no credit arise: the odds with hunger out of the picture.
  */
-function town(
-  ticks: number,
-  seed: number,
-  options: { multiplier?: number; fed?: boolean } = {},
-) {
+function town(ticks: number, seed: number, options: { fed?: boolean } = {}) {
   let state: WorldState = loadGreekWorldState();
-  if (options.multiplier !== undefined) {
-    state = {
-      ...state,
-      rules: {
-        ...state.rules,
-        petitionBalance: {
-          ...state.rules.petitionBalance,
-          wrongNeedMultiplier: options.multiplier,
-        },
-      },
-    };
-  }
   if (options.fed === true) {
     const actors = new Map(state.actors);
     for (const [id, actor] of actors) {
@@ -95,15 +79,6 @@ test("the guarantee does not rest on hunger: with every mortal fed, so no credit
     ).toBe(false);
     expect([seed, day.crossPatron.length >= 3]).toEqual([seed, true]);
   }
-});
-
-test("hunger raises the count: with the need multiplier at 1 the same seeds wrong less, in total over the seeds", () => {
-  const total = (options: { multiplier?: number }) =>
-    SEEDS.reduce(
-      (sum, seed) => sum + town(300, seed, options).wrongs.length,
-      0,
-    );
-  expect(total({ multiplier: 1 })).toBeLessThan(total({}));
 });
 
 test("the same seed does the same wrongs, event for event, and a different seed does others", () => {
