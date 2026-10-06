@@ -6,9 +6,12 @@ import { perceive } from "./perception";
 import {
   DEFAULT_PETITION_BALANCE,
   openPetitionsFor,
+  patronOf,
   petitionBalanceOf,
+  petitionFor,
   planNoticeStep,
   prayableCauses,
+  routePetition,
 } from "./petitions";
 import { decideRoutineProposal } from "./routines";
 import {
@@ -1978,4 +1981,138 @@ test("a forgotten cause still blocks a second petition about the same loss: the 
     }),
   };
   expect(prayable()).toBe(true);
+});
+
+// --- Patrons: who a prayer goes to ---------------------------------------------------------------
+
+/** The petition pack with every mortal devoted to Hera (the patron), and a table sending fire and spoilage to Zeus. */
+function patronWorld(
+  troubleKinds: Record<string, string> | null = {
+    fire: "zeus",
+    spoilage: "zeus",
+  },
+) {
+  const base = pack();
+  return new World(
+    createInitialWorldState({
+      ...base,
+      inhabitants: base.inhabitants.map((inhabitant) =>
+        "drives" in inhabitant
+          ? { ...inhabitant, devotion: { god: "hera", affinity: 1 } }
+          : inhabitant,
+      ),
+      rules: {
+        ...base.rules,
+        ...(troubleKinds === null ? {} : { troubleKinds }),
+      },
+    }),
+  );
+}
+
+test("a need prayer, hunger included, goes to the patron even when another god has a higher affinity plus standing", () => {
+  const world = patronWorld();
+  expect(patronOf(world.state, id("farmer"))).toBe(id("hera"));
+  // Zeus is felt more (8 to 1) and stands for more at the farmer's home (5).
+  const feeling = world.state.relationships;
+  world.state = {
+    ...world.state,
+    relationships: new Map(feeling).set(
+      relationshipKey(id("farmer"), id("zeus")),
+      {
+        from: id("farmer"),
+        toward: id("zeus"),
+        affinity: 8,
+        grudge: 0,
+        allied: false,
+      },
+    ),
+    standing: new Map([[id("zeus"), new Map([[id("square"), 5]])]]),
+  };
+  const hungry = world.apply({
+    kind: "unmet-need",
+    entityId: "farmer",
+    resource: "food",
+    reason: "no-seller",
+  });
+  place(world, "farmer", "altar");
+  const asked = petitionFor(world.state, id("farmer"), hungry.id);
+  expect(asked?.god).toBe(id("hera"));
+  expect(asked?.request).toMatchObject({ kind: "help" });
+
+  // Control: the same world with no patron prays to the god it weighs most, Zeus.
+  const unpatroned = { ...world.state, patrons: new Map() };
+  expect(petitionFor(unpatroned, id("farmer"), hungry.id)?.god).toBe(
+    id("zeus"),
+  );
+});
+
+test("a trouble in a god's domain goes to the table's god, not the patron; a trouble the table lacks, a harm by a god, a need, and a dead domain god go to the patron", () => {
+  const world = patronWorld();
+  const cause = (kind: string, extra: Record<string, unknown> = {}) => ({
+    eventId: `evt-0-${kind}` as EventId,
+    tick: 0,
+    kind: kind as never,
+    ...extra,
+  });
+  const to = (c: ReturnType<typeof cause>, state = world.state) =>
+    String(routePetition(state, id("farmer"), c));
+  // Fire and spoilage are in the table: Zeus's domain here.
+  expect(to(cause("fire", { building: "the-tavern" }))).toBe("zeus");
+  expect(to(cause("spoilage", { resource: "food", amount: 2 }))).toBe("zeus");
+  // The table has no theft, so a director's theft goes to the patron.
+  expect(to(cause("theft", { resource: "food", amount: 1 }))).toBe("hera");
+  // A fire a god's strike started is a harm by that god: the patron's, even where the table names the god.
+  expect(to(cause("fire", { building: "the-tavern", offender: "zeus" }))).toBe(
+    "hera",
+  );
+  // Needs and grudges are the patron's whatever the table says.
+  expect(to(cause("need", { resource: "food" }))).toBe("hera");
+  expect(to(cause("grudge", { offender: "drifter" }))).toBe("hera");
+  // A domain god that is gone leaves the patron to hear it.
+  const zeus = getActor(world.state, id("zeus"));
+  if (!zeus) throw new Error("zeus");
+  const without = withActor(world.state, { ...zeus, alive: false });
+  expect(to(cause("fire", { building: "the-tavern" }), without)).toBe("hera");
+  // No table at all: everything is the patron's.
+  const bare = patronWorld(null);
+  expect(
+    String(
+      routePetition(bare.state, id("farmer"), cause("fire", { building: "x" })),
+    ),
+  ).toBe("hera");
+});
+
+test("end to end: a mortal's spoiled stock is prayed about to the domain god, not its patron, by its own routine", () => {
+  const world = patronWorld();
+  const spoiled = world.apply({
+    kind: "stock-spoiled",
+    entityId: "farmer",
+    resource: "food",
+    amount: 2,
+    cause: "director",
+  });
+  world.until(() => world.petitions().length > 0);
+  const [first] = world.petitions();
+  expect(first).toMatchObject({
+    petitioner: "farmer",
+    cause: spoiled.id,
+    god: "zeus",
+  });
+});
+
+test("the patron survives encode and decode and is unchanged by any prayer, answer, or lapse", () => {
+  const world = patronWorld();
+  world.apply({
+    kind: "unmet-need",
+    entityId: "farmer",
+    resource: "food",
+    reason: "no-seller",
+  });
+  world.until(() => world.petitions().length > 0);
+  world.until(() => world.petitions().every((p) => p.status !== "open"), 400);
+  expect(world.petitions().every((p) => p.status === "lapsed")).toBe(true);
+  expect(world.state.patrons).toEqual(world.initial.patrons);
+  const decoded = decode(JSON.parse(JSON.stringify(encode(world.state))));
+  expect(decoded.patrons).toEqual(world.initial.patrons);
+  expect(decoded).toEqual(world.state);
 });

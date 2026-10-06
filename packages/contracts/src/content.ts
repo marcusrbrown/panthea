@@ -89,10 +89,10 @@ export interface Inhabitant {
   /** Inventory this inhabitant holds at genesis. Absent means it starts with nothing. */
   readonly startingInventory?: readonly ResourceAmount[];
   /**
-   * The god a mortal prays to first: it starts with `affinity` toward `god`, and
-   * a mortal prays to the god it feels most toward. What the god then does for it
-   * moves the feeling, so a devotion is a starting point and never a fixture.
-   * Absent means no starting feeling. Only a mortal has one; a god prays to no one.
+   * The god a mortal belongs to: its patron. It starts with `affinity` toward
+   * `god`, and every prayer about a wrong, a harm, or a need goes to the patron;
+   * only a recorded defection changes it. Every mortal has one, and a god prays
+   * to no one, so a god has none.
    */
   readonly devotion?: Devotion;
   /**
@@ -131,6 +131,8 @@ export interface WorldRules {
   readonly practiceBalance?: Readonly<Record<string, number>>;
   /** The stakes a god may set on the terms it offers a supplicant, by id: what the mortal becomes if it takes the boon and breaks the term. Absent means no stake can be set. */
   readonly practiceStakes?: Readonly<Record<string, Transformation>>;
+  /** The god each trouble kind is prayed about, by god id: a trouble with no mortal doer goes to the god of its domain, not to the mortal's patron. Absent, or a kind it lacks, means the patron. */
+  readonly troubleKinds?: Readonly<Record<string, string>>;
 }
 
 export interface ContentPack {
@@ -534,6 +536,34 @@ export function parsePracticeStakes(
   return ok(stakes);
 }
 
+/** The kinds of trouble that have a domain god. */
+export const TROUBLE_KINDS = ["fire", "spoilage", "theft"] as const;
+export type TroubleKind = (typeof TROUBLE_KINDS)[number];
+
+/**
+ * `rules.troubleKinds`: a god id for each trouble kind, an unknown kind refused
+ * so a typo cannot silently send a prayer to the patron. That each god exists is
+ * checked against the pack (content) or the actors (a stored world).
+ */
+export function parseTroubleKinds(
+  value: unknown,
+  path: string,
+): ParseResult<Readonly<Record<string, string>>> {
+  if (!isRecord(value))
+    return fail(path, "expected an object of gods by trouble");
+  const table: Record<string, string> = {};
+  for (const [kind, entry] of Object.entries(value)) {
+    const at = `${path}.${kind}`;
+    if (!(TROUBLE_KINDS as readonly string[]).includes(kind)) {
+      return fail(at, "not a trouble kind");
+    }
+    const god = parseString(entry, at);
+    if (!god.ok) return god;
+    table[kind] = god.value;
+  }
+  return ok(table);
+}
+
 function parseBalanceRecord(
   value: unknown,
   path: string,
@@ -603,6 +633,11 @@ function parseWorldRules(
       ? ok<Readonly<Record<string, Transformation>> | undefined>(undefined)
       : parsePracticeStakes(value.practiceStakes, `${path}.practiceStakes`);
   if (!practiceStakes.ok) return practiceStakes;
+  const troubleKinds =
+    value.troubleKinds === undefined
+      ? ok<Readonly<Record<string, string>> | undefined>(undefined)
+      : parseTroubleKinds(value.troubleKinds, `${path}.troubleKinds`);
+  if (!troubleKinds.ok) return troubleKinds;
   return ok({
     catchUpCapMs: catchUpCapMs.value,
     catchUpChunkMs: catchUpChunkMs.value,
@@ -622,6 +657,9 @@ function parseWorldRules(
     ...(practiceStakes.value === undefined
       ? {}
       : { practiceStakes: practiceStakes.value }),
+    ...(troubleKinds.value === undefined
+      ? {}
+      : { troubleKinds: troubleKinds.value }),
   });
 }
 
@@ -717,7 +755,16 @@ function checkReferentialIntegrity(
       }
       seenRivals.add(rival);
     }
-    if (inhabitant.devotion === undefined) continue;
+    if (inhabitant.devotion === undefined) {
+      // A mortal's devotion is its patron: every mortal has one, authored.
+      if (inhabitant.deity !== true) {
+        return fail(
+          `inhabitants[${index}].devotion`,
+          `"${inhabitant.id}" is a mortal and needs an authored devotion: its patron god`,
+        );
+      }
+      continue;
+    }
     if (inhabitant.deity === true) {
       return fail(
         `inhabitants[${index}].devotion`,
@@ -736,6 +783,15 @@ function checkReferentialIntegrity(
       return fail(
         `inhabitants[${index}].devotion.affinity`,
         `"${inhabitant.id}" starts with affinity ${inhabitant.devotion.affinity} toward "${inhabitant.devotion.god}", beyond the pack's affinity limit of ${limit}`,
+      );
+    }
+  }
+
+  for (const [kind, god] of Object.entries(pack.rules.troubleKinds ?? {})) {
+    if (!deityIds.has(god)) {
+      return fail(
+        `rules.troubleKinds.${kind}`,
+        `trouble "${kind}" belongs to "${god}", who is not a god in the pack`,
       );
     }
   }

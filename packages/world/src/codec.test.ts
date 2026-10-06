@@ -531,3 +531,52 @@ test("decode holds a stored actor's form and withheld capabilities to their shap
     expect(() => decode(copy)).toThrow();
   }
 });
+
+function patronPack(): ContentPack {
+  const base = walkPack();
+  return {
+    ...base,
+    inhabitants: [
+      { id: "zeus", name: "Zeus", locationId: "grove", deity: true },
+      { id: "hera", name: "Hera", locationId: "grove", deity: true },
+      {
+        id: "farmer",
+        name: "Farmer",
+        locationId: "grove",
+        devotion: { god: "hera", affinity: 3 },
+      },
+    ],
+    rules: { ...minimalRules(), troubleKinds: { fire: "zeus" } },
+  };
+}
+
+test("a mortal's patron and the trouble-kind table round-trip through the codec, and decode holds both to the world's actors", () => {
+  const state = createInitialWorldState(patronPack());
+  const encoded = JSON.parse(JSON.stringify(encode(state)));
+  expect(encoded.patrons).toEqual([["farmer", "hera"]]);
+  const decoded = decode(encoded);
+  expect(decoded).toEqual(state);
+  expect(decoded.patrons.get(toEntityId("farmer"))).toBe(toEntityId("hera"));
+  expect(decoded.rules.troubleKinds).toEqual({ fire: "zeus" });
+
+  const refused = (patch: Record<string, unknown>) =>
+    expect(() => decode({ ...encoded, ...patch })).toThrow();
+  // A patron is a god; a god has none; both must be actors; one patron each.
+  refused({ patrons: [["farmer", "farmer"]] });
+  refused({ patrons: [["zeus", "hera"]] });
+  refused({ patrons: [["nobody", "hera"]] });
+  refused({ patrons: [["farmer", "nike"]] });
+  refused({
+    patrons: [
+      ["farmer", "hera"],
+      ["farmer", "zeus"],
+    ],
+  });
+  refused({ patrons: "hera" });
+  // The table's god must be a god of this world, and its kinds are the known ones.
+  refused({ rules: { ...encoded.rules, troubleKinds: { fire: "farmer" } } });
+  refused({ rules: { ...encoded.rules, troubleKinds: { fire: "nike" } } });
+  refused({ rules: { ...encoded.rules, troubleKinds: { blight: "zeus" } } });
+  // Control: the same stored world, untouched, decodes.
+  expect(() => decode(encoded)).not.toThrow();
+});

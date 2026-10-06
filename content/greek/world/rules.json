@@ -169,6 +169,11 @@
       "contestLedgerMax": 48,
       "contestStanding": 1
     },
+    "troubleKinds": {
+      "fire": "hephaestus",
+      "spoilage": "hades",
+      "theft": "hermes"
+    },
     "practiceStakes": {
       "wolf": {
         "form": "wolf",

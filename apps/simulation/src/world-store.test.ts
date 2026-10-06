@@ -2325,3 +2325,67 @@ test("a report told with zero belief salience commits, and the world survives re
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("each mortal's patron, from its authored devotion, and the pack's trouble-kind table survive commit, reopen, rebuild, and archive import", () => {
+  const storeDir = tempDir("panthea-sim-patrons-");
+  const exportDir = tempDir("panthea-sim-patrons-export-");
+  const slotsDir = tempDir("panthea-sim-patrons-slots-");
+  try {
+    const storePath = join(storeDir, "world.sqlite");
+    const seed = loadGreekWorldState();
+    const world = liveWorld(storePath, seed);
+    world.run();
+    world.run();
+    const state = world.state;
+
+    // Every mortal has the patron its devotion names, and the table names a god for each trouble.
+    const mortals = [...state.actors.values()].filter(
+      (actor) => actor.isDeity !== true,
+    );
+    expect(mortals.length).toBe(20);
+    expect(state.patrons.size).toBe(20);
+    expect(state.patrons.get(id("farmer"))).toBe(id("hera"));
+    expect(state.patrons.get(id("fisher-kallias"))).toBe(id("poseidon"));
+    expect(state.rules.troubleKinds).toEqual({
+      fire: "hephaestus",
+      spoilage: "hades",
+      theft: "hermes",
+    });
+
+    closeStore(world.store);
+    const freshReducers = createWorldProjectionReducers(loadGreekWorldState());
+    const reopened = openStore(storePath, freshReducers);
+    const clock = readClock(reopened.db);
+    const live = restoreWorldTime(
+      readLiveProjections(reopened, freshReducers),
+      clock,
+    );
+    expect(live.patrons).toEqual(state.patrons);
+    expect(live).toEqual(state);
+    const rebuilt = restoreWorldTime(
+      rebuildProjections(reopened, freshReducers),
+      clock,
+    );
+    expect(rebuilt.patrons).toEqual(state.patrons);
+
+    const exportPath = join(exportDir, "archive.sqlite");
+    exportArchive(reopened, exportPath);
+    const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+    const branch = openStore(
+      join(imported.slotPath, "world.sqlite"),
+      freshReducers,
+    );
+    const restored = restoreWorldTime(
+      readLiveProjections(branch, freshReducers),
+      readClock(branch.db),
+    );
+    expect(restored.patrons).toEqual(state.patrons);
+    expect(restored.rules.troubleKinds).toEqual(state.rules.troubleKinds);
+    closeStore(branch);
+    closeStore(reopened);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+    rmSync(exportDir, { recursive: true, force: true });
+    rmSync(slotsDir, { recursive: true, force: true });
+  }
+});

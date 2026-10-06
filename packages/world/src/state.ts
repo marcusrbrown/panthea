@@ -528,6 +528,8 @@ export interface WorldState {
   readonly memories: ReadonlyMap<EntityId, readonly MemoryEntry[]>;
   /** How actors feel toward one another, keyed by `relationshipKey`. */
   readonly relationships: ReadonlyMap<string, RelationshipState>;
+  /** The god each mortal belongs to, seeded from its authored devotion. Absent for a mortal built outside a content pack, which prays by feeling and standing. */
+  readonly patrons: ReadonlyMap<EntityId, EntityId>;
   /**
    * Each god's active goal, at most one apiece. Private: nothing in the world
    * perceives it. Outside `ActorState`, like memories, so declaring a goal
@@ -684,10 +686,12 @@ export function createInitialWorldState(pack: ContentPack): WorldState {
   // toward the god it prays to first, so its prayers are routed there until
   // what the gods do for it moves the feeling.
   const relationships = new Map<string, RelationshipState>();
+  const patrons = new Map<EntityId, EntityId>();
   for (const inhabitant of pack.inhabitants) {
     if (inhabitant.devotion === undefined) continue;
     const from = toEntityId(inhabitant.id);
     const toward = toEntityId(inhabitant.devotion.god);
+    patrons.set(from, toward);
     relationships.set(relationshipKey(from, toward), {
       from,
       toward,
@@ -707,6 +711,7 @@ export function createInitialWorldState(pack: ContentPack): WorldState {
     legends: new Map(),
     memories: new Map(),
     relationships,
+    patrons,
     goals: new Map(),
     journeys: new Map(),
     needs: new Map(),

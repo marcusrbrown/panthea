@@ -53,6 +53,7 @@ import {
   parseString,
   parseThreadSubject,
   parseTransformation,
+  parseTroubleKinds,
   REALMS,
   type RejectionReasonCode,
   SERVICE_KINDS,
@@ -106,6 +107,8 @@ export interface EncodedWorldState {
   readonly legends: readonly (readonly [LegendId, LegendRecord])[];
   readonly memories: readonly (readonly [EntityId, readonly MemoryEntry[]])[];
   readonly relationships: readonly (readonly [string, RelationshipState])[];
+  /** `[mortal, patron god]`, one entry per mortal that has a patron. */
+  readonly patrons: readonly (readonly [EntityId, EntityId])[];
   readonly goals: readonly (readonly [EntityId, ActiveGoal])[];
   readonly journeys: readonly (readonly [EntityId, ActiveJourney])[];
   readonly needs: readonly (readonly [string, OpenNeed])[];
@@ -163,6 +166,7 @@ export function encode(state: WorldState): EncodedWorldState {
     legends: [...state.legends.entries()],
     memories: [...state.memories.entries()],
     relationships: [...state.relationships.entries()],
+    patrons: [...state.patrons.entries()],
     goals: [...state.goals.entries()],
     journeys: [...state.journeys.entries()],
     needs: [...state.needs.entries()],
@@ -703,6 +707,11 @@ function parseWorldRules(
       ? ok<Readonly<Record<string, Transformation>> | undefined>(undefined)
       : parsePracticeStakes(value.practiceStakes, `${path}.practiceStakes`);
   if (!practiceStakes.ok) return practiceStakes;
+  const troubleKinds =
+    value.troubleKinds === undefined
+      ? ok<Readonly<Record<string, string>> | undefined>(undefined)
+      : parseTroubleKinds(value.troubleKinds, `${path}.troubleKinds`);
+  if (!troubleKinds.ok) return troubleKinds;
   return ok({
     catchUpCapMs: catchUpCapMs.value,
     catchUpChunkMs: catchUpChunkMs.value,
@@ -722,6 +731,9 @@ function parseWorldRules(
     ...(practiceStakes.value === undefined
       ? {}
       : { practiceStakes: practiceStakes.value }),
+    ...(troubleKinds.value === undefined
+      ? {}
+      : { troubleKinds: troubleKinds.value }),
   });
 }
 
@@ -1806,6 +1818,32 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
   }
   const relationships = new Map(relationshipEntries.value);
 
+  const patronEntries = parseArray(value.patrons, "patrons", (item, path) => {
+    if (!Array.isArray(item) || item.length !== 2) {
+      return fail(path, "expected a [mortal, patron] entry");
+    }
+    const mortal = parseEntityId(item[0], `${path}[0]`);
+    if (!mortal.ok) return mortal;
+    const patron = parseEntityId(item[1], `${path}[1]`);
+    if (!patron.ok) return patron;
+    if (!actors.has(mortal.value)) {
+      return fail(`${path}[0]`, `patron of unknown actor: ${mortal.value}`);
+    }
+    if (actors.get(mortal.value)?.isDeity === true) {
+      return fail(`${path}[0]`, `${mortal.value} is a god, and has no patron`);
+    }
+    if (actors.get(patron.value)?.isDeity !== true) {
+      return fail(`${path}[1]`, `${patron.value} is not a god`);
+    }
+    return ok([mortal.value, patron.value] as const);
+  });
+  if (!patronEntries.ok) return patronEntries;
+  const duplicatePatron = findDuplicateKey(patronEntries.value);
+  if (duplicatePatron !== undefined) {
+    return fail("patrons", `duplicate patron for: ${duplicatePatron}`);
+  }
+  const patrons = new Map(patronEntries.value);
+
   const goalEntries = parseArray(value.goals, "goals", (item, path) =>
     parseGoalEntry(item, path, knownActorIds),
   );
@@ -1986,6 +2024,14 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
 
   const rules = parseWorldRules(value.rules, "rules");
   if (!rules.ok) return rules;
+  for (const [kind, god] of Object.entries(rules.value.troubleKinds ?? {})) {
+    if (actors.get(god as EntityId)?.isDeity !== true) {
+      return fail(
+        `rules.troubleKinds.${kind}`,
+        `trouble "${kind}" belongs to ${god}, who is not a god in this world`,
+      );
+    }
+  }
 
   // Only events forget and only events feel, so a stored world holds what its
   // own rules allow: no actor remembers more than the capacity, and no
@@ -2041,6 +2087,7 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
     legends,
     memories,
     relationships,
+    patrons,
     goals,
     journeys,
     needs,

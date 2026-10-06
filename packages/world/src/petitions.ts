@@ -392,15 +392,61 @@ function petitionsReceivedBy(state: WorldState, god: EntityId): number {
   return count;
 }
 
+function livingGod(state: WorldState, id: EntityId): EntityId | undefined {
+  const actor = getActor(state, id);
+  return actor?.alive === true && actor.isDeity === true ? id : undefined;
+}
+
+/** The god `mortal` belongs to, when it has a patron and the patron lives. */
+export function patronOf(
+  state: WorldState,
+  mortal: EntityId,
+): EntityId | undefined {
+  const patron = state.patrons.get(mortal);
+  return patron === undefined ? undefined : livingGod(state, patron);
+}
+
 /**
- * The god `mortal` prays to: the living deity it weighs most, which is how it feels toward it (its affinity)
- * plus the god's lasting standing at the place the mortal lives, which a contest, a settlement performed there,
- * or a breach moves for good. On a tie, the one that has received the fewest petitions; then by id.
+ * The god of the domain a trouble falls in, from the pack's trouble-kind table: fire, spoiled stock, and a
+ * director's theft have no mortal wrongdoer to answer for them. A fire or a theft a god's own act
+ * caused is a harm by that god, which belongs to the victim's patron, so it has no domain god here.
+ */
+function domainGod(
+  state: WorldState,
+  cause: PetitionCause,
+): EntityId | undefined {
+  if (
+    cause.kind !== "fire" &&
+    cause.kind !== "spoilage" &&
+    cause.kind !== "theft"
+  ) {
+    return undefined;
+  }
+  if (
+    cause.offender !== undefined &&
+    getActor(state, cause.offender)?.isDeity === true
+  ) {
+    return undefined;
+  }
+  const god = state.rules.troubleKinds?.[cause.kind];
+  return god === undefined ? undefined : livingGod(state, god as EntityId);
+}
+
+/**
+ * The god `mortal` prays to about `cause`. A trouble in a god's domain goes to that god. Everything else (a
+ * wrong, a grudge, a harm, a need, hunger included) goes to the mortal's patron. A mortal with no patron,
+ * one built outside a content pack, prays to the living deity it weighs most: its affinity plus the god's
+ * lasting standing at the place it lives. On a tie, the one that has received the fewest petitions; then by id.
  */
 export function routePetition(
   state: WorldState,
   mortal: EntityId,
+  cause?: PetitionCause,
 ): EntityId | undefined {
+  const domain = cause === undefined ? undefined : domainGod(state, cause);
+  if (domain !== undefined) return domain;
+  const patron = patronOf(state, mortal);
+  if (patron !== undefined) return patron;
   const gods = [...state.actors.values()]
     .filter((actor) => actor.alive && actor.isDeity === true)
     .map((actor) => actor.id)
@@ -439,7 +485,7 @@ export function petitionFor(
   );
   if (cause === undefined) return undefined;
   const request = requestFor(state, cause);
-  const god = routePetition(state, mortal);
+  const god = routePetition(state, mortal, cause);
   return request === undefined || god === undefined
     ? undefined
     : { god, request };
