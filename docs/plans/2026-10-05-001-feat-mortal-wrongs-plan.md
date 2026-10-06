@@ -196,7 +196,7 @@ Success criteria carried from the origin:
 - **Refusal is a prayer answer.** It derives a sign like a lapse does, and costs the same affinity (R9). It makes the victim eligible for revenge the same way: the owner confirmed refusal counts as unanswered for R12 (plan scope, 2026-10-05).
 - **One wrong event shape.** A wrong has a wrongdoer, a victim, a kind, and a loss. Theft, cheating, and feud use existing substrate. Unpaid debt and broken agreement come from one minimal credit trade between mortals: goods now, payment by a deadline. A buyer who never pays is an unpaid debt. A seller who takes payment and never delivers is a broken agreement.
 - **Defections are judged at prayer endings.** After an answer, refusal, or lapse changes affinity, the world checks the threshold and records any defection in the same tick.
-- **A defection contest bypasses rivalry and the service-act cause.** The place is the defector's home. If a contest is already open at that place, the defection is recorded but opens nothing.
+- **A defection contest bypasses rivalry and the service-act cause, not knowledge.** Both gods learn of a defection through a narrow patron-change notification (W04, M04): the losing god and the gaining god each receive a memory of it, naming the mortal, its home, and the other god. No other god learns of it unless told. A god may cite a defection only from that memory. The place is the defector's home. If a contest is already open at that place, the defection is recorded but opens nothing.
 - **Seasons are derived from the tick.** `season = floor(tick / seasonTicks) mod seasons`, and the world emits a `season-turned` event on the boundary tick. Catch-up replays it exactly.
 - **The director counts ticks since its own last fire.** Answers and blessings no longer reset it.
 - **Each god's trouble has a guaranteed floor** (owner, 2026-10-05). Every god's domain trouble fires at least once per D23 window shorter than an episode, at a slot the persisted PRNG picks. The season's odds add more troubles on top.
@@ -329,8 +329,9 @@ Tick order for the new PRNG consumers: mortal wrongs, then revenge, then domain 
 **Approach:**
 - After any prayer ending in a tick, check the patron affinity against the threshold. Defect to the last non-patron god that answered, or keep the patron if none has.
 - Record a `patron-changed` event with its cause: the lapsed or refused prayers and the answer.
+- The patron-change rule notifies exactly the losing and the gaining god. Each gets a memory naming the mortal, its home, and the other god (W04, M04).
 - Standing per place counts held worshippers and answered prayers, and falls on defection and on unanswered prayers.
-- The contest cause union gains a defection. Its validation skips rivalry, perception, and act age. The place is the defector's home. One open contest per place is still enforced.
+- The contest cause union gains a defection. Its validation skips rivalry, physical perception, and act age. It still requires the opener to know of the defection through its patron-change memory. The place is the defector's home. One open contest per place is still enforced.
 
 **Patterns to follow:** contest cause validation and standing on closure in `contests.ts`.
 
@@ -339,6 +340,8 @@ Tick order for the new PRNG consumers: mortal wrongs, then revenge, then domain 
 - Edge case (AE3): below the threshold with no non-patron answer, the mortal keeps its patron. A later answer from Athena triggers the defection.
 - Edge case: the last answerer is the current patron. The mortal defects to the last non-patron answerer instead.
 - Happy path (AE4): Poseidon opens a contest with Athena for the harbor, citing the defection, with no rivalry.
+- Error path: Hermes, a third god who wasn't notified and wasn't told, can't cite the defection, and his contest is refused as an unknown cause.
+- Happy path: after a defection, only Poseidon and Athena hold a memory of it.
 - Edge case: a defection at a place with an open contest is recorded and opens nothing.
 - Integration: a defection and its standing change replay identically from the journal.
 
@@ -496,7 +499,7 @@ Tick order for the new PRNG consumers: mortal wrongs, then revenge, then domain 
 
 **Approach:**
 - Remove the goal-set and goal-ended gate checks, with a dated O08 clause. The goal feature stays.
-- **Initiative property:** each god opened at least one demand (which carries its terms) or contest toward another god. Prayer answers and terms offered to mortals don't count. Rejected proposals are logged. It gets an in-process sabotage control.
+- **Initiative property:** each god opened at least one demand (which carries its terms) or contest toward another god, counted across all the gate's episodes, not per episode (R19). Prayer answers and terms offered to mortals don't count. Rejected proposals are logged. It gets an in-process sabotage control. A god that opens a qualifying thread in only one of three episodes still meets it.
 - **Episode metrics:**
   - food failure lines and the food prayer share;
   - trouble occurrences per god;
