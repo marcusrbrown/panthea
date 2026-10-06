@@ -40,6 +40,7 @@ export interface DirectorState {
 export function isConsequential(event: WorldEvent): boolean {
   switch (event.kind) {
     case "building-damaged":
+    case "mortal-struck":
     case "building-ignited":
     case "theft":
     case "stock-spoiled":

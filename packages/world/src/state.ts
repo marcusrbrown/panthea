@@ -306,10 +306,10 @@ export type MemoryEntry = {
       readonly causeEventId: EventId;
     }
   | {
-      /** A god's answer, or its silence, to a petition: favor is the affinity it leaves. */
+      /** A god's answer, its refusal, or its silence to a petition: favor is the affinity it leaves. */
       readonly kind: "sign";
       readonly god: EntityId;
-      readonly outcome: "answered" | "lapsed";
+      readonly outcome: "answered" | "lapsed" | "refused";
       readonly petitionId: EventId;
     }
 );
@@ -363,7 +363,9 @@ export type PetitionCauseKind =
   | "theft"
   | "spoilage"
   | "need"
-  | "grudge";
+  | "grudge"
+  /** A god's strike took goods from the mortal, or struck it with nothing to take. The offender is that god. */
+  | "harm";
 
 export interface PetitionCause {
   readonly eventId: EventId;
@@ -403,7 +405,7 @@ export interface Petition {
   readonly tick: number;
   /** The `petition-opened` event's sequence: "since a goal was set" is measured in events. */
   readonly sequence: number;
-  readonly status: "open" | "answered" | "lapsed";
+  readonly status: "open" | "answered" | "lapsed" | "refused";
 }
 
 /**

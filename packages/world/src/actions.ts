@@ -85,6 +85,7 @@ import {
   applyPetitionAnswered,
   applyPetitionLapsed,
   applyPetitionOpened,
+  applyPetitionRefused,
   judgeAnswers,
   lapsingPetitions,
   planNoticeStep,
@@ -191,6 +192,17 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
       break;
     case "building-damaged":
       next = applyBuildingDamaged(state, event.entityId);
+      break;
+    case "mortal-struck":
+      next =
+        event.resource === undefined
+          ? state
+          : debitActorInventory(
+              state,
+              event.entityId,
+              event.resource,
+              event.amount,
+            );
       break;
     case "building-ignited":
       next = applyBuildingIgnited(state, event.entityId, {
@@ -306,6 +318,9 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
       break;
     case "petition-lapsed":
       next = applyPetitionLapsed(state, event);
+      break;
+    case "petition-refused":
+      next = applyPetitionRefused(state, event);
       break;
     case "practice-opened":
       next = applyPracticeOpened(state, event);
@@ -906,10 +921,17 @@ export function runTick(
     ),
   );
   working = applyEvents(working, worshipEvents);
-  const signs = [...answerEvents, ...lapseEvents].flatMap((event) =>
-    event.kind === "petition-answered" || event.kind === "petition-lapsed"
-      ? (signMemory(working, event) ?? [])
-      : [],
+  // A refusal is a primary event, the god's own act; its sign follows the answers and the lapses.
+  const refusalEvents = primaryEvents.filter(
+    (event) => event.kind === "petition-refused",
+  );
+  const signs = [...answerEvents, ...lapseEvents, ...refusalEvents].flatMap(
+    (event) =>
+      event.kind === "petition-answered" ||
+      event.kind === "petition-lapsed" ||
+      event.kind === "petition-refused"
+        ? (signMemory(working, event) ?? [])
+        : [],
   );
   const noticed = noticeEvents.flatMap((event) =>
     event.kind === "loss-noticed" ? (noticedMemory(working, event) ?? []) : [],

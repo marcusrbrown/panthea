@@ -434,6 +434,7 @@ export const PETITION_BALANCE_KEYS = [
   "blessResourceCap",
   "directorQuietTicks",
   "goalLockTicks",
+  "strikeGoodsCap",
 ] as const;
 
 /**

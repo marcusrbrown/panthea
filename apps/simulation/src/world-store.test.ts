@@ -2389,3 +2389,125 @@ test("each mortal's patron, from its authored devotion, and the pack's trouble-k
     rmSync(slotsDir, { recursive: true, force: true });
   }
 });
+
+test("a god's strike on a mortal takes goods up to the strikeGoodsCap and the prayer it answers or refuses survives reopen, rebuild, and archive import, at the cap's boundary values and for a mortal with nothing to take", () => {
+  // The ferryman holds 6 food (worth the most per unit), 2 fish, and 30 coins.
+  const run = (cap: number) => {
+    const storeDir = tempDir("panthea-sim-strike-");
+    const exportDir = tempDir("panthea-sim-strike-export-");
+    const slotsDir = tempDir("panthea-sim-strike-slots-");
+    try {
+      const storePath = join(storeDir, "world.sqlite");
+      const base = loadGreekWorldState();
+      const ferryman = base.actors.get(id("ferryman"));
+      if (!ferryman) throw new Error("expected the ferryman");
+      const seed = withActor(
+        withActor(
+          {
+            ...base,
+            rules: {
+              ...base.rules,
+              petitionBalance: {
+                ...base.rules.petitionBalance,
+                strikeGoodsCap: cap,
+              },
+            },
+          },
+          { ...ferryman, locationId: id("altar") },
+        ),
+        {
+          id: id("wanderer"),
+          locationId: id("town-square"),
+          alive: true,
+          capabilities: [],
+          inventory: new Map(),
+          revision: 0,
+        },
+      );
+      const world = liveWorld(storePath, seed);
+      const held = getResourceAmount(ferryman.inventory, "food");
+      world.run(
+        queuedProposal("zeus", {
+          kind: "strike",
+          target: "ferryman",
+          power: 1,
+        }),
+      );
+      world.run(
+        queuedProposal("zeus", {
+          kind: "strike",
+          target: "wanderer",
+          power: 1,
+        }),
+      );
+      const [harm, nothing] = eventOfKindAll(
+        listEvents(world.store.db),
+        "mortal-struck",
+      );
+      expect(harm).toMatchObject({
+        entityId: "ferryman",
+        actor: "zeus",
+        resource: "food",
+        amount: Math.min(held, cap),
+      });
+      expect(nothing).toMatchObject({ entityId: "wanderer", amount: 0 });
+      expect(
+        getResourceAmount(
+          world.state.actors.get(id("ferryman"))?.inventory ?? new Map(),
+          "food",
+        ),
+      ).toBe(held - Math.min(held, cap));
+
+      // The ferryman prays at the altar about the harm, to its patron Hades, who refuses.
+      world.run(
+        queuedProposal("ferryman", {
+          kind: "pray",
+          cause: harm?.id,
+          source: "routine",
+        }),
+      );
+      const prayer = eventOfKind(listEvents(world.store.db), "petition-opened");
+      expect(prayer).toMatchObject({ god: "hades", cause: harm?.id });
+      world.run(
+        queuedProposal("hades", { kind: "refuse", petition: prayer.id }),
+      );
+      const state = world.state;
+      expect(state.petitions.get(prayer.id)?.status).toBe("refused");
+      expect(
+        getMemories(state, id("ferryman")).some(
+          (m) => m.kind === "sign" && m.outcome === "refused",
+        ),
+      ).toBe(true);
+
+      closeStore(world.store);
+      const fresh = createWorldProjectionReducers(seed);
+      const reopened = openStore(storePath, fresh);
+      const clock = readClock(reopened.db);
+      expect(
+        restoreWorldTime(readLiveProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      expect(
+        restoreWorldTime(rebuildProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      const exportPath = join(exportDir, "archive.sqlite");
+      exportArchive(reopened, exportPath);
+      const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+      const branch = openStore(join(imported.slotPath, "world.sqlite"), fresh);
+      expect(
+        restoreWorldTime(
+          readLiveProjections(branch, fresh),
+          readClock(branch.db),
+        ),
+      ).toEqual(state);
+      closeStore(branch);
+      closeStore(reopened);
+      return harm?.amount;
+    } finally {
+      rmSync(storeDir, { recursive: true, force: true });
+      rmSync(exportDir, { recursive: true, force: true });
+      rmSync(slotsDir, { recursive: true, force: true });
+    }
+  };
+  // Below what it holds, exactly what it holds (6), above it, and far above it.
+  expect([run(1), run(5), run(6), run(7), run(100)]).toEqual([1, 5, 6, 6, 6]);
+});

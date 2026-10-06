@@ -124,7 +124,14 @@ class World {
   prng: PrngState = createPrng(1);
   readonly log: WorldEvent[] = [];
   readonly initial: WorldState;
-  constructor(state = createInitialWorldState(pack())) {
+  constructor(
+    state = createInitialWorldState(pack()),
+    private readonly mortals: readonly string[] = [
+      "farmer",
+      "woodcutter",
+      "drifter",
+    ],
+  ) {
     this.state = state;
     this.initial = state;
   }
@@ -143,7 +150,7 @@ class World {
         if (!submitted.ok) throw new Error(submitted.rejection.message);
         return submitted.proposal;
       }),
-      ...(["farmer", "woodcutter", "drifter"] as const).flatMap((mortal) => {
+      ...this.mortals.flatMap((mortal) => {
         const decision = decideRoutineProposal(this.state, id(mortal));
         return decision ? [decision.proposal] : [];
       }),
@@ -484,7 +491,7 @@ test("a theft is prayed about as lost stock, always known to its victim, with no
   expect(homeless.petitions()[0]?.request.kind).toBe("help");
 });
 
-test("a grudge yields only a punish petition, and none when the offender owns no building", () => {
+test("a grudge yields only a punish petition, with the offender's buildings when it owns any and with none when it owns none; a grudge against a god, or against a dead mortal, has nothing to ask for", () => {
   const grudge = (toward: string) => {
     const world = new World();
     world.apply({
@@ -504,10 +511,25 @@ test("a grudge yields only a punish petition, and none when the offender owns no
     offender: "woodcutter",
     buildings: ["woodshed"],
   });
+  // A mortal who owns nothing can still be asked to be punished: the world strikes its goods.
   const none = grudge("drifter");
-  expect(prayableCauses(none.state, id("farmer"))).toEqual([]);
-  for (let n = 0; n < 50; n += 1) none.tick();
-  expect(none.petitions()).toEqual([]);
+  none.until(() => none.petitions().length > 0);
+  expect(none.petitions()[0]?.request).toMatchObject({
+    kind: "punish",
+    offender: "drifter",
+    buildings: [],
+  });
+  // A god cannot be struck, so a grudge against one asks for nothing.
+  const divine = grudge("zeus");
+  expect(prayableCauses(divine.state, id("farmer"))).toEqual([]);
+  for (let n = 0; n < 50; n += 1) divine.tick();
+  expect(divine.petitions()).toEqual([]);
+  // Nor can a dead one.
+  const dead = grudge("drifter");
+  const drifter = getActor(dead.state, id("drifter"));
+  if (!drifter) throw new Error("drifter");
+  dead.state = withActor(dead.state, { ...drifter, alive: false });
+  expect(prayableCauses(dead.state, id("farmer"))).toEqual([]);
 });
 
 test("an unmet need is prayed about, citing the need event; spoiled stock too", () => {
@@ -2115,4 +2137,610 @@ test("the patron survives encode and decode and is unchanged by any prayer, answ
   const decoded = decode(JSON.parse(JSON.stringify(encode(world.state))));
   expect(decoded.patrons).toEqual(world.initial.patrons);
   expect(decoded).toEqual(world.state);
+});
+
+// --- Punishing a mortal, and harm as a cause between gods -----------------------------------------
+
+/**
+ * Two gods in a hall that reaches the altar, and mortals at the square, each with a patron:
+ * Lykos (a trader with goods, Hermes's), Doris and Ismene (Poseidon's), and Phaon (Hermes's, empty-handed).
+ */
+function quarrel(
+  balance: { strikeGoodsCap?: number } = {},
+  lykosGoods: { resource: string; amount: number }[] = [
+    { resource: "food", amount: 5 },
+    { resource: "currency", amount: 30 },
+  ],
+) {
+  const base = pack();
+  const mortal = (name: string, god: string, goods: typeof lykosGoods) => ({
+    ...calm(name, "square", goods),
+    devotion: { god, affinity: 1 },
+  });
+  const god = (name: string) => ({
+    id: name,
+    name,
+    locationId: "hall",
+    deity: true as const,
+    startingInventory: [{ resource: "divinity", amount: 10 }],
+  });
+  const content: ContentPack = {
+    ...base,
+    locations: base.locations.map((location) =>
+      location.id === "hall"
+        ? {
+            ...location,
+            edges: [
+              {
+                to: "altar",
+                transport: "divine-transport" as const,
+                bidirectional: true,
+              },
+            ],
+          }
+        : location,
+    ),
+    buildings: [],
+    inhabitants: [
+      god("poseidon"),
+      god("hermes"),
+      god("zeus"),
+      mortal("lykos", "hermes", lykosGoods),
+      mortal("doris", "poseidon", [{ resource: "food", amount: 9 }]),
+      mortal("ismene", "poseidon", [{ resource: "food", amount: 9 }]),
+      mortal("phaon", "hermes", []),
+    ],
+    rules: {
+      ...base.rules,
+      economyBalance: {
+        ...base.rules.economyBalance,
+        value_food: 3,
+        value_currency: 1,
+        value_planks: 2,
+      },
+      petitionBalance: balance,
+    },
+  };
+  return new World(createInitialWorldState(content), [
+    "lykos",
+    "doris",
+    "ismene",
+    "phaon",
+  ]);
+}
+
+/** `mortal` holds a grudge against `offender`: a cause it can pray about, with the offender named. */
+function grudges(world: World, mortal: string, offender: string) {
+  return world.apply({
+    kind: "relationship-changed",
+    entityId: mortal,
+    toward: offender,
+    affinityDelta: -2,
+    grudgeDelta: 1,
+    memoryEventId: "evt-0-fixture-memory",
+  });
+}
+
+const opened = (world: World, petitioner: string) =>
+  world.petitions().find((p) => p.petitioner === id(petitioner));
+
+test("the chain: a mortal's patron punishes its wrongdoer with no building, the struck mortal loses goods, remembers the god, prays to its own patron naming it, and that patron's demand against the god citing the prayer validates", () => {
+  const world = quarrel();
+  const wrong = grudges(world, "doris", "lykos");
+  // Lykos owns no building, and Doris can still ask her patron to punish him.
+  world.until(() => opened(world, "doris") !== undefined);
+  const prayer = opened(world, "doris");
+  expect(prayer).toMatchObject({
+    god: "poseidon",
+    cause: wrong.id,
+    request: { kind: "punish", offender: "lykos", buildings: [] },
+  });
+
+  // Control: Hermes has no cause yet, so a demand against Poseidon is refused.
+  const early = godActs(world, {
+    actor: "hermes",
+    kind: "practice",
+    move: "demand",
+    counterparty: "poseidon",
+    cause: wrong.id,
+    term: {
+      kind: "be-at",
+      party: "poseidon",
+      place: "altar",
+      deadlineTicks: 50,
+    },
+  });
+  expect(early.rejected.map((r) => r.reason)).toEqual(["unauthorized-claim"]);
+
+  // Poseidon strikes Lykos: the world takes his most valuable carried good, up to the cap.
+  const heldBefore = world.state.actors.get(id("lykos"))?.inventory.get("food");
+  const struck = godActs(world, {
+    actor: "poseidon",
+    kind: "strike",
+    target: "lykos",
+    power: 1,
+  });
+  expect(struck.rejected).toEqual([]);
+  const harm = ofKind(struck.events, "mortal-struck")[0];
+  expect(harm).toMatchObject({
+    entityId: "lykos",
+    actor: "poseidon",
+    resource: "food",
+    amount: 2,
+  });
+  expect(world.state.actors.get(id("lykos"))?.inventory.get("food")).toBe(
+    (heldBefore ?? 0) - 2,
+  );
+  expect(world.state.petitions.get(prayer?.id as EventId)?.status).toBe(
+    "answered",
+  );
+  expect(world.state.memories.get(id("lykos"))).toContainEqual(
+    expect.objectContaining({
+      kind: "witnessed",
+      sourceEventId: harm?.id,
+      consequence: { effect: "harm", agent: "poseidon", target: "lykos" },
+    }),
+  );
+
+  // Lykos prays to his own patron, Hermes, about the harm, and names Poseidon.
+  world.until(() => opened(world, "lykos") !== undefined);
+  const heard = opened(world, "lykos");
+  expect(heard).toMatchObject({
+    god: "hermes",
+    cause: harm?.id,
+    about: { kind: "harm", offender: "poseidon" },
+  });
+
+  // Hermes's demand against Poseidon, citing that prayer's cause, validates.
+  const demanded = godActs(world, {
+    actor: "hermes",
+    kind: "practice",
+    move: "demand",
+    counterparty: "poseidon",
+    cause: heard?.cause,
+    term: {
+      kind: "be-at",
+      party: "poseidon",
+      place: "altar",
+      deadlineTicks: 50,
+    },
+  });
+  expect(demanded.rejected).toEqual([]);
+  expect(ofKind(demanded.events, "practice-opened")[0]).toMatchObject({
+    entityId: "hermes",
+    counterparty: "poseidon",
+    causes: [heard?.cause],
+  });
+});
+
+/** One tick of a god's strike on `target`, returning what it committed. */
+function strikes(world: World, god: string, target: string, power = 1) {
+  const ran = godActs(world, { actor: god, kind: "strike", target, power });
+  expect(ran.rejected).toEqual([]);
+  return ofKind(ran.events, "mortal-struck")[0] as Extract<
+    WorldEvent,
+    { kind: "mortal-struck" }
+  >;
+}
+
+test("a strike on a mortal takes its most valuable carried good (by value per unit, then how much it holds, then name), up to the cap, and the divinity is spent", () => {
+  const taken = (
+    goods: { resource: string; amount: number }[],
+    cap?: number,
+  ) => {
+    const world = quarrel(
+      cap === undefined ? {} : { strikeGoodsCap: cap },
+      goods,
+    );
+    const strike = strikes(world, "poseidon", "lykos", 2);
+    const left = world.state.actors.get(id("lykos"));
+    // What it lost is exactly what the event says, and nothing else changed.
+    for (const { resource, amount } of goods) {
+      expect(left?.inventory.get(resource) ?? 0).toBe(
+        amount - (resource === strike.resource ? strike.amount : 0),
+      );
+    }
+    expect(
+      world.state.actors.get(id("poseidon"))?.inventory.get("divinity"),
+    ).toBe(8);
+    return [strike.resource, strike.amount];
+  };
+  const mixed = [
+    { resource: "currency", amount: 30 },
+    { resource: "food", amount: 5 },
+  ];
+  // Food is worth 3 a unit and currency 1: food, though 5 units against 30 coins, up to the cap of 2.
+  expect(taken(mixed)).toEqual(["food", 2]);
+  // The cap's boundaries: one unit, exactly what it holds, and far more than it holds.
+  expect(taken(mixed, 1)).toEqual(["food", 1]);
+  expect(taken(mixed, 5)).toEqual(["food", 5]);
+  expect(taken(mixed, 99)).toEqual(["food", 5]);
+  // Fewer units of a dearer good still win; and holding less than the cap takes what there is.
+  expect(
+    taken([
+      { resource: "currency", amount: 30 },
+      { resource: "planks", amount: 1 },
+    ]),
+  ).toEqual(["planks", 1]);
+  // Equal value: the larger holding; equal holding: the name that sorts first.
+  expect(
+    taken([
+      { resource: "currency", amount: 3 },
+      { resource: "stone", amount: 7 },
+    ]),
+  ).toEqual(["stone", 2]);
+  expect(
+    taken([
+      { resource: "stone", amount: 4 },
+      { resource: "clay", amount: 4 },
+    ]),
+  ).toEqual(["clay", 2]);
+});
+
+test("a strike on a mortal carrying nothing still lands: a harm credited to the god with nothing taken, which the mortal still prays about, naming the god", () => {
+  const world = quarrel();
+  const harm = strikes(world, "poseidon", "phaon");
+  expect(harm).toMatchObject({
+    entityId: "phaon",
+    actor: "poseidon",
+    amount: 0,
+  });
+  expect("resource" in harm).toBe(false);
+  expect(world.state.actors.get(id("phaon"))?.inventory.size).toBe(0);
+  // The cause is the harm, with its agent, and it asks the patron to make the god answer for it.
+  const [cause] = prayableCauses(world.state, id("phaon"));
+  expect(cause).toMatchObject({
+    eventId: harm.id,
+    kind: "harm",
+    offender: "poseidon",
+  });
+  world.until(() => opened(world, "phaon") !== undefined);
+  expect(opened(world, "phaon")).toMatchObject({
+    god: "hermes",
+    cause: harm.id,
+    about: { kind: "harm", offender: "poseidon" },
+    request: { kind: "punish", offender: "poseidon", buildings: [] },
+  });
+  // It remembers who did it: the memory names the god, with no goods in it.
+  expect(world.state.memories.get(id("phaon"))).toContainEqual(
+    expect.objectContaining({
+      sourceEventId: harm.id,
+      consequence: { effect: "harm", agent: "poseidon", target: "phaon" },
+    }),
+  );
+  // The event round-trips through the codec like any other.
+  expect(decode(JSON.parse(JSON.stringify(encode(world.state))))).toEqual(
+    world.state,
+  );
+});
+
+test("a strike on a god, on a dead mortal, on no one, or by a mortal is refused, and a struck mortal's own goods are all the world takes", () => {
+  const world = quarrel();
+  const refused = (raw: Record<string, unknown>) =>
+    godActs(world, raw).rejected.map((r) => r.reason);
+  expect(
+    refused({ actor: "poseidon", kind: "strike", target: "hermes", power: 1 }),
+  ).toEqual(["unauthorized-claim"]);
+  expect(
+    refused({ actor: "poseidon", kind: "strike", target: "nobody", power: 1 }),
+  ).toEqual(["malformed"]);
+  expect(
+    refused({ actor: "doris", kind: "strike", target: "lykos", power: 1 }),
+  ).toEqual(["unauthorized-claim"]);
+  const lykos = getActor(world.state, id("lykos"));
+  if (!lykos) throw new Error("lykos");
+  world.state = withActor(world.state, { ...lykos, alive: false });
+  expect(
+    refused({ actor: "poseidon", kind: "strike", target: "lykos", power: 1 }),
+  ).toEqual(["dead-actor"]);
+  // Too little divinity is still refused.
+  const poor = getActor(world.state, id("poseidon"));
+  if (!poor) throw new Error("poseidon");
+  world.state = withActor(world.state, {
+    ...poor,
+    inventory: new Map([["divinity", 0]]),
+  });
+  expect(
+    refused({ actor: "poseidon", kind: "strike", target: "ismene", power: 1 }),
+  ).toEqual(["insufficient-power"]);
+});
+
+test("a punished mortal with a newer open need prays about the harm first, and a need still leads an older grudge", () => {
+  const world = quarrel();
+  const harm = strikes(world, "poseidon", "lykos");
+  // The need is newer than the harm: newest-first alone would pray about it first.
+  world.state = { ...world.state, tick: world.state.tick + 5 };
+  const need = world.apply({
+    kind: "unmet-need",
+    entityId: "lykos",
+    resource: "currency",
+    reason: "no-funds",
+  });
+  const order = prayableCauses(world.state, id("lykos"));
+  expect(order.map((c) => c.eventId)).toEqual([harm.id, need.id]);
+  world.until(() => opened(world, "lykos") !== undefined);
+  expect(opened(world, "lykos")).toMatchObject({
+    cause: harm.id,
+    god: "hermes",
+  });
+
+  // Control: an older grudge does not outrank a newer need; only a god's harm does.
+  const control = quarrel();
+  const grudge = grudges(control, "lykos", "doris");
+  control.state = { ...control.state, tick: control.state.tick + 5 };
+  const newer = control.apply({
+    kind: "unmet-need",
+    entityId: "lykos",
+    resource: "currency",
+    reason: "no-funds",
+  });
+  expect(
+    prayableCauses(control.state, id("lykos")).map((c) => c.eventId),
+  ).toEqual([newer.id, grudge.id]);
+});
+
+test("when the punished mortal and the one who prayed share a patron, the punishment leaves no cross-god cause: no other god can cite it, and the patron cannot demand against itself", () => {
+  const world = quarrel();
+  // Ismene, Poseidon's, is struck by Poseidon at the prayer of Doris, also Poseidon's.
+  grudges(world, "doris", "ismene");
+  world.until(() => opened(world, "doris") !== undefined);
+  const harm = strikes(world, "poseidon", "ismene");
+  world.until(() => opened(world, "ismene") !== undefined);
+  const prayer = opened(world, "ismene");
+  expect(prayer).toMatchObject({
+    god: "poseidon",
+    cause: harm.id,
+    about: { kind: "harm", offender: "poseidon" },
+  });
+  const demand = (actor: string, counterparty: string) =>
+    godActs(world, {
+      actor,
+      kind: "practice",
+      move: "demand",
+      counterparty,
+      cause: harm.id,
+      term: {
+        kind: "be-at",
+        party: counterparty,
+        place: "altar",
+        deadlineTicks: 50,
+      },
+    }).rejected;
+  // Poseidon knows the cause (it was prayed to him) but may not demand of himself.
+  const self = demand("poseidon", "poseidon");
+  expect(self.map((r) => r.reason)).toEqual(["malformed"]);
+  expect(self[0]?.message).toContain("itself");
+  // Neither Hermes nor Zeus was told anything, so neither can cite it.
+  for (const other of ["hermes", "zeus"]) {
+    expect(demand(other, "poseidon").map((r) => r.reason)).toEqual([
+      "unauthorized-claim",
+    ]);
+    expect(
+      world.state.memories
+        .get(id(other))
+        ?.some((m) => m.sourceEventId === harm.id) ?? false,
+    ).toBe(false);
+  }
+});
+
+test("only the harmed mortal's patron, told by its prayer, can cite a punishment: before the prayer no other god knows it, and a god not addressed never does", () => {
+  const world = quarrel();
+  const harm = strikes(world, "poseidon", "lykos");
+  const cite = (actor: string) =>
+    godActs(world, {
+      actor,
+      kind: "practice",
+      move: "demand",
+      counterparty: "poseidon",
+      cause: harm.id,
+      term: {
+        kind: "be-at",
+        party: "poseidon",
+        place: "altar",
+        deadlineTicks: 50,
+      },
+    }).rejected.map((r) => r.reason);
+  for (const god of ["hermes", "zeus"]) {
+    expect(cite(god)).toEqual(["unauthorized-claim"]);
+    expect(world.state.memories.get(id(god)) ?? []).toEqual([]);
+  }
+  world.until(() => opened(world, "lykos") !== undefined);
+  // Hermes was prayed to, and now may; Zeus, never addressed, still may not.
+  expect(cite("zeus")).toEqual(["unauthorized-claim"]);
+  expect(cite("hermes")).toEqual([]);
+});
+
+// --- Refusing a prayer ----------------------------------------------------------------------------
+
+/** The `relationship-changed` events a memory caused. */
+const feelingFrom = (
+  log: readonly WorldEvent[],
+  memory: WorldEvent | undefined,
+) =>
+  ofKind(log, "relationship-changed").filter(
+    (e) => e.memoryEventId === memory?.id,
+  );
+
+test("a refused prayer closes it, costs the god the petitioner's affinity by exactly what a lapse costs, and records a sign memory; the petition never lapses", () => {
+  const prayed = () => {
+    const world = quarrel();
+    grudges(world, "doris", "lykos");
+    world.until(() => opened(world, "doris") !== undefined);
+    return world;
+  };
+  const refusal = prayed();
+  const prayer = opened(refusal, "doris");
+  const ran = godActs(refusal, {
+    actor: "poseidon",
+    kind: "refuse",
+    petition: prayer?.id,
+  });
+  expect(ran.rejected).toEqual([]);
+  expect(ofKind(ran.events, "petition-refused")).toMatchObject([
+    { entityId: "poseidon", petitioner: "doris", petitionId: prayer?.id },
+  ]);
+  expect(refusal.state.petitions.get(prayer?.id as EventId)?.status).toBe(
+    "refused",
+  );
+  const sign = ofKind(refusal.log, "memory-recorded").find(
+    (m) => m.memoryKind === "sign" && m.petitionId === prayer?.id,
+  );
+  expect(sign).toMatchObject({
+    entityId: "doris",
+    god: "poseidon",
+    outcome: "refused",
+    consequence: { effect: "harm", agent: "poseidon", target: "doris" },
+  });
+  const refused = feelingFrom(refusal.log, sign);
+
+  // The same prayer left to lapse costs exactly the same.
+  const lapse = prayed();
+  const lapsed = opened(lapse, "doris");
+  lapse.state = {
+    ...lapse.state,
+    tick:
+      (lapsed?.tick ?? 0) +
+      petitionBalanceOf(lapse.state.rules, "answerWindowTicks"),
+  };
+  lapse.tick();
+  const lapseSign = ofKind(lapse.log, "memory-recorded").find(
+    (m) => m.memoryKind === "sign" && m.petitionId === lapsed?.id,
+  );
+  expect(lapseSign).toMatchObject({ outcome: "lapsed" });
+  const lapsedFeeling = feelingFrom(lapse.log, lapseSign);
+  expect(refused).toHaveLength(1);
+  expect(refused[0]).toMatchObject({
+    entityId: "doris",
+    toward: "poseidon",
+    affinityDelta: -2,
+    grudgeDelta: 1,
+  });
+  expect(
+    lapsedFeeling.map(({ affinityDelta, grudgeDelta }) => [
+      affinityDelta,
+      grudgeDelta,
+    ]),
+  ).toEqual(
+    refused.map(({ affinityDelta, grudgeDelta }) => [
+      affinityDelta,
+      grudgeDelta,
+    ]),
+  );
+
+  // Refused is final: no later lapse, and the window running out changes nothing.
+  refusal.state = {
+    ...refusal.state,
+    tick:
+      (prayer?.tick ?? 0) +
+      petitionBalanceOf(refusal.state.rules, "answerWindowTicks") +
+      5,
+  };
+  refusal.tick();
+  expect(
+    ofKind(refusal.log, "petition-lapsed").map((e) => e.petitionId),
+  ).not.toContain(prayer?.id);
+  // And the event and the closed petition round-trip through the codec.
+  expect(decode(JSON.parse(JSON.stringify(encode(refusal.state))))).toEqual(
+    refusal.state,
+  );
+});
+
+test("a refusal is judged like a bless: only a god, only a petition addressed to it that is open and inside its window, and not for a petitioner who has died", () => {
+  const world = quarrel();
+  grudges(world, "doris", "lykos");
+  world.until(() => opened(world, "doris") !== undefined);
+  const prayer = opened(world, "doris");
+  const refuse = (actor: string) =>
+    godActs(world, {
+      actor,
+      kind: "refuse",
+      petition: prayer?.id,
+    }).rejected.map((r) => r.reason);
+  // A mortal cannot refuse; another god cannot refuse a prayer not made to it.
+  expect(refuse("lykos")).toEqual(["unauthorized-claim"]);
+  expect(refuse("hermes")).toEqual(["malformed"]);
+  // An unknown petition, and a petition no longer open.
+  expect(
+    godActs(world, {
+      actor: "poseidon",
+      kind: "refuse",
+      petition: "evt-9-9",
+    }).rejected.map((r) => r.reason),
+  ).toEqual(["malformed"]);
+  const doris = getActor(world.state, id("doris"));
+  if (!doris) throw new Error("doris");
+  world.state = withActor(world.state, { ...doris, alive: false });
+  expect(refuse("poseidon")).toEqual(["dead-actor"]);
+  world.state = withActor(world.state, doris);
+  expect(refuse("poseidon")).toEqual([]);
+  expect(refuse("poseidon")).toEqual(["malformed"]);
+  // Outside the answer window it is refused too.
+  const late = quarrel();
+  grudges(late, "doris", "lykos");
+  late.until(() => opened(late, "doris") !== undefined);
+  const stale = opened(late, "doris");
+  late.state = {
+    ...late.state,
+    tick:
+      (stale?.tick ?? 0) +
+      petitionBalanceOf(late.state.rules, "answerWindowTicks") +
+      1,
+  };
+  expect(
+    godActs(late, {
+      actor: "poseidon",
+      kind: "refuse",
+      petition: stale?.id,
+    }).rejected.map((r) => r.reason),
+  ).toEqual(["malformed"]);
+});
+
+test("the struck mortal always knows who struck it, whatever the strike's salience: at 0 it forms no memory and no feeling but still prays naming the god; at 1 it forms a memory; both survive the codec", () => {
+  const withSalience = (salience: number) => {
+    const world = quarrel();
+    world.state = {
+      ...world.state,
+      rules: {
+        ...world.state.rules,
+        memoryBalance: { "salience_mortal-struck": salience },
+      },
+    };
+    const harm = strikes(world, "poseidon", "lykos");
+    return { world, harm };
+  };
+  const forgotten = withSalience(0);
+  expect(
+    forgotten.world.state.memories
+      .get(id("lykos"))
+      ?.some((m) => m.sourceEventId === forgotten.harm.id) ?? false,
+  ).toBe(false);
+  expect(
+    forgotten.world.state.relationships.get(
+      relationshipKey(id("lykos"), id("poseidon")),
+    ),
+  ).toBeUndefined();
+  forgotten.world.until(() => opened(forgotten.world, "lykos") !== undefined);
+  expect(opened(forgotten.world, "lykos")).toMatchObject({
+    god: "hermes",
+    about: { kind: "harm", offender: "poseidon" },
+  });
+  expect(
+    decode(JSON.parse(JSON.stringify(encode(forgotten.world.state)))),
+  ).toEqual(forgotten.world.state);
+
+  // Control: at the smallest positive salience it is remembered, and the memory moves its feeling.
+  const remembered = withSalience(1);
+  expect(
+    remembered.world.state.memories
+      .get(id("lykos"))
+      ?.find((m) => m.sourceEventId === remembered.harm.id),
+  ).toMatchObject({ salience: 1 });
+  expect(
+    remembered.world.state.relationships.get(
+      relationshipKey(id("lykos"), id("poseidon")),
+    ),
+  ).toMatchObject({ grudge: 1 });
+  expect(
+    decode(JSON.parse(JSON.stringify(encode(remembered.world.state)))),
+  ).toEqual(remembered.world.state);
 });

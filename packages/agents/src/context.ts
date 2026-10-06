@@ -359,6 +359,10 @@ function describeCause(petition: Petition): string {
       return `it lacked ${cause.resource}`;
     case "grudge":
       return `it holds a grudge against ${cause.offender}`;
+    case "harm":
+      return cause.resource === undefined
+        ? `${cause.offender} struck it`
+        : `${cause.offender} struck it and took its ${cause.resource}`;
   }
 }
 

@@ -588,13 +588,17 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
     blessResourceCap: 4,
     directorQuietTicks: 120,
     goalLockTicks: 40,
+    strikeGoodsCap: 2,
   };
   const parsed = parseContentPack(packWithPetitionBalance(good));
   expect(parsed.ok).toBe(true);
   if (parsed.ok) expect(parsed.value.rules.petitionBalance).toEqual(good);
-  // A partial record is fine: the rest take their defaults.
+  // A partial record is fine: the rest take their defaults. The cap's smallest value parses.
   expect(
     parseContentPack(packWithPetitionBalance({ goalLockTicks: 10 })).ok,
+  ).toBe(true);
+  expect(
+    parseContentPack(packWithPetitionBalance({ strikeGoodsCap: 1 })).ok,
   ).toBe(true);
   // Without one, nothing changes for packs that never had it.
   const plain = parseContentPack(validPack());
@@ -604,6 +608,11 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
 
   for (const bad of [
     { answerWindowTicks: 0 },
+    // A strike takes at least one unit: a cap of 0, or one that is not a whole number, is no cap.
+    { strikeGoodsCap: 0 },
+    { strikeGoodsCap: -1 },
+    { strikeGoodsCap: 1.5 },
+    { strikeGoodsCap: "2" },
     { answerWindowTicks: -5 },
     { answerWindowTicks: 2.5 },
     { directorQuietTicks: "soon" },

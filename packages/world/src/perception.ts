@@ -205,6 +205,8 @@ function eventLocation(
     case "legend-recorded":
     case "theft":
     case "stock-spoiled":
+    // A strike on a mortal falls where the mortal stood.
+    case "mortal-struck":
       return actorLocationAt(state, event.entityId, event, window);
     // A blessing is given where the blessed one stood, before whoever was there: a rival may see it. The
     // recipient is placed as any actor is, where it was when this happened; if the window cannot say, no
@@ -227,6 +229,7 @@ function eventLocation(
     case "unmet-need":
     case "petition-answered":
     case "petition-lapsed":
+    case "petition-refused":
     case "goal-change-refused":
     case "practice-opened":
     case "practice-moved":

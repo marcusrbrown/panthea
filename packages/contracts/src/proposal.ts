@@ -263,6 +263,12 @@ export interface BlessProposal extends ProposalBase {
   readonly petition: EventId;
 }
 
+/** A god refuses one open petition addressed to it: an answer that closes it and costs the god the petitioner's affinity, as letting it lapse does. */
+export interface RefuseProposal extends ProposalBase {
+  readonly kind: "refuse";
+  readonly petition: EventId;
+}
+
 /**
  * One move in a practice thread between gods. A demand opens a settlement: it
  * names the god it is made of, a cause event the demander knows, and one term.
@@ -342,6 +348,7 @@ export type Proposal =
   | GoalProposal
   | PrayProposal
   | BlessProposal
+  | RefuseProposal
   | PracticeProposal;
 
 export type ProposalKind = Proposal["kind"];
@@ -366,6 +373,7 @@ const PROPOSAL_KIND_SET = {
   goal: true,
   pray: true,
   bless: true,
+  refuse: true,
   practice: true,
 } as const satisfies Record<ProposalKind, true>;
 
@@ -636,6 +644,11 @@ export function parseProposal(input: unknown): ParseResult<Proposal> {
       const petition = parseEventId(input.petition, "petition");
       if (!petition.ok) return petition;
       return ok({ ...base, kind: "bless", petition: petition.value });
+    }
+    case "refuse": {
+      const petition = parseEventId(input.petition, "petition");
+      if (!petition.ok) return petition;
+      return ok({ ...base, kind: "refuse", petition: petition.value });
     }
     case "practice": {
       // A stake belongs to an offer to a supplicant, and to no other move.

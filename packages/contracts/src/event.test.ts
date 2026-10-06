@@ -555,7 +555,7 @@ test("WORLD_EVENT_KINDS lists every kind parseEvent accepts", () => {
   expect(WORLD_EVENT_KINDS).toContain("memory-recorded");
   expect(WORLD_EVENT_KINDS).toContain("report-told");
   expect(WORLD_EVENT_KINDS).toContain("relationship-changed");
-  expect(WORLD_EVENT_KINDS).toHaveLength(41);
+  expect(WORLD_EVENT_KINDS).toHaveLength(43);
 });
 
 test("an unknown event kind is rejected with reason unknown-kind", () => {
@@ -987,7 +987,7 @@ test("only kinds someone can perceive are witnessable: a memory of a report, a m
   for (const eventKind of WITNESSED_EVENT_KINDS) {
     expect(parseEvent(envelope({ ...WITNESSED, eventKind })).ok).toBe(true);
   }
-  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 22);
+  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 23);
 });
 
 // --- Legend tellings: a claim and the recorded hearers ------------------------------------
@@ -1201,12 +1201,20 @@ test("a petition-opened event names the petitioner, the god, the cause, and one 
   }
 });
 
-test("a petition is refused with no god, no cause, a punish request with no offender buildings or offender, or a malformed request", () => {
+test("a petition is refused with no god, no cause, a punish request with no offender or no buildings list, or a malformed request; a punish request for an offender who owns nothing is valid", () => {
+  expect(
+    parseEvent(
+      envelope({
+        ...OPENED,
+        request: { kind: "punish", offender: "woodcutter", buildings: [] },
+      }),
+    ).ok,
+  ).toBe(true);
   for (const overrides of [
     { god: undefined },
     { cause: undefined },
     { request: undefined },
-    { request: { kind: "punish", offender: "woodcutter", buildings: [] } },
+    { request: { kind: "punish", offender: "woodcutter" } },
     { request: { kind: "punish", buildings: ["woodshed"] } },
     { request: { kind: "help" } },
     { request: { kind: "help", need: { kind: "building" } } },
@@ -2497,4 +2505,92 @@ test("a journey-ended event names how the journey ended: arrived or replaced alo
   ]) {
     expect(parseEvent(envelope({ ...good, ...overrides })).ok).toBe(false);
   }
+});
+
+test("a strike on a mortal parses: it took a resource exactly when it took an amount, and is a placed, witnessable event", () => {
+  const struck = {
+    kind: "mortal-struck",
+    entityId: "lykos",
+    actor: "poseidon",
+  };
+  const taken = parseEvent(
+    envelope({ ...struck, resource: "food", amount: 2 }),
+  );
+  expect(taken.ok && taken.value).toMatchObject({
+    kind: "mortal-struck",
+    resource: "food",
+    amount: 2,
+  });
+  // Struck with nothing to take: no resource, an amount of 0.
+  const empty = parseEvent(envelope({ ...struck, amount: 0 }));
+  expect(empty.ok).toBe(true);
+  if (empty.ok) expect("resource" in empty.value).toBe(false);
+  for (const bad of [
+    { ...struck, amount: 2 },
+    { ...struck, resource: "food", amount: 0 },
+    { ...struck, resource: "food", amount: -1 },
+    { ...struck, resource: "food", amount: 1.5 },
+    { ...struck, resource: 3, amount: 1 },
+    { kind: "mortal-struck", entityId: "lykos", resource: "food", amount: 1 },
+    { ...struck },
+  ]) {
+    expect(parseEvent(envelope(bad)).ok).toBe(false);
+  }
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).toContain("mortal-struck");
+  expect(
+    eventSubjects(taken.ok ? taken.value : (undefined as never)).map(String),
+  ).toEqual(["lykos", "poseidon"]);
+});
+
+test("a refused petition parses, is private, and follows the petition it closes; a sign may record it", () => {
+  const refused = parseEvent(
+    envelope({
+      kind: "petition-refused",
+      entityId: "poseidon",
+      petitioner: "doris",
+      petitionId: "evt-4",
+    }),
+  );
+  expect(refused.ok).toBe(true);
+  if (refused.ok) {
+    expect(eventSubjects(refused.value).map(String)).toEqual([
+      "poseidon",
+      "doris",
+    ]);
+    expect(String(eventCause(refused.value))).toBe("evt-4");
+  }
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain(
+    "petition-refused",
+  );
+  for (const missing of ["entityId", "petitioner", "petitionId"]) {
+    const raw: Record<string, unknown> = {
+      kind: "petition-refused",
+      entityId: "poseidon",
+      petitioner: "doris",
+      petitionId: "evt-4",
+    };
+    delete raw[missing];
+    expect(parseEvent(envelope(raw)).ok).toBe(false);
+  }
+  const sign = (outcome: string) =>
+    parseEvent(
+      envelope({
+        kind: "memory-recorded",
+        memoryKind: "sign",
+        entityId: "doris",
+        sourceEventId: "evt-5",
+        salience: 6,
+        subjects: ["poseidon"],
+        god: "poseidon",
+        outcome,
+        petitionId: "evt-4",
+        consequence: { effect: "harm", agent: "poseidon", target: "doris" },
+      }),
+    ).ok;
+  expect([sign("refused"), sign("lapsed"), sign("answered")]).toEqual([
+    true,
+    true,
+    true,
+  ]);
+  expect(sign("ignored")).toBe(false);
 });

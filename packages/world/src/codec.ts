@@ -883,6 +883,7 @@ function parseMemoryEntry(
       const outcome = parseEnum(value.outcome, `${path}.outcome`, [
         "answered",
         "lapsed",
+        "refused",
       ] as const);
       if (!outcome.ok) return outcome;
       const petitionId = parseEventId(value.petitionId, `${path}.petitionId`);
@@ -1006,6 +1007,7 @@ const CAUSE_KINDS = [
   "spoilage",
   "need",
   "grudge",
+  "harm",
 ] as const;
 
 function parseCause(item: unknown, at: string): ParseResult<PetitionCause> {
@@ -1108,6 +1110,7 @@ function parsePetitionEntry(
     "open",
     "answered",
     "lapsed",
+    "refused",
   ] as const);
   if (!status.ok) return status;
   return ok([
