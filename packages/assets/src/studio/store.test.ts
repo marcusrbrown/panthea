@@ -9,17 +9,21 @@ import {
 import { join } from "node:path";
 import { sha256Hex } from "../hash";
 import {
+  authoredFrames,
   doneCandidate,
   jobSource,
   keyframe,
   needsScaleCandidate,
+  PROVISIONAL_TEST_PARAMS,
   queuedJob,
   removeTempRoots,
   request,
   succeededJob,
+  TEST_PALETTE,
   tempRoot,
   workingSet,
 } from "./_test-fixtures";
+import type { EditRecord } from "./export-import";
 import { readStudioStatus } from "./index";
 import { openStore } from "./store";
 
@@ -45,6 +49,7 @@ describe("authoring root", () => {
       jobs: [],
       candidates: [],
       workingSets: [],
+      edits: [],
       commands: [],
       invalid: [],
     });
@@ -99,6 +104,7 @@ describe("records", () => {
       jobs: [jobRecord],
       candidates: [candidate, stuck],
       workingSets: [set],
+      edits: [],
       commands: [command],
       invalid: [],
     });
@@ -592,5 +598,402 @@ describe("candidate and working-set records are strict", () => {
         "working-sets/stale-open.json",
       ].sort(),
     );
+  });
+});
+
+describe("working sets with authored frames", () => {
+  const slots = ["idle/south", "idle/north"];
+  const complete = () =>
+    workingSet("w", {
+      frames: {
+        "idle/south": authoredFrames("e1", 4),
+        "idle/north": authoredFrames("e1", 4),
+      },
+      status: "complete",
+    });
+  const faces = (extra: Record<string, unknown> = {}) =>
+    ({
+      ...workingSet("p", {
+        kind: "portrait",
+        required: ["neutral", "pleased"],
+      }),
+      ...extra,
+    }) as Json;
+
+  test("limits, authored frames, their basis and hand edits read back as written", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    const set = workingSet("w", {
+      picks: { "idle/south": keyframe(doneCandidate("job-a")) },
+      frames: {
+        "idle/south": authoredFrames("e1", 4, {
+          pivot: { x: 32, y: 80 },
+          basis: {
+            kind: "frames",
+            editId: "e0",
+            sheetHash: sha256Hex(new Uint8Array([7])),
+          },
+        }),
+      },
+    });
+    store.putWorkingSet(set);
+    store.putWorkingSet(complete());
+
+    const status = store.status();
+
+    expect(status.invalid).toEqual([]);
+    expect(status.workingSets.find((w) => w.id === "w")?.status).toBe(
+      "complete",
+    );
+    expect(store.readWorkingSet("w")).toEqual({
+      kind: "found",
+      value: complete(),
+    });
+  });
+
+  const mutations: [string, (w: Json) => void, string?][] = [
+    [
+      "a missing limits record",
+      (w) => {
+        delete w.limits;
+      },
+    ],
+    [
+      "limits for a slot that is not required",
+      (w) => {
+        w.limits["idle/west"] = { min: 1, max: 1 };
+      },
+    ],
+    [
+      "a required slot without limits",
+      (w) => {
+        delete w.limits["idle/north"];
+      },
+    ],
+    [
+      "a limit whose minimum is above its maximum",
+      (w) => {
+        w.limits["idle/south"] = { min: 5, max: 4 };
+      },
+    ],
+    [
+      "a limit with a zero minimum",
+      (w) => {
+        w.limits["idle/south"] = { min: 0, max: 4 };
+      },
+    ],
+    [
+      "a limit with an unknown key",
+      (w) => {
+        w.limits["idle/south"].extra = 1;
+      },
+    ],
+    [
+      "authored frames for a slot that is not required",
+      (w) => {
+        w.frames["idle/west"] = authoredFrames("e1", 4);
+      },
+    ],
+    [
+      "fewer authored frames than the minimum",
+      (w) => {
+        w.frames["idle/south"] = authoredFrames("e1", 3);
+      },
+    ],
+    [
+      "more authored frames than the maximum",
+      (w) => {
+        w.frames["idle/south"] = authoredFrames("e1", 5);
+      },
+    ],
+    [
+      "a frame hash that is not a sha256",
+      (w) => {
+        w.frames["idle/south"] = {
+          ...authoredFrames("e1", 4),
+          frames: [
+            { hash: "x", durationMs: 100 },
+            ...authoredFrames("e1", 3).frames,
+          ],
+        };
+      },
+    ],
+    [
+      "a zero duration",
+      (w) => {
+        w.frames["idle/south"] = { ...authoredFrames("e1", 4) };
+        w.frames["idle/south"].frames[0].durationMs = 0;
+      },
+    ],
+    [
+      "a fractional duration",
+      (w) => {
+        w.frames["idle/south"] = { ...authoredFrames("e1", 4) };
+        w.frames["idle/south"].frames[0].durationMs = 100.5;
+      },
+    ],
+    [
+      "a pivot below zero",
+      (w) => {
+        w.frames["idle/south"] = {
+          ...authoredFrames("e1", 4),
+          pivot: { x: -1, y: 0 },
+        };
+      },
+    ],
+    [
+      "an unknown authored-frames key",
+      (w) => {
+        w.frames["idle/south"] = { ...authoredFrames("e1", 4), extra: 1 };
+      },
+    ],
+    [
+      "a basis of an unknown kind",
+      (w) => {
+        w.frames["idle/south"] = {
+          ...authoredFrames("e1", 4),
+          basis: { kind: "magic" },
+        };
+      },
+    ],
+    [
+      "a keyframe basis with a bad hash",
+      (w) => {
+        w.frames["idle/south"] = {
+          ...authoredFrames("e1", 4),
+          basis: { kind: "keyframe", candidateId: "job-a", imageHash: "x" },
+        };
+      },
+    ],
+    [
+      "a frames basis with an unknown key",
+      (w) => {
+        w.frames["idle/south"] = {
+          ...authoredFrames("e1", 4),
+          basis: {
+            kind: "frames",
+            editId: "e0",
+            sheetHash: sha256Hex(new Uint8Array([1])),
+            extra: 1,
+          },
+        };
+      },
+    ],
+    [
+      "hand edits that are not an array",
+      (w) => {
+        w.frames["idle/south"] = { ...authoredFrames("e1", 4), handEdits: "x" };
+      },
+    ],
+    [
+      "a hand edit with an unknown key",
+      (w) => {
+        w.frames["idle/south"] = {
+          ...authoredFrames("e1", 4),
+          handEdits: [{ description: "d", extra: 1 }],
+        };
+      },
+    ],
+    [
+      "a status of open when every slot has its frames",
+      (w) => {
+        w.frames = {
+          "idle/south": authoredFrames("e1", 4),
+          "idle/north": authoredFrames("e1", 4),
+        };
+        w.status = "open";
+      },
+    ],
+    [
+      "a status of complete with one slot short of frames",
+      (w) => {
+        w.frames = { "idle/south": authoredFrames("e1", 4) };
+        w.status = "complete";
+      },
+    ],
+    [
+      "a sprite completed by picks alone",
+      (w) => {
+        w.picks = {
+          "idle/south": keyframe(doneCandidate("a")),
+          "idle/north": keyframe(doneCandidate("b")),
+        };
+        w.status = "complete";
+      },
+    ],
+  ];
+
+  test("every malformed sprite working set is reported and the valid one still reads", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    store.putWorkingSet(workingSet("good"));
+    mkdirSync(join(root, "working-sets"), { recursive: true });
+    mutations.forEach(([, mutate], index) => {
+      const bad = clone(workingSet("x"));
+      mutate(bad);
+      writeFileSync(
+        join(root, "working-sets", `bad-${index}.json`),
+        JSON.stringify(bad),
+      );
+    });
+
+    const status = store.status();
+
+    expect(status.workingSets.map((w) => w.id)).toEqual(["good"]);
+    expect(status.invalid.map((p) => p.file).sort()).toEqual(
+      mutations.map((_, i) => `working-sets/bad-${i}.json`).sort(),
+    );
+    void slots;
+  });
+
+  test("a portrait is complete when every expression has a pick or one authored frame, and not otherwise", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    const frame = authoredFrames("e1", 1);
+    const pick = keyframe(
+      doneCandidate("job-a", { kind: "portrait", slotKey: "neutral" }),
+    );
+    const mixed = {
+      ...faces(),
+      picks: { neutral: pick },
+      frames: { pleased: frame },
+      status: "complete",
+    };
+    mkdirSync(join(root, "working-sets"), { recursive: true });
+    const write = (name: string, value: unknown) =>
+      writeFileSync(
+        join(root, "working-sets", `${name}.json`),
+        JSON.stringify({ ...(value as Json), id: name }),
+      );
+    write("mixed", mixed);
+    write("one-short", {
+      ...faces(),
+      picks: { neutral: pick },
+      status: "open",
+    });
+    write("short-but-complete", {
+      ...faces(),
+      picks: { neutral: pick },
+      status: "complete",
+    });
+    write("two-frames", {
+      ...faces(),
+      picks: { neutral: pick },
+      frames: { pleased: authoredFrames("e1", 2) },
+      status: "complete",
+    });
+    write("authored-wins", {
+      ...faces(),
+      frames: { neutral: frame, pleased: frame },
+      status: "complete",
+    });
+
+    const status = store.status();
+
+    expect(status.workingSets.map((w) => w.id).sort()).toEqual([
+      "authored-wins",
+      "mixed",
+      "one-short",
+    ]);
+    expect(status.invalid.map((p) => p.file).sort()).toEqual([
+      "working-sets/short-but-complete.json",
+      "working-sets/two-frames.json",
+    ]);
+  });
+});
+
+describe("edit records and files", () => {
+  const h = (n: number) => sha256Hex(new Uint8Array([n]));
+  const edit = (id: string): EditRecord => ({
+    schemaVersion: 1,
+    id,
+    workingSetId: "w",
+    slots: ["idle/south"],
+    cell: { w: 64, h: 80 },
+    base: {
+      "idle/south": { kind: "keyframe", candidateId: "job-a", imageHash: h(1) },
+    },
+    evidence: {
+      "idle/south": {
+        params: { ...PROVISIONAL_TEST_PARAMS, scale: null },
+        palette: { ...TEST_PALETTE, colours: [...TEST_PALETTE.colours] },
+      },
+    },
+    baseSheet: { sheetHash: h(2), metadataHash: h(3) },
+    baseSignature: {
+      "idle/south": { frames: [{ hash: h(4), durationMs: 167 }], pivot: null },
+    },
+    status: "open",
+    preview: null,
+  });
+
+  test("a record reads back as written, is listed by status and a malformed one is reported", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    store.putEdit(edit("e1"));
+    store.putEdit({ ...edit("e2"), status: "finished" });
+    writeFileSync(
+      join(root, "edits", "bad.json"),
+      JSON.stringify({ ...edit("bad"), status: "weird" }),
+    );
+
+    expect(store.readEdit("e1")).toEqual({ kind: "found", value: edit("e1") });
+    expect(store.readEdit("nope")).toEqual({ kind: "missing" });
+    expect(store.readEdit("bad").kind).toBe("invalid");
+    const status = store.status();
+    expect(status.edits.map((e) => [e.id, e.status])).toEqual([
+      ["e1", "open"],
+      ["e2", "finished"],
+    ]);
+    expect(status.invalid.map((p) => p.file)).toEqual(["edits/bad.json"]);
+  });
+
+  test("only the three workspace files can be written, under a valid edit id, and read back exactly", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    const bytes = new Uint8Array([1, 2, 3, 0, 255]);
+
+    store.putEditFile("e1", "sheet.png", bytes);
+    store.putEditFile("e1", "sheet.json", new TextEncoder().encode("{}"));
+    store.putEditFile("e1", "workspace.aseprite", bytes);
+
+    expect(store.readEditFile("e1", "sheet.png")).toEqual(bytes);
+    expect(store.readEditFile("e1", "workspace.aseprite")).toEqual(bytes);
+    expect(store.readEditFile("e1", "sheet.json")).toEqual(
+      new TextEncoder().encode("{}"),
+    );
+    expect(store.readEditFile("e2", "sheet.png")).toBeUndefined();
+    expect(readdirSync(join(root, "edits", "e1")).sort()).toEqual([
+      "sheet.json",
+      "sheet.png",
+      "workspace.aseprite",
+    ]);
+    for (const name of [
+      "../escape.png",
+      "other.png",
+      "sheet.png.tmp",
+      "",
+      "e1/sheet.png",
+    ])
+      expect(
+        () => store.putEditFile("e1", name as never, bytes),
+        name,
+      ).toThrow();
+    for (const id of ["../x", "a/b", "", "Not Valid", "."])
+      expect(() => store.putEditFile(id, "sheet.png", bytes), id).toThrow();
+    expect(store.readEditFile("../x", "sheet.png")).toBeUndefined();
+    expect(readdirSync(root).sort()).toEqual(["edits"]);
+  });
+
+  test("a failed edit-file write leaves no temp file behind", () => {
+    const root = tempRoot();
+    const store = openStore(root);
+    mkdirSync(join(root, "edits", "e1", "sheet.png"), { recursive: true });
+
+    expect(() =>
+      store.putEditFile("e1", "sheet.png", new Uint8Array([1])),
+    ).toThrow();
+
+    expect(readdirSync(join(root, "edits", "e1"))).toEqual(["sheet.png"]);
   });
 });

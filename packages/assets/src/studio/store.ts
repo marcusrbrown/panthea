@@ -30,6 +30,7 @@ import {
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
 import { type CandidateRecord, parseCandidateRecord } from "./candidates";
+import { type EditRecord, parseEditRecord } from "./export-import";
 import { parseWorkingSetRecord, type WorkingSetRecord } from "./working-set";
 import {
   type JobSource,
@@ -37,6 +38,13 @@ import {
   parseStudioVersion,
   studioPaths,
 } from "./workspace";
+
+export const EDIT_FILES = [
+  "sheet.png",
+  "sheet.json",
+  "workspace.aseprite",
+] as const;
+export type EditFileName = (typeof EDIT_FILES)[number];
 
 export interface SessionRecord {
   readonly schemaVersion: 1;
@@ -72,6 +80,9 @@ export const COMMAND_TYPES = [
   "remove",
   "abort",
   "pick",
+  "open-edit",
+  "finish-edit",
+  "discard-edit",
 ] as const;
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
@@ -95,6 +106,7 @@ export interface StudioStatus {
   readonly jobs: readonly JobRecord[];
   readonly candidates: readonly CandidateRecord[];
   readonly workingSets: readonly WorkingSetRecord[];
+  readonly edits: readonly EditRecord[];
   readonly commands: readonly CommandRecord[];
   readonly invalid: readonly StoreProblem[];
 }
@@ -252,6 +264,9 @@ export interface Store {
   putJob(record: JobRecord): void;
   putCandidate(record: CandidateRecord): void;
   putWorkingSet(record: WorkingSetRecord): void;
+  putEdit(record: EditRecord): void;
+  /** Writes one of the three files an edit keeps beside its record. */
+  putEditFile(id: string, name: EditFileName, bytes: Uint8Array): void;
   putCommand(record: CommandRecord): void;
   /** Stores bytes under their SHA-256; identical bytes are written once. */
   putBlob(bytes: Uint8Array): Sha256;
@@ -260,6 +275,8 @@ export interface Store {
   readRequest(id: string): Read<RequestRecord>;
   readCandidate(id: string): Read<CandidateRecord>;
   readWorkingSet(id: string): Read<WorkingSetRecord>;
+  readEdit(id: string): Read<EditRecord>;
+  readEditFile(id: string, name: EditFileName): Uint8Array | undefined;
   /** The highest sequence number in the command ledger, by file name. */
   lastCommandSeq(): number;
   status(): StudioStatus;
@@ -297,6 +314,13 @@ export function openStore(root: string): Store {
       writeJson(join(paths.candidates, `${record.id}.json`), record),
     putWorkingSet: (record) =>
       writeJson(join(paths.workingSets, `${record.id}.json`), record),
+    putEdit: (record) =>
+      writeJson(join(paths.edits, `${record.id}.json`), record),
+    putEditFile(id, name, bytes) {
+      if (!parseSlug(id, "edit").ok || !EDIT_FILES.includes(name))
+        throw new Error(`not an edit file: ${id}/${name}`);
+      writeAtomic(join(paths.edits, id, name), bytes);
+    },
     putCommand: (record) =>
       writeJson(join(paths.commands, commandFile(record.seq)), record),
     putBlob(bytes) {
@@ -314,6 +338,14 @@ export function openStore(root: string): Store {
       readRecord(join(paths.requests, `${id}.json`), parseRequestRecord),
     readCandidate: (id) =>
       readRecord(join(paths.candidates, `${id}.json`), parseCandidateRecord),
+    readEdit: (id) =>
+      readRecord(join(paths.edits, `${id}.json`), parseEditRecord),
+    readEditFile(id, name) {
+      if (!parseSlug(id, "edit").ok || !EDIT_FILES.includes(name))
+        return undefined;
+      const path = join(paths.edits, id, name);
+      return existsSync(path) ? new Uint8Array(readFileSync(path)) : undefined;
+    },
     readWorkingSet: (id) =>
       readRecord(join(paths.workingSets, `${id}.json`), parseWorkingSetRecord),
     lastCommandSeq() {
@@ -333,6 +365,7 @@ export function openStore(root: string): Store {
         jobs: list(paths.jobs, parseJobRecord, invalid),
         candidates: list(paths.candidates, parseCandidateRecord, invalid),
         workingSets: list(paths.workingSets, parseWorkingSetRecord, invalid),
+        edits: list(paths.edits, parseEditRecord, invalid),
         commands: list(paths.commands, parseCommandRecord, invalid),
         invalid,
       };

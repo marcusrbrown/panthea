@@ -17,6 +17,7 @@ import {
   keyframe,
   loadContent,
   needsScaleCandidate,
+  PROVISIONAL_TEST_PARAMS,
   queuedJob,
   reapChildren,
   removeTempRoots,
@@ -24,6 +25,7 @@ import {
   runningJob,
   spawnHolder,
   succeededJob,
+  TEST_PALETTE,
   tempRoot,
   workingSet,
 } from "./_test-fixtures";
@@ -479,6 +481,51 @@ describe("a closed session's store", () => {
       ["putCandidate", (s) => s.putCandidate(doneCandidate("stale-job"))],
       ["putWorkingSet", (s) => s.putWorkingSet(workingSet("stale-set"))],
       [
+        "putEdit",
+        (s) =>
+          s.putEdit({
+            schemaVersion: 1,
+            id: "stale-edit",
+            workingSetId: "w",
+            slots: ["idle/south"],
+            cell: { w: 64, h: 80 },
+            base: {
+              "idle/south": {
+                kind: "keyframe",
+                candidateId: "j",
+                imageHash: sha256Hex(new Uint8Array([1])),
+              },
+            },
+            evidence: {
+              "idle/south": {
+                params: { ...PROVISIONAL_TEST_PARAMS, scale: null },
+                palette: {
+                  ...TEST_PALETTE,
+                  colours: [...TEST_PALETTE.colours],
+                },
+              },
+            },
+            baseSheet: {
+              sheetHash: sha256Hex(new Uint8Array([2])),
+              metadataHash: sha256Hex(new Uint8Array([3])),
+            },
+            baseSignature: {
+              "idle/south": {
+                frames: [
+                  { hash: sha256Hex(new Uint8Array([4])), durationMs: 167 },
+                ],
+                pivot: null,
+              },
+            },
+            status: "open",
+            preview: null,
+          }),
+      ],
+      [
+        "putEditFile",
+        (s) => s.putEditFile("stale-edit", "sheet.png", new Uint8Array([1])),
+      ],
+      [
         "putCommand",
         (s) =>
           s.putCommand({
@@ -549,12 +596,14 @@ describe("public surface", () => {
       "STUDIO_SCHEMA_VERSION",
       "adapterInput",
       "buildSpec",
+      "createEditorAdapter",
       "newRequestRecord",
       "openRuntime",
       "openStudioSession",
       "planJobs",
       "readStudioStatus",
       "reportOnly",
+      "resolveAseprite",
       "sheet",
       "slotKey",
       "sortSheet",
@@ -977,12 +1026,23 @@ describe("working sets", () => {
       kind: "portrait",
       sheetRequestId: "faces-a",
       required: [...content.vocabulary.expressions],
+      limits: Object.fromEntries(
+        content.vocabulary.expressions.map((slot) => [
+          slot,
+          { min: 1, max: 1 },
+        ]),
+      ),
       picks: {},
+      frames: {},
       status: "open",
     });
     expect(setOf(root, "zeus-idle")).toMatchObject({
       kind: "sprite",
       required: ["idle/south", "idle/north"],
+      limits: {
+        "idle/south": { min: 4, max: 4 },
+        "idle/north": { min: 4, max: 4 },
+      },
       sheetRequestId: "walk-a",
     });
     session.close();

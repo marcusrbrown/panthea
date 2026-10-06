@@ -1,3 +1,12 @@
+export {
+  type AsepriteConfig,
+  createEditorAdapter,
+  type EditorAdapter,
+  type EditorFailure,
+  type EditorResolution,
+  resolveAseprite,
+  type WorkspaceReadback,
+} from "./aseprite";
 export type {
   CandidateParams,
   CandidateRecord,
@@ -5,6 +14,17 @@ export type {
   CandidateTarget,
   ConformParams,
 } from "./candidates";
+export type {
+  EditCommandResult,
+  EditFailure,
+  EditResult,
+} from "./edit-session";
+export type {
+  EditEvidence,
+  EditPreview,
+  EditRecord,
+  PreviewSlot,
+} from "./export-import";
 export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
 export {
   reportOnly,
@@ -59,6 +79,7 @@ export {
 export {
   type CommandRecord,
   type CommandType,
+  type EditFileName,
   type JobRecord,
   type JobSource,
   type Read,
@@ -69,5 +90,12 @@ export {
   type StoreProblem,
   type StudioStatus,
 } from "./store";
-export type { Keyframe, WorkingSetRecord } from "./working-set";
+export type {
+  AuthoredFrames,
+  FrameLimits,
+  FrameRef,
+  Keyframe,
+  SlotBasis,
+  WorkingSetRecord,
+} from "./working-set";
 export { STUDIO_SCHEMA_VERSION, studioPaths } from "./workspace";

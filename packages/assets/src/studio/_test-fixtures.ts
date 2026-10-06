@@ -15,7 +15,7 @@ import { encodeRgbaPng } from "../placeholder";
 import type { CandidateRecord, ConformParams } from "./candidates";
 import type { StudioContent } from "./request";
 import type { StudioSession } from "./session";
-import type { Keyframe, WorkingSetRecord } from "./working-set";
+import type { AuthoredFrames, Keyframe, WorkingSetRecord } from "./working-set";
 
 export const HOLDER = join(import.meta.dir, "_test-holder.ts");
 
@@ -296,15 +296,52 @@ export function workingSet(
   id: string,
   o: Partial<WorkingSetRecord> & { picks?: Record<string, Keyframe> } = {},
 ): WorkingSetRecord {
+  const required = o.required ?? ["idle/south", "idle/north"];
+  const portrait = o.kind === "portrait";
   return {
     schemaVersion: 1,
     id,
     subject: "zeus",
     kind: "sprite",
     sheetRequestId: "r1",
-    required: ["idle/south", "idle/north"],
+    required,
+    limits: Object.fromEntries(
+      required.map((slot) => [
+        slot,
+        portrait ? { min: 1, max: 1 } : { min: 4, max: 4 },
+      ]),
+    ),
     picks: {},
+    frames: {},
     status: "open",
+    ...o,
+  };
+}
+
+const hashText = (text: string) => sha256Hex(new TextEncoder().encode(text));
+
+/** Authored frames for a slot, written by hand into a record. */
+export function authoredFrames(
+  editId: string,
+  count: number,
+  o: Partial<AuthoredFrames> = {},
+): AuthoredFrames {
+  return {
+    editId,
+    basis: {
+      kind: "keyframe",
+      candidateId: "job-a",
+      imageHash: hashText("image-job-a"),
+    },
+    sheetHash: hashText(`sheet-${editId}`),
+    frames: Array.from({ length: count }, (_, i) => ({
+      hash: hashText(`frame-${editId}-${i}`),
+      durationMs: 167,
+    })),
+    pivot: null,
+    handEdits: [
+      { description: `hand edit ${editId}`, hash: hashText(`sheet-${editId}`) },
+    ],
     ...o,
   };
 }
@@ -414,4 +451,56 @@ export function succeedWithImage(
   ]);
   if (!done.ok) throw new Error(`cannot succeed ${jobId}`);
   return hash;
+}
+
+/** A solid-colour frame at the given size, distinguishable by `tone`. */
+export function toneFrame(
+  cell: { w: number; h: number },
+  tone: number,
+  hidden = 0,
+): RgbaImage {
+  const rgba = new Uint8Array(cell.w * cell.h * 4);
+  for (let at = 0; at < rgba.length; at += 4) {
+    const pixel = at / 4;
+    const x = pixel % cell.w;
+    const y = Math.floor(pixel / cell.w);
+    if (x >= 4 && x < cell.w - 4 && y >= 4 && y < cell.h - 4) {
+      rgba.set([82 + tone, 100, 113, 255], at);
+    } else if (hidden !== 0) {
+      rgba.set([hidden & 255, (hidden * 3) & 255, (hidden * 7) & 255, 0], at);
+    }
+  }
+  return { rgba, width: cell.w, height: cell.h };
+}
+
+const crcTable = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const byte of bytes)
+    c = (crcTable[(c ^ byte) & 255] as number) ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** The same pixels with an extra ancillary tEXt chunk: different bytes, same image. */
+export function withAncillaryChunk(png: Uint8Array): Uint8Array {
+  const body = new Uint8Array([
+    ...new TextEncoder().encode("tEXt"),
+    ...new TextEncoder().encode("note\0re-encoded"),
+  ]);
+  const chunk = new Uint8Array(12 + body.length - 4);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, body.length - 4);
+  chunk.set(body, 4);
+  view.setUint32(8 + body.length - 4, crc32(body));
+  const at = 8 + 12 + 13;
+  const out = new Uint8Array(png.length + chunk.length);
+  out.set(png.subarray(0, at));
+  out.set(chunk, at);
+  out.set(png.subarray(at), at + chunk.length);
+  return out;
 }

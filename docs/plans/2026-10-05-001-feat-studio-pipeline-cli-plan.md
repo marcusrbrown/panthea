@@ -377,7 +377,7 @@ flowchart TB
 
 ### U4. External edit workspace and import seam
 
-- [ ] **Goal:** Open selected draft working sets in Aseprite or export PNG+JSON, watch/report edits, and finish or discard without losing hand pixels.
+- [x] **Goal:** Open selected draft working sets in Aseprite or export PNG+JSON, watch/report edits, and finish or discard without losing hand pixels.
 - **Requirements:** R10, R11, R12, R20; F2; AE3; X02.
 - **Dependencies:** U3; configured Aseprite executable or fallback export/import path.
 - **Files:**
@@ -400,6 +400,7 @@ flowchart TB
   - Failure path: malformed PNG/metadata reports errors and leaves prior state intact.
   - Integration: fake Aseprite executable asserts configured-path and macOS-bundle discovery, argv, RGB-workspace export paths and teardown; installed Aseprite round-trips tags, slices, optional pivots, integer-ms durations, palette and cell geometry for Zeus idle-south and the portrait expressions.
 - **Verification:** The external edit seam proves finished and discarded edits preserve provenance and pixels exactly as the owner chose.
+- **Evidence (fixtures, macOS GUI host, Aseprite 1.3.18.6):** source `aseprite.ts`, `edit-session.ts`, `export-import.ts`, `scripts/export.lua`; tests `aseprite.test.ts`, `edit-session.test.ts`; probe `tools/probes/studio-editor/README.md`. Real positive: 81 checks, 0 failures, on idle 4×64×80 and portrait 6×96×96; a one-pixel in-editor edit imports exactly (stored sheet equals the editor's PNG, exact crops), an off-palette edit imports with a failed report and a separate proposal that is not applied, finish adds one hand-edit step per slot, originals stay byte-identical and the root reopens. Real negative: an unedited export is refused despite differing codec bytes; visible or raw edited imports are exact, but a base-equivalent re-encode or hidden-RGB-only change may no-op, so not every byte-distinct file is stored. Reports never rewrite hand frames, discard keeps the prior working set, and finish is one idempotent step. Durations convert seconds to integer ms; one pivot per slot, inclusive bounds (32,80), slice-relative offsets converted; no per-frame pivot claim. Full check passed (3252 pass, 1 skip, 0 fail, 190 files; all exits 0; 32-file source hash snapshot matches); scoped assets 530 pass twice. Not shown: GUI watching, Linux or Windows, window-server-free runs, canon or art quality. U5–U7 and parent Unit 5 remain incomplete.
 
 ### U5. Pack, approve and publish gates
 

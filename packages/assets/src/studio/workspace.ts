@@ -7,6 +7,8 @@
 //   <root>/jobs/<id>.json
 //   <root>/candidates/<jobId>.json
 //   <root>/working-sets/<id>.json
+//   <root>/edits/<id>.json
+//   <root>/edits/<id>/{sheet.png,sheet.json,workspace.aseprite}
 //   <root>/commands/<seq>.json   the always-on command ledger
 //   <root>/blobs/<sha256>.png    content-addressed bytes
 
@@ -39,6 +41,7 @@ export const studioPaths = (root: string) => ({
   jobs: join(root, "jobs"),
   candidates: join(root, "candidates"),
   workingSets: join(root, "working-sets"),
+  edits: join(root, "edits"),
   commands: join(root, "commands"),
   blobs: join(root, "blobs"),
 });

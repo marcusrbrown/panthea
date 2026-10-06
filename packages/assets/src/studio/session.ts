@@ -12,6 +12,11 @@ import {
   type ConformParams,
   conformCandidate,
 } from "./candidates";
+import {
+  createEditOps,
+  type EditCommandResult,
+  type EditResult,
+} from "./edit-session";
 import { planJobs, type StudioContent } from "./request";
 import {
   type CommandType,
@@ -55,6 +60,32 @@ export interface StudioSession {
   replaceSheet(workingSetId: string, requestId: string): CommandResult;
   /** Keeps a snapshot of a done candidate for its slot; ledgered. */
   pick(workingSetId: string, candidateId: string): CommandResult;
+  /**
+   * Opens a sheet of the slots' frames for the owner to edit. Refused when a
+   * slot has nothing to start from or is already in an open edit.
+   */
+  openEdit(
+    id: string,
+    workingSetId: string,
+    slots: readonly string[],
+    content: StudioContent,
+  ): EditCommandResult;
+  /** Validates an exported sheet and its metadata in full, then stores them and a preview; changes no working set. */
+  importEdit(
+    id: string,
+    png: Uint8Array,
+    json: string,
+    content: StudioContent,
+  ): EditResult;
+  /** Imports the final sheet and puts its frames into the working set with one hand-edit step each. */
+  finishEdit(
+    id: string,
+    png: Uint8Array,
+    json: string,
+    content: StudioContent,
+  ): EditResult;
+  /** Ends an edit and leaves the working set exactly as it was. */
+  discardEdit(id: string): EditCommandResult;
   remove(jobId: string): CommandResult;
   /** Cancels a running job. The owner of the runtime kills its child. */
   abort(jobId: string): CommandResult;
@@ -310,6 +341,14 @@ export function openStudioSession(root: string): StudioOpen {
     const readCandidateOrRefuse = (id: string) =>
       lookup("candidate", id, store.readCandidate);
 
+    const editOps = createEditOps({
+      store,
+      isClosed: () => closed,
+      ledgered,
+      write: writeRecord,
+      hasLedgered: (type, id) =>
+        store.status().commands.some((c) => c.type === type && c.jobId === id),
+    });
     const closedWrite = <A extends unknown[], R>(write: (...args: A) => R) => {
       return (...args: A): R => {
         if (closed) throw new Error(CLOSED);
@@ -323,6 +362,8 @@ export function openStudioSession(root: string): StudioOpen {
       putJob: closedWrite(store.putJob),
       putCandidate: closedWrite(store.putCandidate),
       putWorkingSet: closedWrite(store.putWorkingSet),
+      putEdit: closedWrite(store.putEdit),
+      putEditFile: closedWrite(store.putEditFile),
       putCommand: closedWrite(store.putCommand),
       putBlob: closedWrite(store.putBlob),
     };
@@ -461,6 +502,10 @@ export function openStudioSession(root: string): StudioOpen {
             store.putWorkingSet(next.record),
           );
         },
+        openEdit: editOps.openEdit,
+        importEdit: editOps.importEdit,
+        finishEdit: editOps.finishEdit,
+        discardEdit: editOps.discardEdit,
         remove: (jobId) =>
           transition(jobId, "remove", ["queued"], (job) => ({
             ...jobBase(job),
