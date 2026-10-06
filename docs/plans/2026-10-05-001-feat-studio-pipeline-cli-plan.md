@@ -294,7 +294,7 @@ flowchart TB
 
 ### U1. Session host and authoring store
 
-- [ ] **Goal:** Create the node-only shared host and durable local authoring store that CLI and future app commands call.
+- [x] **Goal:** Create the node-only shared host and durable local authoring store that CLI and future app commands call.
 - **Requirements:** R2, R4, R8, R18; U07, U08.
 - **Dependencies:** Existing `@panthea/assets` exports and `apps/simulation/src/lifecycle.ts::acquireLock` pattern.
 - **Files:**

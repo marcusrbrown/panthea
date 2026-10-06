@@ -199,3 +199,6 @@ tools/probes/*/scratch/
 # hundreds of megabytes. The report, run record, frames, proxy records, memory series and diagnostics beside them are evidence.
 tools/scenarios/m2-greek-cast/unattended/*/app-data/
 tools/scenarios/m2-greek-cast/unattended/**/*.sqlite*
+
+# Studio authoring store (local requests, jobs, ledgers, blobs); canon lives in the registry
+.studio/
