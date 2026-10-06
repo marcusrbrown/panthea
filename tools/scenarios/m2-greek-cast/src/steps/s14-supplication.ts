@@ -8,7 +8,12 @@
 //
 // The scripted part is the gods' choices; the mortals decide for themselves.
 
-import { type Petition, type PracticeThread, toEntityId } from "@panthea/world";
+import {
+  nextHop,
+  type Petition,
+  type PracticeThread,
+  toEntityId,
+} from "@panthea/world";
 import { GODS, type God } from "../provider";
 import type { Recorder, Story } from "./context";
 import {
@@ -21,7 +26,7 @@ import {
   threadsOf,
   walkTo,
 } from "./practice";
-import { check, stateOf, waitFor } from "./support";
+import { check, postFixture, stateOf, waitFor } from "./support";
 
 const id = toEntityId;
 
@@ -171,6 +176,64 @@ async function offerTerms(
   return accepted;
 }
 
+/**
+ * Stages a prayer's cause, as S4 stages a burning tavern, instead of leaning on
+ * whatever the town happens to go short of: `owner` is walked to its own
+ * `building` by fixture moves, Zeus goes there and damages it (power 1, below
+ * the ignition threshold, so nothing burns), and the owner notices the loss
+ * standing there.
+ * A mortal that has noticed a loss prays about it, to the god it weighs most.
+ */
+async function stageLoss(
+  story: Story,
+  owner: string,
+  buildingId: string,
+): Promise<void> {
+  const building = (await stateOf(story)).buildings.get(id(buildingId));
+  check(
+    building !== undefined && building.owner === id(owner),
+    `${owner} owns ${buildingId}`,
+    String(building?.owner),
+  );
+  for (let hop = 0; hop < 12; hop += 1) {
+    const state = await stateOf(story);
+    const mortal = state.actors.get(id(owner));
+    check(mortal?.alive === true, `${owner} is alive`, "gone");
+    if (mortal.locationId === building.locationId) break;
+    const next = nextHop(
+      state,
+      mortal.locationId,
+      building.locationId,
+      mortal.capabilities,
+    );
+    check(next !== undefined, `${owner} can walk to ${buildingId}`, "no route");
+    await postFixture(
+      story,
+      owner,
+      { kind: "move", to: next },
+      `${owner} walks toward ${buildingId}`,
+    );
+  }
+  // A god names only what it could see: Zeus goes to the building first.
+  await walkTo(story, "zeus", building.locationId);
+  await godMoves(
+    story,
+    "zeus",
+    JSON.stringify({ action: "strike", target: buildingId, power: 1 }),
+    `zeus damages ${buildingId}`,
+  );
+  await waitFor(
+    `${owner} notices the damage to ${buildingId}`,
+    () =>
+      eventsOfKind(
+        story,
+        "loss-noticed",
+        (e) => e.entityId === owner && e.building === buildingId,
+      )[0],
+    { timeoutMs: 20_000, intervalMs: 100 },
+  );
+}
+
 export async function stepSupplication(
   recorder: Recorder,
   story: Story,
@@ -184,6 +247,11 @@ export async function stepSupplication(
       // the step answers the prayers made to them. The term to be broken is a promise of nearly
       // all that its mortal could hold by the deadline of what it gathers, which no wealth in
       // the town changes; the term to be kept is one unit of what its mortal gathers.
+      //
+      // The town goes short rarely now, so the step makes its own causes: the woodcutter and the
+      // farmer, whose patrons are Zeus and Hera, each lose a building and pray about it.
+      await stageLoss(story, "woodcutter", "woodshed");
+      await stageLoss(story, "farmer", "agora-shop");
       const { first, second } = await waitFor(
         "two prayers wait for an answer from two mortals who each gather something",
         async () => {
@@ -210,9 +278,12 @@ export async function stepSupplication(
             .sort((a, b) => b.tick - a.tick);
           const gathers = (mortal: string) =>
             state.actors.get(id(mortal))?.gathers;
-          const breaker = prayers.find(
-            (p) => gathers(p.petitioner) !== undefined,
-          );
+          // A food producer does nothing but gather now that it sells only to whoever asks, so a
+          // promise of what it could gather in the time is one it keeps: the one who breaks is not one.
+          const breaker = prayers.find((p) => {
+            const resource = gathers(p.petitioner);
+            return resource !== undefined && resource !== "food";
+          });
           // Mortals pray to their patrons, so Zeus and Hera hear only their own few, some of them poor: the
           // keeper is asked for a unit of what it gathers, not a coin: a poor mortal spends its coins eating and
           // buying between the god's turn and its own, and a gatherer always has the unit by the deadline. It must
@@ -245,7 +316,7 @@ export async function stepSupplication(
         story,
         first,
         1,
-        40,
+        90,
         undefined,
         keptGood,
       );

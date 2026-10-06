@@ -326,6 +326,18 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
     prng = result.prng;
     log.push(...result.events);
   }
+  // Mortals go short rarely now, so the routines alone no longer crowd a god's prayers: the day ends with a crowd of
+  // prayers to Zeus, staged as the world would have committed them.
+  const crowd = new Run();
+  crowd.state = state;
+  const petitioners = [...state.actors.values()]
+    .filter((actor) => !actor.isDeity && actor.drives)
+    .map((actor) => String(actor.id));
+  for (let i = 0; i < 30; i += 1) {
+    crowd.prays(petitioners[i % petitioners.length] as string);
+  }
+  state = crowd.state;
+  log.push(...crowd.events);
   const worst = { chars: 0, god: "" };
   let crowded = 0;
   for (const profile of allGodProfiles) {

@@ -106,6 +106,7 @@
       "priceCeiling": 100,
       "gatherAmount": 2,
       "consumeAmount": 1,
+      "mealIntervalTicks": 20,
       "value_currency": 1,
       "value_wood": 1,
       "value_food": 3,

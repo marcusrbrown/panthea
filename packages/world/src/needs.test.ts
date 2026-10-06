@@ -210,6 +210,55 @@ test("a mortal with everything it needs has no unmet need; a dead mortal records
   ).toEqual([]);
 });
 
+test("a hungry mortal buys from a stocked producer at its place and records no need; with the producer gone, the shortfall is recorded", () => {
+  const base = pack();
+  const together: ContentPack = {
+    ...base,
+    inhabitants: base.inhabitants.map((inhabitant) =>
+      // The woodcutter has eaten its food and stands with the farmer, a food producer holding some.
+      inhabitant.id === "woodcutter"
+        ? {
+            ...inhabitant,
+            locationId: "square",
+            startingInventory: [{ resource: "currency", amount: 5 }],
+          }
+        : inhabitant.id === "farmer"
+          ? {
+              ...inhabitant,
+              startingInventory: [
+                { resource: "currency", amount: 10 },
+                { resource: "planks", amount: 1 },
+                { resource: "food", amount: 4 },
+              ],
+            }
+          : inhabitant,
+    ),
+  };
+  const foodNeeds = (state: WorldState) =>
+    needsOf(runTick(state, createPrng(1), []).events).filter(
+      (e) =>
+        (e as { entityId: string; resource: string }).entityId ===
+          "woodcutter" && (e as { resource: string }).resource === "food",
+    );
+
+  expect(foodNeeds(createInitialWorldState(together))).toEqual([]);
+
+  // The farmer is gone: nobody sells, and the woodcutter's hunger is a recorded need.
+  const alone = createInitialWorldState(together);
+  const farmer = getActor(alone, id("farmer"));
+  if (!farmer) throw new Error("farmer");
+  const stranded: WorldState = {
+    ...alone,
+    actors: new Map(alone.actors).set(id("farmer"), {
+      ...farmer,
+      alive: false,
+    }),
+  };
+  expect(foodNeeds(stranded)).toMatchObject([
+    { entityId: "woodcutter", resource: "food", reason: "no-seller" },
+  ]);
+});
+
 test("recording a need takes no action slot: the farmer's routine still acts that tick", () => {
   const world = new World();
   const proposal = decideRoutineProposal(world.state, id("farmer"));
