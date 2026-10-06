@@ -65,7 +65,7 @@ M05 requires conflict with valid resolution paths. W04 requires remembered outco
 ## Requirements
 
 **Patrons and domains**
-- R1. Every inhabitant has one patron god. Its authored devotion sets the patron. Where none is authored, its livelihood does: fishers to Poseidon, the smith to Hephaestus, traders to Hermes, and so on. The patron is visible in the inhabitant's state and in the gods' prompts.
+- R1. Every inhabitant has one patron god, set by its authored devotion. Every inhabitant has an authored devotion. The patron is visible in the inhabitant's state and in the gods' prompts.
 - R2. Every god has a domain: a closed list of troubles, such as storms at sea for Poseidon or broken tools for Hephaestus. A mortal prays about a trouble to the god of its domain. Domains are sourced from Greek myth and cite their sources.
 - R3. A god learns of harm to its worshipper when the worshipper prays to it about the harm. When another god caused the harm, as with a strike or a curse, the harm is a cause the patron may use to open a demand against that god (god-practices R2).
 
@@ -139,7 +139,7 @@ M05 requires conflict with valid resolution paths. W04 requires remembered outco
 - **Wrongs between mortals are the main engine; seasons, domain troubles, and the director support them.** Harm to a worshipper and defections both set gods against each other.
 - **Wrongs go to the victim's patron; troubles go to the domain god.** A wrong between two gods' people gives the victim's patron a choice. A punishment harms another god's worshipper, and the harmed wrongdoer's prayer, naming the god that punished it, is how its patron learns of the harm. No new perception rule is needed. Whether gods choose to punish is what the gate shows.
 - **The god prayed to pays for neglect.** An unanswered prayer lowers affinity for the god it was addressed to, as the world does today.
-- **Authored patrons, not emergent patronage.** An inhabitant's authored devotion is its patron, and livelihood fills in where none is authored. Variety within a livelihood means more wrongs between different gods' people. Defection still lets patronage shift, but only toward a god that answered.
+- **Authored patrons, not emergent patronage.** An inhabitant's authored devotion is its patron, and every inhabitant has one, so no fallback exists. Variety within a livelihood means more wrongs between different gods' people. Defection still lets patronage shift, but only toward a god that answered.
 - **Temperament and need together.** Temperament makes wrongs read as character. Need ties them to the economy without making a fed town a peaceful one.
 - **Every neglect cost applies: defection, revenge, and lost standing.** Ignoring a prayer must cost more than answering it. Damping (R12) bounds the revenge.
 - **A defection opens a contest.** It is a new cause for the existing practice, not a new practice, and it needs no standing rivalry: losing a worshipper is the grievance.
@@ -161,7 +161,6 @@ M05 requires conflict with valid resolution paths. W04 requires remembered outco
 
 ### Deferred to Planning
 
-- [Affects R1][Technical] The livelihood-to-patron table, for inhabitants with no authored devotion in `content/greek/world/inhabitants.json`.
 - [Affects R2][Needs research] Each god's domain list of troubles, with sources.
 - [Affects R2, R14][Needs research] Hades's domain trouble must not need mortals to die. Playable death is later scope, and the world has no deaths yet.
 - [Affects R5][Technical] The temperaments, and the odds each gives per wrong, as D23 tunables.
