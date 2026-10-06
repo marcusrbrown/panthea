@@ -434,6 +434,13 @@ export async function stepSupplication(
       // few before the offer lands): the world accepts the term, and the mortal, who spends its
       // ticks eating, selling, and walking to the altar, cannot hold that much by the deadline.
       const gatherAmount = before.rules.economyBalance.gatherAmount ?? 1;
+      // The god first walks to where the mortal stands, so the blessing is a hop away when the terms are taken and the
+      // thirty-tick deadline is the mortal's to keep or break, not the god's walk across the map to race.
+      const mortalAt = before.actors.get(id(mortal))?.locationId;
+      check(mortalAt !== undefined, `${mortal} is somewhere`, "gone");
+      if (mortalAt !== undefined) {
+        await walkTo(story, second.god as God, String(mortalAt));
+      }
       const promised =
         (before.actors.get(id(mortal))?.inventory.get(gathered ?? "") ?? 0) +
         gatherAmount * (30 - 6);

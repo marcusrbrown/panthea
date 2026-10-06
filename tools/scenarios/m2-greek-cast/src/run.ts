@@ -44,7 +44,12 @@ import {
   type ControlResult,
   type ProcessControlResult,
 } from "./report";
-import { CONTROL_NAMES, type ControlName, runStory } from "./story";
+import {
+  CONTROL_NAMES,
+  CONTROL_STEP,
+  type ControlName,
+  runStory,
+} from "./story";
 
 const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
   chain:
@@ -55,10 +60,19 @@ const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
     "The harness follows the farmer's fixture move instead of the tavern's destruction, an event no strike caused, so the chain has no model request.",
   "petition-privacy":
     "The harness injects a petition addressed to Hera into the last prompt Zeus was shown, as if the divine sense leaked to the other god.",
+  "strike-chain":
+    "The victim's patron only waits when its prayer asks it to punish the wrongdoer, so the wrongdoer is never struck and no harm reaches its own patron.",
+  "refusal-revenge":
+    "The victim's patron answers the prayer by striking the wrongdoer instead of refusing it, so the victim has no unanswered prayer and takes no revenge.",
+  "no-answerer":
+    "The god of the trouble's domain never answers the mortal's prayer, so no god but its patron has answered it, and the mortal keeps its patron however many prayers are refused.",
+  "director-off":
+    "The staged world is made with the director's interval left at the quiet default, so it never fires.",
 };
 
-/** Runs the story again in a child process with a control enabled, and reports how it ended. */
+/** Runs a control in a child process: the story up to the step it breaks, or only its own staged step. */
 async function runControl(name: ControlName): Promise<ProcessControlResult> {
+  const started = Date.now();
   const child = Bun.spawn(
     [
       "bun",
@@ -83,6 +97,11 @@ async function runControl(name: ControlName): Promise<ProcessControlResult> {
     sabotage: CONTROL_SABOTAGE[name],
     exitCode,
     failure,
+    seconds: (Date.now() - started) / 1000,
+    scope:
+      CONTROL_STEP[name] === undefined
+        ? "It reruns the story in a child process, which stops at the step the control breaks."
+        : `It runs only ${CONTROL_STEP[name]}, which starts a world of its own, so it costs that step and none of the story before it.`,
   };
 }
 
@@ -188,15 +207,16 @@ async function main(): Promise<void> {
       await runRealRun(args);
       return;
     }
-    const { steps, binaryBytes, practiceControls } = await runStory(
-      args,
-      (step) => {
+    const { steps, binaryBytes, practiceControls, worldControls } =
+      await runStory(args, (step) => {
         console.log(
           `PASS ${step.id} ${step.title} (${(step.elapsedMs / 1000).toFixed(1)} s): ${step.result}`,
         );
-      },
-    );
-    for (const { control, failure } of practiceControls) {
+      });
+    for (const { control, failure } of [
+      ...practiceControls,
+      ...worldControls,
+    ]) {
       console.log(`control ${control} (in-process): ${failure}`);
     }
     console.log(
@@ -239,6 +259,14 @@ async function main(): Promise<void> {
             via: "in-process",
             name: control,
             sabotage: SABOTAGE[control],
+            failure,
+          }),
+        ),
+        ...worldControls.map(
+          ({ control, sabotage, failure }): ControlResult => ({
+            via: "in-process",
+            name: control,
+            sabotage,
             failure,
           }),
         ),

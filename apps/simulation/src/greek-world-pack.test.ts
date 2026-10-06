@@ -192,3 +192,43 @@ test("PANTHEA_PETITION_BALANCE overrides petition tunables over the authored one
     expect(result.ok).toBe(false);
   }
 });
+
+test("PANTHEA_TEMPERAMENT_ODDS replaces the temperament odds table (a scenario's staged world sees a wrong within a few ticks), and anything invalid is refused", () => {
+  const authored = loadEmbeddedGreekWorldPack({});
+  if (!authored.ok) throw new Error(authored.message);
+  expect(Object.keys(authored.value.rules.temperamentOdds ?? {}).length).toBe(
+    4,
+  );
+  const staged = loadEmbeddedGreekWorldPack({
+    PANTHEA_TEMPERAMENT_ODDS: JSON.stringify({ greedy: { theft: 1000 } }),
+  });
+  if (!staged.ok) throw new Error(staged.message);
+  // Replaced, not merged: the other temperaments have no odds at all.
+  expect(staged.value.rules.temperamentOdds).toEqual({
+    greedy: { theft: 1000 },
+  });
+  // An empty table is a world where no mortal wrongs another, and the other tunables are untouched by it.
+  const none = loadEmbeddedGreekWorldPack({ PANTHEA_TEMPERAMENT_ODDS: "{}" });
+  expect(none.ok && none.value.rules.temperamentOdds).toEqual({});
+  expect(none.ok && none.value.rules.petitionBalance).toEqual(
+    authored.value.rules.petitionBalance,
+  );
+  // Without it, or empty, the authored table stands.
+  const unset = loadEmbeddedGreekWorldPack({ PANTHEA_TEMPERAMENT_ODDS: "" });
+  expect(unset.ok && unset.value.rules.temperamentOdds).toEqual(
+    authored.value.rules.temperamentOdds,
+  );
+  // An unknown temperament or kind, odds out of range, and text that is not JSON are refused.
+  for (const bad of [
+    '{"cunning": {"theft": 5}}',
+    '{"greedy": {"arson": 5}}',
+    '{"greedy": {"theft": 1001}}',
+    '{"greedy": {"theft": -1}}',
+    "not json",
+    "[1]",
+  ]) {
+    expect(
+      loadEmbeddedGreekWorldPack({ PANTHEA_TEMPERAMENT_ODDS: bad }).ok,
+    ).toBe(false);
+  }
+});

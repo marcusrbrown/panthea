@@ -1,7 +1,13 @@
 // Command-line flags of the M2 scenario runner.
 
 import { isLocalUrl, parseRoutingConfig } from "@panthea/agents/config";
-import { CONTROL_NAMES, type ControlName, type StoryOptions } from "./story";
+import {
+  CONTROL_NAMES,
+  type ControlName,
+  STAGED_STEPS,
+  type StagedStep,
+  type StoryOptions,
+} from "./story";
 
 /**
  * The model the real run and the experience gate use unless told otherwise:
@@ -44,6 +50,7 @@ function positiveInt(flag: string, text: string): number {
 
 export function parseArgs(argv: readonly string[]): Args {
   let control: ControlName | undefined;
+  let steps: StagedStep[] | undefined;
   let skipBuild = false;
   let real = false;
   let writeReadme = false;
@@ -90,6 +97,18 @@ export function parseArgs(argv: readonly string[]): Args {
     } else if (arg.startsWith("--key-ref=")) {
       keyRef = arg.slice(10);
       if (keyRef === "") throw new Error("--key-ref needs a key reference");
+    } else if (arg.startsWith("--steps=")) {
+      steps = arg
+        .slice(8)
+        .split(",")
+        .map((id) => {
+          if (!(STAGED_STEPS as readonly string[]).includes(id)) {
+            throw new Error(
+              `--steps names only staged steps that start a world of their own (${STAGED_STEPS.join(", ")}), got ${id}`,
+            );
+          }
+          return id as StagedStep;
+        });
     } else if (arg.startsWith("--positive-control=")) {
       const name = arg.slice("--positive-control=".length);
       if (!(CONTROL_NAMES as readonly string[]).includes(name)) {
@@ -130,6 +149,7 @@ export function parseArgs(argv: readonly string[]): Args {
   }
   return {
     ...(control ? { control } : {}),
+    ...(steps ? { steps } : {}),
     skipBuild,
     real,
     seconds,
