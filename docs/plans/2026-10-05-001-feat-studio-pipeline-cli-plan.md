@@ -351,7 +351,7 @@ flowchart TB
 
 ### U3. Candidate ingestion, conformance and working sets
 
-- [ ] **Goal:** Turn successful image outputs into candidate working sets with deterministic conformance reports, visual diffs and sorted review data.
+- [x] **Goal:** Turn successful image outputs into candidate working sets with deterministic conformance reports, visual diffs and sorted review data.
 - **Requirements:** R2, R9, R11, R20; F1; U06, X02.
 - **Dependencies:** U1, U2 and existing `packages/assets/src/conformance.ts`.
 - **Files:**
@@ -373,6 +373,7 @@ flowchart TB
   - Failure path: low-confidence scale produces a needs-scale response rather than a guessed candidate.
   - Integration: editing a request replaces non-picked sheet entries while selected drafts remain addressable.
 - **Verification:** Candidate review data is deterministic from durable inputs, and every candidate can be traced back to a succeeded job output hash.
+- **Evidence (fixtures only):** candidates keep the original raw PNG and its hash plus decoded-byte evidence, the exact effective params and family palette, reports, and a `needs-scale` status when scale is unsure. Picks are snapshots that survive reroll, sheet replacement and re-conform; a portrait is `complete` once all six slots are picked, and sprites stay `open` until U4 authored frames. Source: `candidates.ts`, `reports.ts`, `working-set.ts`; tests: `candidates.test.ts`, `reports.test.ts`. Full workspace check passed (3087 pass, 1 skip, 0 fail, 188 files; all exits 0; the 25-file source hash snapshot matches); scoped assets 365 pass. Parameter values in tests are provisional, not owner defaults; no real generation, art quality or canon is assessed. U4–U7 and parent Unit 5 remain incomplete.
 
 ### U4. External edit workspace and import seam
 

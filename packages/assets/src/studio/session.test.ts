@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -11,8 +12,11 @@ import {
 import { join, relative } from "node:path";
 import { sha256Hex } from "../hash";
 import {
+  doneCandidate,
   jobSource,
+  keyframe,
   loadContent,
+  needsScaleCandidate,
   queuedJob,
   reapChildren,
   removeTempRoots,
@@ -21,6 +25,7 @@ import {
   spawnHolder,
   succeededJob,
   tempRoot,
+  workingSet,
 } from "./_test-fixtures";
 import * as studio from "./index";
 import { openStudioSession, readStudioStatus } from "./index";
@@ -471,16 +476,8 @@ describe("a closed session's store", () => {
           s.putRequest({ schemaVersion: 1, id: "r1", request, nextOrdinal: 0 }),
       ],
       ["putJob", (s) => s.putJob(failed)],
-      [
-        "putWorkspace",
-        (s) =>
-          s.putWorkspace({
-            schemaVersion: 1,
-            id: "w1",
-            requestId: "r1",
-            status: "open",
-          }),
-      ],
+      ["putCandidate", (s) => s.putCandidate(doneCandidate("stale-job"))],
+      ["putWorkingSet", (s) => s.putWorkingSet(workingSet("stale-set"))],
       [
         "putCommand",
         (s) =>
@@ -494,6 +491,15 @@ describe("a closed session's store", () => {
       ],
       ["putBlob", (s) => s.putBlob(new Uint8Array([9]))],
     ];
+
+    const covered = attempts.map(([name]) => name).sort();
+    const exposed = Object.keys(stale.store)
+      .filter((key) => key.startsWith("put"))
+      .sort();
+    expect(
+      covered,
+      "every put* on the guarded store has a closed-session attempt",
+    ).toEqual(exposed);
 
     for (const [name, attempt] of attempts) {
       expect(() => attempt(stale.store), name).toThrow(/closed/);
@@ -548,8 +554,12 @@ describe("public surface", () => {
       "openStudioSession",
       "planJobs",
       "readStudioStatus",
+      "reportOnly",
+      "sheet",
       "slotKey",
+      "sortSheet",
       "studioPaths",
+      "summarizeSheet",
     ]);
   });
 });
@@ -625,12 +635,9 @@ describe("request submission", () => {
     const root = tempRoot();
     const first = openOrFail(root);
     first.submitRequest(faces("zeus-faces", 5000));
-    first.store.putWorkspace({
-      schemaVersion: 1,
-      id: "picked",
-      requestId: "zeus-faces",
-      status: "open",
-    });
+    first.store.putWorkingSet(
+      workingSet("picked", { sheetRequestId: "zeus-faces" }),
+    );
     const before = sources(root);
     first.close();
 
@@ -642,7 +649,7 @@ describe("request submission", () => {
       request: { seed: 5000 },
     });
     const workspaceBytes = readFileSync(
-      join(root, "workspaces", "picked.json"),
+      join(root, "working-sets", "picked.json"),
       "utf8",
     );
 
@@ -658,9 +665,9 @@ describe("request submission", () => {
     for (const { source, job } of rerolled)
       expect(job.request.seed).toBe(5000 + source.ordinal);
     expect(status.requests[0]?.nextOrdinal).toBe(36);
-    expect(readFileSync(join(root, "workspaces", "picked.json"), "utf8")).toBe(
-      workspaceBytes,
-    );
+    expect(
+      readFileSync(join(root, "working-sets", "picked.json"), "utf8"),
+    ).toBe(workspaceBytes);
     second.close();
   });
 
@@ -892,6 +899,427 @@ describe("job transitions", () => {
     ])
       expect(result).toMatchObject({ ok: false, reason: "closed" });
     expect(stale.queued()).toMatchObject({ ok: false, reason: "closed" });
+
+    expect(snapshot(root)).toEqual(before);
+    owner.close();
+  });
+});
+
+describe("working sets", () => {
+  const content = loadContent();
+  const refuseDraw = () => {
+    throw new Error("the seed supplier must not be called");
+  };
+  const request = (
+    id: string,
+    kind: "sprite" | "portrait",
+    slots: { state?: string; direction?: string; expression?: string }[],
+    subject = "zeus",
+  ) => {
+    const built = newRequestRecord(
+      content,
+      { id, subject, kind, slots, batch: 1, seed: 1 },
+      refuseDraw,
+    );
+    if (!built.ok) throw new Error(JSON.stringify(built.error));
+    return built.value.record;
+  };
+  const expressions = content.vocabulary.expressions.map((expression) => ({
+    expression,
+  }));
+  const spriteSlots = [
+    { state: "idle", direction: "south" },
+    { state: "idle", direction: "north" },
+  ];
+  const setOf = (root: string, id: string) =>
+    readStudioStatus(root).workingSets.find((w) => w.id === id);
+  const bytesOf = (root: string, id: string) =>
+    readFileSync(join(root, "working-sets", `${id}.json`), "utf8");
+  const pickLedger = (root: string) =>
+    readStudioStatus(root)
+      .commands.filter((c) => c.type === "pick")
+      .map((c) => c.jobId);
+
+  function portraitSession(root: string) {
+    const session = openOrFail(root);
+    session.submitRequest(request("faces-a", "portrait", expressions));
+    expect(session.openWorkingSet("zeus-faces", "faces-a", content)).toEqual({
+      ok: true,
+    });
+    return session;
+  }
+  const faceCandidate = (
+    id: string,
+    expression: string,
+    requestId = "faces-a",
+    extra = {},
+  ) =>
+    doneCandidate(id, {
+      requestId,
+      slotKey: expression,
+      kind: "portrait",
+      ...extra,
+    });
+
+  test("opening a portrait set requires every vocabulary expression; a sprite set requires the request's slots", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.submitRequest(request("walk-a", "sprite", spriteSlots));
+
+    expect(session.openWorkingSet("zeus-idle", "walk-a", content)).toEqual({
+      ok: true,
+    });
+
+    expect(setOf(root, "zeus-faces")).toEqual({
+      schemaVersion: 1,
+      id: "zeus-faces",
+      subject: "zeus",
+      kind: "portrait",
+      sheetRequestId: "faces-a",
+      required: [...content.vocabulary.expressions],
+      picks: {},
+      status: "open",
+    });
+    expect(setOf(root, "zeus-idle")).toMatchObject({
+      kind: "sprite",
+      required: ["idle/south", "idle/north"],
+      sheetRequestId: "walk-a",
+    });
+    session.close();
+  });
+
+  test("a duplicate id, a bad id and an unknown request are refused without writing", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    const before = bytesOf(root, "zeus-faces");
+
+    expect(
+      session.openWorkingSet("zeus-faces", "faces-a", content),
+    ).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(
+      session.openWorkingSet("Not A Slug", "faces-a", content),
+    ).toMatchObject({ ok: false, reason: "invalid-params" });
+    expect(
+      session.openWorkingSet("../escape", "faces-a", content),
+    ).toMatchObject({ ok: false, reason: "invalid-params" });
+    expect(session.openWorkingSet("zeus-more", "nope", content)).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+
+    expect(bytesOf(root, "zeus-faces")).toBe(before);
+    expect(readdirSync(join(root, "working-sets"))).toEqual([
+      "zeus-faces.json",
+    ]);
+    session.close();
+  });
+
+  test("a portrait set is complete only when all six expressions are picked, each pick ledgered with the candidate id", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    const names = content.vocabulary.expressions;
+    names.forEach((expression, index) => {
+      session.store.putCandidate(faceCandidate(`face-${index}`, expression));
+    });
+
+    names.forEach((_, index) => {
+      expect(session.pick("zeus-faces", `face-${index}`)).toEqual({ ok: true });
+      expect(setOf(root, "zeus-faces")?.status).toBe(
+        index === names.length - 1 ? "complete" : "open",
+      );
+    });
+
+    expect(names).toHaveLength(6);
+    expect(pickLedger(root)).toEqual(names.map((_, i) => `face-${i}`));
+    expect(Object.keys(setOf(root, "zeus-faces")?.picks ?? {})).toEqual([
+      ...names,
+    ]);
+    session.close();
+  });
+
+  test("a sprite set stays open however many slots are picked", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.submitRequest(request("walk-a", "sprite", spriteSlots));
+    session.openWorkingSet("zeus-idle", "walk-a", content);
+    session.store.putCandidate(
+      doneCandidate("walk-1", { requestId: "walk-a", slotKey: "idle/south" }),
+    );
+    session.store.putCandidate(
+      doneCandidate("walk-2", {
+        requestId: "walk-a",
+        slotKey: "idle/north",
+        ordinal: 1,
+      }),
+    );
+
+    expect(session.pick("zeus-idle", "walk-2")).toEqual({ ok: true });
+    expect(session.pick("zeus-idle", "walk-1")).toEqual({ ok: true });
+
+    expect(Object.keys(JSON.parse(bytesOf(root, "zeus-idle")).picks)).toEqual([
+      "idle/south",
+      "idle/north",
+    ]);
+    expect(setOf(root, "zeus-idle")?.status).toBe("open");
+    session.close();
+  });
+
+  test("a failing report may be picked; every other refusal leaves the set and the ledger unchanged", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.submitRequest(request("walk-a", "sprite", spriteSlots));
+    session.submitRequest(request("faces-b", "portrait", expressions));
+    session.store.putCandidate(
+      faceCandidate("failing", "neutral", "faces-a", { pass: false }),
+    );
+    expect(session.pick("zeus-faces", "failing")).toEqual({ ok: true });
+    const picked = bytesOf(root, "zeus-faces");
+    const ledgerBefore = pickLedger(root);
+
+    const stuck = needsScaleCandidate("stuck", {
+      requestId: "faces-a",
+      slotKey: "pleased",
+      kind: "portrait",
+    });
+    const refusals: [string, string, string][] = [
+      ["no such set", "nope", "failing"],
+      ["no such candidate", "zeus-faces", "ghost"],
+      ["a bad candidate id", "zeus-faces", "../x"],
+      ["a candidate that needs a scale", "zeus-faces", "stuck"],
+      ["a sprite candidate for a portrait set", "zeus-faces", "sprite-c"],
+      ["another subject's candidate", "zeus-faces", "other-subject"],
+      ["a candidate of another sheet", "zeus-faces", "old-sheet"],
+      [
+        "a candidate for a slot the set does not need",
+        "zeus-faces",
+        "stray-slot",
+      ],
+    ];
+    session.store.putCandidate(stuck);
+    session.store.putCandidate(
+      doneCandidate("sprite-c", {
+        requestId: "faces-a",
+        slotKey: "pleased",
+        kind: "sprite",
+      }),
+    );
+    session.store.putCandidate(
+      faceCandidate("other-subject", "pleased", "faces-a", { subject: "hera" }),
+    );
+    session.store.putCandidate(
+      faceCandidate("old-sheet", "pleased", "faces-b"),
+    );
+    session.store.putCandidate(faceCandidate("stray-slot", "ecstatic"));
+
+    for (const [name, setId, candidateId] of refusals) {
+      expect(session.pick(setId, candidateId), name).toMatchObject({
+        ok: false,
+      });
+    }
+    expect(session.pick("nope", "failing")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(session.pick("zeus-faces", "ghost")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(session.pick("zeus-faces", "stuck")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    expect(session.pick("zeus-faces", "old-sheet")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+
+    expect(bytesOf(root, "zeus-faces")).toBe(picked);
+    expect(pickLedger(root)).toEqual(ledgerBefore);
+    session.close();
+  });
+
+  test("a pick is a snapshot: a re-conformed candidate leaves it unchanged until the slot is picked again", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.store.putCandidate(faceCandidate("neutral-1", "neutral"));
+    session.pick("zeus-faces", "neutral-1");
+    const picked = bytesOf(root, "zeus-faces");
+
+    session.store.putCandidate(
+      faceCandidate("neutral-1", "neutral", "faces-a", {
+        pass: false,
+        pixelsChanged: 9,
+      }),
+    );
+    expect(bytesOf(root, "zeus-faces")).toBe(picked);
+    expect(setOf(root, "zeus-faces")?.picks.neutral).toEqual(
+      keyframe(faceCandidate("neutral-1", "neutral")),
+    );
+
+    expect(session.pick("zeus-faces", "neutral-1")).toEqual({ ok: true });
+    expect(setOf(root, "zeus-faces")?.picks.neutral?.report.status).toBe(
+      "fail",
+    );
+    expect(Object.keys(setOf(root, "zeus-faces")?.picks ?? {})).toEqual([
+      "neutral",
+    ]);
+    session.close();
+  });
+
+  test("picks survive a reroll and a sheet replacement; only the current sheet's candidates can be picked", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.submitRequest(request("faces-b", "portrait", expressions));
+    session.store.putCandidate(faceCandidate("neutral-1", "neutral"));
+    session.pick("zeus-faces", "neutral-1");
+    const picked = setOf(root, "zeus-faces")?.picks;
+
+    expect(session.reroll("faces-a", 1)).toMatchObject({ ok: true });
+    expect(setOf(root, "zeus-faces")?.picks).toEqual(picked);
+
+    expect(session.replaceSheet("zeus-faces", "faces-b")).toEqual({ ok: true });
+    expect(setOf(root, "zeus-faces")).toMatchObject({
+      sheetRequestId: "faces-b",
+      status: "open",
+      picks: picked,
+    });
+
+    session.store.putCandidate(faceCandidate("old", "pleased", "faces-a"));
+    session.store.putCandidate(faceCandidate("new", "pleased", "faces-b"));
+    expect(session.pick("zeus-faces", "old")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    expect(session.pick("zeus-faces", "new")).toEqual({ ok: true });
+    expect(Object.keys(setOf(root, "zeus-faces")?.picks ?? {})).toEqual([
+      "neutral",
+      "pleased",
+    ]);
+    session.close();
+  });
+
+  test("a sheet can only be replaced by a request of the same kind and subject that exists", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.submitRequest(request("walk-a", "sprite", spriteSlots));
+    const before = bytesOf(root, "zeus-faces");
+
+    expect(session.replaceSheet("zeus-faces", "walk-a")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    expect(session.replaceSheet("zeus-faces", "nope")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(session.replaceSheet("nope", "faces-a")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+
+    expect(bytesOf(root, "zeus-faces")).toBe(before);
+    session.close();
+  });
+
+  test("a pick whose ledger entry cannot be written is refused and changes nothing", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.store.putCandidate(faceCandidate("neutral-1", "neutral"));
+    const before = bytesOf(root, "zeus-faces");
+    const next = readStudioStatus(root).commands.length + 1;
+    mkdirSync(join(root, "commands", `${String(next).padStart(8, "0")}.json`));
+
+    expect(session.pick("zeus-faces", "neutral-1")).toMatchObject({
+      ok: false,
+      reason: "write-failed",
+    });
+
+    expect(bytesOf(root, "zeus-faces")).toBe(before);
+    expect(setOf(root, "zeus-faces")?.picks).toEqual({});
+    session.close();
+  });
+
+  test("a pick whose working set cannot be written is refused and leaves the set as it was", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.store.putCandidate(faceCandidate("neutral-1", "neutral"));
+    const before = bytesOf(root, "zeus-faces");
+    chmodSync(join(root, "working-sets"), 0o500);
+    try {
+      expect(session.pick("zeus-faces", "neutral-1")).toMatchObject({
+        ok: false,
+        reason: "write-failed",
+      });
+    } finally {
+      chmodSync(join(root, "working-sets"), 0o700);
+    }
+
+    expect(bytesOf(root, "zeus-faces")).toBe(before);
+    expect(setOf(root, "zeus-faces")?.picks).toEqual({});
+    session.close();
+  });
+
+  test("a closed session refuses every working-set operation and leaves a new owner's store untouched", () => {
+    const root = tempRoot();
+    const stale = openOrFail(root);
+    stale.close();
+    const owner = portraitSession(root);
+    owner.store.putCandidate(faceCandidate("neutral-1", "neutral"));
+    owner.submitRequest(request("faces-b", "portrait", expressions));
+    const before = snapshot(root);
+
+    expect(stale.openWorkingSet("x", "faces-a", content)).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(stale.replaceSheet("zeus-faces", "faces-b")).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(stale.pick("zeus-faces", "neutral-1")).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(
+      stale.conform("job", content, {
+        background: { type: "alpha" },
+        alphaCutoff: 128,
+        grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
+      }),
+    ).toMatchObject({ ok: false, reason: "closed" });
+
+    expect(snapshot(root)).toEqual(before);
+    owner.close();
+  });
+
+  test("method references taken before the close refuse afterwards too", () => {
+    const root = tempRoot();
+    const stale = openOrFail(root);
+    const { conform, openWorkingSet, replaceSheet, pick } = stale;
+    stale.close();
+    const owner = portraitSession(root);
+    owner.store.putCandidate(faceCandidate("neutral-1", "neutral"));
+    const before = snapshot(root);
+
+    expect(openWorkingSet("x", "faces-a", content)).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(replaceSheet("zeus-faces", "faces-a")).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(pick("zeus-faces", "neutral-1")).toMatchObject({
+      ok: false,
+      reason: "closed",
+    });
+    expect(
+      conform("job", content, {
+        background: { type: "alpha" },
+        alphaCutoff: 128,
+        grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
+      }),
+    ).toMatchObject({ ok: false, reason: "closed" });
 
     expect(snapshot(root)).toEqual(before);
     owner.close();

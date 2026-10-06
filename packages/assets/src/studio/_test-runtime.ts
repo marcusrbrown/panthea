@@ -39,6 +39,8 @@ export interface Behavior {
   ignoreTerm?: boolean;
   grandchild?: boolean;
   jobDelayMs?: number;
+  /** A PNG file served as the image of every "ok" job instead of the generated pattern. */
+  image?: string;
   /** Mode per img_gen submission, counted across processes; the last repeats. */
   sequence?: Mode[];
 }
@@ -88,6 +90,17 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out;
 }
 
+/** The PNG with a tRNS chunk after its header, which the studio decoder refuses as unsupported. */
+export function withTransparencyChunk(png: Uint8Array): Uint8Array {
+  const trns = chunk("tRNS", new Uint8Array(6));
+  const at = 8 + 12 + 13;
+  const out = new Uint8Array(png.length + trns.length);
+  out.set(png.subarray(0, at));
+  out.set(trns, at);
+  out.set(png.subarray(at), at + trns.length);
+  return out;
+}
+
 /** A valid 8-bit grayscale PNG, which the studio decoder refuses as unsupported. */
 export function grayscalePng(width: number, height: number): Uint8Array {
   const ihdr = new Uint8Array(13);
@@ -114,9 +127,17 @@ export function grayscalePng(width: number, height: number): Uint8Array {
 
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
-function completed(mode: Mode, width: number, height: number): Response {
+function completed(
+  mode: Mode,
+  width: number,
+  height: number,
+  imagePath: string | undefined,
+): Response {
   const image = (bytes: Uint8Array) => ({ b64_json: b64(bytes) });
-  const ok = testImage(width, height).png;
+  const ok =
+    imagePath === undefined
+      ? testImage(width, height).png
+      : new Uint8Array(readFileSync(imagePath));
   const images: Record<string, unknown[]> = {
     ok: [image(ok)],
     "no-images": [],
@@ -228,7 +249,12 @@ function main(): void {
           if (job.mode === "bad-status")
             return Response.json({ status: "weird" });
           const submitted = readLogBody(logPath, job.n);
-          return completed(job.mode, submitted.width, submitted.height);
+          return completed(
+            job.mode,
+            submitted.width,
+            submitted.height,
+            behavior().image,
+          );
         }
         return new Response("not found", { status: 404 });
       },

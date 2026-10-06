@@ -1,4 +1,20 @@
+export type {
+  CandidateParams,
+  CandidateRecord,
+  CandidateResult,
+  CandidateTarget,
+  ConformParams,
+} from "./candidates";
 export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
+export {
+  reportOnly,
+  type SheetSlot,
+  type SheetSummary,
+  type SheetView,
+  sheet,
+  sortSheet,
+  summarizeSheet,
+} from "./reports";
 export {
   type AdapterInput,
   adapterInput,
@@ -30,6 +46,8 @@ export {
 export {
   type CommandFailure,
   type CommandResult,
+  type ConformFailure,
+  type ConformResult,
   type ExpandFailure,
   type ExpandResult,
   openStudioSession,
@@ -51,8 +69,5 @@ export {
   type StoreProblem,
   type StudioStatus,
 } from "./store";
-export {
-  STUDIO_SCHEMA_VERSION,
-  studioPaths,
-  type WorkspaceRecord,
-} from "./workspace";
+export type { Keyframe, WorkingSetRecord } from "./working-set";
+export { STUDIO_SCHEMA_VERSION, studioPaths } from "./workspace";

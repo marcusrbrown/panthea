@@ -6,15 +6,23 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import type { GenerationJob, JobOutput } from "@panthea/contracts";
-import { planJobs } from "./request";
+import { parseSlug } from "@panthea/contracts";
+import {
+  type CandidateRecord,
+  type ConformParams,
+  conformCandidate,
+} from "./candidates";
+import { planJobs, type StudioContent } from "./request";
 import {
   type CommandType,
   type JobRecord,
   type JobSource,
   openStore,
+  type Read,
   type RequestRecord,
   type Store,
 } from "./store";
+import { newWorkingSet, pickKeyframe, replaceSheetOf } from "./working-set";
 import { STUDIO_SCHEMA_VERSION, studioPaths } from "./workspace";
 
 export interface StudioSession {
@@ -33,6 +41,20 @@ export interface StudioSession {
   succeed(jobId: string, outputs: readonly JobOutput[]): CommandResult;
   fail(jobId: string, error: string): CommandResult;
   unavailable(jobId: string, reason: string, staging: string): CommandResult;
+  /** Conforms a succeeded job's original image into a candidate; the original bytes are never rewritten. */
+  conform(
+    jobId: string,
+    content: StudioContent,
+    params: ConformParams,
+  ): ConformResult;
+  openWorkingSet(
+    id: string,
+    requestId: string,
+    content: StudioContent,
+  ): CommandResult;
+  replaceSheet(workingSetId: string, requestId: string): CommandResult;
+  /** Keeps a snapshot of a done candidate for its slot; ledgered. */
+  pick(workingSetId: string, candidateId: string): CommandResult;
   remove(jobId: string): CommandResult;
   /** Cancels a running job. The owner of the runtime kills its child. */
   abort(jobId: string): CommandResult;
@@ -45,7 +67,25 @@ export type CommandFailure =
   | "closed"
   | "not-found"
   | "wrong-state"
+  | "invalid-params"
   | "write-failed";
+
+export type ConformFailure =
+  | "closed"
+  | "not-found"
+  | "wrong-state"
+  | "write-failed"
+  | "invalid-params"
+  | "unsupported-png"
+  | "corrupt-png";
+
+export type ConformResult =
+  | { readonly ok: true; readonly candidate: CandidateRecord }
+  | {
+      readonly ok: false;
+      readonly reason: ConformFailure;
+      readonly message: string;
+    };
 export type CommandResult =
   | { readonly ok: true }
   | {
@@ -231,6 +271,45 @@ export function openStudioSession(root: string): StudioOpen {
       return { ok: true, jobIds: enqueued };
     };
 
+    const writeRecord = (write: () => void): CommandResult => {
+      try {
+        write();
+        return { ok: true };
+      } catch (error) {
+        return refused("write-failed", (error as Error).message);
+      }
+    };
+    const lookup = <T>(
+      kind: string,
+      id: string,
+      read: (id: string) => Read<T>,
+    ): { ok: true; record: T } | { ok: false; refusal: CommandResult } => {
+      if (!parseSlug(id, kind).ok)
+        return { ok: false, refusal: refused("not-found", `no ${kind} ${id}`) };
+      const found = read(id);
+      if (found.kind === "missing")
+        return { ok: false, refusal: refused("not-found", `no ${kind} ${id}`) };
+      if (found.kind === "invalid")
+        return {
+          ok: false,
+          refusal: refused(
+            "wrong-state",
+            `${kind} ${id} is invalid: ${found.message}`,
+          ),
+        };
+      return { ok: true, record: found.value };
+    };
+    const conformRefusal = (refusal: CommandResult): ConformResult =>
+      refusal.ok
+        ? refused("wrong-state", "unreachable")
+        : { ok: false, reason: refusal.reason, message: refusal.message };
+    const readRequestOrRefuse = (id: string) =>
+      lookup("request", id, store.readRequest);
+    const readSetOrRefuse = (id: string) =>
+      lookup("working set", id, store.readWorkingSet);
+    const readCandidateOrRefuse = (id: string) =>
+      lookup("candidate", id, store.readCandidate);
+
     const closedWrite = <A extends unknown[], R>(write: (...args: A) => R) => {
       return (...args: A): R => {
         if (closed) throw new Error(CLOSED);
@@ -242,7 +321,8 @@ export function openStudioSession(root: string): StudioOpen {
       putSession: closedWrite(store.putSession),
       putRequest: closedWrite(store.putRequest),
       putJob: closedWrite(store.putJob),
-      putWorkspace: closedWrite(store.putWorkspace),
+      putCandidate: closedWrite(store.putCandidate),
+      putWorkingSet: closedWrite(store.putWorkingSet),
       putCommand: closedWrite(store.putCommand),
       putBlob: closedWrite(store.putBlob),
     };
@@ -314,6 +394,73 @@ export function openStudioSession(root: string): StudioOpen {
             reason,
             staging,
           })),
+        conform(jobId, content, params) {
+          if (closed) return { ok: false, reason: "closed", message: CLOSED };
+          const job = lookup("job", jobId, store.readJob);
+          if (!job.ok) return conformRefusal(job.refusal);
+          const request = lookup(
+            "request",
+            job.record.source.requestId,
+            store.readRequest,
+          );
+          if (!request.ok) return conformRefusal(request.refusal);
+          const output =
+            job.record.job.status === "succeeded"
+              ? job.record.job.outputs[0]
+              : undefined;
+          const outcome = conformCandidate({
+            job: job.record,
+            request: request.record,
+            original: output && store.readBlob(output.hash),
+            content,
+            params,
+          });
+          if (!outcome.ok) return outcome;
+          try {
+            for (const blob of outcome.blobs) store.putBlob(blob);
+            store.putCandidate(outcome.candidate);
+          } catch (error) {
+            return refused("write-failed", (error as Error).message);
+          }
+          return { ok: true, candidate: outcome.candidate };
+        },
+        openWorkingSet(id, requestId, content) {
+          if (closed) return closedRefusal();
+          if (!parseSlug(id, "id").ok)
+            return refused(
+              "invalid-params",
+              "a working set id is a lowercase hyphenated name",
+            );
+          if (store.readWorkingSet(id).kind !== "missing")
+            return refused("wrong-state", `working set ${id} already exists`);
+          const request = readRequestOrRefuse(requestId);
+          if (!request.ok) return request.refusal;
+          const made = newWorkingSet(id, request.record, content);
+          if (!made.ok) return refused(made.reason, made.message);
+          return writeRecord(() => store.putWorkingSet(made.record));
+        },
+        replaceSheet(workingSetId, requestId) {
+          if (closed) return closedRefusal();
+          const set = readSetOrRefuse(workingSetId);
+          if (!set.ok) return set.refusal;
+          const request = readRequestOrRefuse(requestId);
+          if (!request.ok) return request.refusal;
+          const next = replaceSheetOf(set.record, request.record);
+          if (!next.ok) return refused(next.reason, next.message);
+          return writeRecord(() => store.putWorkingSet(next.record));
+        },
+        pick(workingSetId, candidateId) {
+          if (closed) return closedRefusal();
+          const set = readSetOrRefuse(workingSetId);
+          if (!set.ok) return set.refusal;
+          const candidate = readCandidateOrRefuse(candidateId);
+          if (!candidate.ok) return candidate.refusal;
+          const next = pickKeyframe(set.record, candidate.record);
+          if (!next.ok) return refused(next.reason, next.message);
+          return ledgered("pick", candidateId, () =>
+            store.putWorkingSet(next.record),
+          );
+        },
         remove: (jobId) =>
           transition(jobId, "remove", ["queued"], (job) => ({
             ...jobBase(job),

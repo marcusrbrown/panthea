@@ -29,11 +29,13 @@ import {
   type Sha256,
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
+import { type CandidateRecord, parseCandidateRecord } from "./candidates";
+import { parseWorkingSetRecord, type WorkingSetRecord } from "./working-set";
 import {
+  type JobSource,
+  parseJobSource,
   parseStudioVersion,
-  parseWorkspaceRecord,
   studioPaths,
-  type WorkspaceRecord,
 } from "./workspace";
 
 export interface SessionRecord {
@@ -53,11 +55,7 @@ export interface RequestRecord {
   readonly nextOrdinal: number;
 }
 
-export interface JobSource {
-  readonly requestId: string;
-  readonly slotKey: string;
-  readonly ordinal: number;
-}
+export type { JobSource };
 
 export interface JobRecord {
   readonly schemaVersion: 1;
@@ -73,6 +71,7 @@ export const COMMAND_TYPES = [
   "unavailable",
   "remove",
   "abort",
+  "pick",
 ] as const;
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
@@ -94,7 +93,8 @@ export interface StudioStatus {
   readonly session: SessionRecord | undefined;
   readonly requests: readonly RequestRecord[];
   readonly jobs: readonly JobRecord[];
-  readonly workspaces: readonly WorkspaceRecord[];
+  readonly candidates: readonly CandidateRecord[];
+  readonly workingSets: readonly WorkingSetRecord[];
   readonly commands: readonly CommandRecord[];
   readonly invalid: readonly StoreProblem[];
 }
@@ -165,26 +165,6 @@ const parseRequestRecord: Parse<RequestRecord> = (input) =>
         id: id.value,
         request: request.value,
         nextOrdinal: nextOrdinal.value,
-      });
-    },
-  );
-
-const parseJobSource = (input: unknown, path: string): ParseResult<JobSource> =>
-  parseStrictRecord(
-    input,
-    path,
-    ["requestId", "slotKey", "ordinal"],
-    (record) => {
-      const requestId = parseSlug(record.requestId, `${path}.requestId`);
-      if (!requestId.ok) return requestId;
-      const slotKey = parseString(record.slotKey, `${path}.slotKey`);
-      if (!slotKey.ok) return slotKey;
-      const ordinal = parseIntegerAtLeast(record.ordinal, `${path}.ordinal`, 0);
-      if (!ordinal.ok) return ordinal;
-      return ok({
-        requestId: requestId.value,
-        slotKey: slotKey.value,
-        ordinal: ordinal.value,
       });
     },
   );
@@ -270,13 +250,16 @@ export interface Store {
   putSession(record: SessionRecord): void;
   putRequest(record: RequestRecord): void;
   putJob(record: JobRecord): void;
-  putWorkspace(record: WorkspaceRecord): void;
+  putCandidate(record: CandidateRecord): void;
+  putWorkingSet(record: WorkingSetRecord): void;
   putCommand(record: CommandRecord): void;
   /** Stores bytes under their SHA-256; identical bytes are written once. */
   putBlob(bytes: Uint8Array): Sha256;
   readBlob(hash: Sha256): Uint8Array | undefined;
   readJob(id: string): Read<JobRecord>;
   readRequest(id: string): Read<RequestRecord>;
+  readCandidate(id: string): Read<CandidateRecord>;
+  readWorkingSet(id: string): Read<WorkingSetRecord>;
   /** The highest sequence number in the command ledger, by file name. */
   lastCommandSeq(): number;
   status(): StudioStatus;
@@ -310,8 +293,10 @@ export function openStore(root: string): Store {
       writeJson(join(paths.requests, `${record.id}.json`), record),
     putJob: (record) =>
       writeJson(join(paths.jobs, `${record.job.id}.json`), record),
-    putWorkspace: (record) =>
-      writeJson(join(paths.workspaces, `${record.id}.json`), record),
+    putCandidate: (record) =>
+      writeJson(join(paths.candidates, `${record.id}.json`), record),
+    putWorkingSet: (record) =>
+      writeJson(join(paths.workingSets, `${record.id}.json`), record),
     putCommand: (record) =>
       writeJson(join(paths.commands, commandFile(record.seq)), record),
     putBlob(bytes) {
@@ -327,6 +312,10 @@ export function openStore(root: string): Store {
     readJob: (id) => readRecord(join(paths.jobs, `${id}.json`), parseJobRecord),
     readRequest: (id) =>
       readRecord(join(paths.requests, `${id}.json`), parseRequestRecord),
+    readCandidate: (id) =>
+      readRecord(join(paths.candidates, `${id}.json`), parseCandidateRecord),
+    readWorkingSet: (id) =>
+      readRecord(join(paths.workingSets, `${id}.json`), parseWorkingSetRecord),
     lastCommandSeq() {
       if (!existsSync(paths.commands)) return 0;
       return readdirSync(paths.commands)
@@ -342,7 +331,8 @@ export function openStore(root: string): Store {
         session: session.kind === "found" ? session.value : undefined,
         requests: list(paths.requests, parseRequestRecord, invalid),
         jobs: list(paths.jobs, parseJobRecord, invalid),
-        workspaces: list(paths.workspaces, parseWorkspaceRecord, invalid),
+        candidates: list(paths.candidates, parseCandidateRecord, invalid),
+        workingSets: list(paths.workingSets, parseWorkingSetRecord, invalid),
         commands: list(paths.commands, parseCommandRecord, invalid),
         invalid,
       };

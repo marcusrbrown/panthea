@@ -1,11 +1,12 @@
-// Authoring-root layout and the workspace record. Everything under the root is
-// studio-local bookkeeping; canon stays in the registry.
+// Authoring-root layout and the pieces every record kind shares. Everything
+// under the root is studio-local bookkeeping; canon stays in the registry.
 //
 //   <root>/session.lock          OS-held exclusive lock (SQLite)
 //   <root>/session.json          the session record
 //   <root>/requests/<id>.json
 //   <root>/jobs/<id>.json
-//   <root>/workspaces/<id>.json
+//   <root>/candidates/<jobId>.json
+//   <root>/working-sets/<id>.json
 //   <root>/commands/<seq>.json   the always-on command ledger
 //   <root>/blobs/<sha256>.png    content-addressed bytes
 
@@ -14,9 +15,10 @@ import {
   fail,
   ok,
   type ParseResult,
-  parseEnum,
+  parseIntegerAtLeast,
   parseSlug,
   parseStrictRecord,
+  parseString,
 } from "@panthea/contracts";
 
 export const STUDIO_SCHEMA_VERSION = 1;
@@ -35,42 +37,38 @@ export const studioPaths = (root: string) => ({
   session: join(root, "session.json"),
   requests: join(root, "requests"),
   jobs: join(root, "jobs"),
-  workspaces: join(root, "workspaces"),
+  candidates: join(root, "candidates"),
+  workingSets: join(root, "working-sets"),
   commands: join(root, "commands"),
   blobs: join(root, "blobs"),
 });
 
-export interface WorkspaceRecord {
-  readonly schemaVersion: 1;
-  readonly id: string;
+/** Where a job came from: its request, the slot it fills and its place in the request's sequence. */
+export interface JobSource {
   readonly requestId: string;
-  readonly status: "open" | "complete";
+  readonly slotKey: string;
+  readonly ordinal: number;
 }
 
-export function parseWorkspaceRecord(
+export function parseJobSource(
   input: unknown,
-): ParseResult<WorkspaceRecord> {
+  path: string,
+): ParseResult<JobSource> {
   return parseStrictRecord(
     input,
-    "workspace",
-    ["schemaVersion", "id", "requestId", "status"],
+    path,
+    ["requestId", "slotKey", "ordinal"],
     (record) => {
-      const version = parseStudioVersion(record.schemaVersion, "workspace");
-      if (!version.ok) return version;
-      const id = parseSlug(record.id, "workspace.id");
-      if (!id.ok) return id;
-      const requestId = parseSlug(record.requestId, "workspace.requestId");
+      const requestId = parseSlug(record.requestId, `${path}.requestId`);
       if (!requestId.ok) return requestId;
-      const status = parseEnum(record.status, "workspace.status", [
-        "open",
-        "complete",
-      ] as const);
-      if (!status.ok) return status;
+      const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+      if (!slotKey.ok) return slotKey;
+      const ordinal = parseIntegerAtLeast(record.ordinal, `${path}.ordinal`, 0);
+      if (!ordinal.ok) return ordinal;
       return ok({
-        schemaVersion: version.value,
-        id: id.value,
         requestId: requestId.value,
-        status: status.value,
+        slotKey: slotKey.value,
+        ordinal: ordinal.value,
       });
     },
   );
