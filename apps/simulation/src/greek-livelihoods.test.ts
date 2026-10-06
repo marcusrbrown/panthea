@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { WorldEvent } from "@panthea/contracts";
 import {
+  applyEvent,
   createInitialWorldState,
   createPrng,
   runTick,
@@ -148,15 +149,45 @@ test("mortals who go short pray to the god they revere, so the day's prayers nam
   }
 });
 
-test("Hades hears prayers: over a longer scripted day a mortal prays to him, so he can enter a practice (R20)", () => {
-  // Mortals pray when they go short, and they go short rarely now (R17): the ferryman, who reveres Hades, feeds himself,
-  // so Hades's first prayer comes from a mortal whose feelings have moved toward him, later than the 400-tick day.
-  const longer = day(700);
-  const toHades = longer.events.filter(
+test("Hades hears prayers: when stock the ferryman holds spoils, he prays to the god he reveres, so Hades can enter a practice (R20)", () => {
+  // Mortals pray when something goes wrong for them, and nothing does by itself now (R17): the ferryman feeds himself,
+  // so the day stages what the quiet-world director would do, a spoilage, and the ferryman prays to his patron.
+  const pack = loadEmbeddedGreekWorldPack();
+  if (!pack.ok) throw new Error(pack.message);
+  let state = createInitialWorldState(pack.value);
+  let prng = createPrng(7);
+  const events: WorldEvent[] = [];
+  for (let tick = 0; tick < 120; tick += 1) {
+    if (tick === 30) {
+      const spoiled = {
+        schemaVersion: 1,
+        id: "evt-30-9000",
+        sequence: state.lastSequence + 1,
+        simTime: 0,
+        tick: state.tick,
+        correlationId: "fixture",
+        causationId: "fixture",
+        approximate: false,
+        kind: "stock-spoiled",
+        entityId: "ferryman",
+        resource: "food",
+        amount: 1,
+        cause: "director",
+      } as unknown as WorldEvent;
+      state = applyEvent({ ...state, lastSequence: spoiled.sequence }, spoiled);
+      events.push(spoiled);
+    }
+    const queue = buildRoutineQueue(state).map((entry) => entry.proposal);
+    const result = runTick(state, prng, queue);
+    state = result.state;
+    prng = result.prng;
+    events.push(...result.events);
+  }
+  const toHades = events.filter(
     (e): e is Extract<WorldEvent, { kind: "petition-opened" }> =>
       e.kind === "petition-opened" && String(e.god) === "hades",
   );
-  expect(toHades.length).toBeGreaterThan(0);
+  expect(toHades.map((e) => String(e.entityId))).toContain("ferryman");
 });
 
 // --- Occasional hunger (R17, SC1) -------------------------------------------------------------
