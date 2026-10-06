@@ -257,8 +257,59 @@ test("a god's slow state (what it remembers, how it feels, its goal, what it did
   expect(checked).toBeGreaterThan(0);
 });
 
+/** `mortal` prays to `god` about food that spoiled, staged on an aged world: mortals go short rarely now, so the world no longer makes enough prayers on its own to fill a god's prompt. */
+function withPrayer(
+  world: { state: WorldState; events: WorldEvent[] },
+  mortal: string,
+  god: string,
+): { state: WorldState; events: WorldEvent[] } {
+  let state = world.state;
+  const events = [...world.events];
+  const apply = (n: number, overrides: Record<string, unknown>): WorldEvent => {
+    const event = {
+      schemaVersion: 1,
+      id: `evt-${state.tick}-${9000 + n}`,
+      sequence: state.lastSequence + 1,
+      simTime: 0,
+      tick: state.tick,
+      correlationId: "fixture",
+      causationId: "fixture",
+      approximate: false,
+      ...overrides,
+    } as unknown as WorldEvent;
+    state = applyEvent(state, event);
+    events.push(event);
+    return event;
+  };
+  const cause = apply(1, {
+    kind: "stock-spoiled",
+    entityId: mortal,
+    resource: "food",
+    amount: 1,
+    cause: "director",
+  });
+  apply(2, {
+    kind: "petition-opened",
+    entityId: mortal,
+    god,
+    cause: cause.id,
+    request: {
+      kind: "help",
+      need: { kind: "resource", resource: "food", amount: 1 },
+    },
+  });
+  return { state, events };
+}
+
 test("prayers, practice threads, openings, and contests are the last sections before the question: per-tick state last", () => {
-  const world = aged(450);
+  let world = aged(450);
+  // One prayer to each god, so every prompt has a prayers section to place.
+  const mortals = [...world.state.actors.values()].filter(
+    (actor) => !actor.isDeity && actor.drives,
+  );
+  for (const [i, god] of GODS.entries()) {
+    world = withPrayer(world, String(mortals[i]?.id), god);
+  }
   const seen = new Set<string>();
   for (const god of GODS) {
     const { user } = requestOf(world, god);
