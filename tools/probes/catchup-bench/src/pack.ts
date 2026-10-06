@@ -32,7 +32,14 @@ export function loadPack(mortals?: number): ContentPack {
   const raw = JSON.parse(readPackText()) as {
     inhabitants: { id: string; deity?: boolean }[];
     buildings: { owner?: string }[];
+    rules: { petitionBalance?: Record<string, number> };
   };
+  // The fixture is immutable and predates the director's own clock: its quiet window is that clock's interval now.
+  const balance = raw.rules.petitionBalance;
+  if (balance !== undefined && "directorQuietTicks" in balance) {
+    balance.directorIntervalTicks = balance.directorQuietTicks as number;
+    delete balance.directorQuietTicks;
+  }
   if (mortals !== undefined) {
     let kept = 0;
     raw.inhabitants = raw.inhabitants.filter((inhabitant) => {

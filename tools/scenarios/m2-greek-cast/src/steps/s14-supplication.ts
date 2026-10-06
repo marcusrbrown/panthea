@@ -214,24 +214,43 @@ async function stageLoss(
       `${owner} walks toward ${buildingId}`,
     );
   }
-  // A god names only what it could see: Zeus goes to the building first.
-  await walkTo(story, "zeus", building.locationId);
-  await godMoves(
-    story,
-    "zeus",
-    JSON.stringify({ action: "strike", target: buildingId, power: 1 }),
-    `zeus damages ${buildingId}`,
-  );
-  await waitFor(
-    `${owner} notices the damage to ${buildingId}`,
-    () =>
-      eventsOfKind(
+  // The world's troubles may have taken the owner's stock, and an owner with nothing to hold goes to work the tick
+  // after it is put anywhere, so the fixture is posted again each tick until the loss is noticed: the owner is
+  // standing at its building when Zeus damages it.
+  let holding = true;
+  const hold = (async () => {
+    while (holding) {
+      await postFixture(
         story,
-        "loss-noticed",
-        (e) => e.entityId === owner && e.building === buildingId,
-      )[0],
-    { timeoutMs: 20_000, intervalMs: 100 },
-  );
+        owner,
+        { kind: "move", to: building.locationId },
+        `${owner} stays at ${buildingId}`,
+      );
+    }
+  })();
+  try {
+    // A god names only what it could see: Zeus goes to the building first.
+    await walkTo(story, "zeus", building.locationId);
+    await godMoves(
+      story,
+      "zeus",
+      JSON.stringify({ action: "strike", target: buildingId, power: 1 }),
+      `zeus damages ${buildingId}`,
+    );
+    await waitFor(
+      `${owner} notices the damage to ${buildingId}`,
+      () =>
+        eventsOfKind(
+          story,
+          "loss-noticed",
+          (e) => e.entityId === owner && e.building === buildingId,
+        )[0],
+      { timeoutMs: 20_000, intervalMs: 100 },
+    );
+  } finally {
+    holding = false;
+    await hold;
+  }
 }
 
 /** The good (never coin) `mortal` holds the most of, when it holds at least three: one it can offer by any deadline. */
@@ -291,11 +310,17 @@ export async function stepSupplication(
           // What a mortal holds plenty of: a weaver turns all her wool into cloth, so a gatherer does not always
           // have a unit of what it gathers to offer, and a mortal with a stock of something does.
           const stock = (mortal: string) => stockOf(state, mortal);
-          // A food producer does nothing but gather now that it sells only to whoever asks, so a
-          // promise of what it could gather in the time is one it keeps: the one who breaks is not one.
+          // The one who breaks gathers a good its own work turns into something else (wood into planks, wool into
+          // cloth, ore into tools), so it cannot hold what it promised. A mortal that gathers a good nothing makes
+          // use of (fish, food) only sells it when asked, and can hold nearly all it could gather in the time.
           const breaker = prayers.find((p) => {
             const resource = gathers(p.petitioner);
-            return resource !== undefined && resource !== "food";
+            return (
+              resource !== undefined &&
+              Object.values(state.recipes).some((recipe) =>
+                recipe.inputs.some((input) => input.resource === resource),
+              )
+            );
           });
           // Mortals pray to their patrons, so Zeus and Hera hear only their own few, some of them poor: the
           // keeper is asked for a unit of a good it holds a stock of, not a coin: a poor mortal spends its coins eating and

@@ -140,18 +140,22 @@ test("mortals who go short pray to the god they revere, so the day's prayers nam
   // A mortal with a devotion prays to its god until its feelings have moved them elsewhere.
   const pack = loadEmbeddedGreekWorldPack();
   if (!pack.ok) throw new Error(pack.message);
+  // (A trouble in a god's domain is the exception: it goes to that god, whoever the mortal reveres.)
+  const troubles = new Set(
+    ran.events.filter((e) => e.kind === "trouble").map((e) => e.id),
+  );
   for (const petition of petitions) {
     const devotion = pack.value.inhabitants.find(
       (i) => i.id === String(petition.petitioner),
     )?.devotion?.god;
-    if (petition.tick <= 30)
+    if (petition.tick <= 30 && !troubles.has(petition.cause))
       expect(String(petition.god)).toBe(String(devotion));
   }
 });
 
-test("Hades hears prayers: when stock the ferryman holds spoils, he prays to the god he reveres, so Hades can enter a practice (R20)", () => {
-  // Mortals pray when something goes wrong for them, and nothing does by itself now (R17): the ferryman feeds himself,
-  // so the day stages what the quiet-world director would do, a spoilage, and the ferryman prays to his patron.
+test("Hades hears prayers: when a trouble in his domain takes the ferryman's coin, he prays to the god of that domain, so Hades can enter a practice (R20)", () => {
+  // Mortals pray when something goes wrong for them, and little does by itself now (R17): the ferryman feeds himself,
+  // so the day stages what the world's troubles would do, a hoard swallowed, and the ferryman prays to Hades.
   const pack = loadEmbeddedGreekWorldPack();
   if (!pack.ok) throw new Error(pack.message);
   let state = createInitialWorldState(pack.value);
@@ -159,7 +163,7 @@ test("Hades hears prayers: when stock the ferryman holds spoils, he prays to the
   const events: WorldEvent[] = [];
   for (let tick = 0; tick < 120; tick += 1) {
     if (tick === 30) {
-      const spoiled = {
+      const swallowed = {
         schemaVersion: 1,
         id: "evt-30-9000",
         sequence: state.lastSequence + 1,
@@ -168,14 +172,19 @@ test("Hades hears prayers: when stock the ferryman holds spoils, he prays to the
         correlationId: "fixture",
         causationId: "fixture",
         approximate: false,
-        kind: "stock-spoiled",
+        kind: "trouble",
         entityId: "ferryman",
-        resource: "food",
-        amount: 1,
-        cause: "director",
+        trouble: "hoard-swallowed",
+        god: "hades",
+        season: "spring",
+        source: "season",
+        loss: { kind: "resource", resource: "currency", amount: 1 },
       } as unknown as WorldEvent;
-      state = applyEvent({ ...state, lastSequence: spoiled.sequence }, spoiled);
-      events.push(spoiled);
+      state = applyEvent(
+        { ...state, lastSequence: swallowed.sequence },
+        swallowed,
+      );
+      events.push(swallowed);
     }
     const queue = buildRoutineQueue(state).map((entry) => entry.proposal);
     const result = runTick(state, prng, queue);

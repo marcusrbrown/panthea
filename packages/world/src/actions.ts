@@ -38,7 +38,7 @@ import {
   noteService,
   planContestStanding,
 } from "./contests";
-import { noteConsequential, planDirectorStep } from "./director";
+import { noteDirectorFire, planDirectorStep } from "./director";
 import {
   applyRecipe,
   creditActorInventory,
@@ -105,6 +105,7 @@ import {
   planConsequences,
 } from "./practices";
 import { applyBuildingRepaired, applyRepairProgressed } from "./repair";
+import { applyTrouble, planSeasonTurn, planTroubleStep } from "./seasons";
 import {
   type PrngState,
   toLegendId,
@@ -336,6 +337,12 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
     case "wrong":
       next = applyWrong(state, event);
       break;
+    case "season-turned":
+      next = state;
+      break;
+    case "trouble":
+      next = applyTrouble(state, event);
+      break;
     case "credit-extended":
       next = applyCreditExtended(state, event);
       break;
@@ -384,7 +391,7 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
     // An act a rival can contest is noted against the world it found.
     ...noteService(
       state,
-      noteConsequential(recordCauses(next, event), event),
+      noteDirectorFire(recordCauses(next, event), event),
       event,
     ),
     lastSequence: event.sequence,
@@ -789,14 +796,27 @@ export function runTick(
   );
   working = applyEvents(working, incomeEvents);
 
-  // Wrongs between mortals draw first, then fire, then the director, so a replay draws the same values.
+  // The season turns on its boundary tick; the troubles below read it from the tick.
+  const seasonEvents = planSeasonTurn(working).map((draft) =>
+    completePrimary(draft, environmentCause),
+  );
+  working = applyEvents(working, seasonEvents);
+
+  // The persisted PRNG is drawn in a fixed order, so a replay draws the same values: wrongs between mortals
+  // (credit judgments, wrongs, revenge), then the gods' domain troubles, then fire, then the director.
   const wrongStep = planWrongStep(working, prng);
   const wrongEvents = wrongStep.events.map((draft) =>
     completePrimary(draft, environmentCause),
   );
   working = applyEvents(working, wrongEvents);
 
-  const fireStep = planFireStep(working, wrongStep.prng);
+  const troubleStep = planTroubleStep(working, wrongStep.prng);
+  const troubleEvents = troubleStep.events.map((draft) =>
+    completePrimary(draft, environmentCause),
+  );
+  working = applyEvents(working, troubleEvents);
+
+  const fireStep = planFireStep(working, troubleStep.prng);
   const fireEvents = fireStep.events.map((draft) =>
     completePrimary(draft, environmentCause),
   );
@@ -843,7 +863,9 @@ export function runTick(
       ...proposalEvents,
       ...journeyEvents,
       ...incomeEvents,
+      ...seasonEvents,
       ...wrongEvents,
+      ...troubleEvents,
       ...fireEvents,
       ...needEvents,
       ...directorEvents,
@@ -885,7 +907,9 @@ export function runTick(
   const environmentEvents = [
     ...journeyEvents,
     ...incomeEvents,
+    ...seasonEvents,
     ...wrongEvents,
+    ...troubleEvents,
     ...fireEvents,
     ...needEvents,
     ...directorEvents,

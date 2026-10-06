@@ -393,6 +393,8 @@ export interface PetitionCause {
   readonly amount?: number;
   /** How the offender wronged it, for a `wrong`. */
   readonly wrong?: WrongKind;
+  /** The domain trouble that caused it, when one did: it is prayed about to that trouble's god. */
+  readonly trouble?: string;
 }
 
 /** A wrong one mortal did another, kept so a revenge can find it and answer it once. */
@@ -612,7 +614,10 @@ export interface WorldState {
   /** The losses each owner has already noticed, keyed `owner|causeEventId`: what makes noticing once per loss. */
   readonly noticed: ReadonlyMap<string, NoticedLoss>;
   /** The quiet-world director's timer: the tick of the last consequential event. */
-  readonly director: { readonly lastConsequentialTick: number };
+  /** The tick the quiet-world director last fired: its own clock, which nothing else resets. */
+  readonly director: { readonly lastFireTick: number };
+  /** The tick of the newest domain trouble of each god that has had one: what keeps a god's trouble to its floor. */
+  readonly lastTrouble: ReadonlyMap<EntityId, number>;
   /** The building a mortal was last blessed planks for: its repair routine mends that one first. */
   readonly repairGrants: ReadonlyMap<EntityId, EntityId>;
   /** Numeric balance content (catch-up, fire, economy); never mutated by any event or by `runTick` itself. */
@@ -778,7 +783,8 @@ export function createInitialWorldState(pack: ContentPack): WorldState {
     standing: new Map(),
     repairGrants: new Map(),
     noticed: new Map(),
-    director: { lastConsequentialTick: 0 },
+    director: { lastFireTick: 0 },
+    lastTrouble: new Map(),
     rules: pack.rules,
     recipes: pack.recipes,
   };

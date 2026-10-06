@@ -77,8 +77,8 @@ test("every profile cites its sources and labels what the game invented, apart f
     expect(profile.inventions.length).toBeGreaterThan(0);
     // Each source is used.
     const cited = new Set(
-      [...profile.lore, ...profile.variants].flatMap((entry) =>
-        entry.cites.map((cite) => cite.source),
+      [...profile.lore, ...profile.variants, ...profile.troubles].flatMap(
+        (entry) => entry.cites.map((cite) => cite.source),
       ),
     );
     for (const source of profile.sources) {
@@ -325,4 +325,119 @@ test("every mortal of the Greek town is authored a temperament, the odds table c
       (i) => i.deity === true && i.temperament !== undefined,
     ),
   ).toEqual([]);
+});
+
+test("every god has at least one sourced domain trouble the pack's table draws, and the table draws only sourced ones (R14)", () => {
+  const { pack, profiles } = loaded();
+  const troubles = pack.rules.troubles ?? {};
+  for (const profile of profiles) {
+    expect(profile.troubles.length).toBeGreaterThan(0);
+    for (const trouble of profile.troubles) {
+      expect(trouble.cites.length).toBeGreaterThan(0);
+      // The trouble is the game's own and says so.
+      expect(profile.inventions.map((i) => i.id)).toContain(trouble.invention);
+      expect(pack.rules.troubleKinds?.[trouble.id]).toBe(profile.id);
+      expect(troubles[trouble.id]).toBeDefined();
+    }
+  }
+  const listed = profiles.flatMap((p) => p.troubles.map((t) => t.id)).sort();
+  expect(listed).toEqual(Object.keys(troubles).sort());
+});
+
+test("hades's troubles need no death: each takes goods, never a life, and no trouble names a mortal's death", () => {
+  const { pack } = loaded();
+  const hades = Object.entries(pack.rules.troubles ?? {}).filter(
+    ([id]) => pack.rules.troubleKinds?.[id] === "hades",
+  );
+  expect(hades.length).toBeGreaterThan(0);
+  for (const [, trouble] of hades) expect(trouble.effect).toBe("resource");
+});
+
+test("a trouble in a profile with no source, a trouble no pack table has, one that belongs to another god, or one the table draws that no profile sources, each fails to parse", () => {
+  const { pack } = loaded();
+  const read = (god: string) =>
+    JSON.parse(readFileSync(join(GODS, `${god}.json`), "utf8"));
+  const parse = (athena: unknown, rules = pack.rules) =>
+    parseGodProfiles(
+      [{ label: "athena.json", value: athena }],
+      pack.inhabitants,
+      rules,
+    );
+  expect(parse(read("athena")).ok).toBe(true);
+
+  const noCite = read("athena");
+  noCite.troubles[0].cites = [];
+  expect(parse(noCite)).toMatchObject({
+    ok: false,
+    path: "athena.json.troubles[0].cites",
+  });
+
+  const unknownSource = read("athena");
+  unknownSource.troubles[0].cites = [{ source: "nowhere", locator: "1" }];
+  expect(parse(unknownSource).ok).toBe(false);
+
+  const noInvention = read("athena");
+  noInvention.troubles[0].invention = "not-an-invention";
+  expect(parse(noInvention)).toMatchObject({
+    ok: false,
+    path: "athena.json.troubles[0].invention",
+  });
+
+  const unlabelled = read("athena");
+  delete unlabelled.troubles[0].invention;
+  expect(parse(unlabelled).ok).toBe(false);
+
+  const unknownTrouble = read("athena");
+  unknownTrouble.troubles.push({ ...unknownTrouble.troubles[0], id: "plague" });
+  expect(parse(unknownTrouble)).toMatchObject({
+    ok: false,
+    path: "athena.json.troubles[2].id",
+  });
+
+  // A trouble the table gives to another god fails in the profile that claims it.
+  const stolen = read("athena");
+  stolen.troubles.push({ ...stolen.troubles[0], id: "squall" });
+  expect(parse(stolen)).toMatchObject({
+    ok: false,
+    path: "athena.json.troubles[2].id",
+  });
+
+  // A trouble the table draws that its god's profile does not source.
+  const unsourced = read("athena");
+  unsourced.troubles.pop();
+  expect(parse(unsourced)).toMatchObject({
+    ok: false,
+    path: "athena.troubles",
+  });
+
+  // A duplicate in one profile.
+  const twice = read("athena");
+  twice.troubles.push(twice.troubles[0]);
+  expect(parse(twice).ok).toBe(false);
+});
+
+test("the trouble table gives each kind one god: household spoilage to Hera, the director's no-thief theft to Hermes, forge fire to Hephaestus, sky to Zeus, sea and quakes to Poseidon (R2)", () => {
+  const { pack } = loaded();
+  const kinds = pack.rules.troubleKinds ?? {};
+  expect(kinds.spoilage).toBe("hera");
+  expect(kinds.theft).toBe("hermes");
+  expect(kinds.fire).toBe("hephaestus");
+  for (const id of ["squall", "lightning-fire"]) expect(kinds[id]).toBe("zeus");
+  for (const id of ["harbour-surge", "quake"])
+    expect(kinds[id]).toBe("poseidon");
+  // Every kind names a god in the cast, and a god exactly once per kind (a record has one value per key).
+  const gods = new Set(GOD_IDS);
+  for (const god of Object.values(kinds)) expect(gods.has(god)).toBe(true);
+  // Each trouble's loss is the world's own substrate: goods taken, or a building damaged.
+  for (const trouble of Object.values(pack.rules.troubles ?? {})) {
+    expect(["resource", "building"]).toContain(trouble.effect);
+  }
+  // Every season has a trouble that can come in it, so no season is quiet.
+  for (const season of ["spring", "summer", "autumn", "winter"] as const) {
+    expect(
+      Object.values(pack.rules.troubles ?? {}).some(
+        (t) => (t.seasons[season] ?? 0) > 0,
+      ),
+    ).toBe(true);
+  }
 });

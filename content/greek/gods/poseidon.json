@@ -222,6 +222,11 @@
   ],
   "inventions": [
     {
+      "id": "domain-troubles",
+      "statement": "Poseidon's domain troubles are the game's own.",
+      "reason": "A harbour surge that wrecks boats and nets, and a quake that damages walls and homes, are troubles the game draws on a season's odds and a floor, damaging a building. The sources attest his sea and his earth-shaking; no source tells these episodes."
+    },
+    {
       "id": "earthshaker-as-strike",
       "statement": "His earthquake is a damaging strike on structures.",
       "reason": "The world has no earthquake or flood action but strike; it is a game stand-in."
@@ -240,6 +245,34 @@
       "id": "authored-tuning",
       "statement": "The drive weights and the starting dispositions of Poseidon are authored tuning.",
       "reason": "The sources describe temperament in prose; the numbers are a design choice to be revised against play."
+    }
+  ],
+  "troubles": [
+    {
+      "id": "harbour-surge",
+      "statement": "A surge wrecks boats and nets: the fish landing is damaged. Autumn and winter.",
+      "cites": [
+        {
+          "source": "hymn-22-poseidon",
+          "locator": "lines 1-7"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "quake",
+      "statement": "A quake damages harbour walls or homes: a building is damaged. Spring and autumn.",
+      "cites": [
+        {
+          "source": "hymn-22-poseidon",
+          "locator": "lines 1-7"
+        },
+        {
+          "source": "iliad-15",
+          "locator": "lines 187-193"
+        }
+      ],
+      "invention": "domain-troubles"
     }
   ],
   "sprite": "placeholder-poseidon"

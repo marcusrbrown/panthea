@@ -55,6 +55,7 @@ import {
   parseThreadSubject,
   parseTransformation,
   parseTroubleKinds,
+  parseTroubles,
   REALMS,
   type RejectionReasonCode,
   SERVICE_KINDS,
@@ -128,7 +129,9 @@ export interface EncodedWorldState {
   readonly standing: readonly (readonly [EntityId, EntityId, number])[];
   readonly repairGrants: readonly (readonly [EntityId, EntityId])[];
   readonly noticed: readonly (readonly [string, NoticedLoss])[];
-  readonly director: { readonly lastConsequentialTick: number };
+  readonly director: { readonly lastFireTick: number };
+  /** `[god, tick]`: the tick of the newest trouble in each god's domain. */
+  readonly lastTrouble: readonly (readonly [EntityId, number])[];
   readonly rules: WorldState["rules"];
   readonly recipes: WorldState["recipes"];
 }
@@ -190,6 +193,7 @@ export function encode(state: WorldState): EncodedWorldState {
     repairGrants: [...state.repairGrants.entries()],
     noticed: [...state.noticed.entries()],
     director: state.director,
+    lastTrouble: [...state.lastTrouble.entries()],
     rules: state.rules,
     recipes: state.recipes,
   };
@@ -724,10 +728,19 @@ function parseWorldRules(
       ? ok<Readonly<Record<string, Transformation>> | undefined>(undefined)
       : parsePracticeStakes(value.practiceStakes, `${path}.practiceStakes`);
   if (!practiceStakes.ok) return practiceStakes;
+  const troubles =
+    value.troubles === undefined
+      ? ok<WorldState["rules"]["troubles"]>(undefined)
+      : parseTroubles(value.troubles, `${path}.troubles`);
+  if (!troubles.ok) return troubles;
   const troubleKinds =
     value.troubleKinds === undefined
       ? ok<Readonly<Record<string, string>> | undefined>(undefined)
-      : parseTroubleKinds(value.troubleKinds, `${path}.troubleKinds`);
+      : parseTroubleKinds(
+          value.troubleKinds,
+          `${path}.troubleKinds`,
+          new Set(Object.keys(troubles.value ?? {})),
+        );
   if (!troubleKinds.ok) return troubleKinds;
   const temperamentOdds =
     value.temperamentOdds === undefined
@@ -756,6 +769,7 @@ function parseWorldRules(
     ...(troubleKinds.value === undefined
       ? {}
       : { troubleKinds: troubleKinds.value }),
+    ...(troubles.value === undefined ? {} : { troubles: troubles.value }),
     ...(temperamentOdds.value === undefined
       ? {}
       : { temperamentOdds: temperamentOdds.value }),
@@ -1087,11 +1101,14 @@ function parseCause(item: unknown, at: string): ParseResult<PetitionCause> {
       ? ok<(typeof WRONG_KINDS)[number] | undefined>(undefined)
       : parseEnum(item.wrong, `${at}.wrong`, WRONG_KINDS);
   if (!wrong.ok) return wrong;
+  const trouble = parseOptionalString(item.trouble, `${at}.trouble`);
+  if (!trouble.ok) return trouble;
   return ok({
     eventId: eventId.value,
     tick: tick.value,
     kind: kind.value,
     ...(wrong.value === undefined ? {} : { wrong: wrong.value }),
+    ...(trouble.value === undefined ? {} : { trouble: trouble.value }),
     ...(offender.value === undefined ? {} : { offender: offender.value }),
     ...(building.value === undefined ? {} : { building: building.value }),
     ...(resource.value === undefined ? {} : { resource: resource.value }),
@@ -2235,12 +2252,36 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
   if (!isRecord(value.director)) {
     return fail("director", "expected the director's state");
   }
-  const lastConsequentialTick = parseNonNegativeInteger(
-    value.director.lastConsequentialTick,
-    "director.lastConsequentialTick",
+  const lastFireTick = parseNonNegativeInteger(
+    value.director.lastFireTick,
+    "director.lastFireTick",
   );
-  if (!lastConsequentialTick.ok) return lastConsequentialTick;
-  const director = { lastConsequentialTick: lastConsequentialTick.value };
+  if (!lastFireTick.ok) return lastFireTick;
+  const director = { lastFireTick: lastFireTick.value };
+
+  const lastTroubleEntries = parseArray(
+    value.lastTrouble,
+    "lastTrouble",
+    (item, path) => {
+      if (!Array.isArray(item) || item.length !== 2) {
+        return fail(path, "expected a [god, tick] entry");
+      }
+      const god = parseEntityId(item[0], `${path}[0]`);
+      if (!god.ok) return god;
+      if (actors.get(god.value)?.isDeity !== true) {
+        return fail(`${path}[0]`, `${god.value} is not a god in this world`);
+      }
+      const tick = parseNonNegativeInteger(item[1], `${path}[1]`);
+      if (!tick.ok) return tick;
+      return ok([god.value, tick.value] as const);
+    },
+  );
+  if (!lastTroubleEntries.ok) return lastTroubleEntries;
+  const duplicateTrouble = findDuplicateKey(lastTroubleEntries.value);
+  if (duplicateTrouble !== undefined) {
+    return fail("lastTrouble", `duplicate god: ${duplicateTrouble}`);
+  }
+  const lastTrouble = new Map(lastTroubleEntries.value);
 
   const rules = parseWorldRules(value.rules, "rules");
   if (!rules.ok) return rules;
@@ -2249,6 +2290,14 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
       return fail(
         `rules.troubleKinds.${kind}`,
         `trouble "${kind}" belongs to ${god}, who is not a god in this world`,
+      );
+    }
+  }
+  for (const id of Object.keys(rules.value.troubles ?? {})) {
+    if (rules.value.troubleKinds?.[id] === undefined) {
+      return fail(
+        `rules.troubles.${id}`,
+        `trouble "${id}" belongs to no god in this world`,
       );
     }
   }
@@ -2322,6 +2371,7 @@ function parseEncodedWorldState(value: unknown): ParseResult<WorldState> {
     repairGrants,
     noticed,
     director,
+    lastTrouble,
     rules: rules.value,
     recipes: recipes.value,
   });

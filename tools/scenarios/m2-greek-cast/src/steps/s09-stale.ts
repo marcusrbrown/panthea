@@ -112,6 +112,10 @@ export async function stepStale(
         "the stale proposal caused no event",
         "an event carries its observation",
       );
+      // The two go home: a god left standing in the town witnesses what the running world does there (the
+      // director's troubles come on their own clock now), which crowds the memories the later steps rest on.
+      await walkTo(story, "hera", "great-hall");
+      await walkTo(story, "zeus", "great-hall");
       step.done(
         `held turn in an unchanged world: committed; the same strike after hera was moved: ${stale.consumed.outcome} (${stale.consumed.reason}), no event`,
       );

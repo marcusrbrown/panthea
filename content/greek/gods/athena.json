@@ -64,6 +64,22 @@
   ],
   "sources": [
     {
+      "id": "works-and-days",
+      "title": "Works and Days",
+      "author": "Hesiod",
+      "edition": "Theoi Project text",
+      "url": "https://www.theoi.com/Text/HesiodWorksDays.html",
+      "accessed": "2026-10-05"
+    },
+    {
+      "id": "odyssey-23",
+      "title": "Odyssey, book 23",
+      "author": "Homer",
+      "edition": "Theoi Project text",
+      "url": "https://www.theoi.com/Text/HomerOdyssey23.html",
+      "accessed": "2026-10-05"
+    },
+    {
       "id": "theogony",
       "title": "Theogony",
       "author": "Hesiod",
@@ -248,6 +264,11 @@
   ],
   "inventions": [
     {
+      "id": "domain-troubles",
+      "statement": "Athena's domain troubles are the game's own.",
+      "reason": "A loom that breaks and a tool flaw that ruins craftwork are troubles the game draws on a season's odds and a floor, damaging the loom house or taking goods. The sources attest her craft (weaving, the craftsman's skill); no source tells these episodes."
+    },
+    {
       "id": "counsel-as-legend",
       "statement": "Athena's counsel is told in play as a legend.",
       "reason": "Legend is the world's only action that records speech; it is a game mapping, not a mythic device."
@@ -271,6 +292,30 @@
       "id": "authored-tuning",
       "statement": "The drive weights and the starting dispositions of Athena are authored tuning.",
       "reason": "The sources describe temperament in prose; the numbers are a design choice to be revised against play."
+    }
+  ],
+  "troubles": [
+    {
+      "id": "loom-break",
+      "statement": "A loom breaks: the loom house is damaged. Winter.",
+      "cites": [
+        {
+          "source": "works-and-days",
+          "locator": "lines 63-68"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "tool-flaw",
+      "statement": "A flaw in a tool ruins craftwork: tools or planks are lost. Spring and autumn.",
+      "cites": [
+        {
+          "source": "odyssey-23",
+          "locator": "lines 159-162"
+        }
+      ],
+      "invention": "domain-troubles"
     }
   ],
   "sprite": "placeholder-athena"

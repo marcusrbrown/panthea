@@ -6,6 +6,8 @@
 // field here is parsed, never assumed.
 
 import {
+  SEASONS,
+  type Season,
   TEMPERAMENTS,
   type Temperament,
   WITNESSED_EVENT_KINDS,
@@ -122,6 +124,19 @@ export interface Recipe {
   readonly outputs: readonly ResourceAmount[];
 }
 
+/**
+ * A trouble in a god's domain, as the pack authors it. A `resource` trouble takes some of the first of `resources`
+ * a mortal carries (the afflicted is drawn from those who carry any); a `building` trouble damages one of
+ * `buildings` (any operational owned building when absent), and the afflicted is its owner. `seasons` is the
+ * per-mille odds each tick in each season, absent meaning none: the season's draw, on top of the god's floor.
+ */
+export interface TroubleSpec {
+  readonly effect: "resource" | "building";
+  readonly resources?: readonly string[];
+  readonly buildings?: readonly string[];
+  readonly seasons: Readonly<Partial<Record<Season, number>>>;
+}
+
 export interface WorldRules {
   readonly catchUpCapMs: number;
   readonly catchUpChunkMs: number;
@@ -140,6 +155,8 @@ export interface WorldRules {
   readonly practiceStakes?: Readonly<Record<string, Transformation>>;
   /** The god each trouble kind is prayed about, by god id: a trouble with no mortal doer goes to the god of its domain, not to the mortal's patron. Absent, or a kind it lacks, means the patron. */
   readonly troubleKinds?: Readonly<Record<string, string>>;
+  /** The domain troubles the world draws, by id: what each takes and its per-mille odds each tick in each season. Each id needs a god in `troubleKinds`. Absent means the world draws none. */
+  readonly troubles?: Readonly<Record<string, TroubleSpec>>;
   /** Per-mille odds each tick that a mortal of a temperament commits each kind of wrong (or, for `revenge`, takes it): temperament, then kind. Absent, or a temperament or kind it lacks, means no odds. */
   readonly temperamentOdds?: Readonly<
     Record<string, Readonly<Record<string, number>>>
@@ -452,7 +469,10 @@ export const PETITION_BALANCE_KEYS = [
   "blessPlanks",
   "blessResourceAmount",
   "blessResourceCap",
-  "directorQuietTicks",
+  "directorIntervalTicks",
+  "seasonTicks",
+  "troubleFloorTicks",
+  "troubleLossCap",
   "goalLockTicks",
   "strikeGoodsCap",
   "defectionAffinity",
@@ -568,20 +588,24 @@ export const TROUBLE_KINDS = ["fire", "spoilage", "theft"] as const;
 export type TroubleKind = (typeof TROUBLE_KINDS)[number];
 
 /**
- * `rules.troubleKinds`: a god id for each trouble kind, an unknown kind refused
- * so a typo cannot silently send a prayer to the patron. That each god exists is
+ * `rules.troubleKinds`: a god id for each trouble kind (the base kinds, and each id in `rules.troubles`), an
+ * unknown kind refused so a typo cannot silently send a prayer to the patron. That each god exists is
  * checked against the pack (content) or the actors (a stored world).
  */
 export function parseTroubleKinds(
   value: unknown,
   path: string,
+  troubleIds: ReadonlySet<string> = new Set(),
 ): ParseResult<Readonly<Record<string, string>>> {
   if (!isRecord(value))
     return fail(path, "expected an object of gods by trouble");
   const table: Record<string, string> = {};
   for (const [kind, entry] of Object.entries(value)) {
     const at = `${path}.${kind}`;
-    if (!(TROUBLE_KINDS as readonly string[]).includes(kind)) {
+    if (
+      !(TROUBLE_KINDS as readonly string[]).includes(kind) &&
+      !troubleIds.has(kind)
+    ) {
       return fail(at, "not a trouble kind");
     }
     const god = parseString(entry, at);
@@ -589,6 +613,88 @@ export function parseTroubleKinds(
     table[kind] = god.value;
   }
   return ok(table);
+}
+
+function parseNameList(
+  value: unknown,
+  path: string,
+): ParseResult<readonly string[]> {
+  const list = parseArray(value, path, parseString);
+  if (!list.ok) return list;
+  if (list.value.length === 0) return fail(path, "expected at least one name");
+  if (new Set(list.value).size !== list.value.length) {
+    return fail(path, "expected each name once");
+  }
+  return list;
+}
+
+/**
+ * `rules.troubles`: each trouble's effect (what it takes), the names it may take, and its per-mille odds in each
+ * season. An unknown effect or season, a list that does not suit the effect, or odds outside 0 to 1000 are
+ * refused, and so is an id that is one of the base trouble kinds, so a trouble never shadows fire, spoilage, or
+ * theft. Used for authored content and when a stored world's rules are decoded.
+ */
+export function parseTroubles(
+  value: unknown,
+  path: string,
+): ParseResult<Readonly<Record<string, TroubleSpec>>> {
+  if (!isRecord(value)) return fail(path, "expected an object of troubles");
+  const troubles: Record<string, TroubleSpec> = {};
+  for (const [id, entry] of Object.entries(value)) {
+    const at = `${path}.${id}`;
+    if (id === "" || (TROUBLE_KINDS as readonly string[]).includes(id)) {
+      return fail(at, "expected an id that is not fire, spoilage, or theft");
+    }
+    if (!isRecord(entry)) return fail(at, "expected a trouble");
+    const effect = parseEnum(entry.effect, `${at}.effect`, [
+      "resource",
+      "building",
+    ] as const);
+    if (!effect.ok) return effect;
+    let resources: readonly string[] | undefined;
+    let buildings: readonly string[] | undefined;
+    if (effect.value === "resource") {
+      if (entry.buildings !== undefined) {
+        return fail(`${at}.buildings`, "a resource trouble names no buildings");
+      }
+      const list = parseNameList(entry.resources, `${at}.resources`);
+      if (!list.ok) return list;
+      resources = list.value;
+    } else {
+      if (entry.resources !== undefined) {
+        return fail(`${at}.resources`, "a building trouble names no resources");
+      }
+      if (entry.buildings !== undefined) {
+        const list = parseNameList(entry.buildings, `${at}.buildings`);
+        if (!list.ok) return list;
+        buildings = list.value;
+      }
+    }
+    if (!isRecord(entry.seasons)) {
+      return fail(`${at}.seasons`, "expected odds by season");
+    }
+    const seasons: Partial<Record<Season, number>> = {};
+    for (const [name, odds] of Object.entries(entry.seasons)) {
+      const season = parseEnum(name, `${at}.seasons.${name}`, SEASONS);
+      if (!season.ok) return season;
+      const parsed = parseNonNegativeInteger(odds, `${at}.seasons.${name}`);
+      if (!parsed.ok) return parsed;
+      if (parsed.value > 1000) {
+        return fail(
+          `${at}.seasons.${name}`,
+          "expected odds of at most 1000 per mille",
+        );
+      }
+      seasons[season.value] = parsed.value;
+    }
+    troubles[id] = {
+      effect: effect.value,
+      ...(resources === undefined ? {} : { resources }),
+      ...(buildings === undefined ? {} : { buildings }),
+      seasons,
+    };
+  }
+  return ok(troubles);
 }
 
 /** The kinds a temperament has odds for: the wrongs, and the revenge a victim may take. */
@@ -698,10 +804,19 @@ function parseWorldRules(
       ? ok<Readonly<Record<string, Transformation>> | undefined>(undefined)
       : parsePracticeStakes(value.practiceStakes, `${path}.practiceStakes`);
   if (!practiceStakes.ok) return practiceStakes;
+  const troubles =
+    value.troubles === undefined
+      ? ok<Readonly<Record<string, TroubleSpec>> | undefined>(undefined)
+      : parseTroubles(value.troubles, `${path}.troubles`);
+  if (!troubles.ok) return troubles;
   const troubleKinds =
     value.troubleKinds === undefined
       ? ok<Readonly<Record<string, string>> | undefined>(undefined)
-      : parseTroubleKinds(value.troubleKinds, `${path}.troubleKinds`);
+      : parseTroubleKinds(
+          value.troubleKinds,
+          `${path}.troubleKinds`,
+          new Set(Object.keys(troubles.value ?? {})),
+        );
   if (!troubleKinds.ok) return troubleKinds;
   const temperamentOdds =
     value.temperamentOdds === undefined
@@ -732,6 +847,7 @@ function parseWorldRules(
     ...(troubleKinds.value === undefined
       ? {}
       : { troubleKinds: troubleKinds.value }),
+    ...(troubles.value === undefined ? {} : { troubles: troubles.value }),
     ...(temperamentOdds.value === undefined
       ? {}
       : { temperamentOdds: temperamentOdds.value }),
@@ -868,6 +984,32 @@ function checkReferentialIntegrity(
         `rules.troubleKinds.${kind}`,
         `trouble "${kind}" belongs to "${god}", who is not a god in the pack`,
       );
+    }
+  }
+  const resourceIds = new Set(pack.resources.map((r) => r.resource));
+  const buildingIds = new Set(pack.buildings.map((b) => b.id));
+  for (const [id, trouble] of Object.entries(pack.rules.troubles ?? {})) {
+    if (pack.rules.troubleKinds?.[id] === undefined) {
+      return fail(
+        `rules.troubles.${id}`,
+        `trouble "${id}" belongs to no god: name one in rules.troubleKinds`,
+      );
+    }
+    for (const resource of trouble.resources ?? []) {
+      if (!resourceIds.has(resource)) {
+        return fail(
+          `rules.troubles.${id}.resources`,
+          `trouble "${id}" takes "${resource}", which the pack does not declare`,
+        );
+      }
+    }
+    for (const building of trouble.buildings ?? []) {
+      if (!buildingIds.has(building)) {
+        return fail(
+          `rules.troubles.${id}.buildings`,
+          `trouble "${id}" damages "${building}", which is not a building in the pack`,
+        );
+      }
     }
   }
 

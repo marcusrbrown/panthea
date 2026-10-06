@@ -20,6 +20,7 @@ import {
   parseSchemaVersion,
   parseString,
   type ResourceAmount,
+  type WorldRules,
 } from "@panthea/contracts";
 
 export const GOD_PROFILE_SCHEMA_VERSIONS = [1] as const;
@@ -70,6 +71,18 @@ export interface GodInvention {
   readonly reason: string;
 }
 
+/**
+ * A trouble the world may bring in this god's domain: `id` is its entry in the pack's trouble table
+ * (`rules.troubles`, whose god is this one in `rules.troubleKinds`), `cites` is where the domain is attested, and
+ * `invention` names the entry of `inventions` that says the trouble itself is the game's own.
+ */
+export interface GodTrouble {
+  readonly id: string;
+  readonly statement: string;
+  readonly cites: readonly Citation[];
+  readonly invention: string;
+}
+
 export interface GodAbility {
   readonly id: string;
   readonly name: string;
@@ -102,6 +115,8 @@ export interface GodProfile {
   readonly sources: readonly GodSource[];
   readonly variants: readonly GodVariant[];
   readonly inventions: readonly GodInvention[];
+  /** The domain troubles the world brings, each sourced; absent means the god has none. */
+  readonly troubles: readonly GodTrouble[];
   /** Placeholder sprite id; final art is a later milestone. */
   readonly sprite: string;
 }
@@ -254,6 +269,35 @@ export function parseInvention(
   });
 }
 
+function parseTrouble(
+  sourceIds: ReadonlySet<string>,
+  inventionIds: ReadonlySet<string>,
+) {
+  return (value: unknown, path: string): ParseResult<GodTrouble> => {
+    if (!isRecord(value)) return fail(path, "expected a trouble entry");
+    const id = parseString(value.id, `${path}.id`);
+    if (!id.ok) return id;
+    const statement = parseString(value.statement, `${path}.statement`);
+    if (!statement.ok) return statement;
+    const cites = parseCitations(value.cites, `${path}.cites`, sourceIds);
+    if (!cites.ok) return cites;
+    const invention = parseString(value.invention, `${path}.invention`);
+    if (!invention.ok) return invention;
+    if (!inventionIds.has(invention.value)) {
+      return fail(
+        `${path}.invention`,
+        `trouble "${id.value}" names unknown invention id: ${invention.value}; the trouble is the game's own and says so`,
+      );
+    }
+    return ok({
+      id: id.value,
+      statement: statement.value,
+      cites: cites.value,
+      invention: invention.value,
+    });
+  };
+}
+
 function parseParameters(
   value: unknown,
   path: string,
@@ -403,6 +447,15 @@ export function parseGodProfile(
     parseInvention,
   );
   if (!inventions.ok) return inventions;
+  const troubles = parseOptionalArray(
+    input.troubles,
+    `${path}.troubles`,
+    parseTrouble(
+      sourceIds,
+      new Set(inventions.value.map((invention) => invention.id)),
+    ),
+  );
+  if (!troubles.ok) return troubles;
   const sprite = parseString(input.sprite, `${path}.sprite`);
   if (!sprite.ok) return sprite;
 
@@ -412,6 +465,7 @@ export function parseGodProfile(
     [lore.value, "lore", "lore"],
     [variants.value, "variants", "variant"],
     [inventions.value, "inventions", "invention"],
+    [troubles.value, "troubles", "trouble"],
   ] as const) {
     const unique = checkUniqueIds(items, `${path}.${key}`, what);
     if (!unique.ok) return unique;
@@ -429,6 +483,7 @@ export function parseGodProfile(
     sources: sources.value,
     variants: variants.value,
     inventions: inventions.value,
+    troubles: troubles.value,
     sprite: sprite.value,
   });
 }
@@ -447,6 +502,7 @@ export interface LabeledProfileInput {
 export function parseGodProfiles(
   inputs: readonly LabeledProfileInput[],
   inhabitants: readonly Inhabitant[],
+  rules?: Pick<WorldRules, "troubles" | "troubleKinds">,
 ): ParseResult<readonly GodProfile[]> {
   const byId = new Map(
     inhabitants.map((inhabitant) => [inhabitant.id, inhabitant]),
@@ -488,7 +544,36 @@ export function parseGodProfiles(
         );
       }
     }
+    if (rules !== undefined) {
+      for (const [index, trouble] of profile.troubles.entries()) {
+        const at = `${label}.troubles[${index}].id`;
+        if (rules.troubles?.[trouble.id] === undefined) {
+          return fail(
+            at,
+            `trouble "${trouble.id}" is not in the pack's trouble table (rules.troubles)`,
+          );
+        }
+        const owner = rules.troubleKinds?.[trouble.id];
+        if (owner !== profile.id) {
+          return fail(
+            at,
+            `trouble "${trouble.id}" belongs to ${owner ?? "no god"} in the pack, not to ${profile.id}`,
+          );
+        }
+      }
+    }
     profiles.push(profile);
+  }
+  // Every trouble the pack draws is sourced: the profile of the god it belongs to lists it.
+  for (const id of Object.keys(rules?.troubles ?? {})) {
+    const owner = rules?.troubleKinds?.[id];
+    const profile = profiles.find((held) => held.id === owner);
+    if (profile !== undefined && !profile.troubles.some((t) => t.id === id)) {
+      return fail(
+        `${profile.id}.troubles`,
+        `trouble "${id}" is in the pack's trouble table but ${profile.id}'s profile does not source it`,
+      );
+    }
   }
   return ok(profiles);
 }

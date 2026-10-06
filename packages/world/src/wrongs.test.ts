@@ -8,6 +8,7 @@ import { decode, encode } from "./codec";
 import { planDirectorStep } from "./director";
 import { planFireStep } from "./fire";
 import { decideRoutineProposal } from "./routines";
+import { planTroubleStep } from "./seasons";
 import {
   createInitialWorldState,
   createPrng,
@@ -100,7 +101,7 @@ function content(options: {
       maxProposalsPerTick: 100,
       fireBalance: {},
       economyBalance: { consumeAmount: 1, value_food: 3, value_currency: 1 },
-      petitionBalance: { directorQuietTicks: 100000, ...options.balance },
+      petitionBalance: { directorIntervalTicks: 100000, ...options.balance },
       temperamentOdds: options.odds ?? NONE,
       troubleKinds: { spoilage: "hera" },
     },
@@ -330,7 +331,7 @@ test("the same seed and state do the same wrongs, and a replay of the log rebuil
   );
 });
 
-test("the PRNG is spent in a fixed order: wrongs, then fire, then the director, so a tick's new state is what drawing them in that order gives", () => {
+test("the PRNG is spent in a fixed order: wrongs, then the gods' troubles, then fire, then the director (seasons.test.ts pins it with troubles drawing), so a tick's new state is what drawing them in that order gives", () => {
   const town = new Town(
     {
       mortals: [
@@ -344,7 +345,8 @@ test("the PRNG is spent in a fixed order: wrongs, then fire, then the director, 
   for (let n = 0; n < 40; n += 1) {
     const before = { ...town.state, tick: town.state.tick + 1 };
     const wrongs = planWrongStep(before, town.prng);
-    const fire = planFireStep(before, wrongs.prng);
+    const troubles = planTroubleStep(before, wrongs.prng);
+    const fire = planFireStep(before, troubles.prng);
     const director = planDirectorStep(before, fire.prng, before.tick);
     const ran = town.tick();
     expect(ran.prng).toEqual(director.prng);

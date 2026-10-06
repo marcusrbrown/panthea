@@ -105,7 +105,7 @@ function pack(
       },
       economyBalance: { consumeAmount: 1, value_food: 3, value_currency: 1 },
       // Quiet for good: no director trouble in a scenario this short.
-      petitionBalance: { directorQuietTicks: 100000 },
+      petitionBalance: { directorIntervalTicks: 100000 },
       practiceBalance: {
         negotiationTicks: 40,
         counterBudget: 2,
@@ -1504,7 +1504,8 @@ test("a breach not sworn costs a grudge and standing at the term's place, never 
 
   // Both remember it, from events of the same tick.
   const remembered = world.log.filter(
-    (e) => e.kind === "memory-recorded" && e.sourceEventId === ended?.id,
+    (e): e is Extract<WorldEvent, { kind: "memory-recorded" }> =>
+      e.kind === "memory-recorded" && e.sourceEventId === ended?.id,
   );
   expect(remembered.map((e) => [String(e.entityId), e.tick])).toEqual([
     ["hera", breachTick],
@@ -1752,14 +1753,10 @@ test("only a sealed settlement makes an alliance: the ally term is sealed when a
     { outcome: "fulfilled", reason: "sealed" },
   ]);
   const changes = sealing.derivedEvents.filter(
-    (e) => e.kind === "relationship-changed" && e.allied === true,
+    (e): e is Extract<WorldEvent, { kind: "relationship-changed" }> =>
+      e.kind === "relationship-changed" && e.allied === true,
   );
-  expect(
-    changes.map((e) => [
-      e.entityId,
-      e.kind === "relationship-changed" ? e.toward : "",
-    ]),
-  ).toEqual([
+  expect(changes.map((e) => [String(e.entityId), String(e.toward)])).toEqual([
     ["hera", "zeus"],
     ["zeus", "hera"],
   ]);

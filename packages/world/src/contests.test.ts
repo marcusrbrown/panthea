@@ -121,7 +121,7 @@ function pack(
         destroyIntensity: 50,
       },
       economyBalance: { consumeAmount: 1, value_food: 3, value_currency: 1 },
-      petitionBalance: { directorQuietTicks: 100000 },
+      petitionBalance: { directorIntervalTicks: 100000 },
       memoryBalance: { kindnessAffinity: 2, ...memoryBalance },
       practiceBalance: {
         contestWindowTicks: 10,

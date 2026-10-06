@@ -66,7 +66,10 @@ export function accountOf(
       toSequence: endSequence,
     })
       .filter((event) => MAJOR_EVENT_KINDS.has(event.kind))
-      .map((event) => `${event.kind}:${String(event.entityId)}`),
+      .map(
+        (event) =>
+          `${event.kind}:${"entityId" in event ? String(event.entityId) : ""}`,
+      ),
   };
 }
 

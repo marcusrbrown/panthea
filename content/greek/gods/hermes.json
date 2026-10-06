@@ -174,6 +174,11 @@
   ],
   "inventions": [
     {
+      "id": "domain-troubles",
+      "statement": "Hermes's domain troubles are the game's own.",
+      "reason": "Goods that vanish from a stall with no thief, and goods lost on a road or at a harbour crossing, are troubles the game draws on a season's odds and a floor, taking goods. The sources attest his thieving, trade and roads; no source tells these episodes."
+    },
+    {
       "id": "tidings-as-report",
       "statement": "Hermes carries word as the world's report action.",
       "reason": "Report is the world's only private telling between two actors; it is a game mapping."
@@ -197,6 +202,34 @@
       "id": "authored-tuning",
       "statement": "The drive weights and the starting dispositions of Hermes are authored tuning.",
       "reason": "The sources describe temperament in prose; the numbers are a design choice to be revised against play."
+    }
+  ],
+  "troubles": [
+    {
+      "id": "vanished-goods",
+      "statement": "Goods vanish from a stall and no mortal took them. Spring and summer.",
+      "cites": [
+        {
+          "source": "hymn-4-hermes",
+          "locator": "lines 12-15"
+        },
+        {
+          "source": "hymn-4-hermes",
+          "locator": "lines 282-292"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "crossing-loss",
+      "statement": "A road or harbour crossing loses goods. Spring and autumn.",
+      "cites": [
+        {
+          "source": "hymn-4-hermes",
+          "locator": "lines 14-15"
+        }
+      ],
+      "invention": "domain-troubles"
     }
   ],
   "sprite": "placeholder-hermes"

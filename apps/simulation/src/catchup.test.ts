@@ -1106,7 +1106,10 @@ test("a closed backlog's outcomes never leak into the next one: the second summa
             "legend-recorded",
           ].includes(event.kind),
         )
-        .map((event) => `${event.kind}:${String(event.entityId)}`),
+        .map(
+          (event) =>
+            `${event.kind}:${"entityId" in event ? String(event.entityId) : ""}`,
+        ),
     );
     expect(second.summary.majorOutcomes).toEqual(expected);
   } finally {

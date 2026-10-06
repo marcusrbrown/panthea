@@ -587,7 +587,7 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
     blessPlanks: 3,
     blessResourceAmount: 2,
     blessResourceCap: 4,
-    directorQuietTicks: 120,
+    directorIntervalTicks: 120,
     goalLockTicks: 40,
     strikeGoodsCap: 2,
     defectionAffinity: 1,
@@ -626,7 +626,7 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
     { strikeGoodsCap: "2" },
     { answerWindowTicks: -5 },
     { answerWindowTicks: 2.5 },
-    { directorQuietTicks: "soon" },
+    { directorIntervalTicks: "soon" },
     { blessPlanks: Number.POSITIVE_INFINITY },
     { goalLockTicks: null },
     { answerWindow: 250 },
@@ -844,4 +844,208 @@ test("the wrong tunables are positive whole numbers", () => {
       ]).toEqual([key, bad, false]);
     }
   }
+});
+
+// --- Seasons and domain troubles --------------------------------------------------------------------
+
+const withRules = (patch: Record<string, unknown>) => {
+  const pack = validPack();
+  Object.assign(pack.rules as Record<string, unknown>, patch);
+  return pack;
+};
+
+const SQUALL = {
+  effect: "building",
+  buildings: ["tavern"],
+  seasons: { autumn: 3, winter: 3 },
+};
+const LEAK = {
+  effect: "resource",
+  resources: ["currency"],
+  seasons: { winter: 1000 },
+};
+
+test("the trouble table parses: each trouble's effect, what it may take, and its odds by season; a god for each in the trouble-kind table", () => {
+  const troubles = {
+    squall: SQUALL,
+    leak: LEAK,
+    flood: { effect: "building", seasons: {} },
+  };
+  const result = parseContentPack(
+    withRules({
+      troubles,
+      troubleKinds: { squall: "athena", leak: "athena", flood: "athena" },
+    }),
+  );
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value.rules.troubles).toEqual(
+      troubles as unknown as typeof result.value.rules.troubles,
+    );
+    expect(result.value.rules.troubleKinds).toEqual({
+      squall: "athena",
+      leak: "athena",
+      flood: "athena",
+    });
+  }
+  // Absent, the world draws none.
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.rules.troubles === undefined).toBe(true);
+  // Odds at their ends.
+  for (const odds of [0, 1, 1000]) {
+    expect(
+      parseContentPack(
+        withRules({
+          troubles: { leak: { ...LEAK, seasons: { spring: odds } } },
+          troubleKinds: { leak: "athena" },
+        }),
+      ).ok,
+    ).toBe(true);
+  }
+});
+
+test("the trouble table refuses what a typo would silently weaken: an unknown effect or season, odds outside 0 to 1000, a list that does not suit the effect, or an id that shadows a base kind", () => {
+  const parse = (troubles: unknown) =>
+    parseContentPack(
+      withRules({
+        troubles,
+        troubleKinds: { squall: "athena", leak: "athena" },
+      }),
+    );
+  for (const [bad, path] of [
+    [
+      { squall: { ...SQUALL, effect: "plague" } },
+      "rules.troubles.squall.effect",
+    ],
+    [
+      { squall: { ...SQUALL, effect: undefined } },
+      "rules.troubles.squall.effect",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { monsoon: 3 } } },
+      "rules.troubles.squall.seasons.monsoon",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { winter: 1001 } } },
+      "rules.troubles.squall.seasons.winter",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { winter: -1 } } },
+      "rules.troubles.squall.seasons.winter",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { winter: 0.5 } } },
+      "rules.troubles.squall.seasons.winter",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: undefined } },
+      "rules.troubles.squall.seasons",
+    ],
+    [
+      { squall: { ...SQUALL, buildings: [] } },
+      "rules.troubles.squall.buildings",
+    ],
+    [
+      { squall: { ...SQUALL, buildings: ["tavern", "tavern"] } },
+      "rules.troubles.squall.buildings",
+    ],
+    [
+      { squall: { ...SQUALL, resources: ["currency"] } },
+      "rules.troubles.squall.resources",
+    ],
+    [{ leak: { ...LEAK, resources: [] } }, "rules.troubles.leak.resources"],
+    [
+      { leak: { ...LEAK, resources: undefined } },
+      "rules.troubles.leak.resources",
+    ],
+    [
+      { leak: { ...LEAK, buildings: ["tavern"] } },
+      "rules.troubles.leak.buildings",
+    ],
+    [{ fire: LEAK }, "rules.troubles.fire"],
+    [{ spoilage: LEAK }, "rules.troubles.spoilage"],
+    [{ "": LEAK }, "rules.troubles."],
+    [{ leak: 3 }, "rules.troubles.leak"],
+    [["leak"], "rules.troubles"],
+  ] as const) {
+    const result = parse(bad);
+    expect([JSON.stringify(bad), result.ok]).toEqual([
+      JSON.stringify(bad),
+      false,
+    ]);
+    if (!result.ok) expect(result.path).toBe(path);
+  }
+});
+
+test("each trouble has one god in the pack, who is a god, and takes only goods and buildings the pack has", () => {
+  const parse = (rules: Record<string, unknown>) =>
+    parseContentPack(withRules(rules));
+  // A trouble with no god.
+  expect(parse({ troubles: { leak: LEAK } })).toMatchObject({
+    ok: false,
+    path: "rules.troubles.leak",
+  });
+  expect(
+    parse({ troubles: { leak: LEAK }, troubleKinds: { fire: "athena" } }),
+  ).toMatchObject({ ok: false, path: "rules.troubles.leak" });
+  // A kind that is neither a base kind nor a trouble in the table.
+  expect(
+    parse({
+      troubles: { leak: LEAK },
+      troubleKinds: { leak: "athena", plague: "athena" },
+    }),
+  ).toMatchObject({
+    ok: false,
+    path: "rules.troubleKinds.plague",
+  });
+  // A god that is not one: unknown, or a mortal.
+  expect(
+    parse({ troubles: { leak: LEAK }, troubleKinds: { leak: "zeus" } }),
+  ).toMatchObject({ ok: false, path: "rules.troubleKinds.leak" });
+  expect(
+    parse({ troubles: { leak: LEAK }, troubleKinds: { leak: "npc-1" } }),
+  ).toMatchObject({ ok: false, path: "rules.troubleKinds.leak" });
+  // A good or a building the pack lacks.
+  expect(
+    parse({
+      troubles: { leak: { ...LEAK, resources: ["amber"] } },
+      troubleKinds: { leak: "athena" },
+    }),
+  ).toMatchObject({ ok: false, path: "rules.troubles.leak.resources" });
+  expect(
+    parse({
+      troubles: { squall: { ...SQUALL, buildings: ["lighthouse"] } },
+      troubleKinds: { squall: "athena" },
+    }),
+  ).toMatchObject({ ok: false, path: "rules.troubles.squall.buildings" });
+});
+
+test("the season, floor, loss, and director tunables are positive whole numbers; the retired quiet-window key is refused", () => {
+  for (const key of [
+    "seasonTicks",
+    "troubleFloorTicks",
+    "troubleLossCap",
+    "directorIntervalTicks",
+  ]) {
+    for (const good of [1, 200, 100000]) {
+      expect([
+        key,
+        good,
+        parseContentPack(packWithPetitionBalance({ [key]: good })).ok,
+      ]).toEqual([key, good, true]);
+    }
+    for (const bad of [0, -1, 1.5, "3"]) {
+      expect([
+        key,
+        bad,
+        parseContentPack(packWithPetitionBalance({ [key]: bad })).ok,
+      ]).toEqual([key, bad, false]);
+    }
+  }
+  expect(
+    parseContentPack(packWithPetitionBalance({ directorQuietTicks: 120 })),
+  ).toMatchObject({
+    ok: false,
+    path: "rules.petitionBalance.directorQuietTicks",
+  });
 });

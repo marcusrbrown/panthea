@@ -171,6 +171,11 @@
   ],
   "inventions": [
     {
+      "id": "domain-troubles",
+      "statement": "Hades's domain troubles are the game's own.",
+      "reason": "A buried hoard swallowed, a dig that collapses, and a buried ore seam lost are troubles the game draws on a season's odds and a floor, taking goods. None needs a death. The sources attest his lot (the murk below) and his wealth beneath the earth; no source tells these episodes, and the cited lines for the dig are the lot's, not the dig's."
+    },
+    {
       "id": "decree-as-legend",
       "statement": "His decrees on the dead's due are told in play as legends.",
       "reason": "Legend is the world's only public telling; it is a game mapping."
@@ -194,6 +199,41 @@
       "id": "authored-tuning",
       "statement": "The drive weights and the starting dispositions of Hades are authored tuning.",
       "reason": "The sources describe temperament in prose; the numbers are a design choice to be revised against play."
+    }
+  ],
+  "troubles": [
+    {
+      "id": "hoard-swallowed",
+      "statement": "A buried hoard is swallowed by the earth: coin is lost. Autumn and winter.",
+      "cites": [
+        {
+          "source": "iliad-15",
+          "locator": "lines 187-193"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "dig-collapse",
+      "statement": "A dig collapses and buries ore. Spring and autumn.",
+      "cites": [
+        {
+          "source": "iliad-15",
+          "locator": "lines 187-193"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "ore-seam-lost",
+      "statement": "A buried ore seam is lost: ore or tools are lost. Winter.",
+      "cites": [
+        {
+          "source": "theogony",
+          "locator": "lines 969-974"
+        }
+      ],
+      "invention": "domain-troubles"
     }
   ],
   "sprite": "placeholder-hades"

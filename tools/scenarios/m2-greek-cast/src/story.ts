@@ -90,7 +90,7 @@ export async function runStory(
   // keeps it on. Everything else is the authored pack.
   const env = {
     PANTHEA_PETITION_BALANCE: JSON.stringify({
-      directorQuietTicks: 10_000_000,
+      directorIntervalTicks: 10_000_000,
     }),
     // The authored contest window is five minutes; the story's contest runs a short one.
     PANTHEA_PRACTICE_BALANCE: JSON.stringify({

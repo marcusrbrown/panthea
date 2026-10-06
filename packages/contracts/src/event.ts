@@ -445,6 +445,45 @@ export interface WrongEvent extends EventEnvelope {
   readonly credit?: EventId;
 }
 
+/** The seasons of the year, in order: the world turns through them on a fixed number of ticks (`seasonTicks`), starting in spring at tick 0. */
+export const SEASONS = ["spring", "summer", "autumn", "winter"] as const;
+export type Season = (typeof SEASONS)[number];
+
+/**
+ * The world turned into `season` from `previous`, on a boundary tick. The season itself is derived from the tick,
+ * so this event only records the turn: what the next draw's odds are is read from the tick, never from it.
+ */
+export interface SeasonTurnedEvent extends EventEnvelope {
+  readonly kind: "season-turned";
+  readonly season: Season;
+  readonly previous: Season;
+}
+
+/** What a domain trouble took: some of a good the mortal carried, or the condition of a building it owns. */
+export type TroubleLoss =
+  | {
+      readonly kind: "resource";
+      readonly resource: string;
+      readonly amount: number;
+    }
+  | { readonly kind: "building"; readonly building: EntityId };
+
+/**
+ * A trouble in a god's domain befell `entityId` (a mortal): the trouble named `trouble` in the pack's trouble table,
+ * whose god is `god`, took `loss`. No mortal did it and no god acted: it is the world's, drawn on a season's odds
+ * (`source` "season") or fired to keep the god's guaranteed floor (`source` "floor"). The mortal can pray about it,
+ * and the prayer goes to `god`.
+ */
+export interface TroubleEvent extends EventEnvelope {
+  readonly kind: "trouble";
+  readonly entityId: EntityId;
+  readonly trouble: string;
+  readonly god: EntityId;
+  readonly season: Season;
+  readonly source: "season" | "floor";
+  readonly loss: TroubleLoss;
+}
+
 /**
  * `entityId` (the seller) and `buyer` struck a credit trade: one side is handed over now and the other is owed by
  * `deadline` (a world tick, inclusive). A deferred `payment` means the goods went to the buyer now; a deferred
@@ -769,6 +808,8 @@ export const UNPLACED_EVENT_KINDS = [
   "patron-changed",
   "credit-extended",
   "credit-settled",
+  "season-turned",
+  "trouble",
   "goal-change-refused",
   "practice-opened",
   "practice-moved",
@@ -928,6 +969,8 @@ export type WorldEvent =
   | WrongEvent
   | CreditExtendedEvent
   | CreditSettledEvent
+  | SeasonTurnedEvent
+  | TroubleEvent
   | GoalChangeRefusedEvent
   | PracticeOpenedEvent
   | PracticeMovedEvent
@@ -977,6 +1020,8 @@ const EVENT_KIND_SET: Record<WorldEvent["kind"], true> = {
   wrong: true,
   "credit-extended": true,
   "credit-settled": true,
+  "season-turned": true,
+  trouble: true,
   "goal-change-refused": true,
   "practice-opened": true,
   "practice-moved": true,
@@ -1062,6 +1107,14 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
         return [event.entityId, event.victim];
       case "credit-extended":
         return [event.entityId, event.buyer];
+      case "trouble":
+        return [
+          event.entityId,
+          event.god,
+          ...(event.loss.kind === "building" ? [event.loss.building] : []),
+        ];
+      case "season-turned":
+        return [];
       case "mortal-struck":
         return [event.entityId, event.actor];
       case "practice-opened":
@@ -2261,6 +2314,68 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
         price: price.value,
         deferred: deferred.value,
         deadline: deadline.value,
+      });
+    }
+    case "season-turned": {
+      const season = parseEnum(input.season, "season", SEASONS);
+      if (!season.ok) return season;
+      const previous = parseEnum(input.previous, "previous", SEASONS);
+      if (!previous.ok) return previous;
+      if (
+        SEASONS.indexOf(season.value) !==
+        (SEASONS.indexOf(previous.value) + 1) % SEASONS.length
+      ) {
+        return fail("season", "a season follows the one before it");
+      }
+      return ok({
+        ...envelope,
+        kind: "season-turned",
+        season: season.value,
+        previous: previous.value,
+      });
+    }
+    case "trouble": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const trouble = parseString(input.trouble, "trouble");
+      if (!trouble.ok) return trouble;
+      const god = parseEntityId(input.god, "god");
+      if (!god.ok) return god;
+      const season = parseEnum(input.season, "season", SEASONS);
+      if (!season.ok) return season;
+      const source = parseEnum(input.source, "source", [
+        "season",
+        "floor",
+      ] as const);
+      if (!source.ok) return source;
+      if (!isRecord(input.loss)) return fail("loss", "expected what it took");
+      let loss: TroubleLoss;
+      if (input.loss.kind === "resource") {
+        const resource = parseString(input.loss.resource, "loss.resource");
+        if (!resource.ok) return resource;
+        const amount = parsePositiveInteger(input.loss.amount, "loss.amount");
+        if (!amount.ok) return amount;
+        loss = {
+          kind: "resource",
+          resource: resource.value,
+          amount: amount.value,
+        };
+      } else if (input.loss.kind === "building") {
+        const building = parseEntityId(input.loss.building, "loss.building");
+        if (!building.ok) return building;
+        loss = { kind: "building", building: building.value };
+      } else {
+        return fail("loss.kind", "expected a resource or a building");
+      }
+      return ok({
+        ...envelope,
+        kind: "trouble",
+        entityId: entityId.value,
+        trouble: trouble.value,
+        god: god.value,
+        season: season.value,
+        source: source.value,
+        loss,
       });
     }
     case "credit-settled": {

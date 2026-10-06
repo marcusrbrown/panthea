@@ -128,6 +128,7 @@ describe("the core god profile is unchanged", () => {
         "schemaVersion",
         "sources",
         "sprite",
+        "troubles",
         "variants",
       ].sort(),
     );
