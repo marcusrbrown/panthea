@@ -24,6 +24,7 @@ import {
   resourceValue,
   transferBetweenActors,
 } from "./economy";
+import { currentNeeds } from "./needs";
 import { petitionBalanceOf } from "./petitions";
 import {
   type ActorState,
@@ -122,6 +123,13 @@ function extendCredits(
   for (const need of needs) {
     const buyer = mortals.find((mortal) => mortal.id === need.actor);
     if (buyer === undefined || busy.has(buyer.id)) continue;
+    // The persisted need is closed only after this step, so it may be stale: credit only a shortfall the buyer still
+    // has, for the same reason, as this tick's proposals and income left it.
+    const still = currentNeeds(state, buyer.id).some(
+      (current) =>
+        current.resource === need.resource && current.reason === need.reason,
+    );
+    if (!still) continue;
     const amount = need.resource === "food" ? consumeAmountOf(state.rules) : 1;
     const price = amount * resourceValue(state.rules, need.resource);
     const others = mortals.filter(

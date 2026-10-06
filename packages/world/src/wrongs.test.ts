@@ -28,6 +28,7 @@ interface Mortal {
   patron: string;
   temperament?: string;
   location?: string;
+  gathers?: string;
   goods?: [string, number][];
 }
 
@@ -88,6 +89,7 @@ function content(options: {
           ]
         ).map(([resource, amount]) => ({ resource, amount })),
         devotion: { god: m.patron, affinity: 3 },
+        ...(m.gathers === undefined ? {} : { gathers: m.gathers }),
         ...(m.temperament === undefined ? {} : { temperament: m.temperament }),
       })),
     ],
@@ -552,6 +554,74 @@ test("goods paid for and never delivered become a broken-agreement wrong at the 
     },
   ]);
   expect(town.held("seller", "currency")).toBe(6);
+});
+
+/** A buyer with an open `no-funds` food need and no coin or food, beside a mortal that holds food to sell on credit. */
+function needyTown(gathers?: string) {
+  const town = new Town({
+    mortals: [
+      { name: "seller", patron: "zeus", goods: [["food", 300]] },
+      {
+        name: "buyer",
+        patron: "hera",
+        goods: [],
+        ...(gathers === undefined ? {} : { gathers }),
+      },
+    ],
+    odds: NONE,
+  });
+  town.apply({
+    kind: "unmet-need",
+    entityId: "buyer",
+    resource: "food",
+    reason: "no-funds",
+  });
+  return town;
+}
+
+const credits = (town: Town) =>
+  town.log.filter((e) => e.kind === "credit-extended");
+
+/** One tick in which only the seller acts (it eats), so the buyer stays where it stands for the credit step. */
+const sellerEats = (town: Town) =>
+  town.act({ actor: "seller", kind: "consume", resource: "food", amount: 1 });
+
+test("a genuinely unmet need is sold food on credit: the buyer holds it now and owes the price at the deadline", () => {
+  const town = needyTown();
+  sellerEats(town);
+  expect(credits(town)).toMatchObject([
+    {
+      entityId: "seller",
+      buyer: "buyer",
+      deferred: "payment",
+      goods: { resource: "food", amount: 1 },
+      price: { resource: "currency", amount: 3 },
+    },
+  ]);
+  expect(town.held("buyer", "food")).toBe(1);
+});
+
+test("a need a proposal met earlier in the same tick is sold nothing on credit: the persisted need is only closed after the credit step", () => {
+  const town = needyTown("food");
+  const ran = town.act({
+    actor: "buyer",
+    kind: "gather",
+    resource: "food",
+    amount: 1,
+  });
+  expect(ran.rejected).toEqual([]);
+  expect(town.held("buyer", "food")).toBe(1);
+  expect(credits(town)).toEqual([]);
+  expect(town.held("seller", "food")).toBe(300);
+  expect(town.state.credits.size).toBe(0);
+});
+
+test("a no-funds need whose buyer has funds again is sold nothing on credit", () => {
+  const town = needyTown();
+  town.apply({ kind: "income-earned", entityId: "buyer", amount: 10 });
+  sellerEats(town);
+  expect(credits(town)).toEqual([]);
+  expect(town.state.credits.size).toBe(0);
 });
 
 test("a debtor that can pay and is honest pays at the deadline, and nothing is wronged; a greedy one with certain odds defaults though it could pay", () => {
