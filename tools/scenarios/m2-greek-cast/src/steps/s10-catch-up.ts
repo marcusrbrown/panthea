@@ -2,7 +2,6 @@
 // after it, turns resume; the gods' memory and feelings come through the restart
 // unchanged.
 
-import { toEntityId } from "@panthea/world";
 import {
   readFrame,
   stopClean,
@@ -13,7 +12,7 @@ import {
   activeStorePath,
   backdateCursor,
 } from "../../../m1-living-world/src/world-db";
-import { differences } from "../checks";
+import { differences, memoryChanges } from "../checks";
 import type { Recorder, Story } from "./context";
 import { check, stateOf, waitFor } from "./support";
 
@@ -99,29 +98,12 @@ export async function stepCatchUp(
       const feelings = differences(before, after, ["zeus", "hera"]).filter(
         (line) => !line.startsWith("memories of"),
       );
-      const kept = ["zeus", "hera"].flatMap((god) => {
-        const held = after.memories.get(toEntityId(god)) ?? [];
-        const heldIds = new Set(held.map((memory) => memory.id));
-        const lost = (before.memories.get(toEntityId(god)) ?? []).filter(
-          (memory) => !heldIds.has(memory.id),
-        );
-        const added = held.filter(
-          (memory) =>
-            !(before.memories.get(toEntityId(god)) ?? []).some(
-              (old) => old.id === memory.id,
-            ),
-        );
-        const unexplained = added.filter(
-          (memory) =>
-            memory.kind !== "patronage" && memory.kind !== "witnessed",
-        );
-        return [
-          ...lost.map((memory) => `${god} lost ${memory.id}`),
-          ...unexplained.map(
-            (memory) => `${god} gained ${memory.kind} ${memory.id}`,
-          ),
-        ];
-      });
+      const kept = memoryChanges(
+        before,
+        after,
+        ["zeus", "hera"],
+        ["patronage", "witnessed"],
+      );
       check(
         feelings.length === 0 && kept.length === 0,
         "the gods' memories and feelings are what they were before the restart: none lost or changed, none new but what it saw or a defection's",

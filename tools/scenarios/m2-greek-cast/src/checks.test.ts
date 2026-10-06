@@ -3,6 +3,7 @@ import {
   differences,
   explainChain,
   isWait,
+  memoryChanges,
   type RememberedView,
   tracesIn,
   withoutPrayers,
@@ -92,6 +93,67 @@ test("differences is empty for equal memory and relationships, and names a dropp
       view([["hera", [memory("evt-5-1"), memory("evt-6-1")]]], []),
     ),
   ).toEqual(["relationship hera>zeus differs"]);
+});
+
+test("memoryChanges keeps every retained memory exactly: a lost one, or one with the same id and other content, is named, and a new one only when its kind is allowed", () => {
+  const before = view([["zeus", [memory("evt-5-1"), memory("evt-6-1")]]], []);
+  const allowed = ["witnessed", "patronage"];
+  const changes = (after: RememberedView) =>
+    memoryChanges(before, after, ["zeus"], allowed);
+
+  expect(changes(before)).toEqual([]);
+  // Control: new memories of an allowed kind are the world's doing; one of any other kind is not.
+  const gained = (kind: string) =>
+    view(
+      [
+        [
+          "zeus",
+          [
+            memory("evt-5-1"),
+            memory("evt-6-1"),
+            { ...memory("evt-9-1"), kind },
+          ],
+        ],
+      ],
+      [],
+    );
+  expect(changes(gained("witnessed"))).toEqual([]);
+  expect(changes(gained("patronage"))).toEqual([]);
+  expect(changes(gained("told"))).toEqual(["zeus gained told evt-9-1"]);
+  // A retained memory dropped.
+  expect(changes(view([["zeus", [memory("evt-5-1")]]], []))).toEqual([
+    "zeus lost evt-6-1",
+  ]);
+  // A retained memory whose id is unchanged but whose salience, subjects, or provenance changed.
+  for (const changed of [
+    { salience: 9 },
+    { subjects: ["the-tavern", "hera"] },
+    { sourceEventId: "evt-2-2" },
+  ]) {
+    expect(
+      changes(
+        view(
+          [["zeus", [{ ...memory("evt-5-1"), ...changed }, memory("evt-6-1")]]],
+          [],
+        ),
+      ),
+    ).toEqual(["zeus changed evt-5-1"]);
+  }
+  // Another owner's memories are not judged.
+  expect(
+    memoryChanges(
+      before,
+      view(
+        [
+          ["zeus", [memory("evt-5-1"), memory("evt-6-1")]],
+          ["hera", [memory("evt-1-1")]],
+        ],
+        [],
+      ),
+      ["zeus"],
+      allowed,
+    ),
+  ).toEqual([]);
 });
 
 const event = (

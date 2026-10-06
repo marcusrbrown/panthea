@@ -67,6 +67,40 @@ export function differences(
   return found;
 }
 
+/**
+ * How `after` differs from `before` in what `owners` remember, for a restart that keeps every memory: one line per
+ * memory lost, per memory held under the same id with any other content (subjects, salience, provenance), and per
+ * new memory of a kind not in `allowedNew`. A new memory of an allowed kind is the running world's doing, not a loss.
+ */
+export function memoryChanges(
+  before: RememberedView,
+  after: RememberedView,
+  owners: readonly string[],
+  allowedNew: readonly string[],
+): readonly string[] {
+  type Held = { readonly id: string; readonly kind: string };
+  const found: string[] = [];
+  for (const owner of owners) {
+    const was = (before.memories.get(owner) ?? []) as readonly Held[];
+    const now = (after.memories.get(owner) ?? []) as readonly Held[];
+    const nowById = new Map(now.map((memory) => [memory.id, memory]));
+    const wasIds = new Set(was.map((memory) => memory.id));
+    for (const memory of was) {
+      const kept = nowById.get(memory.id);
+      if (kept === undefined) found.push(`${owner} lost ${memory.id}`);
+      else if (canonicalJson(kept) !== canonicalJson(memory)) {
+        found.push(`${owner} changed ${memory.id}`);
+      }
+    }
+    for (const memory of now) {
+      if (!wasIds.has(memory.id) && !allowedNew.includes(memory.kind)) {
+        found.push(`${owner} gained ${memory.kind} ${memory.id}`);
+      }
+    }
+  }
+  return found;
+}
+
 /** An event as the store holds it: its full payload, parsed from JSON. */
 export type StoredEvent = Record<string, unknown> & { readonly id: string };
 

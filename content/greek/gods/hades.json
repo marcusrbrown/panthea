@@ -75,6 +75,15 @@
       "accessed": "2026-10-02"
     },
     {
+      "id": "cratylus",
+      "title": "Cratylus",
+      "author": "Plato",
+      "translator": "Harold N. Fowler",
+      "edition": "Fowler translation (Plato in Twelve Volumes, vol. 12, Harvard University Press and William Heinemann, 1921), as hosted by Perseus; locators are Stephanus page and section",
+      "url": "https://www.perseus.tufts.edu/hopper/text?doc=Perseus%3Atext%3A1999.01.0172%3Atext%3DCrat.%3Asection%3D403a",
+      "accessed": "2026-10-05"
+    },
+    {
       "id": "odyssey-11",
       "title": "Odyssey, book 11",
       "author": "Homer",
@@ -173,7 +182,7 @@
     {
       "id": "domain-troubles",
       "statement": "Hades's domain troubles are the game's own.",
-      "reason": "A buried hoard swallowed, a dig that collapses, and a buried ore seam lost are troubles the game draws on a season's odds and a floor, taking goods. None needs a death. The sources attest his lot (the murk below) and his wealth beneath the earth; no source tells these episodes, and the cited lines for the dig are the lot's, not the dig's."
+      "reason": "A buried hoard swallowed, a dig that collapses, and a buried ore seam lost are troubles the game draws on a season's odds and a floor, taking goods. None needs a death. Two things are attested: Iliad 15.187-193 gives him the murky underworld as his lot, and Plato's Cratylus 403a says only that the name Pluto is from wealth that comes up from below out of the earth. Neither tells a hoard swallowed, a dig that collapses, or an ore seam lost: the Iliad lines cited for the hoard and the dig are the lot's, and the Cratylus line cited for the seam is the wealth's, not the seam's."
     },
     {
       "id": "decree-as-legend",
@@ -229,8 +238,8 @@
       "statement": "A buried ore seam is lost: ore or tools are lost. Winter.",
       "cites": [
         {
-          "source": "theogony",
-          "locator": "lines 969-974"
+          "source": "cratylus",
+          "locator": "403a"
         }
       ],
       "invention": "domain-troubles"
