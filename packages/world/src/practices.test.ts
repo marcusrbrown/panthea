@@ -2091,6 +2091,48 @@ test("after a fulfilled demand, a demand on the same subject with no newer cause
   expect(opening).toMatchObject({ succeeds: first.id });
 });
 
+const harm = {
+  a: "evt-0-harm-a" as EventId,
+  b: "evt-0-harm-b" as EventId,
+  c: "evt-0-harm-c" as EventId,
+};
+
+/** The farmer prays to Hera about `cause`, naming Zeus: a cause Hera knows only through the prayer. */
+function prayedToHera(world: World, cause: EventId) {
+  world.apply({
+    kind: "petition-opened",
+    entityId: "farmer",
+    god: "hera",
+    cause,
+    request: { kind: "punish", offender: "zeus", buildings: [] },
+  });
+}
+
+test("a cause Hera knows only from a prayer is as old as the prayer: one prayed before her last demand cannot reopen the matter, one prayed after it can", () => {
+  const world = new World();
+  prayedToHera(world, harm.a);
+  prayedToHera(world, harm.b);
+  world.tick(demand(harm.a));
+  world.tick(move(world, "zeus", "refuse"));
+  const first = world.thread();
+  expect(first.status).toBe("refused");
+
+  // Both harms were prayed about before the demand opened: neither is news.
+  world.tick(demand(harm.b));
+  expect(world.rejected()).toEqual(["no-progress"]);
+  expect(world.threads()).toHaveLength(1);
+
+  // A harm prayed about after it is a new cause: the demand opens as a linked successor.
+  prayedToHera(world, harm.c);
+  world.tick(demand(harm.c));
+  expect(world.rejected()).toEqual([]);
+  expect(world.thread()).toMatchObject({
+    status: "open",
+    causes: [harm.c],
+  });
+  expect(world.state.threads.get(first.id)?.successor).toBe(world.thread().id);
+});
+
 test("a newer cause about another subject opens a fresh thread, with no link; a cause no one's memory backs never counts, and a standing aim is no cause", () => {
   const world = new World();
   const cause = sees(world);

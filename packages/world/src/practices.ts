@@ -804,7 +804,7 @@ const sameSubject = (a?: ThreadSubject, b?: ThreadSubject) =>
   a.agent === b.agent &&
   a.target === b.target;
 
-/** Whether `actor` learned of `cause` after the event numbered `sequence`; a cause no memory backs (a need, a loss) is as new as the world says. */
+/** Whether `actor` learned of `cause` after the event numbered `sequence`, from a memory or a prayer addressed to it; a cause neither backs (a need, a loss) is as new as the world says. */
 function learnedAfter(
   state: WorldState,
   actor: EntityId,
@@ -814,6 +814,8 @@ function learnedAfter(
   const learned = getMemories(state, actor)
     .filter((memory) => evidences(memory, cause))
     .map((memory) => memory.recordedAt);
+  const prayer = prayerTo(state, actor, cause);
+  if (prayer !== undefined) learned.push(prayer.sequence);
   return learned.length === 0 || Math.max(...learned) > sequence;
 }
 
