@@ -136,6 +136,7 @@
       "salience_sign": 6,
       "salience_theft": 6,
       "salience_noticed": 5,
+      "salience_patronage": 8,
       "salience_practice-ended": 7,
       "harmAffinity": 2,
       "kindnessAffinity": 1,
@@ -145,7 +146,7 @@
       "grudgeLimit": 10
     },
     "petitionBalance": {
-      "answerWindowTicks": 250,
+      "answerWindowTicks": 150,
       "causePrayableTicks": 150,
       "prayerCooldownTicks": 20,
       "blessDivinityCost": 2,
@@ -154,7 +155,8 @@
       "blessResourceCap": 4,
       "directorQuietTicks": 120,
       "goalLockTicks": 40,
-      "strikeGoodsCap": 2
+      "strikeGoodsCap": 2,
+      "defectionAffinity": 1
     },
     "practiceBalance": {
       "negotiationTicks": 200,

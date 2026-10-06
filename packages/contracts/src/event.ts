@@ -392,6 +392,21 @@ export interface PetitionRefusedEvent extends EventEnvelope {
   readonly petitionId: EventId;
 }
 
+/**
+ * `entityId` (a mortal) took `to` as its patron in place of `from`: its affinity for `from` fell below the
+ * defection threshold and `to` was the last other god to answer it. `unanswered` are the prayers to `from` that
+ * lapsed or were refused, newest first; `answered` is the prayer `to` answered. Private to the two gods, who
+ * each remember it (`patronage` memory).
+ */
+export interface PatronChangedEvent extends EventEnvelope {
+  readonly kind: "patron-changed";
+  readonly entityId: EntityId;
+  readonly from: EntityId;
+  readonly to: EntityId;
+  readonly answered: EventId;
+  readonly unanswered: readonly EventId[];
+}
+
 /** Why a god's goal change was refused. */
 export const GOAL_REFUSAL_REASONS = ["locked"] as const;
 export type GoalRefusalReason = (typeof GOAL_REFUSAL_REASONS)[number];
@@ -691,6 +706,7 @@ export const UNPLACED_EVENT_KINDS = [
   "petition-answered",
   "petition-lapsed",
   "petition-refused",
+  "patron-changed",
   "goal-change-refused",
   "practice-opened",
   "practice-moved",
@@ -776,11 +792,25 @@ export interface NoticedMemoryRecordedEvent extends MemoryRecordedBase {
   readonly causeEventId: EventId;
 }
 
+/**
+ * A god remembers that a mortal changed patron, as the god it left or the god it came to: the mortal, its home,
+ * and the other god. `sourceEventId` is the `patron-changed` event, which is what a contest over the defection cites.
+ * `subjects` are the mortal, its home, and the other god.
+ */
+export interface PatronageMemoryRecordedEvent extends MemoryRecordedBase {
+  readonly memoryKind: "patronage";
+  readonly mortal: EntityId;
+  readonly home: EntityId;
+  readonly from: EntityId;
+  readonly to: EntityId;
+}
+
 export type MemoryRecordedEvent =
   | WitnessedMemoryRecordedEvent
   | ToldMemoryRecordedEvent
   | SignMemoryRecordedEvent
-  | NoticedMemoryRecordedEvent;
+  | NoticedMemoryRecordedEvent
+  | PatronageMemoryRecordedEvent;
 
 /**
  * A relationship changed because of one memory: `entityId` now feels
@@ -832,6 +862,7 @@ export type WorldEvent =
   | PetitionAnsweredEvent
   | PetitionLapsedEvent
   | PetitionRefusedEvent
+  | PatronChangedEvent
   | GoalChangeRefusedEvent
   | PracticeOpenedEvent
   | PracticeMovedEvent
@@ -877,6 +908,7 @@ const EVENT_KIND_SET: Record<WorldEvent["kind"], true> = {
   "petition-answered": true,
   "petition-lapsed": true,
   "petition-refused": true,
+  "patron-changed": true,
   "goal-change-refused": true,
   "practice-opened": true,
   "practice-moved": true,
@@ -956,6 +988,8 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
         return [event.entityId, event.god];
       case "petition-refused":
         return [event.entityId, event.petitioner];
+      case "patron-changed":
+        return [event.entityId, event.from, event.to];
       case "mortal-struck":
         return [event.entityId, event.actor];
       case "practice-opened":
@@ -1028,6 +1062,8 @@ export function eventCause(event: WorldEvent): EventId | undefined {
     case "petition-refused":
     case "blessing-granted":
       return event.petitionId;
+    case "patron-changed":
+      return event.answered;
     case "practice-opened":
       return event.causes[0];
     case "practice-moved":
@@ -1354,6 +1390,27 @@ function parseMemoryRecorded(
         outcome: outcome.value,
         petitionId: petitionId.value,
         consequence: consequence.value,
+      });
+    }
+    case "patronage": {
+      const mortal = parseEntityId(input.mortal, "mortal");
+      if (!mortal.ok) return mortal;
+      const home = parseEntityId(input.home, "home");
+      if (!home.ok) return home;
+      const from = parseEntityId(input.from, "from");
+      if (!from.ok) return from;
+      const to = parseEntityId(input.to, "to");
+      if (!to.ok) return to;
+      if (consequence.value !== undefined) {
+        return fail("consequence", "a change of patron blames no one");
+      }
+      return ok({
+        ...base,
+        memoryKind: "patronage",
+        mortal: mortal.value,
+        home: home.value,
+        from: from.value,
+        to: to.value,
       });
     }
     default:
@@ -2042,6 +2099,34 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
         entityId: entityId.value,
         god: god.value,
         petitionId: petitionId.value,
+      });
+    }
+    case "patron-changed": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const from = parseEntityId(input.from, "from");
+      if (!from.ok) return from;
+      const to = parseEntityId(input.to, "to");
+      if (!to.ok) return to;
+      if (from.value === to.value) {
+        return fail("to", "a mortal changes to another god");
+      }
+      const answered = parseEventId(input.answered, "answered");
+      if (!answered.ok) return answered;
+      const unanswered = parseArray(
+        input.unanswered,
+        "unanswered",
+        parseEventId,
+      );
+      if (!unanswered.ok) return unanswered;
+      return ok({
+        ...envelope,
+        kind: "patron-changed",
+        entityId: entityId.value,
+        from: from.value,
+        to: to.value,
+        answered: answered.value,
+        unanswered: unanswered.value,
       });
     }
     case "petition-refused": {

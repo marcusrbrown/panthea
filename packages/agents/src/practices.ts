@@ -355,6 +355,8 @@ function describeBasis(memory: MemoryEntry, self: EntityId): string {
       return `you noticed a loss (${memory.subjects.join(", ")})`;
     case "sign":
       return `${memory.god} ${memory.outcome === "answered" ? "answered" : "did not answer"} a petition`;
+    case "patronage":
+      return `${memory.mortal} of ${memory.home} left ${memory.from} for ${memory.to}`;
   }
 }
 
@@ -369,6 +371,8 @@ function basisOf(memory: MemoryEntry): EventId | undefined {
       return memory.causeEventId;
     case "sign":
       return undefined;
+    case "patronage":
+      return memory.sourceEventId;
   }
 }
 

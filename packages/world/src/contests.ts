@@ -28,6 +28,7 @@ import {
   type PracticeProposal,
   type WorldEvent,
 } from "@panthea/contracts";
+import { getMemories } from "./memory";
 import { perceivesEvent } from "./perception";
 import { type PracticeVerdict, practiceBalanceOf } from "./practices";
 import {
@@ -37,6 +38,7 @@ import {
   getActor,
   getBuilding,
   isContestOpen,
+  type MemoryEntry,
   type ServiceAct,
   standingOf,
   type WorldEventDraft,
@@ -266,6 +268,73 @@ export function contestableActs(
   });
 }
 
+/**
+ * A contest over a defection: the god a mortal left contests its home with the god it went to. It rests on
+ * the opener's own memory of the change of patron, so it needs no rivalry, no perceived act, and no act young
+ * enough; only the god that lost the worshipper may cite it, and once.
+ */
+function validateDefection(
+  state: WorldState,
+  proposal: Extract<PracticeProposal, { move: "contest" }>,
+  memory: Extract<MemoryEntry, { kind: "patronage" }>,
+): PracticeVerdict {
+  if (memory.from !== proposal.actor) {
+    return refuse(
+      "unauthorized-claim",
+      "only the god that lost the worshipper may contest its defection",
+    );
+  }
+  const rival = getActor(state, memory.to);
+  if (rival?.alive !== true || rival.isDeity !== true) {
+    return refuse("malformed", `${memory.to} is no longer a living god`);
+  }
+  if (mortalsOf(state, memory.home).length === 0) {
+    return refuse("malformed", `no mortal lives at ${memory.home} now`);
+  }
+  const here = [...state.contests.values()].filter(
+    (contest) => contest.place === memory.home,
+  );
+  const open = here.find(isContestOpen);
+  if (open !== undefined) {
+    return refuse(
+      "no-progress",
+      `${open.id} already holds ${memory.home} between ${open.opener} and ${open.rival}; let it close`,
+      open.id,
+    );
+  }
+  const spent = here.find((contest) => contest.cause === proposal.cause);
+  if (spent !== undefined) {
+    return refuse(
+      "no-progress",
+      `that defection was already contested (${spent.id})`,
+      spent.id,
+    );
+  }
+  const latest = here
+    .filter(
+      (contest) =>
+        (contest.opener === proposal.actor && contest.rival === memory.to) ||
+        (contest.opener === memory.to && contest.rival === proposal.actor),
+    )
+    .sort((a, b) => a.openedSequence - b.openedSequence)
+    .at(-1);
+  return {
+    ok: true,
+    events: [
+      {
+        kind: "contest-opened",
+        entityId: proposal.actor,
+        rival: memory.to,
+        place: memory.home,
+        cause: proposal.cause,
+        closesAt:
+          state.tick + practiceBalanceOf(state.rules, "contestWindowTicks"),
+        ...(latest === undefined ? {} : { succeeds: latest.id }),
+      },
+    ],
+  };
+}
+
 /** The events a contest proposal would commit, or why the world refuses it. */
 export function validateContest(
   state: WorldState,
@@ -277,6 +346,15 @@ export function validateContest(
   }
   const maxAge = practiceBalanceOf(state.rules, "contestActTicks");
   const act = state.services.find((held) => held.id === proposal.cause);
+  if (act === undefined) {
+    const defection = getMemories(state, proposal.actor).find(
+      (memory) =>
+        memory.kind === "patronage" && memory.sourceEventId === proposal.cause,
+    );
+    if (defection?.kind === "patronage") {
+      return validateDefection(state, proposal, defection);
+    }
+  }
   if (act === undefined || state.tick - act.tick > maxAge) {
     return refuse(
       "malformed",

@@ -53,6 +53,7 @@ import {
   getResourceAmount,
   isEventLinked,
   nextHop,
+  relationshipKey,
   runTick,
   submitProposal,
   toEntityId,
@@ -2510,4 +2511,156 @@ test("a god's strike on a mortal takes goods up to the strikeGoodsCap and the pr
   };
   // Below what it holds, exactly what it holds (6), above it, and far above it.
   expect([run(1), run(5), run(6), run(7), run(100)]).toEqual([1, 5, 6, 6, 6]);
+});
+
+test("a defection and the threshold behind it survive commit, reopen, rebuild, and archive import, at the threshold's boundary values: at it a mortal stays, below it it goes, and the god lost and gained alone remember it", () => {
+  const run = (affinity: number, threshold: number) => {
+    const storeDir = tempDir("panthea-sim-defect-");
+    const exportDir = tempDir("panthea-sim-defect-export-");
+    const slotsDir = tempDir("panthea-sim-defect-slots-");
+    try {
+      const storePath = join(storeDir, "world.sqlite");
+      const base = loadGreekWorldState();
+      const eleni = base.actors.get(id("fisher-eleni"));
+      const hades = base.actors.get(id("hades"));
+      if (!eleni || !hades) throw new Error("expected eleni and hades");
+      // Eleni (Athena's) has already been helped by Hades, as a spoiled-stock prayer to him would have it.
+      const seed = withActor(
+        withActor(
+          {
+            ...base,
+            rules: {
+              ...base.rules,
+              petitionBalance: {
+                ...base.rules.petitionBalance,
+                defectionAffinity: threshold,
+              },
+            },
+            relationships: new Map(base.relationships).set(
+              relationshipKey(id("fisher-eleni"), id("athena")),
+              {
+                from: id("fisher-eleni"),
+                toward: id("athena"),
+                affinity,
+                grudge: 0,
+                allied: false,
+              },
+            ),
+            causes: new Map([
+              [
+                id("fisher-eleni"),
+                [
+                  {
+                    eventId: "evt-0-9001" as never,
+                    tick: 0,
+                    kind: "spoilage" as const,
+                    resource: "food",
+                    amount: 1,
+                  },
+                ],
+              ],
+            ]),
+          },
+          { ...eleni, locationId: id("altar") },
+        ),
+        { ...hades, locationId: id("altar") },
+      );
+      const world = liveWorld(storePath, seed);
+      // Eleni prays about her spoiled stock: the table sends it to Hades, who blesses her.
+      world.run(
+        queuedProposal("fisher-eleni", {
+          kind: "pray",
+          cause: "evt-0-9001",
+          source: "routine",
+        }),
+      );
+      const asked = eventOfKind(listEvents(world.store.db), "petition-opened");
+      expect(asked).toMatchObject({ god: "hades" });
+      world.run(queuedProposal("hades", { kind: "bless", petition: asked.id }));
+      // Zeus strikes her; she prays about the harm to her patron, who refuses her.
+      world.run(
+        queuedProposal("zeus", {
+          kind: "strike",
+          target: "fisher-eleni",
+          power: 1,
+        }),
+      );
+      const harm = eventOfKind(listEvents(world.store.db), "mortal-struck");
+      // Her patron now: Athena, unless the threshold was high enough for Hades's answer alone to win her.
+      const patron = world.state.patrons.get(id("fisher-eleni"));
+      // The prayer cooldown (20 ticks) passes before she prays again.
+      for (let wait = 0; wait < 20; wait += 1) world.run();
+      world.run(
+        queuedProposal("fisher-eleni", {
+          kind: "pray",
+          cause: harm.id,
+          source: "routine",
+        }),
+      );
+      const prayer = eventOfKind(
+        listEvents(world.store.db),
+        "petition-opened",
+        (e) => e.cause === harm.id,
+      );
+      expect(prayer).toMatchObject({ god: patron });
+      world.run(
+        queuedProposal(String(patron), {
+          kind: "refuse",
+          petition: prayer.id,
+        }),
+      );
+      const state = world.state;
+      const changes = eventOfKindAll(
+        listEvents(world.store.db),
+        "patron-changed",
+      );
+      // The refusal takes her from `affinity` to `affinity - 2`: she goes only if that is below the threshold.
+      expect(changes.length).toBe(affinity - 2 < threshold ? 1 : 0);
+      expect(state.patrons.get(id("fisher-eleni"))).toBe(
+        id(changes.length === 1 ? "hades" : "athena"),
+      );
+      const remembered = (god: string) =>
+        getMemories(state, id(god)).filter((m) => m.kind === "patronage");
+      expect(remembered("hades")).toHaveLength(changes.length);
+      expect(remembered("athena")).toHaveLength(changes.length);
+      expect(remembered("zeus")).toEqual([]);
+
+      closeStore(world.store);
+      const fresh = createWorldProjectionReducers(seed);
+      const reopened = openStore(storePath, fresh);
+      const clock = readClock(reopened.db);
+      expect(
+        restoreWorldTime(readLiveProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      expect(
+        restoreWorldTime(rebuildProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      const exportPath = join(exportDir, "archive.sqlite");
+      exportArchive(reopened, exportPath);
+      const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+      const branch = openStore(join(imported.slotPath, "world.sqlite"), fresh);
+      expect(
+        restoreWorldTime(
+          readLiveProjections(branch, fresh),
+          readClock(branch.db),
+        ),
+      ).toEqual(state);
+      closeStore(branch);
+      closeStore(reopened);
+      return changes.length;
+    } finally {
+      rmSync(storeDir, { recursive: true, force: true });
+      rmSync(exportDir, { recursive: true, force: true });
+      rmSync(slotsDir, { recursive: true, force: true });
+    }
+  };
+  // (affinity, threshold): the feeling after the refusal is affinity - 2, and the threshold is 1 (the default),
+  // 2, and 100 (more than any affinity can be).
+  expect([
+    run(3, 1), // 1 is not below 1: stays
+    run(2, 1), // 0 is below 1: goes
+    run(4, 2), // 2 is not below 2: stays
+    run(3, 2), // 1 is below 2: goes
+    run(10, 100), // 8 is below 100: goes
+  ]).toEqual([0, 1, 0, 1, 1]);
 });

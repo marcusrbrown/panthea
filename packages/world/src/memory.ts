@@ -73,6 +73,8 @@ export const DEFAULT_MEMORY_BALANCE: Readonly<Record<string, number>> = {
   "salience_practice-ended": 7,
   /** A loss the mortal noticed. */
   salience_noticed: 5,
+  /** A god's memory that a mortal left it, or came to it: what a contest over the defection rests on. */
+  salience_patronage: 8,
   /** Affinity lost toward whoever did harm one witnessed. */
   harmAffinity: 2,
   /** Affinity gained toward whoever did one a kindness. */
@@ -149,6 +151,15 @@ function memoryEntryOf(event: MemoryRecordedEvent): MemoryEntry {
         god: event.god,
         outcome: event.outcome,
         petitionId: event.petitionId,
+      };
+    case "patronage":
+      return {
+        ...base,
+        kind: "patronage",
+        mortal: event.mortal,
+        home: event.home,
+        from: event.from,
+        to: event.to,
       };
     case "told":
       return {
@@ -610,6 +621,46 @@ export function signMemory(
       },
     },
   };
+}
+
+/**
+ * What the two gods of a change of patron remember: the god the mortal left and the god it came to, each
+ * naming the mortal, its home, and the other god. No one else learns of it. A god no longer living remembers
+ * nothing.
+ */
+export function patronageMemories(
+  after: WorldState,
+  event: Extract<WorldEvent, { kind: "patron-changed" }>,
+): readonly DerivedDraft[] {
+  const salience = balanceOf(after, "salience_patronage");
+  if (salience < 1) return [];
+  const mortal = after.actors.get(event.entityId);
+  if (mortal === undefined) return [];
+  const home = mortal.home ?? mortal.locationId;
+  return [
+    { god: event.from, other: event.to },
+    { god: event.to, other: event.from },
+  ].flatMap(({ god, other }) =>
+    after.actors.get(god)?.alive === true
+      ? [
+          {
+            cause: event,
+            draft: {
+              kind: "memory-recorded" as const,
+              memoryKind: "patronage" as const,
+              entityId: god,
+              sourceEventId: event.id,
+              mortal: event.entityId,
+              home,
+              from: event.from,
+              to: event.to,
+              subjects: unique([event.entityId, home, other]),
+              salience,
+            },
+          },
+        ]
+      : [],
+  );
 }
 
 /**
