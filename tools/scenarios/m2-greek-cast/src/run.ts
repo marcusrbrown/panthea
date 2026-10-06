@@ -22,10 +22,15 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureEnvironment, renderReport } from "@panthea/tools-probes-shared";
 import { mapLimit, ScenarioFailure } from "../../m1-living-world/src/helpers";
-import { killAllSidecars } from "../../m1-living-world/src/sidecar";
+import { killAllSidecars, REPO_ROOT } from "../../m1-living-world/src/sidecar";
 import { type Args, parseArgs } from "./args";
 import { resolveSidecarBinary } from "./binary";
-import { defaultOutDir, runEpisodes } from "./episodes";
+import {
+  defaultOutDir,
+  gateOf,
+  loadAuthoredPatrons,
+  runEpisodes,
+} from "./episodes";
 import { SABOTAGE } from "./practice-controls";
 import {
   endpointOptions,
@@ -137,12 +142,26 @@ async function runEpisodeGate(args: Args): Promise<void> {
         );
       }
     }
+    for (const check of record.episode.world) {
+      if (!check.ok) failed += 1;
+      console.log(
+        `${check.ok ? "PASS" : "FAIL"} episode ${record.index} ${check.name}: ${check.detail}`,
+      );
+    }
     for (const property of record.analysis.properties) {
       if (!property.ok) failed += 1;
       console.log(
         `${property.ok ? "PASS" : "FAIL"} episode ${record.index} ${property.name}: ${property.detail}`,
       );
     }
+  }
+  // The checks that span the gate's episodes: each god's initiative counts across them, not in each.
+  const patrons = loadAuthoredPatrons(join(REPO_ROOT, "content/greek/world"));
+  for (const check of gateOf(records, patrons)) {
+    if (!check.ok) failed += 1;
+    console.log(
+      `${check.ok ? "PASS" : "FAIL"} gate ${check.name}: ${check.detail}`,
+    );
   }
   if (failed > 0) {
     // The transcripts are kept: an unsuccessful episode is tuning evidence.

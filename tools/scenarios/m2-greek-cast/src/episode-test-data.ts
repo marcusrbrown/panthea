@@ -284,7 +284,7 @@ export const movedEvent = (
   to,
 });
 
-/** A prayer by `petitioner` to `god`, about the event `cause`. */
+/** A prayer by `petitioner` to `god`, about the event `cause`: for planks unless `resource` is given. */
 export const petitionOpenedEvent = (
   id: string,
   sequence: number,
@@ -292,13 +292,14 @@ export const petitionOpenedEvent = (
   god: string,
   cause = "evt-1-1",
   tick = 1,
+  resource = "planks",
 ) => ({
   ...envelope(id, sequence, tick),
   kind: "petition-opened",
   entityId: petitioner,
   god,
   cause,
-  request: { kind: "help", need: { kind: "resource", resource: "food" } },
+  request: { kind: "help", need: { kind: "resource", resource } },
 });
 
 /** `god` answering `petitioner`'s petition `petitionId`. */

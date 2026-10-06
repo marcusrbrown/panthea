@@ -24,6 +24,11 @@ import {
   primaryTarget,
   REPETITION_CAP,
 } from "./episode-analysis";
+import {
+  episodeMetrics,
+  type GateCheck,
+  MAX_FOOD_FAILURE_LINES,
+} from "./gate-analysis";
 import { journeysOf, renderJourneyCounts, renderJourneys } from "./journeys";
 import {
   analyzePractices,
@@ -57,6 +62,8 @@ export interface EpisodeRecord {
   readonly input: RealInput;
   readonly analysis: RealAnalysis;
   readonly episode: EpisodeAnalysis;
+  /** The patron each mortal is authored with, so the transcript can say where a prayer was routed. Absent in a record built without the pack. */
+  readonly patrons?: ReadonlyMap<string, string>;
 }
 
 export interface ActionEntry {
@@ -320,10 +327,60 @@ export function buildWorldNotes(record: EpisodeRecord): WorldNote[] {
           note(e, `the director set ${e.entityId} alight`);
         }
         break;
-      case "petition-opened":
+      case "petition-opened": {
+        const cause = byId.get(String(e.cause));
+        const routed =
+          cause?.kind === "trouble"
+            ? "a trouble in the god's domain: routed to the domain god"
+            : record.patrons?.get(String(e.entityId)) === String(e.god)
+              ? "routed to its patron"
+              : record.patrons === undefined
+                ? undefined
+                : "not its authored patron (a defection or a domain)";
         note(
           e,
-          `${e.entityId} prayed to ${e.god}: ${REQUEST_WORDS(e.request)} [${e.id}]`,
+          `${e.entityId} prayed to ${e.god}: ${REQUEST_WORDS(e.request)} [${e.id}]${routed === undefined ? "" : ` (${routed})`}`,
+        );
+        break;
+      }
+      case "wrong":
+        note(
+          e,
+          `${e.entityId} wronged ${e.victim}: ${e.wrong} of ${e.amount} ${e.resource}; ${e.temperament}${e.needy === true ? ", in need" : ", not in need"}${e.revenge === undefined ? "" : `; a revenge for [${e.revenge}]`}${e.credit === undefined ? "" : `; the credit [${e.credit}] failed`} [${e.id}]`,
+        );
+        break;
+      case "trouble": {
+        const loss = e.loss as {
+          kind: string;
+          resource?: string;
+          amount?: number;
+          building?: string;
+        };
+        note(
+          e,
+          `a ${e.trouble} in ${e.god}'s domain (${e.season}, ${e.source === "floor" ? "the god's floor" : "the season's odds"}) ${loss.kind === "building" ? `damaged ${loss.building}` : `took ${loss.amount} ${loss.resource}`} of ${e.entityId} [${e.id}]`,
+        );
+        break;
+      }
+      case "season-turned":
+        note(e, `the season turned from ${e.previous} to ${e.season}`);
+        break;
+      case "mortal-struck":
+        note(
+          e,
+          `${e.actor} struck ${e.entityId}${e.resource === undefined ? ", who carried nothing" : ` and took ${e.amount} ${e.resource}`} [${e.id}]`,
+        );
+        break;
+      case "petition-refused":
+        note(
+          e,
+          `${e.entityId} refused ${e.petitioner}'s prayer [${e.petitionId}]`,
+        );
+        break;
+      case "patron-changed":
+        note(
+          e,
+          `${e.entityId} left ${e.from} for ${e.to}: ${e.from} left ${(e.unanswered as unknown[]).length} prayers unanswered (${(e.unanswered as string[]).map((id) => `[${id}]`).join(", ") || "none"}) and ${e.to} answered [${e.answered}] [${e.id}]`,
         );
         break;
       case "petition-answered":
@@ -369,7 +426,7 @@ export function buildWorldNotes(record: EpisodeRecord): WorldNote[] {
         if (e.memoryKind === "sign") {
           note(
             e,
-            `${e.entityId} remembers ${e.god}'s ${e.outcome === "answered" ? "answer" : "silence"}`,
+            `${e.entityId} remembers ${e.god}'s ${e.outcome === "answered" ? "answer" : e.outcome === "refused" ? "refusal" : "silence"}`,
           );
         }
         break;
@@ -435,6 +492,38 @@ function renderAction(
     lines.push(`   - caused: ${entry.caused.join("; ")}`);
   for (const change of entry.changes) lines.push(`   - then: ${change}`);
   return lines.join("\n");
+}
+
+/** The episode's numbers the plan names (food, troubles by god, wrongs between mortals with what followed, defections, cause to answer), as lists. */
+function renderEpisodeNumbers(record: EpisodeRecord): string {
+  const metrics = episodeMetrics(
+    {
+      index: record.index,
+      events: record.input.events,
+      proposals: record.input.proposals,
+    },
+    record.patrons ?? new Map(),
+  );
+  const troubles = Object.entries(metrics.troublesByGod)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([god, count]) => `${nameOf(record, god)} ${count}`);
+  const closed = metrics.causeToAnswer;
+  const chains = metrics.crossPatronWrongs.map(
+    (c) =>
+      `  - [${c.wrong}] ${c.wrongdoer} (${c.wrongdoerPatron}) wronged ${c.victim} (${c.victimPatron}): ${c.kind}; ${c.prayer === undefined ? "the victim did not pray about it" : `the victim prayed [${c.prayer}]`}; ${c.consequences.length === 0 ? "no consequence yet" : c.consequences.join(", ")}`,
+  );
+  return [
+    `- Food: ${metrics.foodFailureLines} "cannot get food" lines; ${metrics.foodPrayers} of ${metrics.prayers} prayers are about food`,
+    `- Troubles in a god's domain: ${troubles.length === 0 ? "none" : troubles.join(", ")}`,
+    `- Wrongs between mortals: ${metrics.wrongs}; ${metrics.crossPatronWrongs.length} between different patrons`,
+    ...chains,
+    `- Defections: ${metrics.defections}`,
+    `- From a prayer's cause to its closing: ${closed.closed} closed${closed.medianTicks === undefined ? "" : ` (median ${closed.medianTicks} ticks, p95 ${closed.p95Ticks} ticks)`}; by outcome ${
+      Object.entries(closed.byOutcome)
+        .map(([k, v]) => `${k} ${v}`)
+        .join(", ") || "none"
+    }`,
+  ].join("\n");
 }
 
 function renderWorldNotes(record: EpisodeRecord): string {
@@ -706,6 +795,10 @@ export function renderTranscript(record: EpisodeRecord): string {
     "",
     renderDispositions(record),
     "",
+    "## The episode's numbers",
+    "",
+    renderEpisodeNumbers(record),
+    "",
     "## What the world did",
     "",
     renderWorldNotes(record),
@@ -767,7 +860,14 @@ export interface SummarySettings {
   readonly endpoint?: "hosted" | "local";
   /** Transcript file names, in episode order. */
   readonly files: readonly string[];
+  /** The checks across the episodes (wrongs, threads over harm, each god's initiative). Absent: none were run. */
+  readonly gate?: readonly GateCheck[];
+  /** The patron each mortal is authored with, for the wrongs' consequences. */
+  readonly patrons?: ReadonlyMap<string, string>;
 }
+
+/** The p95 queue wait ADR-0005 allows a god on one model, in seconds (a tick is a second of world time). */
+export const QUEUE_WAIT_P95_TARGET_SECONDS = 90;
 
 export function renderSummary(
   records: readonly EpisodeRecord[],
@@ -780,6 +880,9 @@ export function renderSummary(
     }),
   );
   const failures = records.flatMap((record) => [
+    ...record.episode.world
+      .filter((c) => !c.ok)
+      .map((c) => `episode ${record.index}: ${c.name} (${c.detail})`),
     ...record.episode.gods.flatMap((g) =>
       g.checks
         .filter((c) => !c.ok)
@@ -801,6 +904,30 @@ export function renderSummary(
     );
     return `| ${record.index} | ${practice.threads.length} | ${ended.length} | ${practice.open.length} | ${hard.length} | ${practice.noProgress.length} | ${practice.obligated.turns.length} |`;
   });
+  const gateFailures = (settings.gate ?? []).filter((c) => !c.ok);
+  const numberRows = records.map((record) => {
+    const m = episodeMetrics(
+      {
+        index: record.index,
+        events: record.input.events,
+        proposals: record.input.proposals,
+      },
+      settings.patrons ?? new Map(),
+    );
+    const troubles = Object.entries(m.troublesByGod)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([god, count]) => `${god} ${count}`)
+      .join(", ");
+    const chains = m.crossPatronWrongs;
+    const led = chains.filter((c) => c.consequences.length > 0).length;
+    return `| ${record.index} | ${m.foodFailureLines} (at most ${MAX_FOOD_FAILURE_LINES}) | ${m.foodPrayers} / ${m.prayers} | ${troubles || "none"} | ${m.wrongs} | ${chains.length} / ${led} | ${m.defections} | ${m.causeToAnswer.medianTicks ?? "—"} / ${m.causeToAnswer.p95Ticks ?? "—"} |`;
+  });
+  const queueRows = records.flatMap((record) =>
+    requestTimings(record.input).perGod.map((g) => {
+      const wait = g.p95GapTicks;
+      return `| ${record.index} | ${nameOf(record, g.god)} | ${g.turns} | ${wait ?? "—"} | ${wait === undefined ? "—" : wait <= QUEUE_WAIT_P95_TARGET_SECONDS ? "within" : "over"} |`;
+    }),
+  );
   const runRows = records.map((record) => {
     const a = record.analysis;
     const held = a.properties.filter((p) => p.ok).length;
@@ -824,6 +951,32 @@ export function renderSummary(
     failures.length === 0
       ? "All automated checks and real-run properties held."
       : `Automated checks failed:\n\n${failures.map((f) => `- ${f}`).join("\n")}`,
+    "",
+    "## Across the episodes",
+    "",
+    settings.gate === undefined
+      ? "No cross-episode checks were run."
+      : [
+          ...settings.gate.map(
+            (c) => `- ${c.ok ? "PASS" : "FAIL"} ${c.name}: ${c.detail}`,
+          ),
+          "",
+          gateFailures.length === 0
+            ? "Every cross-episode check held."
+            : `Cross-episode checks failed: ${gateFailures.map((c) => c.name).join(", ")}.`,
+        ].join("\n"),
+    "",
+    "## The episodes' numbers",
+    "",
+    "| Episode | Food failure lines | Food prayers / prayers | Troubles by god | Wrongs | Cross-patron wrongs / with a consequence | Defections | Cause to closing, median / p95 (ticks) |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    ...numberRows,
+    "",
+    `## Queue wait per god (p95 of the ticks between a god's requests; ADR-0005 allows ${QUEUE_WAIT_P95_TARGET_SECONDS} s)`,
+    "",
+    "| Episode | God | Turns | p95 wait (ticks) | Against the target |",
+    "| --- | --- | --- | --- | --- |",
+    ...queueRows,
     "",
     "## Practices",
     "",
