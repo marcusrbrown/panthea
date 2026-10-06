@@ -555,7 +555,7 @@ test("WORLD_EVENT_KINDS lists every kind parseEvent accepts", () => {
   expect(WORLD_EVENT_KINDS).toContain("memory-recorded");
   expect(WORLD_EVENT_KINDS).toContain("report-told");
   expect(WORLD_EVENT_KINDS).toContain("relationship-changed");
-  expect(WORLD_EVENT_KINDS).toHaveLength(43);
+  expect(WORLD_EVENT_KINDS).toHaveLength(44);
 });
 
 test("an unknown event kind is rejected with reason unknown-kind", () => {
@@ -987,7 +987,7 @@ test("only kinds someone can perceive are witnessable: a memory of a report, a m
   for (const eventKind of WITNESSED_EVENT_KINDS) {
     expect(parseEvent(envelope({ ...WITNESSED, eventKind })).ok).toBe(true);
   }
-  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 23);
+  expect(WITNESSED_EVENT_KINDS).toHaveLength(WORLD_EVENT_KINDS.length - 24);
 });
 
 // --- Legend tellings: a claim and the recorded hearers ------------------------------------
@@ -2593,4 +2593,67 @@ test("a refused petition parses, is private, and follows the petition it closes;
     true,
   ]);
   expect(sign("ignored")).toBe(false);
+});
+
+test("a change of patron parses with the god lost, the god gained, the answered prayer, and the ignored ones; it is private and follows the answer", () => {
+  const raw = {
+    kind: "patron-changed",
+    entityId: "fisher",
+    from: "poseidon",
+    to: "athena",
+    answered: "evt-4",
+    unanswered: ["evt-2", "evt-3"],
+  };
+  const parsed = parseEvent(envelope(raw));
+  expect(parsed.ok).toBe(true);
+  if (parsed.ok) {
+    expect(eventSubjects(parsed.value).map(String)).toEqual([
+      "fisher",
+      "poseidon",
+      "athena",
+    ]);
+    expect(String(eventCause(parsed.value))).toBe("evt-4");
+  }
+  // With nothing ignored (a feeling that fell for other reasons) it is still a change.
+  expect(parseEvent(envelope({ ...raw, unanswered: [] })).ok).toBe(true);
+  expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain(
+    "patron-changed",
+  );
+  for (const bad of [
+    { ...raw, to: "poseidon" },
+    { ...raw, from: undefined },
+    { ...raw, to: undefined },
+    { ...raw, answered: undefined },
+    { ...raw, unanswered: undefined },
+    { ...raw, unanswered: [""] },
+    { ...raw, unanswered: "evt-2" },
+  ]) {
+    expect(parseEvent(envelope(bad)).ok).toBe(false);
+  }
+});
+
+test("a patronage memory names the mortal, its home, and both gods, and blames no one", () => {
+  const memory = {
+    kind: "memory-recorded",
+    memoryKind: "patronage",
+    entityId: "poseidon",
+    sourceEventId: "evt-5",
+    salience: 8,
+    subjects: ["fisher", "dock", "athena"],
+    mortal: "fisher",
+    home: "dock",
+    from: "poseidon",
+    to: "athena",
+  };
+  expect(parseEvent(envelope(memory)).ok).toBe(true);
+  for (const bad of [
+    { ...memory, mortal: undefined },
+    { ...memory, home: undefined },
+    { ...memory, from: 3 },
+    { ...memory, to: undefined },
+    { ...memory, salience: 0 },
+    { ...memory, consequence: { effect: "harm", agent: "athena" } },
+  ]) {
+    expect(parseEvent(envelope(bad)).ok).toBe(false);
+  }
 });

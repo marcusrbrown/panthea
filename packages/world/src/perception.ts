@@ -230,6 +230,7 @@ function eventLocation(
     case "petition-answered":
     case "petition-lapsed":
     case "petition-refused":
+    case "patron-changed":
     case "goal-change-refused":
     case "practice-opened":
     case "practice-moved":

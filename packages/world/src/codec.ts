@@ -896,8 +896,29 @@ function parseMemoryEntry(
         petitionId: petitionId.value,
       });
     }
+    case "patronage": {
+      const mortal = parseEntityId(value.mortal, `${path}.mortal`);
+      if (!mortal.ok) return mortal;
+      const home = parseEntityId(value.home, `${path}.home`);
+      if (!home.ok) return home;
+      const from = parseEntityId(value.from, `${path}.from`);
+      if (!from.ok) return from;
+      const to = parseEntityId(value.to, `${path}.to`);
+      if (!to.ok) return to;
+      return ok({
+        ...base,
+        kind: "patronage",
+        mortal: mortal.value,
+        home: home.value,
+        from: from.value,
+        to: to.value,
+      });
+    }
     default:
-      return fail(`${path}.kind`, "expected a witnessed, told, or sign memory");
+      return fail(
+        `${path}.kind`,
+        "expected a witnessed, told, sign, noticed, or patronage memory",
+      );
   }
 }
 

@@ -66,6 +66,7 @@ import {
   endingMemories,
   legendTellings,
   noticedMemory,
+  patronageMemories,
   planRelationships,
   reportTelling,
   signMemory,
@@ -78,6 +79,7 @@ import {
   applyUnmetNeed,
   planNeedStep,
 } from "./needs";
+import { applyPatronChanged, planDefections } from "./patrons";
 import {
   answeredDraft,
   applyBlessingGranted,
@@ -321,6 +323,9 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
       break;
     case "petition-refused":
       next = applyPetitionRefused(state, event);
+      break;
+    case "patron-changed":
+      next = applyPatronChanged(state, event);
       break;
     case "practice-opened":
       next = applyPracticeOpened(state, event);
@@ -949,12 +954,35 @@ export function runTick(
     ),
   );
   working = applyEvents(working, relationshipEvents);
+  // A mortal whose prayer ended in this tick may now leave a patron that neglected it, for a god that answered
+  // it; the god lost and the god gained alone remember it.
+  const endings: { mortal: EntityId; event: WorldEvent }[] = [];
+  for (const event of [...answerEvents, ...lapseEvents, ...refusalEvents]) {
+    if (event.kind === "petition-refused") {
+      endings.push({ mortal: event.petitioner, event });
+    } else if (
+      event.kind === "petition-answered" ||
+      event.kind === "petition-lapsed"
+    ) {
+      endings.push({ mortal: event.entityId, event });
+    }
+  }
+  const defectionEvents = derive(planDefections(working, endings));
+  working = applyEvents(working, defectionEvents);
+  const patronageEvents = derive(
+    defectionEvents.flatMap((event) =>
+      event.kind === "patron-changed" ? patronageMemories(working, event) : [],
+    ),
+  );
+  working = applyEvents(working, patronageEvents);
   const derivedEvents = [
     ...answerEvents,
     ...lapseEvents,
     ...worshipEvents,
     ...memoryEvents,
     ...relationshipEvents,
+    ...defectionEvents,
+    ...patronageEvents,
   ];
   return {
     state: working,

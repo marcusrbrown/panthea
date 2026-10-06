@@ -525,6 +525,7 @@ test("memory tunables are checked key by key: whole non-negative numbers where a
         grudgeLimit: 10,
         refusalAffinity: 1,
         "salience_practice-ended": 7,
+        salience_patronage: 8,
         // Retired, and still accepted: affinity no longer makes an alliance.
         allianceAffinity: 5,
       }),
@@ -589,6 +590,7 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
     directorQuietTicks: 120,
     goalLockTicks: 40,
     strikeGoodsCap: 2,
+    defectionAffinity: 1,
   };
   const parsed = parseContentPack(packWithPetitionBalance(good));
   expect(parsed.ok).toBe(true);
@@ -600,6 +602,11 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
   expect(
     parseContentPack(packWithPetitionBalance({ strikeGoodsCap: 1 })).ok,
   ).toBe(true);
+  for (const defectionAffinity of [1, 10, 11, 1000]) {
+    expect(
+      parseContentPack(packWithPetitionBalance({ defectionAffinity })).ok,
+    ).toBe(true);
+  }
   // Without one, nothing changes for packs that never had it.
   const plain = parseContentPack(validPack());
   expect(plain.ok && plain.value.rules.petitionBalance === undefined).toBe(
@@ -609,6 +616,10 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
   for (const bad of [
     { answerWindowTicks: 0 },
     // A strike takes at least one unit: a cap of 0, or one that is not a whole number, is no cap.
+    // A defection threshold is a positive whole number of affinity: 0 or a fraction is no threshold.
+    { defectionAffinity: 0 },
+    { defectionAffinity: 0.5 },
+    { defectionAffinity: -1 },
     { strikeGoodsCap: 0 },
     { strikeGoodsCap: -1 },
     { strikeGoodsCap: 1.5 },

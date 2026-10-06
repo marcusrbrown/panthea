@@ -312,6 +312,14 @@ export type MemoryEntry = {
       readonly outcome: "answered" | "lapsed" | "refused";
       readonly petitionId: EventId;
     }
+  | {
+      /** A god's memory that a mortal left it for another god, or came to it from one. `sourceEventId` is the `patron-changed` event. */
+      readonly kind: "patronage";
+      readonly mortal: EntityId;
+      readonly home: EntityId;
+      readonly from: EntityId;
+      readonly to: EntityId;
+    }
 );
 
 /** How one actor feels toward another. Changed only by `relationship-changed` events, each citing the memory that caused it. */

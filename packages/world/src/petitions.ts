@@ -64,6 +64,13 @@ export const DEFAULT_PETITION_BALANCE: Readonly<Record<string, number>> = {
   goalLockTicks: 40,
   /** Most units a god's strike takes of the struck mortal's most valuable carried good: what one answered prayer gives (`blessResourceAmount`), so a punishment costs about as much as help is worth. */
   strikeGoodsCap: 2,
+  /**
+   * A mortal defects when its affinity for its patron falls below this: it no longer feels warmly toward the god,
+   * 0 or less. A devotion starts at 2 to 4 and a lapse or a refusal costs 2 (`harmAffinity`), so one ignored prayer
+   * turns a devotion of 2 and two turn any authored devotion, which two prayers in the first 30 ticks put inside
+   * a 300-tick episode (a test holds it).
+   */
+  defectionAffinity: 1,
 };
 
 /** A petition tunable from `rules`, or its default. */

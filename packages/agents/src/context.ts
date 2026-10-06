@@ -1277,6 +1277,9 @@ function describeMemory(memory: MemoryEntry, self?: EntityId): string {
     // A god's own memory is never a sign (signs go to mortals), but the type allows it.
     return `- ${memory.god} ${memory.outcome === "answered" ? "answered" : "did not answer"} a petition`;
   }
+  if (memory.kind === "patronage") {
+    return `- ${memory.mortal} of ${memory.home} left ${memory.from} for ${memory.to} [${memory.sourceEventId}]`;
+  }
   return `- ${memory.teller} told you: "${memory.content}"${what === "" ? "" : ` (claiming ${what})`}`;
 }
 

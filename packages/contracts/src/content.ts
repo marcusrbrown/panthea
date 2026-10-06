@@ -388,6 +388,7 @@ const MEMORY_COUNT_KEYS: ReadonlySet<string> = new Set([
   "salience_told",
   "salience_sign",
   "salience_noticed",
+  "salience_patronage",
   ...WITNESSED_EVENT_KINDS.map((kind) => `salience_${kind}`),
 ]);
 
@@ -435,6 +436,7 @@ export const PETITION_BALANCE_KEYS = [
   "directorQuietTicks",
   "goalLockTicks",
   "strikeGoodsCap",
+  "defectionAffinity",
 ] as const;
 
 /**
