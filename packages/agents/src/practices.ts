@@ -38,7 +38,6 @@ import {
   type PracticeThread,
   petitionBalanceOf,
   practiceBalanceOf,
-  routeLength,
   termObstacle,
   termTuple,
   validatePractice,
@@ -106,15 +105,12 @@ export interface OwedBoon {
     | {
         readonly kind: "strike";
         readonly intent: Readonly<Record<string, unknown>>;
-      }
-    | {
-        readonly kind: "travel";
-        readonly intent: Readonly<Record<string, unknown>>;
       };
   readonly blocked?: string;
   /**
-   * For a punish prayer, whose boon is a strike: the building the next step is about and where it stands. The
-   * step is a strike when the god is there, else the hop toward it.
+   * For a punish prayer, whose boon is a strike: the building the next step strikes and where it stands. Absent when
+   * the step strikes the wrongdoer itself (no listed building can be struck). Either is struck from wherever the god
+   * stands, so no way there is shown.
    */
   readonly building?: {
     readonly id: EntityId;
@@ -493,37 +489,20 @@ function owedBoonOf(
   if (!blessability(state, thread.petition, actorId).ok) {
     return { ...base, blocked: "its prayer is no longer open to an answer" };
   }
-  if (god.locationId === petitioner.locationId) {
-    const cost = petitionBalanceOf(state.rules, "blessDivinityCost");
-    if ((god.inventory.get("divinity") ?? 0) < cost) {
-      return {
-        ...base,
-        blocked: `a bless costs ${cost} divinity and you hold less`,
-      };
-    }
+  // A blessing answers the prayer from wherever the god stands, so it is the step whenever the prayer is open to it and
+  // the god can pay; `blessability` is the action's own predicate above.
+  const cost = petitionBalanceOf(state.rules, "blessDivinityCost");
+  if ((god.inventory.get("divinity") ?? 0) < cost) {
     return {
       ...base,
-      next: {
-        kind: "bless",
-        intent: { action: "bless", petition: thread.petition },
-      },
+      blocked: `a bless costs ${cost} divinity and you hold less`,
     };
-  }
-  if (
-    routeLength(
-      state,
-      god.locationId,
-      petitioner.locationId,
-      god.capabilities,
-    ) === undefined
-  ) {
-    return { ...base, blocked: "there is no way from where you stand to them" };
   }
   return {
     ...base,
     next: {
-      kind: "travel",
-      intent: { action: "travel", to: petitioner.locationId },
+      kind: "bless",
+      intent: { action: "bless", petition: thread.petition },
     },
   };
 }
@@ -553,10 +532,12 @@ export function withStrikeLegality(
 }
 
 /**
- * The boon owed on a punish prayer, which the world counts as a strike by this god on a building the prayer names
- * (`judgeAnswers`): the strike when the god stands where such a building does, else the hop toward the nearest one
- * it can reach. A strike is shown at power 1, the least the world takes; whether the god's own ability allows it is
- * settled where the prompt is built, which holds the profile. Otherwise the reason, and no object.
+ * The boon owed on a punish prayer, which the world counts as a strike by this god on a building the prayer names, or on
+ * the wrongdoer itself (`judgeAnswers`): the strike on the first listed building that can be struck, or, when none can
+ * (the prayer lists none, or each is burning or destroyed), on the wrongdoer if it is a living mortal. A strike has no
+ * location check, so the god strikes from where it stands. A strike is shown at power 1, the least the world takes;
+ * whether the god's own ability allows it is settled where the prompt is built, which holds the profile. Otherwise
+ * the reason, and no object.
  */
 function owedStrikeOf(
   state: WorldState,
@@ -571,67 +552,50 @@ function owedStrikeOf(
   ) {
     return { ...base, blocked: "its prayer is no longer open to an answer" };
   }
-  const named = petition.request.buildings.flatMap((buildingId) => {
+  const request = petition.request;
+  const named = request.buildings.flatMap((buildingId) => {
     const building = state.buildings.get(buildingId);
     return building === undefined ? [] : [building];
   });
   const strikable = named.filter(
     (building) => building.status === "operational",
   );
-  if (strikable.length === 0) {
+  const offender = getActor(state, request.offender);
+  const strikeOffender = offender?.alive === true && offender.isDeity !== true;
+  if (strikable.length === 0 && !strikeOffender) {
     return {
       ...base,
-      blocked: `none of the buildings it names (${named.map((b) => b.id).join(", ")}) can be struck now`,
+      blocked:
+        named.length === 0
+          ? "the wrongdoer cannot be struck"
+          : `none of the buildings it names (${named.map((b) => b.id).join(", ")}) can be struck now, and the wrongdoer cannot be`,
     };
   }
   if ((god.inventory.get("divinity") ?? 0) < 1) {
     return { ...base, blocked: "a strike costs divinity and you hold none" };
   }
-  const where = (building: (typeof named)[number]) => ({
-    id: building.id,
-    name: building.name,
-    place: building.locationId,
-    placeName:
-      state.locations.get(building.locationId)?.name ?? building.locationId,
-  });
-  const here = strikable.find(
-    (building) => building.locationId === god.locationId,
-  );
-  if (here !== undefined) {
+  const first = strikable[0];
+  if (first !== undefined) {
     return {
       ...base,
-      building: where(here),
+      building: {
+        id: first.id,
+        name: first.name,
+        place: first.locationId,
+        placeName:
+          state.locations.get(first.locationId)?.name ?? first.locationId,
+      },
       next: {
         kind: "strike",
-        intent: { action: "strike", target: here.id, power: 1 },
+        intent: { action: "strike", target: first.id, power: 1 },
       },
-    };
-  }
-  const nearest = strikable
-    .flatMap((building) => {
-      const length = routeLength(
-        state,
-        god.locationId,
-        building.locationId,
-        god.capabilities,
-      );
-      return length === undefined ? [] : [{ building, length }];
-    })
-    .sort(
-      (a, b) => a.length - b.length || (a.building.id < b.building.id ? -1 : 1),
-    )[0];
-  if (nearest === undefined) {
-    return {
-      ...base,
-      blocked: "there is no way from where you stand to a building it names",
     };
   }
   return {
     ...base,
-    building: where(nearest.building),
     next: {
-      kind: "travel",
-      intent: { action: "travel", to: nearest.building.locationId },
+      kind: "strike",
+      intent: { action: "strike", target: request.offender, power: 1 },
     },
   };
 }
@@ -1391,19 +1355,15 @@ function owedBoonRows(view: ThreadView, owed: OwedBoon, by: string): string[] {
   const building = owed.building;
   if (owed.next?.kind === "bless") {
     lines.push(
-      `  ${owed.petitioner} is here: give it now with ${json(owed.next.intent)}`,
+      `  ${owed.petitioner}'s prayer is open to you from where you stand: give it now with ${json(owed.next.intent)}`,
     );
   } else if (owed.next?.kind === "strike" && building !== undefined) {
     lines.push(
-      `  ${building.name} [${building.id}] is here: strike it now with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
+      `  ${building.name} [${building.id}] stands at ${building.placeName} [${building.place}]: strike it now, from where you stand, with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
     );
-  } else if (owed.next?.kind === "travel" && building !== undefined) {
+  } else if (owed.next?.kind === "strike") {
     lines.push(
-      `  ${building.name} [${building.id}] stands at ${building.placeName} [${building.place}]: your next step is ${json(owed.next.intent)}; the world walks you there, and once you are there, strike it.`,
-    );
-  } else if (owed.next?.kind === "travel") {
-    lines.push(
-      `  ${owed.petitioner} is not here (they are at ${owed.placeName} [${owed.place}]): your next step is ${json(owed.next.intent)}; the world walks you there, and once you are with them, bless them naming the prayer.`,
+      `  The wrongdoer may be struck wherever it is: give it now, from where you stand, with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
     );
   } else if (owed.blocked !== undefined) {
     lines.push(`  You cannot give it now: ${owed.blocked}.`);

@@ -475,9 +475,9 @@ test("a busy world with rival acts, open contests, and a crowd of prayers still 
     if (chars > worst.chars) Object.assign(worst, { chars, god: profile.id });
   }
   expect(sections).toBeGreaterThan(0);
-  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`, 2026-10-05): 10,046 characters of this busiest prompt
-  // (Hera's, wrongs and troubles in) were 2,870 tokens, 3.50 characters a token, and the lowest ratio seen in any measured prompt was 3.34. At 3.3
-  // a token 10,500 characters is under 3,200 tokens, with some 900 under the 4,090 past which Ollama silently
-  // drops the start of a prompt.
+  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`; see defaults.md): 2026-10-05, 10,046 characters of this busiest
+  // prompt (Hera's) were 2,870 tokens (3.50 a token); 2026-10-07, after answers from where the god stands, 10,354 were
+  // 2,962 (3.50), and the lowest ratio seen in any measured prompt was 3.34. At 3.3 a token 10,500 characters is under
+  // 3,200 tokens, with some 900 under the 4,090 past which Ollama silently drops the start of a prompt.
   expect(worst.chars).toBeLessThanOrEqual(10500);
 });

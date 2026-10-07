@@ -68,6 +68,10 @@ const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
     "The god of the trouble's domain never answers the mortal's prayer, so no god but its patron has answered it, and the mortal keeps its patron however many prayers are refused.",
   "director-off":
     "The staged world is made with the director's interval left at the quiet default, so it never fires.",
+  "remote-bless":
+    "The god of the mortal's trouble only waits instead of sending the bless its prompt offers, as one that has not walked to the mortal first would, so the blessing never comes.",
+  "remote-strike":
+    "The wronged mortal's patron only waits instead of sending the strike on the wrongdoer's listed building its prompt offers, as one that has not walked to the building first would, so the building is never struck.",
 };
 
 /** Runs a control in a child process: the story up to the step it breaks, or only its own staged step. */

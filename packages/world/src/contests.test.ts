@@ -287,6 +287,27 @@ test("a rival's bless a god perceived at a place with a mortal is a service the 
   ]);
 });
 
+test("a blessing from afar is service at the blessed one's place, reaching the mortals there, and the god who gave it from elsewhere is not among those who perceived it", () => {
+  const town = new Town();
+  // Poseidon stands at the far place; m1 is at the square and prays to him.
+  town.place("poseidon", "far");
+  const blessing = town.blessing("poseidon", "m1");
+  expect(plain(town.state.services)).toEqual([
+    {
+      id: blessing.id,
+      kind: "bless",
+      god: "poseidon",
+      place: "square",
+      tick: blessing.tick,
+      sequence: blessing.sequence,
+      reached: ["m1"],
+      perceivedBy: ["athena", "hera"],
+    },
+  ]);
+  // The god did not move.
+  expect(getActor(town.state, id("poseidon"))?.locationId).toBe(id("far"));
+});
+
 test("a god opens a contest over a rival's act it perceived: the world finds the rival, the place, and the window, and records the cause", () => {
   const { town, act, contest } = opened();
   expect(town.rejected()).toEqual([]);
@@ -308,6 +329,20 @@ test("a god opens a contest over a rival's act it perceived: the world finds the
   });
   expect(contest.closesAt).toBe(contest.openedTick + 10);
   expect(town.state.contests.get(contest.id)).toBe(contest);
+});
+
+test("a strike on a building from afar is service at the building's place, with the god standing elsewhere", () => {
+  const town = new Town();
+  town.place("poseidon", "far");
+  town.tick({ actor: "poseidon", kind: "strike", target: "shed", power: 1 });
+  expect(town.rejected()).toEqual([]);
+  const hit = town.state.services.at(-1);
+  expect(plain(hit)).toMatchObject({
+    kind: "strike",
+    god: "poseidon",
+    place: "square",
+  });
+  expect(getActor(town.state, id("poseidon"))?.locationId).toBe(id("far"));
 });
 
 test("a strike and a legend are rival acts too, each at the place with mortals in it", () => {

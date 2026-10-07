@@ -49,7 +49,7 @@ export interface RunSummary {
 const HOW_TO_RUN = `\`\`\`sh
 bun run --cwd tools/scenarios scenario:m2                                    # build the sidecar, run the scripted story
 bun run --cwd tools/scenarios scenario:m2 --skip-build                       # reuse the built sidecar
-bun run --cwd tools/scenarios scenario:m2 --steps=S21,S24                    # only the staged steps S21 to S25 (each starts a world of its own); the tool for working on one
+bun run --cwd tools/scenarios scenario:m2 --steps=S21,S24                    # only the staged steps S21 to S27 (each starts a world of its own); the tool for working on one
 bun run --cwd tools/scenarios scenario:m2 --positive-control=<name>          # a process control; must exit non-zero; names below
 bun run --cwd tools/scenarios scenario:m2 --real [--seconds=180]             # both gods through local Ollama; asserts properties, writes real-run.json
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --reasoning-effort=none   # the experience gate on the local baseline, qwen3-8b-4k (set up once: ollama create qwen3-8b-4k -f tools/probes/inference-baseline/Modelfile.qwen3-8b-4k)
@@ -60,10 +60,11 @@ bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # s
 Controls come in three kinds. A **process control** runs in a child process with one
 thing broken mid-flight, and that run must exit non-zero. The first four rerun the story
 up to the step they break: \`chain\`, \`isolation\`, \`trace\`, and \`petition-privacy\`.
-The next four are **staged-world controls**: each runs only its own step (S21 to S25
+The next six are **staged-world controls**: each runs only its own step (S21 to S27
 start worlds of their own) with the one thing that step stages left out, so it costs
 that step and none of the story: \`strike-chain\` (S21), \`refusal-revenge\` (S22),
-\`no-answerer\` (S24), and \`director-off\` (S25). A **world control** is in-process like
+\`no-answerer\` (S24), \`director-off\` (S25), \`remote-bless\` (S26), and
+\`remote-strike\` (S27). A **world control** is in-process like
 the practice controls: \`trouble-route\` breaks the evidence S23 collected, and S23's
 own check must fail on it. A **practice control**
 breaks a copy of the data the one story run collected, in-process, at the end of
@@ -145,10 +146,11 @@ only what that god could name):
   thread; \`practice-absent\` deletes the contest); \`src/practice-analysis.test.ts\`
   holds the same controls as unit tests on a fixture.
 
-World steps (S21 to S25 start a world of their own beside the story's, created with story-only rules that make the
+World steps (S21 to S27 start a world of their own beside the story's, created with story-only rules that make the
 world's own logic produce the thing within a few ticks, so nothing waits on chance and no step depends on S1 to S20:
-a greedy temperament at 1000 per mille to steal, revenge at 1000 per mille, a trouble floor of a few ticks, a
-defection threshold above any feeling, and a director interval of three ticks. The wrongs, prayers, troubles, and fires
+a greedy temperament at 1000 per mille to steal (every temperament, in S27, so an owner of a building steals too),
+revenge at 1000 per mille, a trouble floor of a few ticks, a defection threshold above any feeling, and a director
+interval of three ticks. The wrongs, prayers, troubles, and fires
 are the world's, drawn on its persisted generator and judged by the real validator; the harness posts only moves and
 prayers for mortals, as \`stageLoss\` does, and scripts what the gods answer, each reply a function of the prompt its god
 was shown; nothing is injected as an event):
@@ -174,9 +176,23 @@ was shown; nothing is injected as an event):
   having answered it, so the mortal keeps its patron.
 - **S25** The director fires three times exactly its interval apart with the world
   busy around it. \`director-off\` leaves the interval at the quiet default.
+- **S26** A god answers a prayer with a blessing from where it stands. A trouble in a
+  blessing god's domain takes goods from a mortal, which prays to that god; the god,
+  not with the mortal, copies the bless its prompt offers and sends it as written. In
+  that one turn the world accepts it, the prayer is answered, the god has not moved
+  and has no journey, every mortal who stood at the blessed one's place perceives
+  the blessing, and none saw the god or anything at its place. \`remote-bless\` has
+  the god only wait, as one that has not walked first would, and the step fails at its wait.
+- **S27** A god answers a punish prayer by striking a building it lists, from where it
+  stands. A theft's victim prays to a patron that can strike, the prayer lists the
+  wrongdoer's building, and the god, away from both, copies the strike on that
+  building and sends it as written: the building is damaged in that one turn, the
+  prayer is answered, the god has not moved, and the mortals at the building's
+  place perceive it and learn nothing of where the god is. \`remote-strike\` has the
+  god only wait.
 
-The four world controls that change what happens (\`strike-chain\`, \`refusal-revenge\`,
-\`no-answerer\`, \`director-off\`) run only their own step, in a world of their own, so each costs
+The six world controls that change what happens (\`strike-chain\`, \`refusal-revenge\`,
+\`no-answerer\`, \`director-off\`, \`remote-bless\`, \`remote-strike\`) run only their own step, in a world of their own, so each costs
 that step and none of the story; \`--steps=S21,S24\` runs staged steps alone while working on
 one, and \`--positive-control=<name>\` runs one control.
 

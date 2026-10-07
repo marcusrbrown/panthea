@@ -745,9 +745,7 @@ function handleBless(state: WorldState, proposal: BlessProposal): RuleOutcome {
   if (!petitioner?.alive) {
     return reject("dead-actor", "the petitioner is no longer living");
   }
-  if (petitioner.locationId !== god.locationId) {
-    return reject("not-adjacent", "a god blesses only a mortal it stands with");
-  }
+  // A blessing answers an open prayer addressed to this god, wherever either stands: `blessability` is the gate.
   const cost = petitionBalanceOf(state.rules, "blessDivinityCost");
   if (getResourceAmount(god.inventory, DIVINE_CAPACITY_RESOURCE) < cost) {
     return reject(

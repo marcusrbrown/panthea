@@ -226,18 +226,19 @@ test("an offerable prayer shows the god its choices: help freely, set terms in f
   legalAsWritten(run, "zeus", terms as Record<string, unknown>);
 });
 
-test("from afar the travel hint belongs to the choice of helping, said as a condition; the terms path is the same either way", () => {
+test("from afar the blessing is a direct choice, with no travel step; the terms path is the same either way", () => {
   const run = new Run();
   const petition = run.prays();
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
-  // Travelling to the petitioner is still listed, and the help path says it is for one who chooses to help.
-  expect(prayers).toContain('"action":"travel"');
-  expect(prayers).toMatch(/help freely: .*if you choose this/);
+  // The petitioner is away, and the blessing is written out whole beside the terms: a help prayer shows both.
   expect(prayers).toContain(
-    `bless them {"action":"bless","petition":"${petition}"}`,
+    `help freely, from where you stand: {"action":"bless","petition":"${petition}"}`,
   );
+  expect(prayers).toContain("set terms");
+  expect(prayers).not.toContain("travel");
   expect(prayers).not.toContain("bless them now");
   expect(prayers).not.toContain("keep going each turn");
+  // The terms are the one practice object, as before; the blessing is its own action beside it.
   expect(intentsIn(prayersOf(run.view("zeus").context.prompt))).toHaveLength(1);
 });
 
