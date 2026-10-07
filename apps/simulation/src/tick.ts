@@ -44,6 +44,7 @@ import {
   recordProposalOutcome,
 } from "@panthea/telemetry";
 import {
+  type CurrencyClaims,
   decideRoutineProposal,
   type PrngState,
   type RuleRejection,
@@ -108,8 +109,11 @@ export function buildRoutineQueue(
 ): readonly QueuedProposal[] {
   const urgent: QueuedProposal[] = [];
   const ordinary: QueuedProposal[] = [];
+  // One round: each decision speaks for the currency its trade will move, so two sellers never both pick the
+  // buyer who can pay for only one.
+  const claims: CurrencyClaims = new Map();
   for (const actorId of actorIds) {
-    const decision = decideRoutineProposal(state, actorId);
+    const decision = decideRoutineProposal(state, actorId, claims);
     if (!decision) {
       continue;
     }

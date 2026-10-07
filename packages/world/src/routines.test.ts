@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ContentPack, EventId, WorldEvent } from "@panthea/contracts";
 import { runTick } from "./actions";
+import { recordCauses } from "./petitions";
 import {
   decideRoutineProposal,
   foodWant,
@@ -829,4 +830,240 @@ test("no meal passes back and forth: over a long stretch, food moves only from a
     const [seller, buyer] = sale.split(">");
     expect(sales.has(`${buyer}>${seller}`)).toBe(false);
   }
+});
+
+// --- The sale herd -----------------------------------------------------------------------------
+//
+// Every mortal decides from the same committed state, so with one buyer able to pay, every seller picked it,
+// one sale went through and the rest were refused with "counterparty lacks N currency", and the losers chose the
+// same sale again next tick instead of praying, working or eating. A round of decisions now shares the
+// currency its earlier proposals have spoken for.
+
+/** A wood seller: holds wood to sell, drives that put the sale first (greed 0.9). */
+const seller = (name: string, at = "square") =>
+  mortal(
+    name,
+    at,
+    { wood: 4 },
+    {
+      gathers: "wood",
+      drives: { thrift: 0, appetite: 0, greed: 0.9, piety: 0 },
+    },
+  );
+
+/** A world where wood sells for 3 currency (2 wood at 1.5). */
+function woodMarket(actors: readonly ActorState[]): WorldState {
+  let state = createInitialWorldState(
+    pack({
+      locations: LINE,
+      rules: rules({ ...MEAL_RULES, value_wood: 1.5 }),
+    }),
+  );
+  for (const actor of actors) state = withActor(state, actor);
+  return state;
+}
+
+test("three sellers and one buyer holding 3 currency: only one sale is proposed in a round, the others gather, and no sale is refused for the buyer's lack of currency", () => {
+  const state = woodMarket([
+    seller("s1"),
+    seller("s2"),
+    seller("s3"),
+    mortal("buyer", "square", { currency: 3 }),
+  ]);
+  const claims = new Map();
+  const proposals = ["s1", "s2", "s3"].flatMap((name) => {
+    const decided = decideRoutineProposal(state, toEntityId(name), claims);
+    return decided ? [decided.proposal] : [];
+  });
+  expect(proposals.map((proposal) => proposal.kind)).toEqual([
+    "trade",
+    "gather",
+    "gather",
+  ]);
+  expect(proposals[0]).toMatchObject({ counterparty: "buyer" });
+
+  const ran = runTick(state, createPrng(1), proposals);
+  expect(ran.rejected).toHaveLength(0);
+  expect(
+    ran.events.filter((event) => event.kind === "resource-traded"),
+  ).toHaveLength(1);
+});
+
+test("a buyer's spare currency is shared out: with 6 currency and 3 sellers, two sell to it and the third gathers", () => {
+  const state = woodMarket([
+    seller("s1"),
+    seller("s2"),
+    seller("s3"),
+    mortal("buyer", "square", { currency: 6 }),
+  ]);
+  const claims = new Map();
+  const kinds = ["s1", "s2", "s3"].map(
+    (name) =>
+      decideRoutineProposal(state, toEntityId(name), claims)?.proposal.kind,
+  );
+  expect(kinds).toEqual(["trade", "trade", "gather"]);
+});
+
+test("a seller turns to a second buyer once the first one's currency is spoken for", () => {
+  const state = woodMarket([
+    seller("s1"),
+    seller("s2"),
+    mortal("rich", "square", { currency: 3 }),
+    mortal("also-rich", "square", { currency: 3 }),
+  ]);
+  const claims = new Map();
+  const buyers = ["s1", "s2"].map((name) => {
+    const proposal = decideRoutineProposal(
+      state,
+      toEntityId(name),
+      claims,
+    )?.proposal;
+    return proposal?.kind === "trade" ? proposal.counterparty : undefined;
+  });
+  expect(buyers).toEqual([toEntityId("rich"), toEntityId("also-rich")]);
+});
+
+test("a buyer with no currency gets no sale proposals, and the seller works instead", () => {
+  const state = woodMarket([
+    seller("s1"),
+    mortal("broke", "square", { currency: 0 }),
+  ]);
+  expect(
+    decideRoutineProposal(state, toEntityId("s1"), new Map())?.proposal.kind,
+  ).toBe("gather");
+});
+
+test("a recipe's output is sold under the same sharing: two smiths and one buyer holding 3 currency sell one tool between them", () => {
+  const tools = {
+    tools: {
+      inputs: [{ resource: "ore", amount: 2 }],
+      outputs: [{ resource: "tools", amount: 1 }],
+    },
+  };
+  const smith = (name: string) =>
+    mortal(
+      name,
+      "square",
+      { tools: 5 },
+      {
+        gathers: "ore",
+        drives: { thrift: 0.5, appetite: 0, greed: 0.3, piety: 0 },
+      },
+    );
+  let state = createInitialWorldState(
+    pack({
+      locations: LINE,
+      rules: rules({ ...MEAL_RULES, value_tools: 3 }),
+      recipes: tools,
+    }),
+  );
+  for (const actor of [
+    smith("a"),
+    smith("b"),
+    mortal("buyer", "square", { currency: 3 }),
+  ]) {
+    state = withActor(state, actor);
+  }
+  const claims = new Map();
+  const kinds = ["a", "b"].map(
+    (name) =>
+      decideRoutineProposal(state, toEntityId(name), claims)?.proposal.kind,
+  );
+  expect(kinds).toEqual(["trade", "gather"]);
+});
+
+test("a smith hit by a trouble prays within a few ticks once the one buyer in town is spoken for by an earlier seller, where it used to lose the same sale every tick and never pray", () => {
+  const altar = toEntityId("altar");
+  const base = createInitialWorldState(
+    pack({
+      locations: [
+        {
+          id: "square",
+          realm: "mortal",
+          name: "Square",
+          edges: [{ to: "altar", transport: "path", bidirectional: true }],
+        },
+        { id: "altar", realm: "mortal", name: "Altar", edges: [] },
+      ],
+      rules: {
+        ...rules({ ...MEAL_RULES, value_tools: 3, value_wood: 1.5 }),
+        petitionBalance: { prayerCooldownTicks: 20 },
+        troubleKinds: { "cracked-tools": "hephaestus" },
+      },
+      recipes: {
+        tools: {
+          inputs: [{ resource: "ore", amount: 2 }],
+          outputs: [{ resource: "tools", amount: 1 }],
+        },
+      },
+    }),
+  );
+  const smithDrives = { thrift: 0.5, appetite: 0, greed: 0.3, piety: 0.4 };
+  let state = base;
+  for (const actor of [
+    // Earlier in the round, so it speaks for the buyer's currency first.
+    mortal(
+      "rival",
+      "square",
+      { tools: 5 },
+      { gathers: "ore", drives: smithDrives },
+    ),
+    mortal(
+      "smith",
+      "square",
+      { tools: 5 },
+      { gathers: "ore", drives: smithDrives },
+    ),
+    mortal("buyer", "square", { currency: 3 }),
+    {
+      ...mortal("hephaestus", "altar", {}),
+      isDeity: true as const,
+      drives: undefined,
+    },
+  ]) {
+    state = withActor(state, actor);
+  }
+  state = recordCauses(state, {
+    kind: "trouble",
+    id: "evt-0-1",
+    tick: 0,
+    entityId: toEntityId("smith"),
+    trouble: "cracked-tools",
+    god: toEntityId("hephaestus"),
+    season: "spring",
+    source: "floor",
+    loss: { kind: "resource", resource: "tools", amount: 2 },
+  } as unknown as WorldEvent);
+
+  let prng = createPrng(1);
+  const prayed: number[] = [];
+  const refused: string[] = [];
+  for (let tick = 0; tick < 6; tick += 1) {
+    // The town's buyer is always flush again by the next tick.
+    state = withActor(state, {
+      ...(getActor(state, toEntityId("buyer")) as ActorState),
+      inventory: new Map([["currency", 3]]),
+    });
+    const claims = new Map();
+    const proposals = [...state.actors.keys()].flatMap((actorId) => {
+      const decided = decideRoutineProposal(state, actorId, claims);
+      return decided ? [decided.proposal] : [];
+    });
+    const ran = runTick(state, prng, proposals);
+    for (const rejection of ran.rejected) refused.push(rejection.message);
+    if (
+      ran.events.some(
+        (event) =>
+          event.kind === "petition-opened" && event.entityId === "smith",
+      )
+    ) {
+      prayed.push(tick);
+    }
+    state = ran.state;
+    prng = ran.prng;
+  }
+  expect(getActor(state, toEntityId("smith"))?.locationId).toBe(altar);
+  expect(prayed.length).toBeGreaterThan(0);
+  expect(Math.min(...prayed)).toBeLessThanOrEqual(3);
+  expect(refused.filter((message) => message.includes("lacks"))).toEqual([]);
 });
