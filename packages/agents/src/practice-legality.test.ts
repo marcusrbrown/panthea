@@ -1045,11 +1045,16 @@ test("a term carries what its kind needs: a place for the kinds that name one, a
   ).toBe(true);
 });
 
-test("a turn with no practice on offer has the schema it had: no conditions at all", () => {
+test("a turn with no practice on offer has the schema it had, but for the one condition a legend needs: no practice conditions at all", () => {
   const run = new Run();
-  const schema = run.view("zeus").schema.jsonSchema as Record<string, unknown>;
-  expect(schema.allOf).toBeUndefined();
-  expect(JSON.stringify(schema)).not.toContain('"if"');
+  const schema = run.view("zeus").schema.jsonSchema as {
+    allOf?: { if: { properties: { action: { const: string } } } }[];
+  };
+  // Zeus can tell a legend, so the schema says a legend needs its assertion; nothing else is conditional.
+  expect(schema.allOf?.map((c) => c.if.properties.action.const)).toEqual([
+    "legend",
+  ]);
+  expect(JSON.stringify(schema)).not.toContain('"practice"');
 });
 
 test("the practice instructions no longer say every practice carries a term: only a demand, an offer, and a counter do", () => {
@@ -1139,7 +1144,11 @@ test("a counter that names the standing term's kind and leaves out the place it 
 
 test("the practice conditions apply only to a practice: another action carrying stray practice fields still meets the schema", () => {
   const { run, thread } = zeusAwaiting();
-  const conditions = allOfOf(run.view("zeus").schema.jsonSchema);
+  // The practice conditions: the schema's other condition, a legend's assertion, is not one of them.
+  const conditions = allOfOf(run.view("zeus").schema.jsonSchema).filter(
+    (condition) => condition.if.properties.action.const === "practice",
+  );
+  expect(conditions.length).toBeGreaterThan(0);
   const stray = {
     move: "accept",
     thread: thread.id,
