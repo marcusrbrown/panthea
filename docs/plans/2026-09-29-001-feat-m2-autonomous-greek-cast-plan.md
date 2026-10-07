@@ -619,6 +619,8 @@ Real gap found: none. Each property already held; the new tests pin them, and ea
 
 **Verification:** the run's report and gate result are committed; the roadmap records an M2 outcome only after the gate passes.
 
+Status (2026-10-07): planned in detail in `docs/plans/2026-10-07-002-feat-m2-unattended-run-plan.md`. The 30 s queue-wait line above is history. The gate uses the ADR-0005 2026-10-05 target, a p95 of 90 s per god outside the no-service windows, and adds a longest quiet stretch of at most 300 ticks per god (owner, 2026-10-07). The baseline model is granite3.3-8b-4k (ADR-0005, 2026-10-07). Memory is recorded as the workload baseline and fails only on a dead process or sidecar RSS still rising at the end. The crash-safe catch-up summary dependency merged as #57.
+
 ## System-Wide Impact
 
 - **Interaction graph:** the agent runner is a new producer on the journal; the tick, catch-up, and replay paths are unchanged except for new event kinds and memory updates inside the commit.
