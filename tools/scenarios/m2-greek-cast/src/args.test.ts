@@ -8,9 +8,9 @@ import {
   WORLD_CONTROLS,
 } from "./steps/context";
 
-test("the model defaults to the M2 local baseline, qwen3 8B at 4K, and reasoning is unset", () => {
+test("the model defaults to the M2 local baseline, granite3.3 8B at 4K, and reasoning is unset", () => {
   const args = parseArgs(["--real"]);
-  expect(args.model).toBe("qwen3-8b-4k");
+  expect(args.model).toBe("granite3.3-8b-4k");
   expect(args.reasoningEffort).toBeUndefined();
 });
 
