@@ -25,7 +25,12 @@ import {
   stepStrike,
   stepTrace,
 } from "./steps/chain";
-import type { Story, StoryOptions } from "./steps/context";
+import {
+  CONTROL_STEP,
+  STAGED_STEPS,
+  type Story,
+  type StoryOptions,
+} from "./steps/context";
 import { stepIdle } from "./steps/s01-idle";
 import { stepKillJournal } from "./steps/s02-kill-journal";
 import { stepKillInference } from "./steps/s03-kill-inference";
@@ -38,11 +43,23 @@ import { stepSupplication } from "./steps/s14-supplication";
 import { stepPracticeProperties } from "./steps/s15-practice-properties";
 import { CONTEST_WINDOW_TICKS, stepContest } from "./steps/s16-contest";
 import { stepAlliance, stepHades } from "./steps/s17-cast";
+import { stepRevenge, stepWrongChain } from "./steps/s21-wrongs";
+import {
+  stepDirectorClock,
+  stepTroubleRoute,
+  type WorldControlRun,
+} from "./steps/s23-world";
+import { stepDefection } from "./steps/s24-defection";
+import { launchConfigFor } from "./steps/staging";
 
 export {
   CONTROL_NAMES,
+  CONTROL_STEP,
   type ControlName,
+  STAGED_STEPS,
+  type StagedStep,
   type StoryOptions,
+  WORLD_CONTROLS,
 } from "./steps/context";
 
 export interface StoryResult {
@@ -50,6 +67,8 @@ export interface StoryResult {
   readonly binaryBytes: number;
   /** The practice controls, each applied in-process to the data this one run collected. */
   readonly practiceControls: readonly PracticeControlRun[];
+  /** The world controls, each applied in-process to the evidence its own step collected. */
+  readonly worldControls: readonly WorldControlRun[];
 }
 
 export async function runStory(
@@ -63,28 +82,7 @@ export async function runStory(
   const dataDir = join(root, "app-data");
   const provider = startProvider();
   provider.policy("hera", heraPolicy());
-  const launchConfig = {
-    models: {
-      endpoints: [
-        { id: "scripted", baseUrl: provider.baseUrl, model: "scripted" },
-      ],
-      // Every god in the pack needs a route of its own. The provider answers a god
-      // from the replies the steps queue for it, and with a wait when there are none.
-      roles: Object.fromEntries(
-        [
-          "athena",
-          "hades",
-          "hephaestus",
-          "hera",
-          "hermes",
-          "poseidon",
-          "zeus",
-        ].map((god) => [god, { endpoint: "scripted" }]),
-      ),
-    },
-    offline: false,
-    keys: {},
-  };
+  const launchConfig = launchConfigFor(provider.baseUrl);
   // The scripted story is a causal chain the harness stages, so the quiet-world
   // director is off for it (a quiet window longer than any run); the real gate
   // keeps it on. Everything else is the authored pack.
@@ -115,6 +113,32 @@ export async function runStory(
     };
     story = running;
 
+    // A focused run (`--steps`) or a staged-world control runs only the staged steps it names: they start worlds of
+    // their own and depend on nothing the story did before them.
+    const only =
+      options.steps ??
+      (options.control === undefined
+        ? undefined
+        : CONTROL_STEP[options.control] && [CONTROL_STEP[options.control]]);
+    if (only !== undefined) {
+      const worldControls: WorldControlRun[] = [];
+      for (const id of STAGED_STEPS.filter((step) => only.includes(step))) {
+        if (id === "S21") await stepWrongChain(recorder, running);
+        if (id === "S22") await stepRevenge(recorder, running);
+        if (id === "S23") {
+          worldControls.push(...(await stepTroubleRoute(recorder, running)));
+        }
+        if (id === "S24") await stepDefection(recorder, running);
+        if (id === "S25") await stepDirectorClock(recorder, running);
+      }
+      return {
+        steps: recorder.results,
+        binaryBytes,
+        practiceControls: [],
+        worldControls,
+      };
+    }
+
     await stepIdle(recorder, running);
     await stepKillJournal(recorder, running);
     await stepKillInference(recorder, running);
@@ -135,10 +159,17 @@ export async function runStory(
     await stepAlliance(recorder, running);
     await stepHades(recorder, running);
     const { controls } = await stepPracticeProperties(recorder, running);
+    // What the world does on its own, after the practice properties have judged the data the gods' steps collected.
+    await stepWrongChain(recorder, running);
+    await stepRevenge(recorder, running);
+    const worldControls = await stepTroubleRoute(recorder, running);
+    await stepDefection(recorder, running);
+    await stepDirectorClock(recorder, running);
     return {
       steps: recorder.results,
       binaryBytes,
       practiceControls: controls,
+      worldControls,
     };
   } finally {
     await story?.sidecar.stop("SIGTERM").catch(() => undefined);

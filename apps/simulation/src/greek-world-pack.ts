@@ -68,20 +68,50 @@ function withBalanceOverride(
 }
 
 /**
+ * `rules` with the temperament odds table replaced by the JSON object in `raw` (a scenario's staged world gives
+ * the mortals the odds it needs to see a wrong or a revenge within a few ticks): not merged, since a table is a
+ * whole. A non-JSON value is passed on as it is, so the strict parser refuses the pack.
+ */
+function withOddsOverride(
+  rules: Record<string, unknown>,
+  raw: string | undefined,
+): Record<string, unknown> {
+  if (!raw) return rules;
+  let table: unknown = raw;
+  try {
+    table = JSON.parse(raw);
+  } catch {
+    // Left as text: the parser refuses it.
+  }
+  return {
+    ...rules,
+    rules: { ...asRecord(rules.rules), temperamentOdds: table },
+  };
+}
+
+/**
  * The authored rules, with the petition tunables overridden by
  * `env.PANTHEA_PETITION_BALANCE` and the practice tunables by
  * `env.PANTHEA_PRACTICE_BALANCE` (each a JSON object of tunable names to
- * numbers) when set. The result goes through the same strict parser as
+ * numbers) and the temperament odds table by `env.PANTHEA_TEMPERAMENT_ODDS`
+ * when set. The result goes through the same strict parser as
  * authored content, so an unknown name or an invalid value refuses the pack.
  */
 function rulesWithOverrides(
   rules: Record<string, unknown>,
   env: NodeJS.ProcessEnv,
 ): Record<string, unknown> {
-  return withBalanceOverride(
-    withBalanceOverride(rules, "petitionBalance", env.PANTHEA_PETITION_BALANCE),
-    "practiceBalance",
-    env.PANTHEA_PRACTICE_BALANCE,
+  return withOddsOverride(
+    withBalanceOverride(
+      withBalanceOverride(
+        rules,
+        "petitionBalance",
+        env.PANTHEA_PETITION_BALANCE,
+      ),
+      "practiceBalance",
+      env.PANTHEA_PRACTICE_BALANCE,
+    ),
+    env.PANTHEA_TEMPERAMENT_ODDS,
   );
 }
 

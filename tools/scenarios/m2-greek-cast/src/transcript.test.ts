@@ -24,6 +24,7 @@ import { episodeSettings } from "./episodes";
 import { analyzeReal, type RealInput } from "./real-analysis";
 import {
   buildActions,
+  buildWorldNotes,
   type EpisodeRecord,
   renderSummary,
   renderTranscript,
@@ -360,10 +361,10 @@ test("the model-run section says when each god was asked and how long it waited:
   expect(section).toContain("| hades | 12 |");
   expect(section).toContain("in flight at the end (inferred)");
   expect(section).toContain(
-    "| God | Turns | Median gap (ticks) | Worst gap (ticks) | Median latency |",
+    "| God | Turns | Median gap (ticks) | p95 gap (ticks) | Worst gap (ticks) | Median latency |",
   );
   // Poseidon is a god of the run and was never asked.
-  expect(section).toContain("| poseidon | 0 | — | — | — |");
+  expect(section).toContain("| poseidon | 0 | — | — | — | — |");
   // The gate's own lines are as they were.
   expect(section).toContain("valid actions");
 });
@@ -864,7 +865,8 @@ test("the summary shows each god's goals set and ended", () => {
     files: ["episode-1.md"],
   });
   expect(none).toMatch(/\| 1 \| Zeus \|[^\n]*\| 0 \/ 0 \|/);
-  expect(none).toContain("goal set");
+  // Goals are reported, not required: the summary no longer names them as a failed check.
+  expect(none).not.toContain("goal set (");
 });
 
 test("the model-run block states the prompt size against the 4K budget", () => {
@@ -1418,4 +1420,234 @@ test("the summary adds one line counting journeys started and how they ended acr
   expect(text).toContain(
     "- journeys: 4 started: 2 arrived, 2 refused (restricted-realm ×2), 0 replaced, 0 still travelling",
   );
+});
+
+// --- The wrongs, routing, defections, and seasons (R18) ------------------------------------
+
+const envelope = (id: string, sequence: number, tick: number) => ({
+  schemaVersion: 1,
+  id,
+  sequence,
+  simTime: 0,
+  correlationId: "c",
+  causationId: "c",
+  tick,
+  approximate: false,
+});
+
+const wrongsWorld = () => {
+  const stolen = {
+    ...envelope("evt-5-1", 1, 5),
+    kind: "wrong",
+    entityId: "lykos",
+    victim: "doris",
+    wrong: "theft",
+    resource: "food",
+    amount: 2,
+    temperament: "greedy",
+    needy: true,
+  };
+  const prayed = {
+    ...envelope("evt-8-2", 2, 8),
+    kind: "petition-opened",
+    entityId: "doris",
+    god: "poseidon",
+    cause: "evt-5-1",
+    request: { kind: "punish", offender: "lykos", buildings: [] },
+  };
+  const refused = {
+    ...envelope("evt-9-3", 3, 9),
+    kind: "petition-refused",
+    entityId: "poseidon",
+    petitioner: "doris",
+    petitionId: "evt-8-2",
+  };
+  const revenge = {
+    ...envelope("evt-20-4", 4, 20),
+    kind: "wrong",
+    entityId: "doris",
+    victim: "lykos",
+    wrong: "feud",
+    resource: "food",
+    amount: 1,
+    temperament: "quarrelsome",
+    needy: false,
+    revenge: "evt-5-1",
+  };
+  const trouble = {
+    ...envelope("evt-30-5", 5, 30),
+    kind: "trouble",
+    entityId: "ismene",
+    trouble: "squall",
+    god: "zeus",
+    season: "autumn",
+    source: "floor",
+    loss: { kind: "building", building: "shop" },
+  };
+  const turned = {
+    ...envelope("evt-40-6", 6, 40),
+    kind: "season-turned",
+    season: "summer",
+    previous: "spring",
+  };
+  const changed = {
+    ...envelope("evt-50-7", 7, 50),
+    kind: "patron-changed",
+    entityId: "doris",
+    from: "poseidon",
+    to: "athena",
+    answered: "evt-45-9",
+    unanswered: ["evt-8-2"],
+  };
+  const struck = {
+    ...envelope("evt-60-8", 8, 60),
+    kind: "mortal-struck",
+    entityId: "lykos",
+    actor: "poseidon",
+    resource: "food",
+    amount: 2,
+  };
+  return [stolen, prayed, refused, revenge, trouble, turned, changed, struck];
+};
+
+test("a transcript shows each wrong with its wrongdoer, victim, temperament and need, and each revenge, trouble, season turn, strike, refusal, and defection with its cause (R18)", () => {
+  const rec = {
+    ...record([], wrongsWorld()),
+    patrons: new Map([
+      ["lykos", "hermes"],
+      ["doris", "poseidon"],
+    ]),
+  };
+  const lines = buildWorldNotes(rec).map((n) => n.line);
+  expect(lines).toContain(
+    "lykos wronged doris: theft of 2 food; greedy, in need [evt-5-1]",
+  );
+  expect(lines).toContain(
+    "doris wronged lykos: feud of 1 food; quarrelsome, not in need; a revenge for [evt-5-1] [evt-20-4]",
+  );
+  expect(lines).toContain(
+    "a squall in zeus's domain (autumn, the god's floor) damaged shop of ismene [evt-30-5]",
+  );
+  expect(lines).toContain("the season turned from spring to summer");
+  expect(lines).toContain("poseidon struck lykos and took 2 food [evt-60-8]");
+  expect(lines).toContain("poseidon refused doris's prayer [evt-8-2]");
+  expect(lines).toContain(
+    "doris left poseidon for athena: poseidon left 1 prayers unanswered ([evt-8-2]) and athena answered [evt-45-9] [evt-50-7]",
+  );
+  // Routing: doris's prayer went to her authored patron.
+  expect(lines).toContain(
+    "doris prayed to poseidon: punish lykos, who owns  [evt-8-2] (routed to its patron)",
+  );
+});
+
+test("a prayer about a trouble says it was routed to the domain god, and one to a god that is not the mortal's authored patron says so", () => {
+  const trouble = wrongsWorld()[4] as Record<string, unknown>;
+  const aboutTrouble = {
+    ...envelope("evt-31-9", 9, 31),
+    kind: "petition-opened",
+    entityId: "ismene",
+    god: "zeus",
+    cause: "evt-30-5",
+    request: { kind: "help", need: { kind: "building", building: "shop" } },
+  };
+  const astray = {
+    ...envelope("evt-32-10", 10, 32),
+    kind: "petition-opened",
+    entityId: "doris",
+    god: "athena",
+    cause: "evt-5-1",
+    request: { kind: "help", need: { kind: "resource", resource: "food" } },
+  };
+  const rec = {
+    ...record(
+      [],
+      [
+        wrongsWorld()[0] as Record<string, unknown>,
+        trouble,
+        aboutTrouble,
+        astray,
+      ],
+    ),
+    patrons: new Map([
+      ["ismene", "poseidon"],
+      ["doris", "poseidon"],
+    ]),
+  };
+  const lines = buildWorldNotes(rec).map((n) => n.line);
+  expect(
+    lines.some((l) =>
+      l.includes(
+        "[evt-31-9] (a trouble in the god's domain: routed to the domain god)",
+      ),
+    ),
+  ).toBe(true);
+  expect(
+    lines.some((l) => l.includes("[evt-32-10] (not its authored patron")),
+  ).toBe(true);
+  // With no patron table the transcript claims no routing.
+  const bare = buildWorldNotes(record([], [trouble, aboutTrouble, astray])).map(
+    (n) => n.line,
+  );
+  expect(bare.find((l) => l.includes("[evt-32-10]"))).not.toContain("routed");
+});
+
+test("the transcript's numbers list food, troubles by god, wrongs between different patrons with what followed, defections, and the ticks from a cause to its closing", () => {
+  const rec = {
+    ...record([], wrongsWorld()),
+    patrons: new Map([
+      ["lykos", "hermes"],
+      ["doris", "poseidon"],
+      ["ismene", "athena"],
+    ]),
+  };
+  const text = renderTranscript(rec);
+  const section = text.slice(
+    text.indexOf("## The episode's numbers"),
+    text.indexOf("\n## What the world did\n"),
+  );
+  expect(section).toContain(
+    '0 "cannot get food" lines; 0 of 1 prayers are about food',
+  );
+  expect(section).toContain("Troubles in a god's domain: Zeus 1");
+  expect(section).toContain(
+    "Wrongs between mortals: 2; 2 between different patrons",
+  );
+  expect(section).toContain(
+    "[evt-5-1] lykos (hermes) wronged doris (poseidon): theft; the victim prayed [evt-8-2]; revenge, defection",
+  );
+  expect(section).toContain("Defections: 1");
+});
+
+test("the summary shows the checks across the episodes, each episode's numbers, and each god's p95 queue wait against the 90 s target", () => {
+  const rec = {
+    ...record([], wrongsWorld()),
+    patrons: new Map([
+      ["lykos", "hermes"],
+      ["doris", "poseidon"],
+    ]),
+  };
+  const gate = [
+    { name: "mortal wrong", ok: true, detail: "1 with a consequence" },
+    { name: "initiative: zeus", ok: false, detail: "no demand or contest" },
+  ];
+  const text = renderSummary([rec], {
+    seconds: 300,
+    model: "m",
+    files: ["episode-1.md"],
+    gate,
+    patrons: rec.patrons,
+  });
+  expect(text).toContain("## Across the episodes");
+  expect(text).toContain("- PASS mortal wrong: 1 with a consequence");
+  expect(text).toContain("- FAIL initiative: zeus: no demand or contest");
+  expect(text).toContain("Cross-episode checks failed: initiative: zeus.");
+  expect(text).toContain("## The episodes' numbers");
+  expect(text).toMatch(
+    /\| 1 \| 0 \(at most 250\) \| 0 \/ 1 \| zeus 1 \| 2 \| 2 \/ 1 \| 1 \|/,
+  );
+  expect(text).toContain("ADR-0005 allows 90 s");
+  // With no gate run, it says so.
+  expect(
+    renderSummary([rec], { seconds: 300, model: "m", files: ["episode-1.md"] }),
+  ).toContain("No cross-episode checks were run.");
 });

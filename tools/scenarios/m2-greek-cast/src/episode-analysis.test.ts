@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   analyzeEpisode,
+  type GodIdentity,
   MIN_ACTIONS,
   REPETITION_CAP,
 } from "./episode-analysis";
@@ -560,14 +561,14 @@ test("the episode is ok only when every check of every god holds", () => {
 
 // --- Goals ---------------------------------------------------------------------------------
 
-const GOAL_NAMES = ["goal set", "goal ended"] as const;
-const goalChecks = (episode: ReturnType<typeof analyzeEpisode>, god: string) =>
-  Object.fromEntries(
-    GOAL_NAMES.map((name) => [name, check(episode, god, name)?.ok]),
-  );
-
-test("goal checks: a god that set a goal and ended one, one by replacement, passes both", () => {
-  // Hera sets A, then sets B (A ends as abandoned), then ends B as achieved.
+test("goals are reported and no longer required (R19): a god that set none and ended none passes every check, and the counts and outcomes stay in its numbers", () => {
+  const none = analyzeEpisode(input([move("hera", "a", 10)]), identities, [
+    "hera",
+  ]);
+  expect(none.gods[0]).toMatchObject({ goalsSet: 0, goalsEnded: 0 });
+  expect(none.gods[0]?.checks.map((c) => c.name)).not.toContain("goal set");
+  expect(none.gods[0]?.checks.map((c) => c.name)).not.toContain("goal ended");
+  // Hera sets A, sets B (A ends as abandoned), and ends nothing more: both are counted, neither is judged.
   const events = [
     goalSetEvent("evt-1-1", 1, "hera", "Win the farmer.", "farmer"),
     goalEndedEvent("evt-2-2", 2, "hera", "evt-1-1", "abandoned"),
@@ -578,54 +579,15 @@ test("goal checks: a god that set a goal and ended one, one by replacement, pass
     identities,
     ["hera"],
   );
-  expect(goalChecks(replaced, "hera")).toEqual({
-    "goal set": true,
-    "goal ended": true,
-  });
-  expect(check(replaced, "hera", "goal set")?.detail).toContain("2");
-  expect(check(replaced, "hera", "goal ended")?.detail).toContain("abandoned");
-});
-
-test("goal checks: a god that sets but never ends fails the end check only; one that never sets fails both; another god's goals do not count", () => {
-  const setOnly = analyzeEpisode(
-    input([move("hera", "a", 10)], [goalSetEvent("evt-1-1", 1, "hera")]),
-    identities,
-    ["hera"],
-  );
-  expect(goalChecks(setOnly, "hera")).toEqual({
-    "goal set": true,
-    "goal ended": false,
-  });
-
-  const none = analyzeEpisode(input([move("hera", "a", 10)]), identities, [
-    "hera",
-  ]);
-  expect(goalChecks(none, "hera")).toEqual({
-    "goal set": false,
-    "goal ended": false,
-  });
-
-  // Zeus's goals are Zeus's: Hera still has none.
+  expect(replaced.gods[0]).toMatchObject({ goalsSet: 2, goalsEnded: 1 });
+  // Another god's goals are its own.
   const theirs = analyzeEpisode(
-    input(
-      [move("hera", "a", 10)],
-      [
-        goalSetEvent("evt-1-1", 1, "zeus"),
-        goalEndedEvent("evt-2-2", 2, "zeus", "evt-1-1"),
-      ],
-    ),
+    input([move("hera", "a", 10)], [goalSetEvent("evt-1-1", 1, "zeus")]),
     identities,
     ["zeus", "hera"],
   );
-  expect(goalChecks(theirs, "zeus")).toEqual({
-    "goal set": true,
-    "goal ended": true,
-  });
-  expect(goalChecks(theirs, "hera")).toEqual({
-    "goal set": false,
-    "goal ended": false,
-  });
-  expect(theirs.ok).toBe(false);
+  expect(theirs.gods.find((g) => g.god === "hera")?.goalsSet).toBe(0);
+  expect(theirs.gods.find((g) => g.god === "zeus")?.goalsSet).toBe(1);
 });
 
 test("a goal-only proposal is not an action: it does not count toward activity or repetition, and still needs its model request", () => {
@@ -739,10 +701,15 @@ test("petition checks: a god that heard none fails the heard check; one that hea
 });
 
 test("petition checks: a god that heard a petition but answered none fails the answered check; with an answer it passes, and an answer by the other god does not count", () => {
+  // A god with a strike or a bless can answer; one with neither is held only to hearing (below).
+  const answering = new Map(identities).set("hera", {
+    ...(identities.get("hera") as GodIdentity),
+    abilities: [{ name: "Thunderbolt", action: "strike" }],
+  });
   const heard = [petitionOpenedEvent("evt-1-2", 2, "farmer", "hera")];
   const none = analyzeEpisode(
     input([move("hera", "a", 10)], heard),
-    identities,
+    answering,
     ["hera"],
   );
   expect(check(none, "hera", "petition answered")?.ok).toBe(false);
@@ -754,7 +721,7 @@ test("petition checks: a god that heard a petition but answered none fails the a
   ];
   const ok = analyzeEpisode(
     input([move("hera", "a", 10)], answered),
-    identities,
+    answering,
     ["hera"],
   );
   expect(check(ok, "hera", "petition answered")?.ok).toBe(true);
@@ -767,11 +734,69 @@ test("petition checks: a god that heard a petition but answered none fails the a
   ];
   const mixed = analyzeEpisode(
     input([move("hera", "a", 10), move("zeus", "a", 11)], wrong),
-    identities,
+    answering,
     ["zeus", "hera"],
   );
   expect(check(mixed, "hera", "petition answered")?.ok).toBe(false);
   expect(check(mixed, "zeus", "petition answered")?.ok).toBe(true);
+});
+
+test("a god with no bless or strike cannot answer a prayer by itself: it is held to hearing them, and the detail says so", () => {
+  const heard = [petitionOpenedEvent("evt-1-2", 2, "farmer", "hera")];
+  // The test's Hera has only a legend: no petition answered is required of her.
+  const mute = analyzeEpisode(
+    input([move("hera", "a", 10)], heard),
+    identities,
+    ["hera"],
+  );
+  expect(check(mute, "hera", "petition answered")?.ok).toBe(true);
+  expect(check(mute, "hera", "petition answered")?.detail).toContain(
+    "no bless or strike",
+  );
+  // Hearing is still required of her.
+  const deaf = analyzeEpisode(input([move("hera", "a", 10)]), identities, [
+    "hera",
+  ]);
+  expect(check(deaf, "hera", "petition heard")?.ok).toBe(false);
+  // A god whose profile is unknown is held to answering, as before.
+  const unknown = analyzeEpisode(
+    input([move("hera", "a", 10)], heard),
+    new Map(),
+    ["hera"],
+  );
+  expect(check(unknown, "hera", "petition answered")?.ok).toBe(false);
+});
+
+test("a refusal is a valid context action, keyed by the petition it answers, and a strike on a mortal keys on the mortal", () => {
+  const refusals = [1, 2, 3, 4].map((i) =>
+    act("hera", { kind: "refuse", petition: "evt-1-2" }, i),
+  );
+  const episode = analyzeEpisode(input(refusals), identities, ["hera"]);
+  expect(check(episode, "hera", "profile trace")?.ok).toBe(true);
+  expect(episode.gods[0]?.longestRun?.key).toBe("refuse:evt-1-2");
+  expect(check(episode, "hera", "repetition")?.ok).toBe(false);
+  expect(episode.gods[0]?.contextBacked).toBe(4);
+  // A refusal of a different prayer breaks the run, as a bless of a different one does.
+  const varied = analyzeEpisode(
+    input([
+      ...refusals.slice(0, 3),
+      act("hera", { kind: "refuse", petition: "evt-1-3" }, 5),
+    ]),
+    identities,
+    ["hera"],
+  );
+  expect(check(varied, "hera", "repetition")?.ok).toBe(true);
+  const strikes = analyzeEpisode(
+    input(
+      [1, 2].map((i) =>
+        act("zeus", { kind: "strike", target: "lykos", power: 1 }, i),
+      ),
+    ),
+    identities,
+    ["zeus"],
+  );
+  expect(strikes.gods[0]?.longestRun?.key).toBe("strike:lykos");
+  expect(strikes.gods[0]?.abilityBacked).toBe(2);
 });
 
 test("a bless is a valid context action, keyed by the petition it answers", () => {

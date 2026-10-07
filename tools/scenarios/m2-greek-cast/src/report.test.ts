@@ -31,6 +31,8 @@ const summary: RunSummary = {
       name: "chain",
       sabotage: "Drops the claim.",
       exitCode: 1,
+      scope: "It reruns the story.",
+      seconds: 12,
       failure: "FAIL invariant violated: x",
     },
     {
@@ -58,13 +60,13 @@ test("the report carries each step, its notes, and each control's failure, with 
     "Positive control `god-silent` (in-process)",
   );
   expect(input.findings.join("\n")).toContain(
-    "The run exited 1 with: FAIL invariant violated: x",
+    "It reruns the story. The run exited 1 after 12 s with: FAIL invariant violated: x",
   );
   expect(input.bottomLine).toContain(
     "All 2 positive controls tripped the assertion they target",
   );
   expect(input.bottomLine).toContain(
-    "1 by a rerun of the story in a child process that exited non-zero, 1 by breaking a copy",
+    "1 by a child process that exited non-zero (a rerun of the story to the step it breaks, or only its own staged step), 1 by breaking a copy of the evidence a step collected in-process",
   );
   expect(input.caveat).toContain("Not covered");
 });
@@ -121,6 +123,8 @@ test("a control that did not trip is not counted among those that did", () => {
         name: "chain",
         sabotage: "x",
         exitCode: 0,
+        scope: "It reruns the story.",
+        seconds: 3,
         failure: "",
       },
     ],

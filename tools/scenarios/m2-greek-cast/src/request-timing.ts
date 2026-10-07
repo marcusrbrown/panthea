@@ -35,6 +35,8 @@ export interface GodTiming {
   /** Ticks between this god's consecutive request starts. */
   readonly medianGapTicks: number | undefined;
   readonly worstGapTicks: number | undefined;
+  /** The 95th percentile (nearest rank) of the ticks between this god's consecutive request starts: how long it waits its turn on one model (ADR-0005's 90 s target, a tick being a second). */
+  readonly p95GapTicks: number | undefined;
   readonly medianLatencyMs: number | undefined;
 }
 
@@ -60,6 +62,16 @@ const median = (values: readonly number[]): number | undefined => {
   return sorted.length % 2 === 1
     ? (sorted[mid] as number)
     : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
+};
+
+/** The nearest-rank percentile of `values`, or undefined with none. */
+export const percentile = (
+  values: readonly number[],
+  share: number,
+): number | undefined => {
+  if (values.length === 0) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.max(0, Math.ceil(share * sorted.length) - 1)];
 };
 
 const detailOf = (request: RealRequest): string | undefined => {
@@ -136,6 +148,7 @@ export function requestTimings(input: RealInput): RequestTimings {
       turns: finished.length,
       medianGapTicks: median(gaps),
       worstGapTicks: gaps.length === 0 ? undefined : Math.max(...gaps),
+      p95GapTicks: percentile(gaps, 0.95),
       medianLatencyMs: median(
         finished.flatMap((r) =>
           r.latencyMs === undefined ? [] : [r.latencyMs],
@@ -173,11 +186,11 @@ export function renderRequestTimings(timings: RequestTimings): string[] {
     "",
     "Each god's turns (finished requests; the gap is the ticks between its request starts):",
     "",
-    "| God | Turns | Median gap (ticks) | Worst gap (ticks) | Median latency |",
-    "| --- | --- | --- | --- | --- |",
+    "| God | Turns | Median gap (ticks) | p95 gap (ticks) | Worst gap (ticks) | Median latency |",
+    "| --- | --- | --- | --- | --- | --- |",
     ...timings.perGod.map(
       (g) =>
-        `| ${g.god} | ${g.turns} | ${ticks(g.medianGapTicks)} | ${ticks(g.worstGapTicks)} | ${seconds(g.medianLatencyMs)} |`,
+        `| ${g.god} | ${g.turns} | ${ticks(g.medianGapTicks)} | ${ticks(g.p95GapTicks)} | ${ticks(g.worstGapTicks)} | ${seconds(g.medianLatencyMs)} |`,
     ),
   ];
 }

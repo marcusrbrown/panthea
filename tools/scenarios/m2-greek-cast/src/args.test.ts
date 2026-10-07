@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
 import { DEFAULT_JOBS, parseArgs } from "./args";
 import { endpointOptions } from "./real";
+import {
+  CONTROL_NAMES,
+  CONTROL_STEP,
+  STAGED_STEPS,
+  WORLD_CONTROLS,
+} from "./steps/context";
 
 test("the model defaults to the M2 local baseline, qwen3 8B at 4K, and reasoning is unset", () => {
   const args = parseArgs(["--real"]);
@@ -236,4 +242,41 @@ test("--jobs must be a positive whole number and applies only with --write-readm
   expect(() =>
     parseArgs(["--skip-build", "--positive-control=chain", "--jobs=2"]),
   ).toThrow(/only with --write-readme/);
+});
+
+test("--steps names staged steps that start a world of their own, and nothing else", () => {
+  expect(parseArgs(["--skip-build", "--steps=S21,S24"]).steps).toEqual([
+    "S21",
+    "S24",
+  ]);
+  expect(parseArgs(["--skip-build"]).steps).toBeUndefined();
+  // A step that rests on the story's world cannot run alone.
+  for (const bad of [
+    "--steps=S15",
+    "--steps=S21,S1",
+    "--steps=",
+    "--steps=S26",
+  ]) {
+    expect(() => parseArgs([bad])).toThrow(/staged steps/);
+  }
+});
+
+test("each staged-world control runs only its own step, and the others run the story", () => {
+  for (const [control, step] of Object.entries(CONTROL_STEP)) {
+    expect(STAGED_STEPS as readonly string[]).toContain(step);
+    expect(CONTROL_NAMES as readonly string[]).toContain(control);
+  }
+  expect(CONTROL_STEP).toEqual({
+    "strike-chain": "S21",
+    "refusal-revenge": "S22",
+    "no-answerer": "S24",
+    "director-off": "S25",
+  });
+  // A control with no staged step reruns the story to the step it breaks.
+  for (const control of ["chain", "isolation", "trace", "petition-privacy"]) {
+    expect((CONTROL_STEP as Record<string, unknown>)[control]).toBeUndefined();
+  }
+  // The in-process world control is not a process control.
+  expect(CONTROL_NAMES as readonly string[]).not.toContain("trouble-route");
+  expect(WORLD_CONTROLS).toEqual(["trouble-route"]);
 });

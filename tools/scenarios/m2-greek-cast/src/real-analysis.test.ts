@@ -662,6 +662,46 @@ test("a bless is a valid god action, and the petition it names must be in the pr
   expect(property(unseen, "perception compliance")?.ok).toBe(false);
 });
 
+test("a refusal and a strike on a mortal are valid god actions, and the prayer a refusal names and the mortal a strike names must be in the prompt like any named id", () => {
+  const prompt =
+    'Prayers to you:\n- [evt-26-7] farmer (your worshipper) asks you to punish lykos.\n  - refuse it: {"action":"refuse","petition":"evt-26-7"}';
+  const refused = base({
+    requests: [request("p1", prompt)],
+    proposals: [
+      proposal("p1", "hera", { kind: "refuse", petition: "evt-26-7" }),
+    ],
+  });
+  expect(GOD_ACTIONS.has("refuse")).toBe(true);
+  expect(property(refused, "valid actions")?.ok).toBe(true);
+  expect(property(refused, "perception compliance")?.ok).toBe(true);
+  expect(namedIds({ kind: "refuse", petition: "evt-26-7" })).toEqual([
+    "evt-26-7",
+  ]);
+  // A refusal of a prayer the prompt never showed fails compliance.
+  const unseen = base({
+    requests: [request("p1", "You are Hera.")],
+    proposals: [
+      proposal("p1", "hera", { kind: "refuse", petition: "evt-26-7" }),
+    ],
+  });
+  expect(property(unseen, "perception compliance")?.ok).toBe(false);
+  // The mortal a strike names is shown by the prayer that asks for its punishment; one the prompt never named fails.
+  const struck = base({
+    requests: [request("p1", prompt)],
+    proposals: [
+      proposal("p1", "hera", { kind: "strike", target: "lykos", power: 1 }),
+    ],
+  });
+  expect(property(struck, "perception compliance")?.ok).toBe(true);
+  const stranger = base({
+    requests: [request("p1", prompt)],
+    proposals: [
+      proposal("p1", "hera", { kind: "strike", target: "ismene", power: 1 }),
+    ],
+  });
+  expect(property(stranger, "perception compliance")?.ok).toBe(false);
+});
+
 test("petition privacy matches whole ids: evt-26-7 does not match inside evt-26-70, and does match at the end of a line", () => {
   const events = [prayerToHera()] as never;
   const near = base({
