@@ -401,7 +401,7 @@ flowchart TB
 - One `--write-readme --jobs=4` run on the final tree holds every step, and every control fails at its own step.
 - The README records both new controls.
 
-- [ ] **Unit 7: Rated gate, measured**
+- [x] **Unit 7: Rated gate, measured**
 
 **Goal:** record what remote answers change in a real-model gate.
 
@@ -424,6 +424,35 @@ Don't tune anything to the result.
 **Test expectation:** none. This is measurement evidence.
 
 **Verification:** the evidence is committed with an honest comparison, and the SC verdicts are restated.
+
+**Status (2026-10-07): the measurement ran; the owner rates.** One rated gate, 3 × 300 s on qwen3-8b-4k with reasoning off, on main 4bea553 (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T14-02-54/`), the load average 4.65 at the start and 5.83 at the end from other processes. Exit 1: 143 passed and 43 failed of 186 checks (the first gate, 79 failed; the second, 52). Compared with the two earlier 2026-10-07 gates (transcripts: `tools/scenarios/m2-greek-cast/episodes/2026-10-07T00-52-07/`, `tools/scenarios/m2-greek-cast/episodes/2026-10-07T02-58-12/`):
+
+| | Gate 1 (00-52) | Gate 2 (02-58, legend fix) | Gate 3 (14-02, from afar) |
+| --- | --- | --- | --- |
+| Failed checks | 79 | 52 | 43 |
+| Walks (travel) | 63 | 56 | 57 |
+| Direct answers: blesses / strikes on mortals / strikes on buildings / refusals | 1 / 1 / 0 / 0 | 6 / 0 / 0 / 0 | 3 / 0 / 0 / 0 |
+| Offers of terms to mortals | 6 | 7 | 6 |
+| Legends / reports | 0 / 0 | 23 / 4 | 18 / 28 |
+| Demands or contests between gods | 0 | 0 | 0 |
+| Turns where a prayer was open to the god: walk / answer or offer / other | 49 / 8 / 0 | 43 / 13 / 10 | 36 / 9 / 33 |
+| Prayers opened; closed (lapsed / answered / refused) | 105; 43 (41 / 2 / 0) | 86; 42 (36 / 6 / 0) | 95; 40 (37 / 3 / 0) |
+| Revenges / defections | 5 / 0 | 6 / 0 | 4 / 0 |
+| Wrongs between different patrons; prayed to the victim's patron; with a consequence | 27; 20; 5 | 23; 15; 6 | 27; 16; 4 |
+| Food lines per episode; food-prayer share | 69, 59, 65; 58%, 50%, 51% | 66, 49, 73; 42%, 57%, 50% | 68, 65, 95; 52%, 58%, 50% |
+| Requests; exhausted | 84; 12 | 102; 2 | 114; 0 |
+| Rejected proposals (blesses and reports) | 1 | 4 | 2 (reports, `not-adjacent`) |
+| Turns per god per episode; queue-wait p95 range; god-episodes over 90 s | 3 to 6; 73 to 115; 13 of 21 | 4 to 7; 62 to 83; 0 | 5 to 7; 59 to 73; 0 |
+
+Per god in gate 3 (committed actions over the three episodes): Athena 9 legends, 3 reports, 3 walks; Hades 16 walks; Hephaestus 9 legends, 5 walks, 1 report; Hera 10 reports, 6 walks; Hermes 10 walks, 5 reports, 3 offers; Poseidon 9 walks, 6 reports; Zeus 8 walks, 3 offers, 3 blesses, 3 reports. Prayers addressed per god (all three episodes): Poseidon 32, Hermes 21, Athena 18, Hera 11, Zeus 10, Hades 3, Hephaestus 0. "Turns where a prayer was open" counts a prayer for its 150-tick window unless answered, so it is an upper bound on the turns that could have answered one.
+
+**Verdicts, mortal-wrongs plan.** SC1: lines pass (68, 65, 95 of at most 250); the share is not under half in any episode: not met. SC2: each god's trouble fired 2 to 3 times in every episode; every god but Hephaestus received prayers (Hades 3, Hephaestus 0 in all three episodes, as in both earlier gates): not met for Hephaestus. SC3: met (27 wrongs, 16 prayed to the victim's patron, 4 consequences, all revenges). SC4, SC5: not met (no demand or contest between gods in any episode, so no god showed initiative). SC6: not shown (0 defections; 3 of 95 prayers answered). SC7: the owner rates.
+
+**Did answering from afar change what it set out to change?** Mechanically yes, and behaviourally no. The promise was one turn per answer, not fewer lapsed prayers or more disputes (the origin's success criteria): the scripted story proves the one-turn answer for a blessing and a building strike, each with a control. In the real gate the wasted requests on answers fell (a bless refused as malformed or `not-adjacent`: 1 and 4 before, 0 now; exhausted requests 12, 2, 0), the queue wait stayed within 90 s, and each god took 5 to 7 turns. But walks did not fall (63, 56, 57), direct answers fell from 6 to 3, and 37 of the 40 prayers that closed lapsed (41 of 43 and 36 of 42 before).
+
+**Causes, read from the transcripts.** *Model behaviour:* a god with a prayer open took a direct answer on about one turn in nine (9 of 78 counting offers; 3 blesses): it walked on 46% and sent a report on 35%. The one sampled turn is the same in all three episodes (Hera, request 4, with a farmer's help prayer open and `help freely, from where you stand` written out whole): she travelled to the ancient olive tree, a place unrelated to the prayer. The old gates sent her to the town square, where the farmer was, as the instructions then told her. Walks are the model's default action, and the old walk-first instruction was not what drove them. The reports are chatter with no claim (Hera told weaver-xenia nearly the same line four times, a repetition failure). All three blesses are Zeus's owed boon on the same prayer (evt-5-106, the world starts identically each episode); there was no unprompted blessing (gate 2 had three, by Athena and Poseidon) and no strike on a mortal or a building. *Mechanics:* Hephaestus is addressed no prayer in any gate; the not-adjacent report rejections come from a listener who walked away between the prompt and the commit. One run, one model, 5 to 7 turns a god: the differences between 3 and 6 answers are not significant.
+
+**Next options (not taken).** (1) Compare a different local model on the same prompt (granite3.3-8b-4k, llama3.1-8b-4k, gemma4-e4b-4k are installed) to separate the model from the prompt; one variable, a few minutes. (2) Put the answer ahead of the idle choices in a prayer's menu or name it the default; that is tuning, and the owner rejected it before the system is built. (3) Look at why Hephaestus's smiths pray to no one. (4) A scheduler priority is no longer the limit: the queue wait is within the target. (5) Rate as it stands.
 
 ## System-Wide Impact
 

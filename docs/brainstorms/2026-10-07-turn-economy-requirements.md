@@ -80,6 +80,7 @@ Two rated seven-god gates ran on 2026-10-07: `tools/scenarios/m2-greek-cast/epis
 - **What this promises:** it removes the walk from a prayer answer. It doesn't promise fewer lapsed prayers or more disputes between gods. Whether a god chooses to answer before a prayer lapses is model behaviour, and changing that is separate work.
 - **Measured in the next rated gate:** it reports the actions spent on prayer answers versus walks, and the prayers answered versus lapsed, against the two 2026-10-07 gates. These are measured, not targets. The owner rejected tuning to the 5-minute episode before the system is built.
 - **Clean handoff:** planning can proceed without inventing which acts work from afar, what the world checks, or what the prompt shows.
+- Status (2026-10-07), measured in the first rated gate after the change (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T14-02-54/`, 3 × 300 s on qwen3-8b-4k, exit 1, 43 failed checks of 186): the one-turn answer is proven in the scripted story (S26, S27) and the wasted requests on answers fell (0 refused blesses, 0 exhausted requests), but walks did not fall (63, 56, 57 across the three gates), direct answers fell from 6 to 3 (all Zeus's owed boon), and 37 of 40 closed prayers lapsed. The promise was the removal of the walk, not fewer lapses or more disputes; the model walked on 46% and reported on 35% of the turns where a prayer was open, so whether a god chooses to answer is, as written, model behaviour. The owner rates.
 
 ---
 
