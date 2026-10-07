@@ -331,6 +331,20 @@ test("a god opens a contest over a rival's act it perceived: the world finds the
   expect(town.state.contests.get(contest.id)).toBe(contest);
 });
 
+test("a strike on a building from afar is service at the building's place, with the god standing elsewhere", () => {
+  const town = new Town();
+  town.place("poseidon", "far");
+  town.tick({ actor: "poseidon", kind: "strike", target: "shed", power: 1 });
+  expect(town.rejected()).toEqual([]);
+  const hit = town.state.services.at(-1);
+  expect(plain(hit)).toMatchObject({
+    kind: "strike",
+    god: "poseidon",
+    place: "square",
+  });
+  expect(getActor(town.state, id("poseidon"))?.locationId).toBe(id("far"));
+});
+
 test("a strike and a legend are rival acts too, each at the place with mortals in it", () => {
   const strike = new Town();
   strike.tick({ actor: "poseidon", kind: "strike", target: "shed", power: 1 });

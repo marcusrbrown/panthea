@@ -201,14 +201,17 @@ export function buildModelProposal(
         (building) => building.id === intent.target,
       );
       if (!target) {
-        // Not a building here: the mortal a shown prayer asks the god to punish. The world takes its goods wherever it
-        // is, so nothing pins its place or its revision (a routine moves it every tick); the prayer is the fact.
+        // Not a building here: the mortal a shown prayer asks the god to punish, or a building it lists. The world takes a
+        // strike wherever the target is (and the building's status is rechecked at commit), so nothing pins the target's
+        // place or its revision (a routine moves a mortal every tick); the prayer is the fact, and only the god is pinned.
         const prayer = remembered.petitions.find(
-          (candidate) => candidate.strikeMortal?.target === intent.target,
+          (candidate) =>
+            candidate.strikeMortal?.target === intent.target ||
+            candidate.strikeBuildings?.includes(intent.target),
         );
         if (prayer === undefined) {
           return refuse(
-            `${intent.target} is not a building in the snapshot or the offender of a prayer shown`,
+            `${intent.target} is not a building in the snapshot, or the offender or a listed building of a prayer shown`,
           );
         }
         factsRead.push(`petition:${prayer.id}`);

@@ -995,6 +995,57 @@ const affinityOf = (world: World, mortal: string, god: string) =>
   world.state.relationships.get(relationshipKey(id(mortal), id(god)))
     ?.affinity ?? 0;
 
+test("AE2 shape: Zeus strikes a prayer's listed building from the hall, far from it: the shed is damaged, the prayer is answered, Zeus has not moved, and the farmer, who stood at the square, perceives the strike while no one there learns where Zeus is", () => {
+  const world = new World();
+  const opened = petition(world, "farmer", "zeus", theftBy("woodcutter"));
+  expect(getActor(world.state, id("zeus"))?.locationId).toBe(id("hall"));
+  expect(world.state.petitions.get(opened.id)?.request).toMatchObject({
+    kind: "punish",
+    buildings: ["woodshed"],
+  });
+  const ran = godActs(world, {
+    actor: "zeus",
+    kind: "strike",
+    target: "woodshed",
+    power: 1,
+  });
+  expect(ran.rejected).toEqual([]);
+  expect(ofKind(ran.events, "building-damaged")[0]).toMatchObject({
+    entityId: "woodshed",
+    actor: "zeus",
+  });
+  expect(world.state.buildings.get(id("woodshed"))?.status).toBe("damaged");
+  expect(world.state.petitions.get(opened.id)?.status).toBe("answered");
+  expect(getActor(world.state, id("zeus"))?.locationId).toBe(id("hall"));
+  const seen = JSON.stringify(
+    perceive(world.state, id("farmer"), world.log)?.events ?? [],
+  );
+  expect(seen).toContain("building-damaged");
+  expect(seen).not.toContain("hall");
+});
+
+test("a strike on a listed building that lands after its prayer lapsed still lands and answers nothing: no new gate on strikes", () => {
+  const world = new World();
+  const opened = petition(world, "farmer", "zeus", theftBy("woodcutter"));
+  world.state = {
+    ...world.state,
+    tick:
+      opened.tick +
+      petitionBalanceOf(world.state.rules, "answerWindowTicks") +
+      1,
+  };
+  const ran = godActs(world, {
+    actor: "zeus",
+    kind: "strike",
+    target: "woodshed",
+    power: 1,
+  });
+  expect(ran.rejected).toEqual([]);
+  expect(world.state.buildings.get(id("woodshed"))?.status).toBe("damaged");
+  expect(ofKind(ran.events, "petition-answered")).toEqual([]);
+  expect(world.state.petitions.get(opened.id)?.status).not.toBe("answered");
+});
+
 test("Zeus strikes the woodshed within the window: the petition is answered, the farmer gets a sign that raises its affinity toward Zeus, and it worships him", () => {
   const world = new World();
   const opened = petition(world, "farmer", "zeus", theftBy("woodcutter"));

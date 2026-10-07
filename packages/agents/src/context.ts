@@ -218,6 +218,8 @@ export interface PetitionView {
   readonly offenderGod?: true;
   /** The strike on a mortal offender the world would take (the offender itself, so no building or travel), written out in the intent to send. */
   readonly strikeMortal?: Readonly<Record<string, unknown>>;
+  /** The prayer's listed buildings the world would take a strike on as the answer (operational, and the god has the divinity): each is struck from wherever the god stands, so no way there is shown. */
+  readonly strikeBuildings?: readonly EntityId[];
   /** The refusal the world would take, written out in the intent to send. */
   readonly refuse?: Readonly<Record<string, unknown>>;
   /** For harm a god did the one who prayed: the demand for redress the world would take, written out in the intent to send. */
@@ -480,6 +482,19 @@ function petitionView(
   const strike = { action: "strike", target: offender, power: 1 };
   const refuse = { action: "refuse", petition: petition.id };
   const bless = { action: "bless", petition: petition.id };
+  // A listed building is struck as the answer only while it is operational (a burning or destroyed one would answer nothing),
+  // and only when the world would take the strike: the world has no location check on a strike, so none is made here.
+  const strikeBuildings =
+    request.kind === "punish"
+      ? request.buildings.filter(
+          (building) =>
+            state.buildings.get(building)?.status === "operational" &&
+            validateProposal(
+              state,
+              proposal({ kind: "strike", target: building, power: 1 }),
+            ).ok,
+        )
+      : [];
   return {
     id: petition.id,
     petitioner: petition.petitioner,
@@ -504,6 +519,11 @@ function petitionView(
       proposal({ kind: "strike", target: offender, power: 1 }),
     ).ok
       ? { strikeMortal: strike }
+      : {}),
+    ...(request.kind === "punish" &&
+    offenderActor?.isDeity !== true &&
+    strikeBuildings.length > 0
+      ? { strikeBuildings }
       : {}),
     ...(validateProposal(
       state,
@@ -879,12 +899,14 @@ function offerFor(
     strikeCap >= 1
       ? [
           ...snapshot.buildings.map((building) => building.id),
-          ...remembered.petitions.flatMap((petition) =>
-            petition.strikeMortal === undefined
+          // What a shown prayer asks the god to strike: the mortal it names, and each listed building, wherever they are.
+          ...remembered.petitions.flatMap((petition) => [
+            ...(petition.strikeMortal === undefined
               ? []
-              : [petition.strikeMortal.target as EntityId],
-          ),
-        ]
+              : [petition.strikeMortal.target as EntityId]),
+            ...(petition.strikeBuildings ?? []),
+          ]),
+        ].filter((target, at, all) => all.indexOf(target) === at)
       : [];
   return {
     destinations: snapshot.destinations.map((place) => place.id),
@@ -1582,8 +1604,8 @@ function targetIsHere(snapshot: PerceptionSnapshot, target: EntityId): boolean {
  */
 type StrikeCheck = (
   target: EntityId,
-  /** A mortal is struck wherever it is: no building to find in view. */
-  kind?: "mortal",
+  /** A mortal, or a building a shown prayer lists, is struck wherever it is: no building to find in view. */
+  kind?: "remote",
 ) =>
   | { readonly ok: true; readonly cap: number }
   | { readonly ok: false; readonly why: string };
@@ -1610,7 +1632,7 @@ function strikeCheckFor(
     if (cap < 1) {
       return { ok: false, why: "a strike costs divinity and you hold none" };
     }
-    if (kind === "mortal") return { ok: true, cap };
+    if (kind === "remote") return { ok: true, cap };
     const building = snapshot.buildings.find((b) => b.id === target);
     if (building === undefined) {
       return { ok: false, why: `${target} is not in your view` };
@@ -1682,7 +1704,7 @@ function answerGuidance(
     petition.strikeMortal === undefined
       ? []
       : (() => {
-          const check = strike(request.offender, "mortal");
+          const check = strike(request.offender, "remote");
           return [
             check.ok
               ? `  - punish ${request.offender} itself, wherever it is: ${send({ ...petition.strikeMortal, power: 1 })} (the world takes its most valuable carried good, a few units at most; a power from 1 to ${check.cap}, 1 is shown).`
@@ -1692,33 +1714,29 @@ function answerGuidance(
   if (buildings.length === 0) {
     return free([...itself, ...answerFor(request.offender)]);
   }
-  const here = petition.whereabouts.find(
-    (entry) =>
-      entry.place.here && entry.who.some((id) => buildings.includes(id)),
-  );
-  const target = (entry: { who: readonly EntityId[] }) =>
-    entry.who.find((id) => buildings.includes(id));
-  if (here !== undefined) {
-    const aim = target(here) as EntityId;
-    const check = strike(aim);
-    return free([
-      check.ok
-        ? `  - punish freely: ${aim} is here: ${send({ action: "strike", target: aim, power: 1 })} (a power from 1 to ${check.cap}; 1 is shown).`
-        : `  - punish freely: ${aim} is here, but you cannot strike it now: ${check.why}.`,
-      ...itself,
-    ]);
-  }
-  const away = petition.whereabouts.find(
-    (entry) => entry.place.reachable && target(entry) !== undefined,
-  );
-  return free([
-    ...(away === undefined
-      ? []
-      : [
-          `  - punish freely: if you choose this, travel to ${away.place.name} ${send({ action: "travel", to: away.place.id })}; the world walks you there, and once you are there, strike ${target(away)}.`,
-        ]),
-    ...itself,
-  ]);
+  // Each listed building is a choice. One in the scene is said with its reasons when the strike is not on offer; one
+  // elsewhere is struck from where the god stands, and is not shown at all when it would answer nothing.
+  const aims = buildings.flatMap((aim) => {
+    const here = petition.whereabouts.some(
+      (entry) => entry.place.here && entry.who.includes(aim),
+    );
+    if (here) {
+      const check = strike(aim);
+      return [
+        check.ok
+          ? `  - punish freely: ${aim} is here: ${send({ action: "strike", target: aim, power: 1 })} (a power from 1 to ${check.cap}; 1 is shown).`
+          : `  - punish freely: ${aim} is here, but you cannot strike it now: ${check.why}.`,
+      ];
+    }
+    if (!petition.strikeBuildings?.includes(aim)) return [];
+    const check = strike(aim, "remote");
+    return check.ok
+      ? [
+          `  - punish freely, from where you stand: ${send({ action: "strike", target: aim, power: 1 })} (a power from 1 to ${check.cap}; 1 is shown).`,
+        ]
+      : [];
+  });
+  return free([...aims, ...itself]);
 }
 
 /** The heading of the scene's list of places the god may travel to, with the steps each is away. */

@@ -205,7 +205,7 @@ test("an answered or lapsed petition is no longer listed", () => {
   expect(run.prompt("hera")).not.toContain("Prayers to you");
 });
 
-test("the woodshed becomes a strike target only once it is in the scene: not from Olympus, and yes from the square", () => {
+test("the woodshed is a strike target from Olympus as from the square, because a prayer lists it, and a building no prayer lists is a target only in the scene", () => {
   const run = greek();
   run.prayAboutTheft("farmer", "woodcutter");
   const strikeTargets = (god: string) => {
@@ -216,11 +216,150 @@ test("the woodshed becomes a strike target only once it is in the scene: not fro
     ).properties;
     return properties.target?.enum ?? [];
   };
-  expect(strikeTargets("hera")).not.toContain("woodshed");
+  // Hera is on Olympus: the shed the prayer lists is offered, and so is the woodcutter, its owner.
+  expect(strikeTargets("hera")).toContain("woodshed");
+  expect(strikeTargets("hera")).toContain("woodcutter");
+  // A building no prayer lists is not: the old oak is far below and no one asked about it.
+  expect(strikeTargets("hera")).not.toContain("old-oak");
   run.state = actorAt(run.state, "hera", "town-square");
   expect(strikeTargets("hera")).toContain("woodshed");
-  // And the prayers section no longer needs a route: she is there.
-  expect(prayersOf(run.prompt("hera"))).not.toContain("take ");
+  // The prayers section needs no route either way.
+  expect(prayersOf(run.prompt("hera"))).not.toContain("travel");
+});
+
+test("a punish prayer offers a copyable strike on the listed building and on its owner, from afar: each parses, builds from the prayer, and commits through runTick", () => {
+  const run = greek();
+  const opened = run.prayAboutTheft("farmer", "woodcutter");
+  const god = String(opened.god);
+  expect(getActor(run.state, id(god))?.locationId).toBe(id("great-hall"));
+  const prayers = prayersOf(run.prompt(god));
+  const lineFor = (target: string) =>
+    prayers
+      .split("\n")
+      .find((l) => l.includes(`{"action":"strike","target":"${target}"`)) ?? "";
+  expect(lineFor("woodshed")).toContain("punish freely, from where you stand");
+  expect(lineFor("woodcutter")).toContain("punish woodcutter itself");
+  expect(prayers).not.toContain("travel");
+  expect(prayers).not.toContain("once you are there");
+  const snapshot = perceive(run.state, id(god), []);
+  if (!snapshot) throw new Error("snapshot");
+  const remembered = rememberedBy(run.state, id(god));
+  for (const target of ["woodshed", "woodcutter"]) {
+    const parsed = run
+      .schema(god)
+      .parse({ action: "strike", target, power: 1 });
+    if (!parsed.ok) throw new Error(parsed.message);
+    const built = buildModelProposal(
+      id(god),
+      snapshot,
+      parsed.value,
+      remembered,
+    );
+    if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+    // Built from the prayer: the god's own revision is the one pin, no location or building revision.
+    expect(
+      built.proposal.expectedRevisions.map((r) => String(r.entityId)),
+    ).toEqual([god]);
+    expect(built.observation.factsRead).toContain(`petition:${opened.id}`);
+    const ran = runTick(run.state, createPrng(1), [built.proposal]);
+    expect(ran.rejected).toEqual([]);
+    expect(ran.state.petitions.get(opened.id)?.status).toBe("answered");
+    expect(getActor(ran.state, id(god))?.locationId).toBe(id("great-hall"));
+  }
+  // The shed's strike damages the shed.
+  const shedIntent = run
+    .schema(god)
+    .parse({ action: "strike", target: "woodshed", power: 1 });
+  if (!shedIntent.ok) throw new Error(shedIntent.message);
+  const shed = buildModelProposal(
+    id(god),
+    snapshot,
+    shedIntent.value,
+    remembered,
+  );
+  if (!shed.ok || shed.kind !== "proposal") throw new Error("no proposal");
+  const hit = runTick(run.state, createPrng(1), [shed.proposal]);
+  expect(hit.events.map((e) => e.kind)).toContain("building-damaged");
+});
+
+test("the strike enum names only buildings a shown prayer lists (or the scene): a building no prayer lists, and a strike on a prayer's building from a god not shown it, are refused", () => {
+  const run = greek();
+  const opened = run.prayAboutTheft("farmer", "woodcutter");
+  const god = String(opened.god);
+  const other = god === "hera" ? "zeus" : "hera";
+  expect(
+    run.schema(god).parse({ action: "strike", target: "woodshed", power: 1 })
+      .ok,
+  ).toBe(true);
+  expect(
+    run.schema(god).parse({ action: "strike", target: "old-oak", power: 1 }).ok,
+  ).toBe(false);
+  // The other god was shown no such prayer.
+  expect(
+    run.schema(other).parse({ action: "strike", target: "woodshed", power: 1 })
+      .ok,
+  ).toBe(false);
+  const snapshot = perceive(run.state, id(other), []);
+  if (!snapshot) throw new Error("snapshot");
+  const built = buildModelProposal(
+    id(other),
+    snapshot,
+    { action: "strike", target: id("woodshed"), power: 1 } as never,
+    rememberedBy(run.state, id(other)),
+  );
+  expect(built.ok).toBe(false);
+});
+
+test("a listed building that is burning or destroyed is not offered, and the prayer's other choices stay", () => {
+  const run = greek();
+  const opened = run.prayAboutTheft("farmer", "woodcutter");
+  const god = String(opened.god);
+  const shed = run.state.buildings.get(id("woodshed"));
+  if (!shed) throw new Error("shed");
+  for (const status of ["burning", "destroyed", "repairing"]) {
+    const changed = {
+      ...run.state,
+      buildings: new Map(run.state.buildings).set(shed.id, {
+        ...shed,
+        status,
+      } as never),
+    };
+    const copy = new Run(changed);
+    const props = (
+      copy.schema(god).jsonSchema as {
+        properties: Record<string, { enum?: string[] }>;
+      }
+    ).properties;
+    expect([status, props.target?.enum ?? []]).toEqual([
+      status,
+      expect.not.arrayContaining(["woodshed"]),
+    ]);
+    const prayers = prayersOf(copy.prompt(god));
+    expect(prayers).not.toContain('{"action":"strike","target":"woodshed"');
+    // The strike on its owner and the rest of the choices remain.
+    expect(prayers).toContain('{"action":"strike","target":"woodcutter"');
+    expect(prayers).toContain("let it be");
+  }
+});
+
+test("a punish prayer that lists both of the farmer's buildings offers both, each with its own strike, with no cap", () => {
+  const run = greek();
+  const opened = run.prayAboutTheft("woodcutter", "farmer");
+  const god = String(opened.god);
+  expect(opened.request).toMatchObject({ kind: "punish", offender: "farmer" });
+  const listed = (opened.request as unknown as { buildings: string[] })
+    .buildings;
+  expect(listed.length).toBeGreaterThanOrEqual(2);
+  const prayers = prayersOf(run.prompt(god));
+  for (const building of listed) {
+    expect(prayers).toContain(
+      `{"action":"strike","target":"${building}","power":1}`,
+    );
+    expect(
+      run.schema(god).parse({ action: "strike", target: building, power: 1 })
+        .ok,
+    ).toBe(true);
+  }
 });
 
 test("bless is offered for each open help petition shown to the god, wherever the petitioner stands, and for no other god or kind of prayer", () => {
@@ -963,15 +1102,15 @@ test("a remote bless stays unpinned: a worshipper's worship raised the god's rev
   expect(ran.events.map((e) => e.kind)).toContain("blessing-granted");
 });
 
-test("a punish prayer offers striking the offender's building as a choice: travel to it from afar if you choose to, and strike it where it stands once there", () => {
+test("a punish prayer offers striking the offender's building as a choice from where the god stands, and the same line, with the building here, when the god is at the square", () => {
   const run = greek();
   const opened = run.prayAboutTheft("farmer", "woodcutter");
   const god = String(opened.god);
   const afar = prayersOf(run.prompt(god));
   expect(afar).toContain("punish freely");
-  expect(afar).toContain("once you are there, strike woodshed");
-  expect(afar).toContain("if you choose this");
-  expect(afar).toContain('{"action":"travel","to":"town-square"}');
+  expect(afar).toContain('{"action":"strike","target":"woodshed","power":1}');
+  expect(afar).not.toContain("travel");
+  expect(afar).not.toContain("if you choose this");
   expect(afar).not.toContain("To answer it");
   run.state = actorAt(run.state, god, "town-square");
   const near = prayersOf(run.prompt(god));
