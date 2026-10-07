@@ -530,6 +530,35 @@ This recount supersedes the figures for turns with a prayer open in the merged q
 
 **Problems specific to a model.** (1) granite3.3, episode 3: from request 22 (tick 142) 124 of 145 requests were exhausted, each an HTTP 200 whose body was not a completion (`"created":-62135596800` and `"model":""`, the zero values of a server-side error) answered in about 24 ms; the harness showed degraded frames in 51% of polls. It did not recur in episode 1 or 2 (one exhausted request in episode 1 was an offer whose `term.party` was not a god), and granite3.3 answered 6 of 6 gate-sized prompts afterwards; the machine was at about 17.8 of 18 GB used with load average 5 to 8 from other work at the time. I take it as an Ollama or machine fault, not the model's behaviour, and did not rerun (owner's instruction: no looping). The granite3.3 numbers above include that episode; for episodes 1 and 2 alone it committed 67 actions (35 blesses, 2 strikes on mortals, 2 on buildings, 4 offers, 12 reports, 9 legends, 3 walks), opened 86 prayers and closed 44 of them (37 answered, 7 lapsed), with 44 requests where a prayer was open of which 37 were direct answers. (2) gemma4: 34 of 90 requests exhausted, all the legend fault again: `{"action":"legend","linkedEventId":"evt-…"}` with no `assertion`, though the legend's shape is written out in its instructions; qwen3 had the same fault before the copyable line was added, and neither qwen3 nor llama3.1 had it in the later gates. (3) gemma4's queue wait is over the 90 s target in 5 of 21 god-episodes, under heavier machine load than the other runs. (4) llama3.1: as in its note above.
 
+**Status (2026-10-07), one clean granite3.3-8b-4k gate, on the town after the sale-herd fix (#162).** The identical rated gate (3 × 300 s, 4K context, `--reasoning-effort=none`, only `--model=granite3.3-8b-4k`) ran once on main 1917511 with nothing else running (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T20-12-37/`, 15 m 12 s). Load average 2.62 at the start and 1.34 at the end; `vm_stat` pages free 4,155 and 14,835, swap used 7.0 of 8.0 GB at the start and 10.3 of 11.0 GB at the end (the Ollama model, loaded, 5.7 GB). The empty-200 fault of the last granite3.3 run did not recur: no response in any episode was a zero-value body, and one request of 103 was exhausted (an offer whose `term.resource` was not a resource in the world). Exit 1: 162 passed and 24 failed of 186 checks (the earlier granite3.3 run: 156 and 30; qwen3: 143 and 43). Compared with qwen3 (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T14-02-54/`) and granite3.3's earlier run, episodes 1 and 2, which were intact (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T18-48-15/`, on the town before the sale-herd fix):
+
+| | qwen3, 3 episodes | granite3.3 earlier, episodes 1 and 2 | granite3.3 clean, 3 episodes |
+| --- | --- | --- | --- |
+| Failed checks | 43 | 30 (all three episodes; one broken) | 24 |
+| Walks | 57 | 3 | 2 |
+| Blesses / strikes on mortals / on buildings / refusals | 3 / 0 / 0 / 0 | 35 / 2 / 2 / 0 | 64 / 4 / 3 / 1 |
+| Offers of terms | 6 | 4 | 9 |
+| Legends / reports | 18 / 28 | 9 / 12 | 9 / 7 |
+| Demands or contests between gods | 0 | 0 | 0 |
+| Committed actions | 112 | 67 | 99 |
+| Turns with a prayer open: walk / answer or offer / other | 36 / 9 / 33 (of 78) | 0 / 41 / 12 (of 53) | 0 / 80 / 7 (of 87) |
+| Direct answers (bless, strike, refuse) on those turns | 4% | 70% | 82% (92% with offers) |
+| Prayers opened; closed (lapsed / answered / refused) | 95; 40 (37 / 3 / 0) | 86; 44 (7 / 37 / 0) | 197; 118 (47 / 70 / 1) |
+| Revenges / defections | 4 / 0 | 0 / 0 | 3 / 6 |
+| Cross-patron wrongs; prayed to the victim's patron; with a consequence | 27; 16; 4 | 22; 16; 3 (three episodes) | 33; 28; 9 |
+| Requests; exhausted; rejected proposals | 114; 0; 2 | 72; 1; 2 | 103; 1; 3 |
+| Latency p50 / p95 per episode | 8.3, 8.3, 6.3 s / 12.2, 13.0, 12.4 s | 7.7, 7.3 s / 12.1, 13.5 s | 8.1, 7.1, 7.4 s / 12.8, 11.8, 12.5 s |
+| Turns per god per episode; queue-wait p95; god-episodes over 90 s | 5 to 7; 59 to 73 s; 0 of 21 | 4 to 6; 42 to 73 s; 0 | 4 to 7; 63 to 79 s; 0 of 21 |
+| Food lines; food-prayer share | 68, 65, 95; 52%, 58%, 50% | 83, 79; 45%, 35% | 86, 103, 85; 31%, 34%, 35% |
+
+**Did the 69% answer rate hold?** Yes, and higher: 71 of 87 turns with a prayer open (82%) were a bless, a strike or a refusal, against 70% (37 of 53) in the earlier run's two intact episodes; 80 of 87 (92%) counting offers. The gods did not walk (2 walks in 99 actions) and answered from where they stood; the 7 other turns were 6 reports and a legend. This is a model difference: qwen3 on a town of the same kind took a direct answer on 4% of its turns.
+
+**Verdicts, mortal-wrongs plan.** SC1 met: food lines 86, 103, 85 (at most 250) and the food-prayer share under half in all three episodes. SC2 met: each god's trouble fired 2 to 3 times in every episode and every god received prayers in every episode (Hades 10, Hephaestus 11 over the run). SC3 met: 33 wrongs between mortals of different patrons, 28 prayed to the victim's patron, 9 with a consequence (3 revenges, 6 defections, strikes on a wrongdoer). SC4 not met: no demand or contest between gods opened. SC5 not met: all seven gods fail the initiative check. SC6 met: six mortals defected inside the 300-tick episodes, in all three of them (ticks 206, 241, 248; 243; 268, 294), each to a god that had answered it, citing the patron's unanswered prayers. SC7: the owner rates.
+
+**What comes from the town and what from the model.** From the town (the sale-herd fix): prayers per episode rose from about 32 (qwen3) and 43 (granite3.3 before) to 66, wrongs between mortals of different patrons from about 9 (qwen3) and 7 (granite3.3 before) to 11 an episode, and the food-prayer share fell to 31 to 35% (from 35 to 45% for granite3.3 before); more prayers than the gods' five turns an episode can answer left 47 to lapse, which is where the six defections come from (the earlier run answered 37 of 44 and lapsed 7). From the model: the answer rate and the absence of walking, as before, and the model's choice of what to do on a turn (the 82% above, against 4% for qwen3 on a similar town). The sampled turn changed with the town: Hera's request 4 is now on the farmer's prayer evt-3-61, and she offers terms (a supplication, a make-offering term) in all three episodes instead of blessing.
+
+**Faults.** None of the empty-200 kind. Rejected proposals: two strikes on a mortal, rejected `stale-target` (Zeus on fisher-kallias, Hera on olive-grower-phoebe; the target's or the god's revision moved between the prompt and the commit), and a Hades offer rejected `insufficient-resources`. One request exhausted on an offer whose `term.resource` was outside the world's resources. Minimum activity fails for 8 god-episodes (4 or 3 actions where 5 are required): the gods took 4 to 7 turns, and a god that answers every prayer in 4 turns passes nothing else.
+
 ## System-Wide Impact
 
 - **Interaction graph:**
