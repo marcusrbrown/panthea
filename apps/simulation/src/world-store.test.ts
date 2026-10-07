@@ -2914,3 +2914,103 @@ test("the season, floor, loss, and director tunables survive commit, reopen, reb
   expect(floorsOf(high).length).toBeGreaterThan(40);
   expect(new Set(floorsOf(high).map((e) => e.god)).size).toBe(7);
 });
+
+// --- The director replays from the journal (M2 Unit 12) ---------------------------------------------------
+
+/** The director's own trouble in `events`, reduced to when, what, to whom, and the attribution it carries. */
+const directorEvents = (events: readonly WorldEvent[]) =>
+  events.flatMap((event) => {
+    if (
+      (event.kind === "theft" || event.kind === "stock-spoiled") &&
+      event.cause === "director"
+    ) {
+      return [
+        [event.id, event.tick, event.kind, String(event.entityId), "director"],
+      ];
+    }
+    if (event.kind === "building-ignited" && event.cause.kind === "director") {
+      return [
+        [event.id, event.tick, event.kind, String(event.entityId), "director"],
+      ];
+    }
+    return [];
+  });
+
+test("director events replay from the journal without re-deciding: reopen, rebuild, and the read of the live row leave the journal's director events, the director's clock, and the persisted generator untouched, and a resumed world fires when an uninterrupted one would", () => {
+  const storeDir = tempDir("panthea-sim-director-replay-");
+  try {
+    const storePath = join(storeDir, "world.sqlite");
+    const authored = loadGreekWorldState();
+    const seed: WorldState = {
+      ...authored,
+      rules: {
+        ...authored.rules,
+        petitionBalance: {
+          ...authored.rules.petitionBalance,
+          directorIntervalTicks: 10,
+        },
+      },
+    };
+    const world = liveWorld(storePath, seed);
+    for (let tick = 0; tick < 55; tick += 1) world.run();
+    const journaled = directorEvents(listEvents(world.store.db));
+    // Five fires so far, at 10, 20, 30, 40, 50, each carrying its attribution.
+    expect(journaled.map((fire) => fire[1])).toEqual([10, 20, 30, 40, 50]);
+    expect(world.state.director.lastFireTick).toBe(50);
+    const eventCount = getCurrentSequence(world.store.db);
+    const persisted = readPrngState(world.store.db);
+    closeStore(world.store);
+
+    // Reopen: the live row, and a full rebuild from the journal, give the director's clock the journal holds.
+    const reducers = createWorldProjectionReducers(seed);
+    const store = openStore(storePath, reducers);
+    const live = restoreWorldTime(
+      readLiveProjections(store, reducers),
+      readClock(store.db),
+    );
+    const rebuilt = restoreWorldTime(
+      rebuildProjections(store, reducers),
+      readClock(store.db),
+    );
+    expect(live.director).toEqual({ lastFireTick: 50 });
+    expect(rebuilt.director).toEqual({ lastFireTick: 50 });
+    expect(rebuilt).toEqual(live);
+    // Neither added an event nor drew from the generator: the journal and the persisted PRNG are as they were.
+    expect(getCurrentSequence(store.db)).toBe(eventCount);
+    expect(directorEvents(listEvents(store.db))).toEqual(journaled);
+    expect(readPrngState(store.db)).toBe(persisted);
+
+    // The resumed world, from the rebuilt state and the persisted generator, fires at 60 and not before: its clock is
+    // the journal's, not a fresh one (a fresh one would fire at tick 56) and not a re-decision.
+    const restoredPrng = deserializePrngState(persisted) ?? createPrng(1);
+    let state = rebuilt;
+    let prng = restoredPrng;
+    const resumed: WorldEvent[] = [];
+    for (let tick = 0; tick < 10; tick += 1) {
+      const step = runTick(state, prng, []);
+      state = step.state;
+      prng = step.prng;
+      resumed.push(...step.events);
+    }
+    expect(directorEvents(resumed).map((fire) => fire[1])).toEqual([60]);
+
+    // And an uninterrupted world fires exactly the same trouble: the restart changed nothing about what happens.
+    let straightState: WorldState = seed;
+    let straightPrng = createPrng(1);
+    const straight: WorldEvent[] = [];
+    for (let tick = 0; tick < 65; tick += 1) {
+      const step = runTick(straightState, straightPrng, []);
+      straightState = step.state;
+      straightPrng = step.prng;
+      straight.push(...step.events);
+    }
+    expect(
+      directorEvents([...listEvents(store.db), ...resumed]).map((fire) =>
+        fire.slice(1),
+      ),
+    ).toEqual(directorEvents(straight).map((fire) => fire.slice(1)));
+    closeStore(store);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+  }
+});
