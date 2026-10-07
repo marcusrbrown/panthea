@@ -1365,7 +1365,37 @@ export function godIntentSchema(
             },
           },
         ];
+  // A legend's words are its assertion: the schema says so as the parser does (a server that ignores a condition still has
+  // the parser; the instructions show the shape).
+  const legendNeedsWords = offer.canLegend
+    ? [
+        {
+          if: {
+            properties: { action: { const: "legend" } },
+            required: ["action"],
+          },
+          // biome-ignore lint/suspicious/noThenProperty: `then` is JSON Schema's conditional keyword; this is a schema fragment, never awaited.
+          then: { required: ["assertion"] },
+        },
+      ]
+    : [];
+  // A report needs a listener and its words, as the parser requires.
+  const reportNeedsListener =
+    offer.listeners.length > 0
+      ? [
+          {
+            if: {
+              properties: { action: { const: "report" } },
+              required: ["action"],
+            },
+            // biome-ignore lint/suspicious/noThenProperty: `then` is JSON Schema's conditional keyword; this is a schema fragment, never awaited.
+            then: { required: ["listener", "content"] },
+          },
+        ]
+      : [];
   const conditions = [
+    ...legendNeedsWords,
+    ...reportNeedsListener,
     ...forPetition("bless", offer.blessPetitions),
     ...forPetition("refuse", offer.refusable),
     ...(offer.practice === undefined ? [] : practiceConditions(offer.practice)),
@@ -1952,6 +1982,13 @@ export function buildGodContext(
     // Every god, every tick: how to decide, how to act, how to speak, how to reply.
     "Decide what you do next, in character, using only what you are shown as perceived. You know nothing else about the world, and you may only name ids listed in the scene.",
     `You may also travel to any place you can reach, naming it in "to": ${JSON.stringify({ action: "travel", to: "<place id>" })}. The world walks you there, one step a tick.`,
+    // The shape of a legend, next to travel's, for a god that can tell one: with no named field for its words a god sent the
+    // cited event, or its words as a report's `content`, and no `assertion`.
+    ...(offer.canLegend
+      ? [
+          `For a legend: ${JSON.stringify({ action: "legend", assertion: "<what you say, one or two short sentences>" })}`,
+        ]
+      : []),
     "Speak your report and legend words in the first person, to those who hear them, without using your own name.",
     `Keep a legend assertion (at most ${MAX_ASSERTION_LENGTH} characters) and report content (at most ${MAX_REPORT_LENGTH} characters) to one or two short sentences.`,
     goalInstruction(remembered),
@@ -1971,6 +2008,10 @@ export function buildGodContext(
     ...(snapshot.actors.length > 0
       ? [
           'You may also tell someone here something (action "report", naming the listener, your words, and optionally a claim of who harmed or did a kindness to whom, and an event you saw). It is your own account, told as you choose.',
+          // Its shape, for a god with someone here to tell: a report named a place in `to` (travel's field) when its listener had no
+          // named place. Here, with the report's other guidance, and not in the start every god shares: whether anyone is here
+          // changes from god to god and tick to tick.
+          `For a report: ${JSON.stringify({ action: "report", listener: "<who is here>", content: "<what you tell, one or two short sentences>" })}`,
           citationGuidance("report", offer.witnessedEventIds),
         ]
       : []),

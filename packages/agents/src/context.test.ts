@@ -907,7 +907,7 @@ test("the instructions state the legend and report text limits, from the constan
   // The limit is one line, not a paragraph.
   const line = (withCompany.instructions ?? "")
     .split("\n")
-    .filter((l) => l.includes("one or two short sentences"));
+    .filter((l) => l.startsWith("Keep a legend assertion"));
   expect(line).toHaveLength(1);
   expect(line[0]?.length).toBeLessThan(200);
 });
