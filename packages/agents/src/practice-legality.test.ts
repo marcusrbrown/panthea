@@ -1050,9 +1050,11 @@ test("a turn with no practice on offer has the schema it had, but for the one co
   const schema = run.view("zeus").schema.jsonSchema as {
     allOf?: { if: { properties: { action: { const: string } } } }[];
   };
-  // Zeus can tell a legend, so the schema says a legend needs its assertion; nothing else is conditional.
+  // Zeus can tell a legend and has company, so the schema says a legend needs its assertion and a report its listener and
+  // words; nothing else is conditional.
   expect(schema.allOf?.map((c) => c.if.properties.action.const)).toEqual([
     "legend",
+    "report",
   ]);
   expect(JSON.stringify(schema)).not.toContain('"practice"');
 });

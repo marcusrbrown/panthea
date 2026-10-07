@@ -1379,8 +1379,23 @@ export function godIntentSchema(
         },
       ]
     : [];
+  // A report needs a listener and its words, as the parser requires.
+  const reportNeedsListener =
+    offer.listeners.length > 0
+      ? [
+          {
+            if: {
+              properties: { action: { const: "report" } },
+              required: ["action"],
+            },
+            // biome-ignore lint/suspicious/noThenProperty: `then` is JSON Schema's conditional keyword; this is a schema fragment, never awaited.
+            then: { required: ["listener", "content"] },
+          },
+        ]
+      : [];
   const conditions = [
     ...legendNeedsWords,
+    ...reportNeedsListener,
     ...forPetition("bless", offer.blessPetitions),
     ...forPetition("refuse", offer.refusable),
     ...(offer.practice === undefined ? [] : practiceConditions(offer.practice)),
@@ -1993,6 +2008,10 @@ export function buildGodContext(
     ...(snapshot.actors.length > 0
       ? [
           'You may also tell someone here something (action "report", naming the listener, your words, and optionally a claim of who harmed or did a kindness to whom, and an event you saw). It is your own account, told as you choose.',
+          // Its shape, for a god with someone here to tell: a report named a place in `to` (travel's field) when its listener had no
+          // named place. Here, with the report's other guidance, and not in the start every god shares: whether anyone is here
+          // changes from god to god and tick to tick.
+          `For a report: ${JSON.stringify({ action: "report", listener: "<who is here>", content: "<what you tell, one or two short sentences>" })}`,
           citationGuidance("report", offer.witnessedEventIds),
         ]
       : []),
