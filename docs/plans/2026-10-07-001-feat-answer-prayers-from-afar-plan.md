@@ -541,8 +541,9 @@ This recount supersedes the figures for turns with a prayer open in the merged q
 | Legends / reports | 18 / 28 | 9 / 12 | 9 / 7 |
 | Demands or contests between gods | 0 | 0 | 0 |
 | Committed actions | 112 | 67 | 99 |
-| Turns with a prayer open: walk / answer or offer / other | 36 / 9 / 33 (of 78) | 0 / 41 / 12 (of 53) | 0 / 80 / 7 (of 87) |
-| Direct answers (bless, strike, refuse) on those turns | 4% | 70% | 82% (92% with offers) |
+| Requests with a prayer open to the god, counted as in the four-model note above: successful; exhausted | 76; 0 | 44; 0 | 83; 1 |
+| of the successful: walk / direct answer / offer / other | 33 / 3 / 6 / 34 | 0 / 37 / 4 / 3 | 0 / 71 / 9 / 3 |
+| Direct answers (bless, strike, refuse) on those requests; with offers; with the exhausted ones in the denominator | 4%; 12%; same | 84%; 93%; same | 86%; 96%; 85% and 95% |
 | Prayers opened; closed (lapsed / answered / refused) | 95; 40 (37 / 3 / 0) | 86; 44 (7 / 37 / 0) | 197; 118 (47 / 70 / 1) |
 | Revenges / defections | 4 / 0 | 0 / 0 | 3 / 6 |
 | Cross-patron wrongs; prayed to the victim's patron; with a consequence | 27; 16; 4 | 22; 16; 3 (three episodes) | 33; 28; 9 |
@@ -551,11 +552,22 @@ This recount supersedes the figures for turns with a prayer open in the merged q
 | Turns per god per episode; queue-wait p95; god-episodes over 90 s | 5 to 7; 59 to 73 s; 0 of 21 | 4 to 6; 42 to 73 s; 0 | 4 to 7; 63 to 79 s; 0 of 21 |
 | Food lines; food-prayer share | 68, 65, 95; 52%, 58%, 50% | 83, 79; 45%, 35% | 86, 103, 85; 31%, 34%, 35% |
 
-**Did the 69% answer rate hold?** Yes, and higher: 71 of 87 turns with a prayer open (82%) were a bless, a strike or a refusal, against 70% (37 of 53) in the earlier run's two intact episodes; 80 of 87 (92%) counting offers. The gods did not walk (2 walks in 99 actions) and answered from where they stood; the 7 other turns were 6 reports and a legend. This is a model difference: qwen3 on a town of the same kind took a direct answer on 4% of its turns.
+The clean run's requests with a prayer open, per episode, counted as in the four-model note above (one model request, a god's turn, with a prayer addressed to that god open at its start tick; goal declarations are never turns, and this run set and ended none; "other" here is three proposals the world refused: two strikes `stale-target` and an offer `insufficient-resources`). The same script reproduces the gate's 197 prayers opened and 118 closed (72, 65, 60 opened and 37, 40, 41 closed) and its 103 requests and 1 exhausted:
+
+| Episode | Successful | Exhausted | Direct | Offer | Walk | Other | Direct share | Answer or offer share |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 26 | 0 | 23 | 3 | 0 | 0 | 88% | 100% |
+| 2 | 28 | 0 | 22 | 4 | 0 | 2 | 79% | 93% |
+| 3 | 29 | 1 | 26 | 2 | 0 | 1 | 90% (87%) | 97% (93%) |
+| All | 83 | 1 | 71 | 9 | 0 | 3 | 86% (85%) | 96% (95%) |
+
+The 19 successful requests with no prayer open to the god at their start tick are the 9 legends, 7 reports, 2 walks and 1 strike on a mortal that no prayer asked for. The first count of 87 "turns" held the same 80 answers and offers, but also counted 7 reports and legends as having a prayer open (none was open at their start) and left out the 3 proposals the world refused; this recount supersedes it, as it does the earlier granite3.3 and qwen3 figures.
+
+**Did the answer rate hold?** Yes: 71 of 83 requests with a prayer open (86%) were a bless, a strike or a refusal, against 84% (37 of 44) in the earlier run's two intact episodes; 80 of 83 (96%) counting offers, and the other 3 were proposals the world refused. No god walked with a prayer open (2 walks in 99 actions, both with none open) and every answer came from where the god stood. This is a model difference: qwen3 on a town of the same kind took a direct answer on 4% of its requests with a prayer open.
 
 **Verdicts, mortal-wrongs plan.** SC1 met: food lines 86, 103, 85 (at most 250) and the food-prayer share under half in all three episodes. SC2 met: each god's trouble fired 2 to 3 times in every episode and every god received prayers in every episode (Hades 10, Hephaestus 11 over the run). SC3 met: 33 wrongs between mortals of different patrons, 28 prayed to the victim's patron, 9 with a consequence (3 revenges, 6 defections, strikes on a wrongdoer). SC4 not met: no demand or contest between gods opened. SC5 not met: all seven gods fail the initiative check. SC6 met: six mortals defected inside the 300-tick episodes, in all three of them (ticks 206, 241, 248; 243; 268, 294), each to a god that had answered it, citing the patron's unanswered prayers. SC7: the owner rates.
 
-**What comes from the town and what from the model.** From the town (the sale-herd fix): prayers per episode rose from about 32 (qwen3) and 43 (granite3.3 before) to 66, wrongs between mortals of different patrons from about 9 (qwen3) and 7 (granite3.3 before) to 11 an episode, and the food-prayer share fell to 31 to 35% (from 35 to 45% for granite3.3 before); more prayers than the gods' five turns an episode can answer left 47 to lapse, which is where the six defections come from (the earlier run answered 37 of 44 and lapsed 7). From the model: the answer rate and the absence of walking, as before, and the model's choice of what to do on a turn (the 82% above, against 4% for qwen3 on a similar town). The sampled turn changed with the town: Hera's request 4 is now on the farmer's prayer evt-3-61, and she offers terms (a supplication, a make-offering term) in all three episodes instead of blessing.
+**What comes from the town and what from the model.** From the town (the sale-herd fix): prayers per episode rose from about 32 (qwen3) and 43 (granite3.3 before) to 66, wrongs between mortals of different patrons from about 9 (qwen3) and 7 (granite3.3 before) to 11 an episode, and the food-prayer share fell to 31 to 35% (from 35 to 45% for granite3.3 before); more prayers than the gods' five turns an episode can answer left 47 to lapse, which is where the six defections come from (the earlier run answered 37 of 44 and lapsed 7). From the model: the answer rate and the absence of walking, as before, and the model's choice of what to do on a turn (the 86% above, against 4% for qwen3 on a similar town). The sampled turn changed with the town: Hera's request 4 is now on the farmer's prayer evt-3-61, and she offers terms (a supplication, a make-offering term) in all three episodes instead of blessing.
 
 **Faults.** None of the empty-200 kind. Rejected proposals: two strikes on a mortal, rejected `stale-target` (Zeus on fisher-kallias, Hera on olive-grower-phoebe; the target's or the god's revision moved between the prompt and the commit), and a Hades offer rejected `insufficient-resources`. One request exhausted on an offer whose `term.resource` was outside the world's resources. Minimum activity fails for 8 god-episodes (4 or 3 actions where 5 are required): the gods took 4 to 7 turns, and a god that answers every prayer in 4 turns passes nothing else.
 
