@@ -12,7 +12,7 @@ import {
   activeStorePath,
   backdateCursor,
 } from "../../../m1-living-world/src/world-db";
-import { differences } from "../checks";
+import { differences, memoryChanges } from "../checks";
 import type { Recorder, Story } from "./context";
 import { check, stateOf, waitFor } from "./support";
 
@@ -89,15 +89,28 @@ export async function stepCatchUp(
       const after = await stateOf(story);
       // The gods' own memories and feelings are what a restart must keep. The
       // mortals' live on through the catch-up (they pray, and unanswered prayers
-      // lapse into harm and a fall in affinity: R4, R8), so theirs may change.
-      const changed = differences(before, after, ["zeus", "hera"]);
+      // lapse into harm and a fall in affinity: R4, R8), so theirs may change, and
+      // so may a god's memory by what the running world does around it: the director's
+      // troubles and the town's wrongs happen where a god stands, and it remembers
+      // what it saw (a `witnessed` memory), and a mortal that defected in the gap
+      // to or from the god is remembered (a `patronage` memory, W04). Those are new
+      // memories, never a lost or a changed one.
+      const feelings = differences(before, after, ["zeus", "hera"]).filter(
+        (line) => !line.startsWith("memories of"),
+      );
+      const kept = memoryChanges(
+        before,
+        after,
+        ["zeus", "hera"],
+        ["patronage", "witnessed"],
+      );
       check(
-        changed.length === 0,
-        "the gods' memory and feelings are exactly what they were before the restart",
-        changed.join("; "),
+        feelings.length === 0 && kept.length === 0,
+        "the gods' memories and feelings are what they were before the restart: none lost or changed, none new but what it saw or a defection's",
+        [...feelings, ...kept].join("; "),
       );
       step.done(
-        `${(frame.catchUpSummary?.appliedMs ?? 0) / 1000} s applied by a catch-up that ran ${(finished?.at ?? 0) - started.at} ms; 0 provider requests inside it; the first request after it at +${resumed.at - (finished?.at ?? 0)} ms; the gods' memories and feelings unchanged (the mortals' are free to move on)`,
+        `${(frame.catchUpSummary?.appliedMs ?? 0) / 1000} s applied by a catch-up that ran ${(finished?.at ?? 0) - started.at} ms; 0 provider requests inside it; the first request after it at +${resumed.at - (finished?.at ?? 0)} ms; the gods' memories and feelings kept (a god may gain what it saw or a defection; the mortals' are free to move on)`,
         [
           {
             name: "catch-up gap applied",

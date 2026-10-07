@@ -38,7 +38,7 @@ import {
   noteService,
   planContestStanding,
 } from "./contests";
-import { noteConsequential, planDirectorStep } from "./director";
+import { noteDirectorFire, planDirectorStep } from "./director";
 import {
   applyRecipe,
   creditActorInventory,
@@ -66,6 +66,7 @@ import {
   endingMemories,
   legendTellings,
   noticedMemory,
+  patronageMemories,
   planRelationships,
   reportTelling,
   signMemory,
@@ -78,6 +79,7 @@ import {
   applyUnmetNeed,
   planNeedStep,
 } from "./needs";
+import { applyPatronChanged, planDefections } from "./patrons";
 import {
   answeredDraft,
   applyBlessingGranted,
@@ -85,6 +87,7 @@ import {
   applyPetitionAnswered,
   applyPetitionLapsed,
   applyPetitionOpened,
+  applyPetitionRefused,
   judgeAnswers,
   lapsingPetitions,
   planNoticeStep,
@@ -102,6 +105,7 @@ import {
   planConsequences,
 } from "./practices";
 import { applyBuildingRepaired, applyRepairProgressed } from "./repair";
+import { applyTrouble, planSeasonTurn, planTroubleStep } from "./seasons";
 import {
   type PrngState,
   toLegendId,
@@ -111,6 +115,12 @@ import {
 } from "./state";
 import { validateProposal } from "./validate";
 import { answeredWorshipDraft, applyWorshipPerformed } from "./worship";
+import {
+  applyCreditExtended,
+  applyCreditSettled,
+  applyWrong,
+  planWrongStep,
+} from "./wrongs";
 
 /** Moves an actor to `to`, bumping the actor's and both locations' revisions. */
 function moveActor(
@@ -191,6 +201,17 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
       break;
     case "building-damaged":
       next = applyBuildingDamaged(state, event.entityId);
+      break;
+    case "mortal-struck":
+      next =
+        event.resource === undefined
+          ? state
+          : debitActorInventory(
+              state,
+              event.entityId,
+              event.resource,
+              event.amount,
+            );
       break;
     case "building-ignited":
       next = applyBuildingIgnited(state, event.entityId, {
@@ -307,6 +328,27 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
     case "petition-lapsed":
       next = applyPetitionLapsed(state, event);
       break;
+    case "petition-refused":
+      next = applyPetitionRefused(state, event);
+      break;
+    case "patron-changed":
+      next = applyPatronChanged(state, event);
+      break;
+    case "wrong":
+      next = applyWrong(state, event);
+      break;
+    case "season-turned":
+      next = state;
+      break;
+    case "trouble":
+      next = applyTrouble(state, event);
+      break;
+    case "credit-extended":
+      next = applyCreditExtended(state, event);
+      break;
+    case "credit-settled":
+      next = applyCreditSettled(state, event);
+      break;
     case "practice-opened":
       next = applyPracticeOpened(state, event);
       break;
@@ -349,7 +391,7 @@ export function applyEvent(state: WorldState, event: WorldEvent): WorldState {
     // An act a rival can contest is noted against the world it found.
     ...noteService(
       state,
-      noteConsequential(recordCauses(next, event), event),
+      noteDirectorFire(recordCauses(next, event), event),
       event,
     ),
     lastSequence: event.sequence,
@@ -754,7 +796,27 @@ export function runTick(
   );
   working = applyEvents(working, incomeEvents);
 
-  const fireStep = planFireStep(working, prng);
+  // The season turns on its boundary tick; the troubles below read it from the tick.
+  const seasonEvents = planSeasonTurn(working).map((draft) =>
+    completePrimary(draft, environmentCause),
+  );
+  working = applyEvents(working, seasonEvents);
+
+  // The persisted PRNG is drawn in a fixed order, so a replay draws the same values: wrongs between mortals
+  // (credit judgments, wrongs, revenge), then the gods' domain troubles, then fire, then the director.
+  const wrongStep = planWrongStep(working, prng);
+  const wrongEvents = wrongStep.events.map((draft) =>
+    completePrimary(draft, environmentCause),
+  );
+  working = applyEvents(working, wrongEvents);
+
+  const troubleStep = planTroubleStep(working, wrongStep.prng);
+  const troubleEvents = troubleStep.events.map((draft) =>
+    completePrimary(draft, environmentCause),
+  );
+  working = applyEvents(working, troubleEvents);
+
+  const fireStep = planFireStep(working, troubleStep.prng);
   const fireEvents = fireStep.events.map((draft) =>
     completePrimary(draft, environmentCause),
   );
@@ -801,6 +863,9 @@ export function runTick(
       ...proposalEvents,
       ...journeyEvents,
       ...incomeEvents,
+      ...seasonEvents,
+      ...wrongEvents,
+      ...troubleEvents,
       ...fireEvents,
       ...needEvents,
       ...directorEvents,
@@ -842,6 +907,9 @@ export function runTick(
   const environmentEvents = [
     ...journeyEvents,
     ...incomeEvents,
+    ...seasonEvents,
+    ...wrongEvents,
+    ...troubleEvents,
     ...fireEvents,
     ...needEvents,
     ...directorEvents,
@@ -906,10 +974,17 @@ export function runTick(
     ),
   );
   working = applyEvents(working, worshipEvents);
-  const signs = [...answerEvents, ...lapseEvents].flatMap((event) =>
-    event.kind === "petition-answered" || event.kind === "petition-lapsed"
-      ? (signMemory(working, event) ?? [])
-      : [],
+  // A refusal is a primary event, the god's own act; its sign follows the answers and the lapses.
+  const refusalEvents = primaryEvents.filter(
+    (event) => event.kind === "petition-refused",
+  );
+  const signs = [...answerEvents, ...lapseEvents, ...refusalEvents].flatMap(
+    (event) =>
+      event.kind === "petition-answered" ||
+      event.kind === "petition-lapsed" ||
+      event.kind === "petition-refused"
+        ? (signMemory(working, event) ?? [])
+        : [],
   );
   const noticed = noticeEvents.flatMap((event) =>
     event.kind === "loss-noticed" ? (noticedMemory(working, event) ?? []) : [],
@@ -927,12 +1002,35 @@ export function runTick(
     ),
   );
   working = applyEvents(working, relationshipEvents);
+  // A mortal whose prayer ended in this tick may now leave a patron that neglected it, for a god that answered
+  // it; the god lost and the god gained alone remember it.
+  const endings: { mortal: EntityId; event: WorldEvent }[] = [];
+  for (const event of [...answerEvents, ...lapseEvents, ...refusalEvents]) {
+    if (event.kind === "petition-refused") {
+      endings.push({ mortal: event.petitioner, event });
+    } else if (
+      event.kind === "petition-answered" ||
+      event.kind === "petition-lapsed"
+    ) {
+      endings.push({ mortal: event.entityId, event });
+    }
+  }
+  const defectionEvents = derive(planDefections(working, endings));
+  working = applyEvents(working, defectionEvents);
+  const patronageEvents = derive(
+    defectionEvents.flatMap((event) =>
+      event.kind === "patron-changed" ? patronageMemories(working, event) : [],
+    ),
+  );
+  working = applyEvents(working, patronageEvents);
   const derivedEvents = [
     ...answerEvents,
     ...lapseEvents,
     ...worshipEvents,
     ...memoryEvents,
     ...relationshipEvents,
+    ...defectionEvents,
+    ...patronageEvents,
   ];
   return {
     state: working,

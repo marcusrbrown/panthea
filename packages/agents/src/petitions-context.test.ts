@@ -128,7 +128,16 @@ class Run {
   }
 }
 
-const greek = () => new Run(greekState());
+/**
+ * The Greek world with every mortal's patron and none of the pack's domain table, so a theft the farmer prays
+ * about goes to its patron Hera, as these tests were written; the table sends it to Hermes (see world-store's
+ * routing test and the petitions tests).
+ */
+const greek = () => {
+  const state = greekState();
+  const { troubleKinds: _domains, ...rules } = state.rules;
+  return new Run({ ...state, rules });
+};
 /** The prayers section alone: its heading and the indented or dashed lines under it. */
 const prayersOf = (text: string) => {
   const lines = text.split("\n");
@@ -250,10 +259,18 @@ test("bless is offered only for a petitioner who is present, naming one of its o
   const blessProps = (g: string) => {
     const schema = run.schema(g).jsonSchema as {
       properties: Record<string, { enum?: string[] }>;
+      allOf?: {
+        if: { properties: { action?: { const?: string } } };
+        then: { properties?: { petition?: { enum?: string[] } } };
+      }[];
     };
+    // A bless names its own ids: the condition on the bless action, apart from the refusal's.
+    const bless = schema.allOf?.find(
+      (condition) => condition.if.properties.action?.const === "bless",
+    );
     return {
       actions: schema.properties.action?.enum ?? [],
-      petitions: schema.properties.petition?.enum,
+      petitions: bless?.then.properties?.petition?.enum,
     };
   };
   // The god is in the hall; the farmer is at the altar: not present, so no bless.
@@ -577,16 +594,11 @@ test("seven open petitions to one god: the newest are listed within the budget, 
     "farmer",
   ].map((mortal, index) => {
     run.state = { ...run.state, tick: run.state.tick + 21 };
-    // Fondness for Hera keeps each prayer coming to her.
-    const relationships = new Map(run.state.relationships);
-    relationships.set(`${mortal}>hera`, {
-      from: id(mortal),
-      toward: id("hera"),
-      affinity: 5,
-      grudge: 0,
-      allied: false,
-    });
-    run.state = { ...run.state, relationships };
+    // Both belong to Hera, so each prayer comes to her.
+    run.state = {
+      ...run.state,
+      patrons: new Map(run.state.patrons).set(id(mortal), id("hera")),
+    };
     return run.prayAboutTheft(
       mortal,
       mortal === "farmer" ? "woodcutter" : "farmer",

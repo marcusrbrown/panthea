@@ -58,6 +58,7 @@ import {
   getLocation,
   isThreadOpen,
   type MemoryEntry,
+  type Petition,
   type PracticeThread,
   type WorldEventDraft,
   type WorldState,
@@ -596,7 +597,23 @@ export function knowsCause(
   ) {
     return true;
   }
-  return (state.causes.get(actor) ?? []).some((c) => c.eventId === cause);
+  if ((state.causes.get(actor) ?? []).some((c) => c.eventId === cause)) {
+    return true;
+  }
+  // A prayer addressed to a god tells it what the prayer is about: its patron's knowledge of a harm to its worshipper.
+  return prayerTo(state, actor, cause) !== undefined;
+}
+
+/** The prayer addressed to `god` that is about `cause`, if one is. */
+function prayerTo(
+  state: WorldState,
+  god: EntityId,
+  cause: EventId,
+): Petition | undefined {
+  for (const petition of state.petitions.values()) {
+    if (petition.god === god && petition.cause === cause) return petition;
+  }
+  return undefined;
 }
 
 /** An offered term as a committed one: its deadline counted from the tick it commits in. */
@@ -769,7 +786,11 @@ export function subjectFor(
     const { agent, target } = memory.consequence;
     return { agent, ...(target === undefined ? {} : { target }) };
   }
-  return undefined;
+  // With no memory of its own, a god's subject is what the prayer addressed to it names: who wronged whom.
+  const prayer = prayerTo(state, actor, cause);
+  return prayer?.about.offender === undefined
+    ? undefined
+    : { agent: prayer.about.offender, target: prayer.petitioner };
 }
 
 const evidences = (memory: MemoryEntry, cause: EventId) =>
@@ -783,7 +804,7 @@ const sameSubject = (a?: ThreadSubject, b?: ThreadSubject) =>
   a.agent === b.agent &&
   a.target === b.target;
 
-/** Whether `actor` learned of `cause` after the event numbered `sequence`; a cause no memory backs (a need, a loss) is as new as the world says. */
+/** Whether `actor` learned of `cause` after the event numbered `sequence`, from a memory or a prayer addressed to it; a cause neither backs (a need, a loss) is as new as the world says. */
 function learnedAfter(
   state: WorldState,
   actor: EntityId,
@@ -793,6 +814,8 @@ function learnedAfter(
   const learned = getMemories(state, actor)
     .filter((memory) => evidences(memory, cause))
     .map((memory) => memory.recordedAt);
+  const prayer = prayerTo(state, actor, cause);
+  if (prayer !== undefined) learned.push(prayer.sequence);
   return learned.length === 0 || Math.max(...learned) > sequence;
 }
 

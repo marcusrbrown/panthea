@@ -619,6 +619,22 @@ test("a pray proposal names the cause event it prays about, and a bless proposal
   }
 });
 
+test("a refuse proposal names the petition it refuses, and nothing else is needed", () => {
+  const refuse = parseProposal(base({ kind: "refuse", petition: "evt-4" }));
+  expect(refuse.ok).toBe(true);
+  if (refuse.ok && refuse.value.kind === "refuse") {
+    expect(String(refuse.value.petition)).toBe("evt-4");
+  }
+  expect(PROPOSAL_KINDS).toContain("refuse");
+  for (const bad of [
+    { kind: "refuse" },
+    { kind: "refuse", petition: "" },
+    { kind: "refuse", petition: 7 },
+  ]) {
+    expect(parseProposal(base(bad)).ok).toBe(false);
+  }
+});
+
 // --- Practice moves ---------------------------------------------------------------------------
 
 const TELL_TERM = {

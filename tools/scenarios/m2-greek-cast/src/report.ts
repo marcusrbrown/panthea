@@ -21,7 +21,14 @@ export type ControlResult = {
   /** The `FAIL` line the control produced. */
   readonly failure: string;
 } & (
-  | { readonly via: "process"; readonly exitCode: number }
+  | {
+      readonly via: "process";
+      readonly exitCode: number;
+      /** What the child ran: the story up to the step the control breaks, or only that step in a world of its own. */
+      readonly scope: string;
+      /** How long the child ran, in seconds. */
+      readonly seconds: number;
+    }
   | { readonly via: "in-process" }
 );
 
@@ -42,16 +49,23 @@ export interface RunSummary {
 const HOW_TO_RUN = `\`\`\`sh
 bun run --cwd tools/scenarios scenario:m2                                    # build the sidecar, run the scripted story
 bun run --cwd tools/scenarios scenario:m2 --skip-build                       # reuse the built sidecar
+bun run --cwd tools/scenarios scenario:m2 --steps=S21,S24                    # only the staged steps S21 to S25 (each starts a world of its own); the tool for working on one
 bun run --cwd tools/scenarios scenario:m2 --positive-control=<name>          # a process control; must exit non-zero; names below
 bun run --cwd tools/scenarios scenario:m2 --real [--seconds=180]             # both gods through local Ollama; asserts properties, writes real-run.json
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --reasoning-effort=none   # the experience gate on the local baseline, qwen3-8b-4k (set up once: ollama create qwen3-8b-4k -f tools/probes/inference-baseline/Modelfile.qwen3-8b-4k)
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --model=<model> --base-url=https://<host>/v1 [--key-ref=<keyRef>]   # the gate against a hosted endpoint; the key is read once from the Keychain
-bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # story (with the practice controls in-process), then each process control four at a time (--jobs=N), rewrites this file from a fresh run and real-run.json
+bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # story (with the practice and world controls in-process), then each process control four at a time (--jobs=N), rewrites this file from a fresh run and real-run.json
 \`\`\`
 
-Controls come in two kinds. A **process control** reruns the whole story in a
-child process with one check broken mid-flight, and that run must exit non-zero:
-\`chain\`, \`isolation\`, \`trace\`, and \`petition-privacy\`. A **practice control**
+Controls come in three kinds. A **process control** runs in a child process with one
+thing broken mid-flight, and that run must exit non-zero. The first four rerun the story
+up to the step they break: \`chain\`, \`isolation\`, \`trace\`, and \`petition-privacy\`.
+The next four are **staged-world controls**: each runs only its own step (S21 to S25
+start worlds of their own) with the one thing that step stages left out, so it costs
+that step and none of the story: \`strike-chain\` (S21), \`refusal-revenge\` (S22),
+\`no-answerer\` (S24), and \`director-off\` (S25). A **world control** is in-process like
+the practice controls: \`trouble-route\` breaks the evidence S23 collected, and S23's
+own check must fail on it. A **practice control**
 breaks a copy of the data the one story run collected, in-process, at the end of
 S20, and the practice property it targets must fail on the copy; none reruns the
 story, so \`--positive-control\` does not take them and every story run applies
@@ -130,6 +144,41 @@ only what that god could name):
   property it targets must fail (\`god-silent\` silences the god that opened the first
   thread; \`practice-absent\` deletes the contest); \`src/practice-analysis.test.ts\`
   holds the same controls as unit tests on a fixture.
+
+World steps (S21 to S25 start a world of their own beside the story's, created with story-only rules that make the
+world's own logic produce the thing within a few ticks, so nothing waits on chance and no step depends on S1 to S20:
+a greedy temperament at 1000 per mille to steal, revenge at 1000 per mille, a trouble floor of a few ticks, a
+defection threshold above any feeling, and a director interval of three ticks. The wrongs, prayers, troubles, and fires
+are the world's, drawn on its persisted generator and judged by the real validator; the harness posts only moves and
+prayers for mortals, as \`stageLoss\` does, and scripts what the gods answer, each reply a function of the prompt its god
+was shown; nothing is injected as an event):
+
+- **S21** A theft between mortals of different patrons becomes the victim's prayer
+  to its patron, who strikes the wrongdoer (the world takes its most valuable
+  carried good up to the cap, answers the prayer, and counts the strike as an act
+  for contests); the wrongdoer, struck by a god, prays to its own patron naming
+  that god, who demands redress of it, citing the harm. \`strike-chain\` leaves the
+  victim's patron only waiting.
+- **S22** A victim whose patron refuses its prayer takes exactly one revenge, and
+  the wrongdoer's own refused prayer about it leads to none: revenge is damped.
+  \`refusal-revenge\` has the patron answer by striking instead, so there is no revenge.
+- **S23** A trouble in a god's domain is prayed about to that god, whoever the
+  afflicted mortal reveres; the domain god's prompt marks it, the patron's does
+  not list it. \`trouble-route\` is in-process: it reads the recorded prayer as if it
+  had gone to the patron, and the step's own check fails on it.
+- **S24** A mortal refused by its patron keeps it while no other god has answered
+  it; when the domain god then answers its prayer, it defects to that god: a
+  patron-changed event cites the answer and the unanswered prayer, exactly the god lost
+  and the god gained remember it, a god told nothing is refused a contest over it, and
+  the god lost opens a contest for the mortal's home. \`no-answerer\` leaves no god
+  having answered it, so the mortal keeps its patron.
+- **S25** The director fires three times exactly its interval apart with the world
+  busy around it. \`director-off\` leaves the interval at the quiet default.
+
+The four world controls that change what happens (\`strike-chain\`, \`refusal-revenge\`,
+\`no-answerer\`, \`director-off\`) run only their own step, in a world of their own, so each costs
+that step and none of the story; \`--steps=S21,S24\` runs staged steps alone while working on
+one, and \`--positive-control=<name>\` runs one control.
 
 The transcript (\`src/transcript.ts\`) shows each thread's cause, participants,
 moves, ending, and recorded changes, each god's distinct practices and thread
@@ -250,7 +299,7 @@ export function buildReportInput(summary: RunSummary): ReportInput {
   );
   const controlFindings = summary.controls.map((control) =>
     control.via === "process"
-      ? `**Positive control \`${control.name}\`.** ${control.sabotage} The run exited ${control.exitCode} with: ${control.failure}`
+      ? `**Positive control \`${control.name}\`.** ${control.sabotage} ${control.scope} The run exited ${control.exitCode} after ${control.seconds.toFixed(0)} s with: ${control.failure}`
       : `**Positive control \`${control.name}\` (in-process).** ${control.sabotage} Applied to a copy of the story's own data, the property it targets failed with: ${control.failure}`,
   );
   const allTripped = summary.controls.every(tripped);
@@ -259,7 +308,7 @@ export function buildReportInput(summary: RunSummary): ReportInput {
   ).length;
   const bottomLine = `All ${summary.steps.length} scripted steps held on the tree this README was committed with. The story ran in ${(summary.steps.reduce((sum, step) => sum + step.elapsedMs, 0) / 1000).toFixed(0)} s; the whole evidence run, with every control, took ${(summary.totalMs / 1000).toFixed(0)} s. ${
     allTripped && summary.controls.length > 0
-      ? `All ${summary.controls.length} positive controls tripped the assertion they target, so those assertions are live: ${summary.controls.length - inProcess} by a rerun of the story in a child process that exited non-zero, ${inProcess} by breaking a copy of the story's own data in-process. `
+      ? `All ${summary.controls.length} positive controls tripped the assertion they target, so those assertions are live: ${summary.controls.length - inProcess} by a child process that exited non-zero (a rerun of the story to the step it breaks, or only its own staged step), ${inProcess} by breaking a copy of the evidence a step collected in-process. `
       : ""
   }The compiled sidecar binary was ${kib(summary.binaryBytes)}.`;
 

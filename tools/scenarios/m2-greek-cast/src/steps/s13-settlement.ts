@@ -519,7 +519,9 @@ export async function stepOath(
         "no report-told",
       );
 
-      // What Hera tells him, so his own demands rest on accounts of their own: one blaming him, one in which she owns a wrong.
+      // What Hera tells him, so his own demands rest on accounts of their own: one blaming him, one in which she owns a
+      // wrong. Each is told just before the demand that rests on it: a god's prompt shows its six most salient memories,
+      // and a town where troubles come on their own would crowd an account told earlier out of them.
       const hera = async (content: string, claim: Record<string, unknown>) => {
         const row = await godMoves(
           story,
@@ -540,22 +542,13 @@ export async function stepOath(
         check(told !== undefined, "her account is recorded", "no report-told");
         return told;
       };
-      const blamed = await hera("You humbled me before the whole court.", {
-        effect: "harm",
-        agent: "zeus",
-        target: "hera",
-      });
-      const owned = await hera("I wronged you too, and I will not undo it.", {
-        effect: "harm",
-        agent: "hera",
-        target: "zeus",
-      });
 
       // C: the oath.
       await godMoves(
         story,
         "hera",
-        demandOver(byId(admission), beAt("zeus", "altar", 40)),
+        // The oath's deadline is long enough that Zeus's own demands below (each told just before it) come first.
+        demandOver(byId(admission), beAt("zeus", "altar", 100)),
         "hera demands that zeus be at the altar",
       );
       const oath = await threadAfter(
@@ -594,6 +587,11 @@ export async function stepOath(
       );
 
       // D: counteroffers run out, and one counter is reworded.
+      const blamed = await hera("You humbled me before the whole court.", {
+        effect: "harm",
+        agent: "zeus",
+        target: "hera",
+      });
       const afterOath = await known(story);
       await godMoves(
         story,
@@ -673,6 +671,11 @@ export async function stepOath(
       );
 
       // E: Hera refuses a demand of Zeus's, and is remembered for it.
+      const owned = await hera("I wronged you too, and I will not undo it.", {
+        effect: "harm",
+        agent: "hera",
+        target: "zeus",
+      });
       const beforeE = await known(story);
       const zeusFelt =
         (await stateOf(story)).relationships.get("zeus>hera" as never)

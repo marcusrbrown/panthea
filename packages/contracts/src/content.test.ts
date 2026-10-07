@@ -53,7 +53,9 @@ function validPack(): Record<string, unknown> {
         name: "Tavernkeeper",
         locationId: "agora",
         drives: { thrift: 0.5, appetite: 0.2, greed: 0.1, piety: 0.3 },
+        devotion: { god: "athena", affinity: 2 },
       },
+      { id: "athena", name: "Athena", locationId: "agora", deity: true },
     ],
     rules: validRules(),
   };
@@ -236,7 +238,9 @@ test("an inhabitant without gathers, wants, deity, or startingInventory parses w
 
 test("an inhabitant may be authored as a deity", () => {
   const pack = validPack();
-  (pack.inhabitants as Record<string, unknown>[])[0].deity = true;
+  const first = (pack.inhabitants as Record<string, unknown>[])[0];
+  first.deity = true;
+  delete first.devotion;
   const result = parseContentPack(pack);
   expect(result.ok).toBe(true);
   if (result.ok) {
@@ -276,12 +280,6 @@ test("a building owner referencing an unknown inhabitant fails referential integ
 function packWithDevotion(devotion: unknown): Record<string, unknown> {
   const pack = validPack();
   const inhabitants = pack.inhabitants as Record<string, unknown>[];
-  inhabitants.push({
-    id: "athena",
-    name: "Athena",
-    locationId: "agora",
-    deity: true,
-  });
   inhabitants[0] = { ...inhabitants[0], devotion };
   return pack;
 }
@@ -296,6 +294,24 @@ test("an inhabitant may revere one god: the god it prays to first, with the star
       devotion: { god: "athena", affinity: 3 },
     });
   }
+  expect(parseContentPack(validPack()).ok).toBe(true);
+});
+
+test("every mortal needs an authored devotion, its patron: a mortal without one fails parse, and a god needs none", () => {
+  const pack = validPack();
+  const inhabitants = pack.inhabitants as Record<string, unknown>[];
+  const { devotion: _patron, ...stateless } = inhabitants[0] as Record<
+    string,
+    unknown
+  >;
+  inhabitants[0] = stateless;
+  const result = parseContentPack(pack);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.path).toBe("inhabitants[0].devotion");
+    expect(result.message).toContain("patron");
+  }
+  // Control: with its devotion back it parses, and the god beside it has none.
   expect(parseContentPack(validPack()).ok).toBe(true);
 });
 
@@ -377,8 +393,8 @@ function packWithRivals(
 ) {
   const pack = validPack();
   const inhabitants = pack.inhabitants as Record<string, unknown>[];
+  inhabitants[1] = { ...inhabitants[1], rivals };
   inhabitants.push(
-    { id: "athena", name: "Athena", locationId: "agora", deity: true, rivals },
     { id: "poseidon", name: "Poseidon", locationId: "agora", deity: true },
     ...extra,
   );
@@ -413,12 +429,6 @@ test("a rival must be another god in the pack, named once; a mortal has no rival
   const pack = validPack();
   const inhabitants = pack.inhabitants as Record<string, unknown>[];
   inhabitants[0] = { ...inhabitants[0], rivals: ["athena"] };
-  inhabitants.push({
-    id: "athena",
-    name: "Athena",
-    locationId: "agora",
-    deity: true,
-  });
   const mortal = parseContentPack(pack);
   expect(mortal.ok).toBe(false);
   if (!mortal.ok) expect(mortal.path).toBe("inhabitants[0].rivals");
@@ -515,6 +525,7 @@ test("memory tunables are checked key by key: whole non-negative numbers where a
         grudgeLimit: 10,
         refusalAffinity: 1,
         "salience_practice-ended": 7,
+        salience_patronage: 8,
         // Retired, and still accepted: affinity no longer makes an alliance.
         allianceAffinity: 5,
       }),
@@ -576,16 +587,26 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
     blessPlanks: 3,
     blessResourceAmount: 2,
     blessResourceCap: 4,
-    directorQuietTicks: 120,
+    directorIntervalTicks: 120,
     goalLockTicks: 40,
+    strikeGoodsCap: 2,
+    defectionAffinity: 1,
   };
   const parsed = parseContentPack(packWithPetitionBalance(good));
   expect(parsed.ok).toBe(true);
   if (parsed.ok) expect(parsed.value.rules.petitionBalance).toEqual(good);
-  // A partial record is fine: the rest take their defaults.
+  // A partial record is fine: the rest take their defaults. The cap's smallest value parses.
   expect(
     parseContentPack(packWithPetitionBalance({ goalLockTicks: 10 })).ok,
   ).toBe(true);
+  expect(
+    parseContentPack(packWithPetitionBalance({ strikeGoodsCap: 1 })).ok,
+  ).toBe(true);
+  for (const defectionAffinity of [1, 10, 11, 1000]) {
+    expect(
+      parseContentPack(packWithPetitionBalance({ defectionAffinity })).ok,
+    ).toBe(true);
+  }
   // Without one, nothing changes for packs that never had it.
   const plain = parseContentPack(validPack());
   expect(plain.ok && plain.value.rules.petitionBalance === undefined).toBe(
@@ -594,9 +615,18 @@ test("petition tunables are strict: each a positive whole number, unknown keys r
 
   for (const bad of [
     { answerWindowTicks: 0 },
+    // A strike takes at least one unit: a cap of 0, or one that is not a whole number, is no cap.
+    // A defection threshold is a positive whole number of affinity: 0 or a fraction is no threshold.
+    { defectionAffinity: 0 },
+    { defectionAffinity: 0.5 },
+    { defectionAffinity: -1 },
+    { strikeGoodsCap: 0 },
+    { strikeGoodsCap: -1 },
+    { strikeGoodsCap: 1.5 },
+    { strikeGoodsCap: "2" },
     { answerWindowTicks: -5 },
     { answerWindowTicks: 2.5 },
-    { directorQuietTicks: "soon" },
+    { directorIntervalTicks: "soon" },
     { blessPlanks: Number.POSITIVE_INFINITY },
     { goalLockTicks: null },
     { answerWindow: 250 },
@@ -706,4 +736,316 @@ test("the stakes a god may set on terms are authored in the rules and parsed str
       parseContentPack(packWithStakes(bad)).ok,
     ]).toEqual([JSON.stringify(bad), false]);
   }
+});
+
+test("the trouble-kind table names a god of the pack for each known kind: a typo'd kind, a mortal, or an unknown god is refused", () => {
+  const withTable = (table: unknown) => {
+    const pack = validPack();
+    (pack.rules as Record<string, unknown>).troubleKinds = table;
+    return parseContentPack(pack);
+  };
+  const good = withTable({ fire: "athena", theft: "athena" });
+  expect(good.ok).toBe(true);
+  if (good.ok) {
+    expect(good.value.rules.troubleKinds).toEqual({
+      fire: "athena",
+      theft: "athena",
+    });
+  }
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.rules.troubleKinds === undefined).toBe(true);
+  for (const [bad, path] of [
+    [{ fyre: "athena" }, "rules.troubleKinds.fyre"],
+    [{ fire: "npc-1" }, "rules.troubleKinds.fire"],
+    [{ fire: "nike" }, "rules.troubleKinds.fire"],
+    [{ fire: 3 }, "rules.troubleKinds.fire"],
+    [["athena"], "rules.troubleKinds"],
+  ] as const) {
+    const result = withTable(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe(path);
+  }
+});
+
+test("a temperament is one of a closed set, authored on a mortal, and absent means honest", () => {
+  const withTemperament = (temperament: unknown) => {
+    const pack = validPack();
+    (pack.inhabitants as Record<string, unknown>[])[0].temperament =
+      temperament;
+    return parseContentPack(pack);
+  };
+  for (const temperament of ["greedy", "quarrelsome", "proud", "honest"]) {
+    const result = withTemperament(temperament);
+    expect(result.ok ? result.value.inhabitants[0]?.temperament : "").toBe(
+      temperament,
+    );
+  }
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.inhabitants[0]?.temperament).toBeUndefined();
+  for (const bad of ["wicked", 3, ""]) {
+    const result = withTemperament(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe("inhabitants[0].temperament");
+  }
+});
+
+test("the temperament odds are per-mille whole numbers for known temperaments and kinds; a typo in either, a fraction, or odds above 1000 are refused", () => {
+  const withOdds = (odds: unknown) => {
+    const pack = validPack();
+    (pack.rules as Record<string, unknown>).temperamentOdds = odds;
+    return parseContentPack(pack);
+  };
+  const good = {
+    greedy: { theft: 2, "unpaid-debt": 150, revenge: 20 },
+    honest: {},
+  };
+  const parsed = withOdds(good);
+  expect(parsed.ok && parsed.value.rules.temperamentOdds).toEqual(good);
+  for (const edge of [0, 1, 1000]) {
+    expect(withOdds({ greedy: { theft: edge } }).ok).toBe(true);
+  }
+  for (const [bad, path] of [
+    [{ grasping: { theft: 1 } }, "rules.temperamentOdds.grasping"],
+    [{ greedy: { arson: 1 } }, "rules.temperamentOdds.greedy.arson"],
+    [{ greedy: { theft: 1001 } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: { theft: -1 } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: { theft: 0.5 } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: { theft: "often" } }, "rules.temperamentOdds.greedy.theft"],
+    [{ greedy: 3 }, "rules.temperamentOdds.greedy"],
+    [["greedy"], "rules.temperamentOdds"],
+  ] as const) {
+    const result = withOdds(bad);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toBe(path);
+  }
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.rules.temperamentOdds === undefined).toBe(
+    true,
+  );
+});
+
+test("the wrong tunables are positive whole numbers", () => {
+  const keys = [
+    "wrongCooldownTicks",
+    "wrongNeedMultiplier",
+    "wrongLossCap",
+    "creditDeadlineTicks",
+    "revengeWindowTicks",
+  ];
+  for (const key of keys) {
+    expect(parseContentPack(packWithPetitionBalance({ [key]: 1 })).ok).toBe(
+      true,
+    );
+    for (const bad of [0, -1, 1.5, "3"]) {
+      expect([
+        key,
+        bad,
+        parseContentPack(packWithPetitionBalance({ [key]: bad })).ok,
+      ]).toEqual([key, bad, false]);
+    }
+  }
+});
+
+// --- Seasons and domain troubles --------------------------------------------------------------------
+
+const withRules = (patch: Record<string, unknown>) => {
+  const pack = validPack();
+  Object.assign(pack.rules as Record<string, unknown>, patch);
+  return pack;
+};
+
+const SQUALL = {
+  effect: "building",
+  buildings: ["tavern"],
+  seasons: { autumn: 3, winter: 3 },
+};
+const LEAK = {
+  effect: "resource",
+  resources: ["currency"],
+  seasons: { winter: 1000 },
+};
+
+test("the trouble table parses: each trouble's effect, what it may take, and its odds by season; a god for each in the trouble-kind table", () => {
+  const troubles = {
+    squall: SQUALL,
+    leak: LEAK,
+    flood: { effect: "building", seasons: {} },
+  };
+  const result = parseContentPack(
+    withRules({
+      troubles,
+      troubleKinds: { squall: "athena", leak: "athena", flood: "athena" },
+    }),
+  );
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value.rules.troubles).toEqual(
+      troubles as unknown as typeof result.value.rules.troubles,
+    );
+    expect(result.value.rules.troubleKinds).toEqual({
+      squall: "athena",
+      leak: "athena",
+      flood: "athena",
+    });
+  }
+  // Absent, the world draws none.
+  const plain = parseContentPack(validPack());
+  expect(plain.ok && plain.value.rules.troubles === undefined).toBe(true);
+  // Odds at their ends.
+  for (const odds of [0, 1, 1000]) {
+    expect(
+      parseContentPack(
+        withRules({
+          troubles: { leak: { ...LEAK, seasons: { spring: odds } } },
+          troubleKinds: { leak: "athena" },
+        }),
+      ).ok,
+    ).toBe(true);
+  }
+});
+
+test("the trouble table refuses what a typo would silently weaken: an unknown effect or season, odds outside 0 to 1000, a list that does not suit the effect, or an id that shadows a base kind", () => {
+  const parse = (troubles: unknown) =>
+    parseContentPack(
+      withRules({
+        troubles,
+        troubleKinds: { squall: "athena", leak: "athena" },
+      }),
+    );
+  for (const [bad, path] of [
+    [
+      { squall: { ...SQUALL, effect: "plague" } },
+      "rules.troubles.squall.effect",
+    ],
+    [
+      { squall: { ...SQUALL, effect: undefined } },
+      "rules.troubles.squall.effect",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { monsoon: 3 } } },
+      "rules.troubles.squall.seasons.monsoon",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { winter: 1001 } } },
+      "rules.troubles.squall.seasons.winter",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { winter: -1 } } },
+      "rules.troubles.squall.seasons.winter",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: { winter: 0.5 } } },
+      "rules.troubles.squall.seasons.winter",
+    ],
+    [
+      { squall: { ...SQUALL, seasons: undefined } },
+      "rules.troubles.squall.seasons",
+    ],
+    [
+      { squall: { ...SQUALL, buildings: [] } },
+      "rules.troubles.squall.buildings",
+    ],
+    [
+      { squall: { ...SQUALL, buildings: ["tavern", "tavern"] } },
+      "rules.troubles.squall.buildings",
+    ],
+    [
+      { squall: { ...SQUALL, resources: ["currency"] } },
+      "rules.troubles.squall.resources",
+    ],
+    [{ leak: { ...LEAK, resources: [] } }, "rules.troubles.leak.resources"],
+    [
+      { leak: { ...LEAK, resources: undefined } },
+      "rules.troubles.leak.resources",
+    ],
+    [
+      { leak: { ...LEAK, buildings: ["tavern"] } },
+      "rules.troubles.leak.buildings",
+    ],
+    [{ fire: LEAK }, "rules.troubles.fire"],
+    [{ spoilage: LEAK }, "rules.troubles.spoilage"],
+    [{ "": LEAK }, "rules.troubles."],
+    [{ leak: 3 }, "rules.troubles.leak"],
+    [["leak"], "rules.troubles"],
+  ] as const) {
+    const result = parse(bad);
+    expect([JSON.stringify(bad), result.ok]).toEqual([
+      JSON.stringify(bad),
+      false,
+    ]);
+    if (!result.ok) expect(result.path).toBe(path);
+  }
+});
+
+test("each trouble has one god in the pack, who is a god, and takes only goods and buildings the pack has", () => {
+  const parse = (rules: Record<string, unknown>) =>
+    parseContentPack(withRules(rules));
+  // A trouble with no god.
+  expect(parse({ troubles: { leak: LEAK } })).toMatchObject({
+    ok: false,
+    path: "rules.troubles.leak",
+  });
+  expect(
+    parse({ troubles: { leak: LEAK }, troubleKinds: { fire: "athena" } }),
+  ).toMatchObject({ ok: false, path: "rules.troubles.leak" });
+  // A kind that is neither a base kind nor a trouble in the table.
+  expect(
+    parse({
+      troubles: { leak: LEAK },
+      troubleKinds: { leak: "athena", plague: "athena" },
+    }),
+  ).toMatchObject({
+    ok: false,
+    path: "rules.troubleKinds.plague",
+  });
+  // A god that is not one: unknown, or a mortal.
+  expect(
+    parse({ troubles: { leak: LEAK }, troubleKinds: { leak: "zeus" } }),
+  ).toMatchObject({ ok: false, path: "rules.troubleKinds.leak" });
+  expect(
+    parse({ troubles: { leak: LEAK }, troubleKinds: { leak: "npc-1" } }),
+  ).toMatchObject({ ok: false, path: "rules.troubleKinds.leak" });
+  // A good or a building the pack lacks.
+  expect(
+    parse({
+      troubles: { leak: { ...LEAK, resources: ["amber"] } },
+      troubleKinds: { leak: "athena" },
+    }),
+  ).toMatchObject({ ok: false, path: "rules.troubles.leak.resources" });
+  expect(
+    parse({
+      troubles: { squall: { ...SQUALL, buildings: ["lighthouse"] } },
+      troubleKinds: { squall: "athena" },
+    }),
+  ).toMatchObject({ ok: false, path: "rules.troubles.squall.buildings" });
+});
+
+test("the season, floor, loss, and director tunables are positive whole numbers; the retired quiet-window key is refused", () => {
+  for (const key of [
+    "seasonTicks",
+    "troubleFloorTicks",
+    "troubleLossCap",
+    "directorIntervalTicks",
+  ]) {
+    for (const good of [1, 200, 100000]) {
+      expect([
+        key,
+        good,
+        parseContentPack(packWithPetitionBalance({ [key]: good })).ok,
+      ]).toEqual([key, good, true]);
+    }
+    for (const bad of [0, -1, 1.5, "3"]) {
+      expect([
+        key,
+        bad,
+        parseContentPack(packWithPetitionBalance({ [key]: bad })).ok,
+      ]).toEqual([key, bad, false]);
+    }
+  }
+  expect(
+    parseContentPack(packWithPetitionBalance({ directorQuietTicks: 120 })),
+  ).toMatchObject({
+    ok: false,
+    path: "rules.petitionBalance.directorQuietTicks",
+  });
 });

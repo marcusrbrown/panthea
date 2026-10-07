@@ -53,6 +53,7 @@ import {
   getResourceAmount,
   isEventLinked,
   nextHop,
+  relationshipKey,
   runTick,
   submitProposal,
   toEntityId,
@@ -479,6 +480,8 @@ test("an economy run of routine-driven inhabitants through a real store conserve
     let woodConsumedByRecipe = 0;
     let incomeEarned = 0;
     const producedByResource: Record<string, number> = {};
+    // What the gods' domain troubles took: a declared sink, like consumption.
+    const troubleLost: Record<string, number> = {};
 
     let state = seededState;
     let prng = createPrng(7);
@@ -498,6 +501,10 @@ test("an economy run of routine-driven inhabitants through a real store conserve
       for (const event of result.environmentEvents) {
         if (event.kind === "income-earned") {
           incomeEarned += event.amount;
+        }
+        if (event.kind === "trouble" && event.loss.kind === "resource") {
+          troubleLost[event.loss.resource] =
+            (troubleLost[event.loss.resource] ?? 0) + event.loss.amount;
         }
       }
       for (const record of result.committed) {
@@ -558,22 +565,25 @@ test("an economy run of routine-driven inhabitants through a real store conserve
     // per-tick service revenue.
     expect(incomeEarned).toBeGreaterThan(0);
     expect(totalAcrossActors(state, "currency")).toBe(
-      currencyBefore + incomeEarned,
+      currencyBefore + incomeEarned - (troubleLost.currency ?? 0),
     );
     // Wood is conserved except at its declared source (gather) and its
     // declared conversion into planks (the recipe's input side).
     expect(totalAcrossActors(state, "wood")).toBe(
-      woodBefore + gatheredWood - woodConsumedByRecipe,
+      woodBefore +
+        gatheredWood -
+        woodConsumedByRecipe -
+        (troubleLost.wood ?? 0),
     );
     // Food is conserved except at its declared source (gather) and sink
     // (consume).
     expect(totalAcrossActors(state, "food")).toBe(
-      foodBefore + gatheredFood - consumedFood,
+      foodBefore + gatheredFood - consumedFood - (troubleLost.food ?? 0),
     );
     // Planks exist only through the declared recipe conversion; trading
     // them between actors never changes the total the world holds.
     expect(totalAcrossActors(state, "planks")).toBe(
-      producedByResource.planks ?? 0,
+      (producedByResource.planks ?? 0) - (troubleLost.planks ?? 0),
     );
 
     closeStore(store);
@@ -1099,12 +1109,15 @@ function socialSeed(memoryBalance?: Record<string, number>): WorldState {
     inventory: new Map(),
     revision: 0,
   });
+  // These stories are about what gods and reports do; the town's own wrongs are tested apart.
+  const { temperamentOdds: _wrongs, ...rules } = seeded.rules;
+  const quiet = { ...seeded, rules };
   return memoryBalance === undefined
-    ? seeded
+    ? quiet
     : {
-        ...seeded,
+        ...quiet,
         rules: {
-          ...seeded.rules,
+          ...quiet.rules,
           memoryBalance: { ...DEFAULT_MEMORY_BALANCE, ...memoryBalance },
         },
       };
@@ -2324,4 +2337,580 @@ test("a report told with zero belief salience commits, and the world survives re
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("each mortal's patron, from its authored devotion, and the pack's trouble-kind table survive commit, reopen, rebuild, and archive import", () => {
+  const storeDir = tempDir("panthea-sim-patrons-");
+  const exportDir = tempDir("panthea-sim-patrons-export-");
+  const slotsDir = tempDir("panthea-sim-patrons-slots-");
+  try {
+    const storePath = join(storeDir, "world.sqlite");
+    const seed = loadGreekWorldState();
+    const world = liveWorld(storePath, seed);
+    world.run();
+    world.run();
+    const state = world.state;
+
+    // Every mortal has the patron its devotion names, and the table names a god for each trouble.
+    const mortals = [...state.actors.values()].filter(
+      (actor) => actor.isDeity !== true,
+    );
+    expect(mortals.length).toBe(20);
+    expect(state.patrons.size).toBe(20);
+    expect(state.patrons.get(id("farmer"))).toBe(id("hera"));
+    expect(state.patrons.get(id("fisher-kallias"))).toBe(id("poseidon"));
+    expect(state.rules.troubleKinds).toMatchObject({
+      fire: "hephaestus",
+      spoilage: "hera",
+      theft: "hermes",
+    });
+
+    closeStore(world.store);
+    const freshReducers = createWorldProjectionReducers(loadGreekWorldState());
+    const reopened = openStore(storePath, freshReducers);
+    const clock = readClock(reopened.db);
+    const live = restoreWorldTime(
+      readLiveProjections(reopened, freshReducers),
+      clock,
+    );
+    expect(live.patrons).toEqual(state.patrons);
+    expect(live).toEqual(state);
+    const rebuilt = restoreWorldTime(
+      rebuildProjections(reopened, freshReducers),
+      clock,
+    );
+    expect(rebuilt.patrons).toEqual(state.patrons);
+
+    const exportPath = join(exportDir, "archive.sqlite");
+    exportArchive(reopened, exportPath);
+    const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+    const branch = openStore(
+      join(imported.slotPath, "world.sqlite"),
+      freshReducers,
+    );
+    const restored = restoreWorldTime(
+      readLiveProjections(branch, freshReducers),
+      readClock(branch.db),
+    );
+    expect(restored.patrons).toEqual(state.patrons);
+    expect(restored.rules.troubleKinds).toEqual(state.rules.troubleKinds);
+    closeStore(branch);
+    closeStore(reopened);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+    rmSync(exportDir, { recursive: true, force: true });
+    rmSync(slotsDir, { recursive: true, force: true });
+  }
+});
+
+test("a god's strike on a mortal takes goods up to the strikeGoodsCap and the prayer it answers or refuses survives reopen, rebuild, and archive import, at the cap's boundary values and for a mortal with nothing to take", () => {
+  // The ferryman holds 6 food (worth the most per unit), 2 fish, and 30 coins.
+  const run = (cap: number) => {
+    const storeDir = tempDir("panthea-sim-strike-");
+    const exportDir = tempDir("panthea-sim-strike-export-");
+    const slotsDir = tempDir("panthea-sim-strike-slots-");
+    try {
+      const storePath = join(storeDir, "world.sqlite");
+      const base = loadGreekWorldState();
+      const ferryman = base.actors.get(id("ferryman"));
+      if (!ferryman) throw new Error("expected the ferryman");
+      const seed = withActor(
+        withActor(
+          {
+            ...base,
+            rules: {
+              ...base.rules,
+              petitionBalance: {
+                ...base.rules.petitionBalance,
+                strikeGoodsCap: cap,
+              },
+            },
+          },
+          { ...ferryman, locationId: id("altar") },
+        ),
+        {
+          id: id("wanderer"),
+          locationId: id("town-square"),
+          alive: true,
+          capabilities: [],
+          inventory: new Map(),
+          revision: 0,
+        },
+      );
+      const world = liveWorld(storePath, seed);
+      const held = getResourceAmount(ferryman.inventory, "food");
+      world.run(
+        queuedProposal("zeus", {
+          kind: "strike",
+          target: "ferryman",
+          power: 1,
+        }),
+      );
+      world.run(
+        queuedProposal("zeus", {
+          kind: "strike",
+          target: "wanderer",
+          power: 1,
+        }),
+      );
+      const [harm, nothing] = eventOfKindAll(
+        listEvents(world.store.db),
+        "mortal-struck",
+      );
+      expect(harm).toMatchObject({
+        entityId: "ferryman",
+        actor: "zeus",
+        resource: "food",
+        amount: Math.min(held, cap),
+      });
+      expect(nothing).toMatchObject({ entityId: "wanderer", amount: 0 });
+      expect(
+        getResourceAmount(
+          world.state.actors.get(id("ferryman"))?.inventory ?? new Map(),
+          "food",
+        ),
+      ).toBe(held - Math.min(held, cap));
+
+      // The ferryman prays at the altar about the harm, to its patron Hades, who refuses.
+      world.run(
+        queuedProposal("ferryman", {
+          kind: "pray",
+          cause: harm?.id,
+          source: "routine",
+        }),
+      );
+      const prayer = eventOfKind(listEvents(world.store.db), "petition-opened");
+      expect(prayer).toMatchObject({ god: "hades", cause: harm?.id });
+      world.run(
+        queuedProposal("hades", { kind: "refuse", petition: prayer.id }),
+      );
+      const state = world.state;
+      expect(state.petitions.get(prayer.id)?.status).toBe("refused");
+      expect(
+        getMemories(state, id("ferryman")).some(
+          (m) => m.kind === "sign" && m.outcome === "refused",
+        ),
+      ).toBe(true);
+
+      closeStore(world.store);
+      const fresh = createWorldProjectionReducers(seed);
+      const reopened = openStore(storePath, fresh);
+      const clock = readClock(reopened.db);
+      expect(
+        restoreWorldTime(readLiveProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      expect(
+        restoreWorldTime(rebuildProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      const exportPath = join(exportDir, "archive.sqlite");
+      exportArchive(reopened, exportPath);
+      const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+      const branch = openStore(join(imported.slotPath, "world.sqlite"), fresh);
+      expect(
+        restoreWorldTime(
+          readLiveProjections(branch, fresh),
+          readClock(branch.db),
+        ),
+      ).toEqual(state);
+      closeStore(branch);
+      closeStore(reopened);
+      return harm?.amount;
+    } finally {
+      rmSync(storeDir, { recursive: true, force: true });
+      rmSync(exportDir, { recursive: true, force: true });
+      rmSync(slotsDir, { recursive: true, force: true });
+    }
+  };
+  // Below what it holds, exactly what it holds (6), above it, and far above it.
+  expect([run(1), run(5), run(6), run(7), run(100)]).toEqual([1, 5, 6, 6, 6]);
+});
+
+test("a defection and the threshold behind it survive commit, reopen, rebuild, and archive import, at the threshold's boundary values: at it a mortal stays, below it it goes, and the god lost and gained alone remember it", () => {
+  const run = (affinity: number, threshold: number) => {
+    const storeDir = tempDir("panthea-sim-defect-");
+    const exportDir = tempDir("panthea-sim-defect-export-");
+    const slotsDir = tempDir("panthea-sim-defect-slots-");
+    try {
+      const storePath = join(storeDir, "world.sqlite");
+      const base = loadGreekWorldState();
+      const eleni = base.actors.get(id("fisher-eleni"));
+      const hera = base.actors.get(id("hera"));
+      if (!eleni || !hera) throw new Error("expected eleni and hera");
+      // Eleni (Athena's) has already been helped by Hera, as a spoiled-stock prayer to him would have it.
+      const seed = withActor(
+        withActor(
+          {
+            ...base,
+            rules: {
+              ...base.rules,
+              petitionBalance: {
+                ...base.rules.petitionBalance,
+                defectionAffinity: threshold,
+              },
+            },
+            relationships: new Map(base.relationships).set(
+              relationshipKey(id("fisher-eleni"), id("athena")),
+              {
+                from: id("fisher-eleni"),
+                toward: id("athena"),
+                affinity,
+                grudge: 0,
+                allied: false,
+              },
+            ),
+            causes: new Map([
+              [
+                id("fisher-eleni"),
+                [
+                  {
+                    eventId: "evt-0-9001" as never,
+                    tick: 0,
+                    kind: "spoilage" as const,
+                    resource: "food",
+                    amount: 1,
+                  },
+                ],
+              ],
+            ]),
+          },
+          { ...eleni, locationId: id("altar") },
+        ),
+        { ...hera, locationId: id("altar") },
+      );
+      const world = liveWorld(storePath, seed);
+      // Eleni prays about her spoiled stock: the table sends it to Hera, who blesses her.
+      world.run(
+        queuedProposal("fisher-eleni", {
+          kind: "pray",
+          cause: "evt-0-9001",
+          source: "routine",
+        }),
+      );
+      const asked = eventOfKind(listEvents(world.store.db), "petition-opened");
+      expect(asked).toMatchObject({ god: "hera" });
+      world.run(queuedProposal("hera", { kind: "bless", petition: asked.id }));
+      // Zeus strikes her; she prays about the harm to her patron, who refuses her.
+      world.run(
+        queuedProposal("zeus", {
+          kind: "strike",
+          target: "fisher-eleni",
+          power: 1,
+        }),
+      );
+      const harm = eventOfKind(listEvents(world.store.db), "mortal-struck");
+      // Her patron now: Athena, unless the threshold was high enough for Hera's answer alone to win her.
+      const patron = world.state.patrons.get(id("fisher-eleni"));
+      // The prayer cooldown (20 ticks) passes before she prays again.
+      for (let wait = 0; wait < 20; wait += 1) world.run();
+      world.run(
+        queuedProposal("fisher-eleni", {
+          kind: "pray",
+          cause: harm.id,
+          source: "routine",
+        }),
+      );
+      const prayer = eventOfKind(
+        listEvents(world.store.db),
+        "petition-opened",
+        (e) => e.cause === harm.id,
+      );
+      expect(prayer).toMatchObject({ god: patron });
+      world.run(
+        queuedProposal(String(patron), {
+          kind: "refuse",
+          petition: prayer.id,
+        }),
+      );
+      const state = world.state;
+      const changes = eventOfKindAll(
+        listEvents(world.store.db),
+        "patron-changed",
+      );
+      // The refusal takes her from `affinity` to `affinity - 2`: she goes only if that is below the threshold.
+      expect(changes.length).toBe(affinity - 2 < threshold ? 1 : 0);
+      expect(state.patrons.get(id("fisher-eleni"))).toBe(
+        id(changes.length === 1 ? "hera" : "athena"),
+      );
+      const remembered = (god: string) =>
+        getMemories(state, id(god)).filter((m) => m.kind === "patronage");
+      expect(remembered("hera")).toHaveLength(changes.length);
+      expect(remembered("athena")).toHaveLength(changes.length);
+      expect(remembered("zeus")).toEqual([]);
+
+      closeStore(world.store);
+      const fresh = createWorldProjectionReducers(seed);
+      const reopened = openStore(storePath, fresh);
+      const clock = readClock(reopened.db);
+      expect(
+        restoreWorldTime(readLiveProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      expect(
+        restoreWorldTime(rebuildProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      const exportPath = join(exportDir, "archive.sqlite");
+      exportArchive(reopened, exportPath);
+      const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+      const branch = openStore(join(imported.slotPath, "world.sqlite"), fresh);
+      expect(
+        restoreWorldTime(
+          readLiveProjections(branch, fresh),
+          readClock(branch.db),
+        ),
+      ).toEqual(state);
+      closeStore(branch);
+      closeStore(reopened);
+      return changes.length;
+    } finally {
+      rmSync(storeDir, { recursive: true, force: true });
+      rmSync(exportDir, { recursive: true, force: true });
+      rmSync(slotsDir, { recursive: true, force: true });
+    }
+  };
+  // (affinity, threshold): the feeling after the refusal is affinity - 2, and the threshold is 1 (the default),
+  // 2, and 100 (more than any affinity can be).
+  expect([
+    run(3, 1), // 1 is not below 1: stays
+    run(2, 1), // 0 is below 1: goes
+    run(4, 2), // 2 is not below 2: stays
+    run(3, 2), // 1 is below 2: goes
+    run(10, 100), // 8 is below 100: goes
+  ]).toEqual([0, 1, 0, 1, 1]);
+});
+
+test("the town's wrongs, credit trades, temperaments, and the loss cap survive commit, reopen, rebuild, and archive import, at the cap's boundary values: no wrong takes more than the cap, and every one is rebuilt from the log", () => {
+  const run = (cap: number) => {
+    const storeDir = tempDir("panthea-sim-wrongs-");
+    const exportDir = tempDir("panthea-sim-wrongs-export-");
+    const slotsDir = tempDir("panthea-sim-wrongs-slots-");
+    try {
+      const storePath = join(storeDir, "world.sqlite");
+      const base = loadGreekWorldState();
+      const seed: WorldState = {
+        ...base,
+        rules: {
+          ...base.rules,
+          petitionBalance: { ...base.rules.petitionBalance, wrongLossCap: cap },
+        },
+      };
+      const world = liveWorld(storePath, seed);
+      for (let tick = 0; tick < 150; tick += 1) world.run();
+      const state = world.state;
+      const events = listEvents(world.store.db);
+      const wrongs = eventOfKindAll(events, "wrong");
+      expect(wrongs.length).toBeGreaterThan(0);
+      expect(state.wrongs.size).toBe(wrongs.length);
+      // The cap bounds what a theft, a cheat, or a feud takes; a failed credit owes its price, which it does not bound.
+      for (const w of wrongs.filter((e) => e.credit === undefined)) {
+        expect(w.amount).toBeLessThanOrEqual(cap);
+      }
+      expect(eventOfKindAll(events, "credit-extended").length).toBe(
+        state.credits.size,
+      );
+      expect(state.actors.get(id("market-trader-iris"))?.temperament).toBe(
+        "greedy",
+      );
+
+      closeStore(world.store);
+      const fresh = createWorldProjectionReducers(seed);
+      const reopened = openStore(storePath, fresh);
+      const clock = readClock(reopened.db);
+      expect(
+        restoreWorldTime(readLiveProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      expect(
+        restoreWorldTime(rebuildProjections(reopened, fresh), clock),
+      ).toEqual(state);
+      const exportPath = join(exportDir, "archive.sqlite");
+      exportArchive(reopened, exportPath);
+      const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+      const branch = openStore(join(imported.slotPath, "world.sqlite"), fresh);
+      expect(
+        restoreWorldTime(
+          readLiveProjections(branch, fresh),
+          readClock(branch.db),
+        ),
+      ).toEqual(state);
+      closeStore(branch);
+      closeStore(reopened);
+      return Math.max(
+        ...wrongs.filter((e) => e.credit === undefined).map((e) => e.amount),
+      );
+    } finally {
+      rmSync(storeDir, { recursive: true, force: true });
+      rmSync(exportDir, { recursive: true, force: true });
+      rmSync(slotsDir, { recursive: true, force: true });
+    }
+  };
+  // A cap of 1 takes one unit at a time; the authored 2 and a cap far above what is held take more.
+  const largest = [run(1), run(2), run(1000)];
+  expect(largest[0]).toBe(1);
+  expect(largest[1]).toBeLessThanOrEqual(2);
+  expect(largest[2]).toBeGreaterThan(largest[0] ?? 0);
+});
+
+/** Reopen `storePath` from a fresh composition root and check it equals `state` rebuilt, read live, and imported from an export. */
+function expectSurvives(
+  storePath: string,
+  seed: WorldState,
+  state: WorldState,
+  exportDir: string,
+  slotsDir: string,
+) {
+  const fresh = createWorldProjectionReducers(seed);
+  const reopened = openStore(storePath, fresh);
+  const clock = readClock(reopened.db);
+  expect(restoreWorldTime(readLiveProjections(reopened, fresh), clock)).toEqual(
+    state,
+  );
+  expect(restoreWorldTime(rebuildProjections(reopened, fresh), clock)).toEqual(
+    state,
+  );
+  const exportPath = join(exportDir, "archive.sqlite");
+  exportArchive(reopened, exportPath);
+  const imported = importArchive(exportPath, slotsDir, worldImportReducers);
+  const branch = openStore(join(imported.slotPath, "world.sqlite"), fresh);
+  expect(
+    restoreWorldTime(readLiveProjections(branch, fresh), readClock(branch.db)),
+  ).toEqual(state);
+  closeStore(branch);
+  closeStore(reopened);
+}
+
+test("all the new state replays equal: a patron and a temperament the seed changed, credit trades, wrongs, the season's turns, the director's last fire, and each god's last trouble survive commit, reopen, rebuild, and export then import", () => {
+  const storeDir = tempDir("panthea-sim-replay-");
+  const exportDir = tempDir("panthea-sim-replay-export-");
+  const slotsDir = tempDir("panthea-sim-replay-slots-");
+  try {
+    const storePath = join(storeDir, "world.sqlite");
+    const base = loadGreekWorldState();
+    const kallias = base.actors.get(id("fisher-kallias"));
+    if (!kallias) throw new Error("expected fisher-kallias");
+    // The seed differs from the authored pack where a restart that re-read content would show it: a mortal that
+    // defected to Zeus (authored: Poseidon) and one whose temperament is not the authored.
+    const seed: WorldState = {
+      ...base,
+      patrons: new Map(base.patrons).set(id("fisher-kallias"), id("zeus")),
+      actors: new Map(base.actors).set(id("fisher-kallias"), {
+        ...kallias,
+        temperament: "proud",
+      }),
+    };
+    const world = liveWorld(storePath, seed);
+    for (let tick = 0; tick < 450; tick += 1) world.run();
+    const state = world.state;
+    const events = listEvents(world.store.db);
+
+    // Every kind of new state was exercised, not just carried.
+    expect(state.patrons.get(id("fisher-kallias"))).toBe(id("zeus"));
+    expect(state.actors.get(id("fisher-kallias"))?.temperament).toBe("proud");
+    expect(state.credits.size).toBeGreaterThan(0);
+    expect(state.wrongs.size).toBeGreaterThan(0);
+    expect(
+      eventOfKindAll(events, "season-turned").map((e) => [e.tick, e.season]),
+    ).toEqual([
+      [200, "summer"],
+      [400, "autumn"],
+    ]);
+    expect(state.director.lastFireTick).toBe(360);
+    expect([...state.lastTrouble.keys()].map(String).sort()).toEqual([
+      "athena",
+      "hades",
+      "hephaestus",
+      "hera",
+      "hermes",
+      "poseidon",
+      "zeus",
+    ]);
+    expect(eventOfKindAll(events, "trouble").length).toBeGreaterThan(7);
+
+    closeStore(world.store);
+    expectSurvives(storePath, seed, state, exportDir, slotsDir);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+    rmSync(exportDir, { recursive: true, force: true });
+    rmSync(slotsDir, { recursive: true, force: true });
+  }
+});
+
+test("the season, floor, loss, and director tunables survive commit, reopen, rebuild, and export at their boundary values: a season of one tick, a floor window of one tick, a loss cap of one unit, and an interval too long to come", () => {
+  const runBalance = (balance: Record<string, number>) => {
+    const storeDir = tempDir("panthea-sim-seasonbal-");
+    const exportDir = tempDir("panthea-sim-seasonbal-export-");
+    const slotsDir = tempDir("panthea-sim-seasonbal-slots-");
+    try {
+      const storePath = join(storeDir, "world.sqlite");
+      const base = loadGreekWorldState();
+      const seed: WorldState = {
+        ...base,
+        rules: {
+          ...base.rules,
+          petitionBalance: { ...base.rules.petitionBalance, ...balance },
+        },
+      };
+      const world = liveWorld(storePath, seed);
+      for (let tick = 0; tick < 40; tick += 1) world.run();
+      const state = world.state;
+      const events = listEvents(world.store.db);
+      closeStore(world.store);
+      expectSurvives(storePath, seed, state, exportDir, slotsDir);
+      return {
+        turns: eventOfKindAll(events, "season-turned").length,
+        troubles: eventOfKindAll(events, "trouble"),
+        director: state.director.lastFireTick,
+      };
+    } finally {
+      rmSync(storeDir, { recursive: true, force: true });
+      rmSync(exportDir, { recursive: true, force: true });
+      rmSync(slotsDir, { recursive: true, force: true });
+    }
+  };
+  const largestLoss = (run: ReturnType<typeof runBalance>) =>
+    Math.max(
+      ...run.troubles.flatMap((e) =>
+        e.loss.kind === "resource" ? [e.loss.amount] : [],
+      ),
+    );
+  const floorsOf = (run: ReturnType<typeof runBalance>) =>
+    run.troubles.filter((e) => e.source === "floor");
+  // The four tunables do not interfere across these three round trips, so each trip carries one boundary of each.
+  // Every trip has a floor window of one tick: each god gets a trouble in every tick it has one that can happen
+  // (every god has them, and a god's building troubles run out as its buildings are damaged).
+  // Low: a season of one tick turns every tick; a loss cap of one takes one unit at a time; a director interval of
+  // one tick fires it every tick it can.
+  const low = runBalance({
+    seasonTicks: 1,
+    troubleFloorTicks: 1,
+    troubleLossCap: 1,
+    directorIntervalTicks: 1,
+  });
+  expect(low.turns).toBe(40);
+  expect(largestLoss(low)).toBe(1);
+  expect(low.director).toBe(40);
+  expect(floorsOf(low).length).toBeGreaterThan(40);
+  expect(new Set(floorsOf(low).map((e) => e.god)).size).toBe(7);
+  // Authored: a season of 200 turns none in 40 ticks; the authored loss cap of 2 takes two; a director interval too
+  // long to come never fires it.
+  const authored = runBalance({
+    seasonTicks: 200,
+    troubleFloorTicks: 1,
+    troubleLossCap: 2,
+    directorIntervalTicks: 1_000_000,
+  });
+  expect(authored.turns).toBe(0);
+  expect(largestLoss(authored)).toBe(2);
+  expect(authored.director).toBe(0);
+  expect(floorsOf(authored).length).toBeGreaterThan(40);
+  expect(new Set(floorsOf(authored).map((e) => e.god)).size).toBe(7);
+  // High: a season of 1,000,000 turns none either; a cap above what is held takes more than the authored two.
+  const high = runBalance({
+    seasonTicks: 1_000_000,
+    troubleFloorTicks: 1,
+    troubleLossCap: 1000,
+    directorIntervalTicks: 1_000_000,
+  });
+  expect(high.turns).toBe(0);
+  expect(largestLoss(high)).toBeGreaterThan(2);
+  expect(high.director).toBe(0);
+  expect(floorsOf(high).length).toBeGreaterThan(40);
+  expect(new Set(floorsOf(high).map((e) => e.god)).size).toBe(7);
 });

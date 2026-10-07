@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import type { RealInput, RealProposal, RealRequest } from "./real-analysis";
-import { renderRequestTimings, requestTimings } from "./request-timing";
+import {
+  percentile,
+  renderRequestTimings,
+  requestTimings,
+} from "./request-timing";
 
 const SEVEN = [
   "athena",
@@ -110,6 +114,7 @@ test("a god that never got a turn is shown with 0 turns and no gaps or latency",
     turns: 0,
     medianGapTicks: undefined,
     worstGapTicks: undefined,
+    p95GapTicks: undefined,
     medianLatencyMs: undefined,
   });
   expect(perGod.find((g) => g.god === "athena")).toMatchObject({
@@ -140,8 +145,20 @@ test("the gap between a god's turns is the ticks between its request starts: the
     turns: 4,
     medianGapTicks: 20,
     worstGapTicks: 70,
+    p95GapTicks: 70,
     medianLatencyMs: 4_000,
   });
+});
+
+test("the 95th percentile is the nearest rank: the largest of twenty values is the 95th, and one value is its own", () => {
+  const twenty = Array.from({ length: 20 }, (_, i) => i + 1);
+  expect(percentile(twenty, 0.95)).toBe(19);
+  expect(percentile([...twenty, 21], 0.95)).toBe(20);
+  expect(percentile([7], 0.95)).toBe(7);
+  expect(percentile([], 0.95)).toBeUndefined();
+  // Unsorted input, and the share's ends.
+  expect(percentile([9, 1, 5], 1)).toBe(9);
+  expect(percentile([9, 1, 5], 0.01)).toBe(1);
 });
 
 test("a request still in flight when the run ended is shown as such, inferred from the quiet since the last answer, with its god the next in id order and its start estimated", () => {
@@ -197,6 +214,6 @@ test("rendering gives one row per request in the order they ran and one row per 
   expect(text).toContain(
     "| 4 | hera | ≈32 | — | — | in flight at the end (inferred) | ",
   );
-  expect(text).toContain("| zeus | 0 | — | — | — |");
-  expect(text).toContain("| athena | 1 | — | — | 11.0 s |");
+  expect(text).toContain("| zeus | 0 | — | — | — | — |");
+  expect(text).toContain("| athena | 1 | — | — | — | 11.0 s |");
 });

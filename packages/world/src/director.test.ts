@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { ContentPack, EventId, WorldEvent } from "@panthea/contracts";
 import { applyEvent, applyEvents, runTick, submitProposal } from "./actions";
 import { decode, encode } from "./codec";
-import { isConsequential, planDirectorStep } from "./director";
+import { noteDirectorFire, planDirectorStep } from "./director";
 import { perceive } from "./perception";
 import { petitionBalanceOf } from "./petitions";
 import { decideRoutineProposal } from "./routines";
@@ -18,7 +18,7 @@ import {
 
 const id = toEntityId;
 
-/** Calm mortals who each hold a lot and own a building, a quiet window of 10, and gods in a hall. */
+/** Calm mortals who each hold a lot and own a building, a director interval of 10, and gods in a hall. */
 function pack(
   quiet = 10,
   mortals = ["farmer", "woodcutter", "drifter"],
@@ -89,7 +89,7 @@ function pack(
         destroyIntensity: 50,
       },
       economyBalance: { consumeAmount: 1, value_food: 3, value_currency: 1 },
-      petitionBalance: { directorQuietTicks: quiet },
+      petitionBalance: { directorIntervalTicks: quiet },
     },
     recipes: {},
   };
@@ -155,15 +155,20 @@ class World {
 
 const trouble = (events: readonly WorldEvent[]) =>
   events.filter(
-    (e) =>
+    (
+      e,
+    ): e is Extract<
+      WorldEvent,
+      { kind: "theft" | "stock-spoiled" | "building-ignited" }
+    > =>
       e.kind === "theft" ||
       e.kind === "stock-spoiled" ||
       (e.kind === "building-ignited" && e.cause.kind === "director"),
   );
 
-test("a quiet world gets trouble once the quiet window has passed, never before, and the trouble names the director as its cause", () => {
+test("the director fires once its interval has passed since it last fired, never before, and the trouble names the director as its cause", () => {
   const world = new World();
-  // Nothing happens for ticks 1..9: the window is 10.
+  // Nothing happens for ticks 1..9: the interval is 10.
   expect(trouble(world.run(9))).toEqual([]);
   const first = trouble(world.tick());
   expect(first).toHaveLength(1);
@@ -175,52 +180,32 @@ test("a quiet world gets trouble once the quiet window has passed, never before,
   } else throw new Error("not trouble");
   // The trouble was caused by the world's own tick, not a proposal.
   expect(String(event.correlationId)).toBe(`tick-${world.state.tick}`);
+  expect(world.state.director.lastFireTick).toBe(10);
 });
 
-test("the director's own trouble resets the timer: the next trouble is at least a quiet window later", () => {
+test("the director's own clock runs from its own last fire: its troubles come exactly one interval apart", () => {
   const world = new World();
-  const quiet = petitionBalanceOf(world.state.rules, "directorQuietTicks");
+  const interval = petitionBalanceOf(
+    world.state.rules,
+    "directorIntervalTicks",
+  );
   const ticks: number[] = [];
-  for (let n = 0; n < quiet * 4 + 5; n += 1) {
+  for (let n = 0; n < interval * 4 + 5; n += 1) {
     if (trouble(world.tick()).length > 0) ticks.push(world.state.tick);
   }
-  expect(ticks.length).toBeGreaterThanOrEqual(3);
-  for (let i = 1; i < ticks.length; i += 1) {
-    expect(
-      (ticks[i] as number) - (ticks[i - 1] as number),
-    ).toBeGreaterThanOrEqual(quiet);
-  }
+  expect(ticks).toEqual([interval, 2 * interval, 3 * interval, 4 * interval]);
 });
 
-/** What each consequential kind looks like at tick 9: a real proposal where one makes it, a recorded fixture where only the director or a god's later answer would. */
-const CONSEQUENTIAL: Record<
+/** A bless, a trade, a strike, an answered prayer: what once reset the director's timer, as a proposal where one makes it and a fixture where only a god's later answer would. */
+const ACTIVITY: Record<
   string,
   { proposal?: Record<string, unknown>; event?: Record<string, unknown> }
 > = {
-  "building-damaged": {
+  strike: {
     proposal: { actor: "zeus", kind: "strike", target: "wood-store", power: 1 },
   },
-  "building-ignited": {
+  ignition: {
     proposal: { actor: "zeus", kind: "strike", target: "wood-store", power: 3 },
-  },
-  theft: {
-    event: {
-      kind: "theft",
-      entityId: "woodcutter",
-      victim: "farmer",
-      resource: "food",
-      amount: 1,
-      cause: "director",
-    },
-  },
-  "stock-spoiled": {
-    event: {
-      kind: "stock-spoiled",
-      entityId: "farmer",
-      resource: "food",
-      amount: 1,
-      cause: "director",
-    },
   },
   "resource-traded": {
     proposal: {
@@ -251,92 +236,144 @@ const CONSEQUENTIAL: Record<
       answeredBy: "evt-9-9",
     },
   },
+  legend: {
+    proposal: { actor: "zeus", kind: "legend", assertion: "Hear me." },
+  },
+  goal: {
+    proposal: {
+      actor: "zeus",
+      kind: "goal",
+      goal: { set: { text: "Watch.", target: "farmer" } },
+    },
+  },
+  prayer: {
+    event: {
+      kind: "petition-opened",
+      entityId: "farmer",
+      god: "zeus",
+      cause: "evt-1-1",
+      request: {
+        kind: "help",
+        need: { kind: "resource", resource: "food" },
+      },
+    },
+  },
+  "unmet-need": {
+    event: {
+      kind: "unmet-need",
+      entityId: "farmer",
+      resource: "planks",
+      reason: "no-seller",
+    },
+  },
 };
 
-/** Trouble in the ticks 10 to 18, after `make` happens at tick 9: none, if `make` reset the timer. */
-function troubleAfter(make: (world: World) => void): number {
-  const world = new World();
-  world.run(8);
-  world.tick(); // tick 9
-  make(world);
-  return trouble(world.run(9)).length;
-}
-
-for (const [kind, how] of Object.entries(CONSEQUENTIAL)) {
-  test(`a ${kind} resets the quiet timer: no trouble for a quiet window after it`, () => {
+for (const [name, how] of Object.entries(ACTIVITY)) {
+  test(`a ${name} at tick 9 does not delay the director: it still fires at tick 10 (AE6)`, () => {
     const world = new World();
     world.run(8);
-    const proposals = how.proposal === undefined ? [] : [how.proposal];
-    world.tick(...proposals); // tick 9
+    world.tick(...(how.proposal === undefined ? [] : [how.proposal])); // tick 9
     if (how.event !== undefined) world.apply(how.event);
-    expect(world.log.some((e) => e.kind === kind)).toBe(true);
-    expect(trouble(world.run(9))).toEqual([]);
+    expect(trouble(world.tick())).toHaveLength(1);
+    expect(world.state.director.lastFireTick).toBe(10);
   });
 }
 
-test("every kind the director counts as consequential has a case above, and nothing else is claimed", () => {
-  const counted = [
-    "building-damaged",
-    "building-ignited",
-    "theft",
-    "stock-spoiled",
-    "resource-traded",
-    "blessing-granted",
-    "petition-answered",
-  ];
-  expect(Object.keys(CONSEQUENTIAL).sort()).toEqual([...counted].sort());
-  for (const kind of counted) {
-    const sample = {
+test("gods blessing every tick do not delay the director: it fires at every interval (AE6)", () => {
+  const world = new World();
+  const blessing = ACTIVITY["blessing-granted"]?.event as Record<
+    string,
+    unknown
+  >;
+  const answered = ACTIVITY["petition-answered"]?.event as Record<
+    string,
+    unknown
+  >;
+  const ticks: number[] = [];
+  for (let n = 0; n < 45; n += 1) {
+    const events = world.tick();
+    world.apply(blessing);
+    world.apply(answered);
+    if (trouble(events).length > 0) ticks.push(world.state.tick);
+  }
+  expect(ticks).toEqual([10, 20, 30, 40]);
+});
+
+test("only the director's own trouble moves its clock: another's theft or spoilage, or a god's fire, does not, and its own does", () => {
+  const world = new World();
+  const before = world.state.director;
+  const event = (overrides: Record<string, unknown>) =>
+    ({
       schemaVersion: 1,
-      id: "evt-1-1",
+      id: "evt-5-1",
       sequence: 1,
       simTime: 0,
-      tick: 1,
+      tick: 5,
       correlationId: "c",
       causationId: "c",
       approximate: false,
-      kind,
-    } as unknown as WorldEvent;
-    expect(isConsequential(sample)).toBe(true);
+      ...overrides,
+    }) as unknown as WorldEvent;
+  for (const other of [
+    event({
+      kind: "building-ignited",
+      entityId: "farm-store",
+      cause: { kind: "strike", actor: "zeus" },
+    }),
+    event({
+      kind: "building-ignited",
+      entityId: "farm-store",
+      cause: { kind: "spread", from: "evt-1-1" },
+    }),
+    event({ kind: "blessing-granted", entityId: "zeus", recipient: "farmer" }),
+    event({
+      kind: "resource-traded",
+      entityId: "farmer",
+      counterpartyId: "woodcutter",
+    }),
+  ]) {
+    expect(noteDirectorFire(world.state, other).director).toEqual(before);
   }
-});
-
-test("controls: with nothing the same ticks have trouble, and talk, goals, and prayers do not reset the timer", () => {
-  expect(troubleAfter(() => {})).toBeGreaterThan(0);
-  const talk = new World();
-  talk.run(8);
-  talk.tick({ actor: "zeus", kind: "legend", assertion: "Hear me." });
-  expect(trouble(talk.run(2)).length).toBeGreaterThan(0);
-  const goal = new World();
-  goal.run(8);
-  goal.tick({
-    actor: "zeus",
-    kind: "goal",
-    goal: { set: { text: "Watch.", target: "farmer" } },
-  });
-  expect(trouble(goal.run(2)).length).toBeGreaterThan(0);
-  // A prayer, and the needs and notices that follow a loss, are activity of the gods' world, not events in it.
+  for (const own of [
+    event({
+      kind: "theft",
+      entityId: "woodcutter",
+      victim: "farmer",
+      resource: "food",
+      amount: 1,
+      cause: "director",
+    }),
+    event({
+      kind: "stock-spoiled",
+      entityId: "farmer",
+      resource: "food",
+      amount: 1,
+      cause: "director",
+    }),
+    event({
+      kind: "building-ignited",
+      entityId: "farm-store",
+      cause: { kind: "director" },
+    }),
+  ]) {
+    expect(noteDirectorFire(world.state, own).director).toEqual({
+      lastFireTick: 5,
+    });
+  }
+  // A clock never runs backward.
+  const later = { ...world.state, director: { lastFireTick: 9 } };
   expect(
-    troubleAfter((world) =>
-      world.apply({
-        kind: "petition-opened",
+    noteDirectorFire(
+      later,
+      event({
+        kind: "stock-spoiled",
         entityId: "farmer",
-        god: "zeus",
-        cause: "evt-1-1",
-        request: { kind: "help", need: { kind: "resource", resource: "food" } },
+        resource: "food",
+        amount: 1,
+        cause: "director",
       }),
-    ),
-  ).toBeGreaterThan(0);
-  expect(
-    troubleAfter((world) =>
-      world.apply({
-        kind: "unmet-need",
-        entityId: "farmer",
-        resource: "planks",
-        reason: "no-seller",
-      }),
-    ),
-  ).toBeGreaterThan(0);
+    ).director,
+  ).toEqual({ lastFireTick: 9 });
 });
 
 test("with fewer than two mortals eligible, the director skips that tick and tries again the next", () => {

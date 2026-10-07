@@ -96,7 +96,9 @@ test("optional buildings.json and inhabitants.json are picked up when present", 
             name: "Tavernkeeper",
             locationId: "tavern",
             drives: { thrift: 0.5, appetite: 0.2, greed: 0.1, piety: 0.3 },
+            devotion: { god: "zeus", affinity: 2 },
           },
+          { id: "zeus", name: "Zeus", locationId: "tavern", deity: true },
         ],
       }),
     );
@@ -105,7 +107,7 @@ test("optional buildings.json and inhabitants.json are picked up when present", 
   expect(result.ok).toBe(true);
   if (result.ok) {
     expect(result.value.buildings).toHaveLength(1);
-    expect(result.value.inhabitants).toHaveLength(1);
+    expect(result.value.inhabitants).toHaveLength(2);
   }
   rmSync(dir, { recursive: true, force: true });
 });

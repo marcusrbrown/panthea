@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO_ROOT } from "../../m1-living-world/src/sidecar";
 import { analyzeEpisode, type GodIdentity } from "./episode-analysis";
+import { type GateCheck, gateChecks } from "./gate-analysis";
 import {
   collectRun,
   endpointKind,
@@ -21,7 +22,48 @@ import {
   renderTranscript,
 } from "./transcript";
 
-export const GODS = ["zeus", "hera"] as const;
+/** Every god of the cast: the gate judges each of them (R19), not only the first two. */
+export const GODS = [
+  "athena",
+  "hades",
+  "hephaestus",
+  "hera",
+  "hermes",
+  "poseidon",
+  "zeus",
+] as const;
+
+/** The patron each mortal is authored with, by mortal id: the devotion in the inhabitants file, which a defection later moves. */
+export function loadAuthoredPatrons(dir: string): Map<string, string> {
+  const raw = JSON.parse(
+    readFileSync(join(dir, "inhabitants.json"), "utf8"),
+  ) as {
+    inhabitants: { id: string; deity?: boolean; devotion?: { god: string } }[];
+  };
+  return new Map(
+    raw.inhabitants.flatMap((i) =>
+      i.deity === true || i.devotion === undefined
+        ? []
+        : [[i.id, i.devotion.god] as const],
+    ),
+  );
+}
+
+/** The checks across a gate's episodes: wrongs, threads over harm, and each god's initiative (R19, SC3 to SC5). */
+export function gateOf(
+  records: readonly EpisodeRecord[],
+  patrons: ReadonlyMap<string, string>,
+): GateCheck[] {
+  return gateChecks(
+    records.map((r) => ({
+      index: r.index,
+      events: r.input.events,
+      proposals: r.input.proposals,
+    })),
+    GODS,
+    patrons,
+  );
+}
 
 /** Reads each god's identity from its authored profile file. */
 export function loadGodIdentities(
@@ -94,6 +136,7 @@ export async function runEpisodes(
     join(REPO_ROOT, "content/greek/gods"),
     GODS,
   );
+  const patrons = loadAuthoredPatrons(join(REPO_ROOT, "content/greek/world"));
   mkdirSync(options.outDir, { recursive: true });
   const records: EpisodeRecord[] = [];
   for (let index = 1; index <= options.episodes; index += 1) {
@@ -109,6 +152,7 @@ export async function runEpisodes(
         input: run.input,
         analysis: run.record.analysis,
         episode: analyzeEpisode(run.input, identities, GODS),
+        patrons,
       };
       writeFileSync(
         join(options.outDir, `episode-${index}.md`),
@@ -136,6 +180,8 @@ export async function runEpisodes(
         ? {}
         : { endpoint: endpointKind(options) }),
       files: records.map((r) => `episode-${r.index}.md`),
+      gate: gateOf(records, patrons),
+      patrons,
     }),
   );
   return records;

@@ -97,9 +97,19 @@ test("the Greek pack gives the woodcutter a woodshed at the square, so a theft b
       "blessResourceAmount",
       "blessResourceCap",
       "causePrayableTicks",
-      "directorQuietTicks",
+      "directorIntervalTicks",
       "goalLockTicks",
       "prayerCooldownTicks",
+      "revengeWindowTicks",
+      "seasonTicks",
+      "strikeGoodsCap",
+      "troubleFloorTicks",
+      "troubleLossCap",
+      "wrongCooldownTicks",
+      "wrongLossCap",
+      "wrongNeedMultiplier",
+      "creditDeadlineTicks",
+      "defectionAffinity",
     ].sort(),
   );
 });
@@ -130,11 +140,11 @@ test("PANTHEA_PRACTICE_BALANCE overrides practice tunables over the authored one
   // The petition tunables are untouched by it, and the two overrides combine.
   const both = loadEmbeddedGreekWorldPack({
     PANTHEA_PRACTICE_BALANCE: JSON.stringify({ contestWindowTicks: 25 }),
-    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorQuietTicks: 100000 }),
+    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorIntervalTicks: 100000 }),
   });
   if (!both.ok) throw new Error(both.message);
   expect(both.value.rules.practiceBalance?.contestWindowTicks).toBe(25);
-  expect(both.value.rules.petitionBalance?.directorQuietTicks).toBe(100000);
+  expect(both.value.rules.petitionBalance?.directorIntervalTicks).toBe(100000);
   // Without it, or empty, the authored tunables stand.
   const unset = loadEmbeddedGreekWorldPack({ PANTHEA_PRACTICE_BALANCE: "" });
   expect(unset.ok && unset.value.rules.practiceBalance).toEqual(
@@ -157,12 +167,12 @@ test("PANTHEA_PETITION_BALANCE overrides petition tunables over the authored one
   const authored = loadEmbeddedGreekWorldPack({});
   if (!authored.ok) throw new Error(authored.message);
   const quiet = loadEmbeddedGreekWorldPack({
-    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorQuietTicks: 100000 }),
+    PANTHEA_PETITION_BALANCE: JSON.stringify({ directorIntervalTicks: 100000 }),
   });
   if (!quiet.ok) throw new Error(quiet.message);
   expect(quiet.value.rules.petitionBalance).toEqual({
     ...authored.value.rules.petitionBalance,
-    directorQuietTicks: 100000,
+    directorIntervalTicks: 100000,
   });
   // Without it, or empty, the authored tunables stand.
   const unset = loadEmbeddedGreekWorldPack({ PANTHEA_PETITION_BALANCE: "" });
@@ -172,7 +182,7 @@ test("PANTHEA_PETITION_BALANCE overrides petition tunables over the authored one
   // Control: a tunable that does not exist, a non-positive value, and text that is not JSON are refused.
   for (const bad of [
     '{"directorQuiet": 5}',
-    '{"directorQuietTicks": 0}',
+    '{"directorIntervalTicks": 0}',
     "not json",
     "[1]",
   ]) {
@@ -180,5 +190,45 @@ test("PANTHEA_PETITION_BALANCE overrides petition tunables over the authored one
       PANTHEA_PETITION_BALANCE: bad,
     });
     expect(result.ok).toBe(false);
+  }
+});
+
+test("PANTHEA_TEMPERAMENT_ODDS replaces the temperament odds table (a scenario's staged world sees a wrong within a few ticks), and anything invalid is refused", () => {
+  const authored = loadEmbeddedGreekWorldPack({});
+  if (!authored.ok) throw new Error(authored.message);
+  expect(Object.keys(authored.value.rules.temperamentOdds ?? {}).length).toBe(
+    4,
+  );
+  const staged = loadEmbeddedGreekWorldPack({
+    PANTHEA_TEMPERAMENT_ODDS: JSON.stringify({ greedy: { theft: 1000 } }),
+  });
+  if (!staged.ok) throw new Error(staged.message);
+  // Replaced, not merged: the other temperaments have no odds at all.
+  expect(staged.value.rules.temperamentOdds).toEqual({
+    greedy: { theft: 1000 },
+  });
+  // An empty table is a world where no mortal wrongs another, and the other tunables are untouched by it.
+  const none = loadEmbeddedGreekWorldPack({ PANTHEA_TEMPERAMENT_ODDS: "{}" });
+  expect(none.ok && none.value.rules.temperamentOdds).toEqual({});
+  expect(none.ok && none.value.rules.petitionBalance).toEqual(
+    authored.value.rules.petitionBalance,
+  );
+  // Without it, or empty, the authored table stands.
+  const unset = loadEmbeddedGreekWorldPack({ PANTHEA_TEMPERAMENT_ODDS: "" });
+  expect(unset.ok && unset.value.rules.temperamentOdds).toEqual(
+    authored.value.rules.temperamentOdds,
+  );
+  // An unknown temperament or kind, odds out of range, and text that is not JSON are refused.
+  for (const bad of [
+    '{"cunning": {"theft": 5}}',
+    '{"greedy": {"arson": 5}}',
+    '{"greedy": {"theft": 1001}}',
+    '{"greedy": {"theft": -1}}',
+    "not json",
+    "[1]",
+  ]) {
+    expect(
+      loadEmbeddedGreekWorldPack({ PANTHEA_TEMPERAMENT_ODDS: bad }).ok,
+    ).toBe(false);
   }
 });

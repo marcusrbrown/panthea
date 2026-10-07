@@ -425,6 +425,7 @@ test("a crowd of rival acts stays within the section's budget: the newest are of
 });
 
 test("a busy world with rival acts, open contests, and a crowd of prayers still builds every god's prompt within the whole-prompt guard", () => {
+  // The town's own wrongs and the gods' troubles are in: the guard is measured with everything the world does.
   let state = withoutFireSpread(greekState());
   let prng = createPrng(1);
   const log: WorldEvent[] = [];
@@ -439,8 +440,9 @@ test("a busy world with rival acts, open contests, and a crowd of prayers still 
     prng = result.prng;
     log.push(...result.events);
   }
-  // The gods meet at the dock; each of Poseidon's acts and Athena's is real, and one contest is held.
-  for (const god of ["athena", "hera", "poseidon"]) {
+  // The gods meet at the dock, where the fishers are (set here, not left to where the town's own day took them);
+  // each of Poseidon's acts and Athena's is real, and one contest is held.
+  for (const god of ["athena", "hera", "poseidon", ...FISHERS]) {
     const actor = getActor(state, id(god));
     if (actor)
       state = withActor(state, { ...actor, locationId: id("ferry-dock") });
@@ -473,7 +475,9 @@ test("a busy world with rival acts, open contests, and a crowd of prayers still 
     if (chars > worst.chars) Object.assign(worst, { chars, god: profile.id });
   }
   expect(sections).toBeGreaterThan(0);
-  // At about 3.3 characters a token (measured on qwen3-8b-4k) this is under 2.9K tokens of a 4K context
-  // that Ollama truncates silently past about 4,090.
-  expect(worst.chars).toBeLessThanOrEqual(9500);
+  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`, 2026-10-05): 10,046 characters of this busiest prompt
+  // (Hera's, wrongs and troubles in) were 2,870 tokens, 3.50 characters a token, and the lowest ratio seen in any measured prompt was 3.34. At 3.3
+  // a token 10,500 characters is under 3,200 tokens, with some 900 under the 4,090 past which Ollama silently
+  // drops the start of a prompt.
+  expect(worst.chars).toBeLessThanOrEqual(10500);
 });

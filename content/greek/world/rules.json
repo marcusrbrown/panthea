@@ -106,6 +106,7 @@
       "priceCeiling": 100,
       "gatherAmount": 2,
       "consumeAmount": 1,
+      "mealIntervalTicks": 20,
       "value_currency": 1,
       "value_wood": 1,
       "value_food": 3,
@@ -127,6 +128,7 @@
     "memoryBalance": {
       "capacity": 24,
       "salience_building-damaged": 5,
+      "salience_mortal-struck": 5,
       "salience_building-ignited": 8,
       "salience_building-destroyed": 9,
       "salience_building-repaired": 4,
@@ -135,6 +137,8 @@
       "salience_sign": 6,
       "salience_theft": 6,
       "salience_noticed": 5,
+      "salience_patronage": 8,
+      "salience_wrong": 6,
       "salience_practice-ended": 7,
       "harmAffinity": 2,
       "kindnessAffinity": 1,
@@ -144,15 +148,25 @@
       "grudgeLimit": 10
     },
     "petitionBalance": {
-      "answerWindowTicks": 250,
+      "answerWindowTicks": 150,
       "causePrayableTicks": 150,
       "prayerCooldownTicks": 20,
       "blessDivinityCost": 2,
       "blessPlanks": 3,
       "blessResourceAmount": 2,
       "blessResourceCap": 4,
-      "directorQuietTicks": 120,
-      "goalLockTicks": 40
+      "directorIntervalTicks": 120,
+      "seasonTicks": 200,
+      "troubleFloorTicks": 150,
+      "troubleLossCap": 2,
+      "goalLockTicks": 40,
+      "strikeGoodsCap": 2,
+      "defectionAffinity": 1,
+      "wrongCooldownTicks": 30,
+      "wrongNeedMultiplier": 2,
+      "wrongLossCap": 2,
+      "creditDeadlineTicks": 100,
+      "revengeWindowTicks": 300
     },
     "practiceBalance": {
       "negotiationTicks": 200,
@@ -168,6 +182,163 @@
       "contestActTicks": 120,
       "contestLedgerMax": 48,
       "contestStanding": 1
+    },
+    "temperamentOdds": {
+      "greedy": {
+        "theft": 2,
+        "cheating": 1,
+        "unpaid-debt": 150,
+        "broken-agreement": 150,
+        "revenge": 20
+      },
+      "quarrelsome": {
+        "feud": 2,
+        "unpaid-debt": 50,
+        "broken-agreement": 50,
+        "revenge": 40
+      },
+      "proud": {
+        "feud": 1,
+        "unpaid-debt": 30,
+        "broken-agreement": 30,
+        "revenge": 60
+      },
+      "honest": {}
+    },
+    "troubles": {
+      "squall": {
+        "effect": "building",
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "lightning-fire": {
+        "effect": "resource",
+        "resources": ["wood", "food"],
+        "seasons": {
+          "summer": 3
+        }
+      },
+      "roof-leak": {
+        "effect": "resource",
+        "resources": ["food"],
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "damp": {
+        "effect": "resource",
+        "resources": ["cloth", "food"],
+        "seasons": {
+          "winter": 3
+        }
+      },
+      "loom-break": {
+        "effect": "building",
+        "seasons": {
+          "winter": 3
+        },
+        "buildings": ["loom-house"]
+      },
+      "tool-flaw": {
+        "effect": "resource",
+        "resources": ["tools", "planks"],
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "vanished-goods": {
+        "effect": "resource",
+        "resources": ["fish", "olives", "wine", "food"],
+        "seasons": {
+          "spring": 3,
+          "summer": 3
+        }
+      },
+      "crossing-loss": {
+        "effect": "resource",
+        "resources": ["fish", "wool", "ore", "olives"],
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "forge-flare": {
+        "effect": "building",
+        "seasons": {
+          "summer": 3
+        },
+        "buildings": ["the-forge"]
+      },
+      "cracked-tools": {
+        "effect": "resource",
+        "resources": ["tools", "ore"],
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "harbour-surge": {
+        "effect": "building",
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        },
+        "buildings": ["fish-landing"]
+      },
+      "quake": {
+        "effect": "building",
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "hoard-swallowed": {
+        "effect": "resource",
+        "resources": ["currency"],
+        "seasons": {
+          "autumn": 3,
+          "winter": 3
+        }
+      },
+      "dig-collapse": {
+        "effect": "resource",
+        "resources": ["ore"],
+        "seasons": {
+          "spring": 3,
+          "autumn": 3
+        }
+      },
+      "ore-seam-lost": {
+        "effect": "resource",
+        "resources": ["ore", "tools"],
+        "seasons": {
+          "winter": 3
+        }
+      }
+    },
+    "troubleKinds": {
+      "fire": "hephaestus",
+      "spoilage": "hera",
+      "theft": "hermes",
+      "squall": "zeus",
+      "lightning-fire": "zeus",
+      "roof-leak": "hera",
+      "damp": "hera",
+      "loom-break": "athena",
+      "tool-flaw": "athena",
+      "vanished-goods": "hermes",
+      "crossing-loss": "hermes",
+      "forge-flare": "hephaestus",
+      "cracked-tools": "hephaestus",
+      "harbour-surge": "poseidon",
+      "quake": "poseidon",
+      "hoard-swallowed": "hades",
+      "dig-collapse": "hades",
+      "ore-seam-lost": "hades"
     },
     "practiceStakes": {
       "wolf": {

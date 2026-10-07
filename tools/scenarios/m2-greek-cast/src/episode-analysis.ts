@@ -6,6 +6,7 @@
 
 import { parseEvent, type WorldEvent } from "@panthea/contracts";
 import type { StoredEvent } from "./checks";
+import { foodChecks } from "./gate-analysis";
 import {
   committedInOrder,
   type RealInput,
@@ -22,6 +23,7 @@ export const CONTEXT_ACTIONS: readonly string[] = [
   "travel",
   "report",
   "bless",
+  "refuse",
   "practice",
 ];
 
@@ -42,10 +44,10 @@ export type CheckName =
   | "repetition"
   | "minimum activity"
   | "influence"
-  | "goal set"
-  | "goal ended"
   | "petition heard"
-  | "petition answered";
+  | "petition answered"
+  | "food failure lines"
+  | "food prayer share";
 
 export interface EpisodeCheck {
   readonly name: CheckName;
@@ -65,7 +67,7 @@ export interface GodEpisode {
     | undefined;
   /** Caused told beliefs and relationship changes. */
   readonly influence: number;
-  /** Goals the god set, and goals it ended (by any outcome). */
+  /** Goals the god set, and goals it ended (by any outcome): reported, no longer required (R19). */
   readonly goalsSet: number;
   readonly goalsEnded: number;
   /** Ticks each ended goal lasted, from its set to its end. */
@@ -80,7 +82,9 @@ export interface GodEpisode {
 
 export interface EpisodeAnalysis {
   readonly gods: readonly GodEpisode[];
-  /** Every check of every god held. */
+  /** The checks on the episode as a whole (food, SC1). */
+  readonly world: readonly EpisodeCheck[];
+  /** Every check of every god, and of the world, held. */
   readonly ok: boolean;
 }
 
@@ -98,6 +102,7 @@ export function primaryTarget(proposal: Record<string, unknown>): string {
         ? proposal.linkedEventId
         : "legend";
     case "bless":
+    case "refuse":
       return String(proposal.petition);
     case "practice":
       // A demand is told apart by its cause, an offer by its prayer, an answer by its thread: two moves on one thread are two choices.
@@ -258,6 +263,13 @@ function influenceOf(
   return { count: kinds.length, kinds };
 }
 
+/** Whether the god's profile gives it a way to answer a prayer by itself; an unknown profile is held to it. */
+const canAnswer = (identity: GodIdentity | undefined): boolean =>
+  identity === undefined ||
+  identity.abilities.some(
+    (ability) => ability.action === "bless" || ability.action === "strike",
+  );
+
 function analyzeGod(
   god: string,
   input: RealInput,
@@ -278,7 +290,6 @@ function analyzeGod(
   const goalsEnded = input.events.filter(
     (e) => e.kind === "goal-ended" && e.entityId === god,
   );
-  const outcomes = [...new Set(goalsEnded.map((e) => String(e.outcome)))];
   const setTicks = new Map(goalsSet.map((e) => [e.id, Number(e.tick)]));
   const goalLifetimes = goalsEnded.flatMap((e) => {
     const setAt = setTicks.get(String(e.goalEventId));
@@ -333,19 +344,6 @@ function analyzeGod(
             : "no told belief or relationship change traces to this god's proposals",
       },
       {
-        name: "goal set",
-        ok: goalsSet.length > 0,
-        detail: `${goalsSet.length} goals set (at least 1)`,
-      },
-      {
-        name: "goal ended",
-        ok: goalsEnded.length > 0,
-        detail:
-          goalsEnded.length > 0
-            ? `${goalsEnded.length} goals ended (${outcomes.join(", ")}); at least 1, any outcome`
-            : "no goal ended (at least 1, any outcome)",
-      },
-      {
         name: "petition heard",
         ok: heard.length > 0,
         detail:
@@ -355,11 +353,14 @@ function analyzeGod(
       },
       {
         name: "petition answered",
-        ok: answered.length > 0,
+        // A god with neither a bless nor a strike has no way to answer a prayer freely: it is held to hearing them.
+        ok: answered.length > 0 || !canAnswer(identity),
         detail:
           answered.length > 0
             ? `${answered.length} of ${heard.length} answered (at least 1)`
-            : `${heard.length} heard, none answered (at least 1)`,
+            : canAnswer(identity)
+              ? `${heard.length} heard, none answered (at least 1)`
+              : `${heard.length} heard; this god has no bless or strike to answer with, so none is required`,
       },
     ],
   };
@@ -373,8 +374,18 @@ export function analyzeEpisode(
   const analyzed = gods.map((god) =>
     analyzeGod(god, input, identities.get(god)),
   );
+  const world = foodChecks(input.events).map(
+    ({ name, ok, detail }): EpisodeCheck => ({
+      name: name as CheckName,
+      ok,
+      detail,
+    }),
+  );
   return {
     gods: analyzed,
-    ok: analyzed.every((g) => g.checks.every((c) => c.ok)),
+    world,
+    ok:
+      analyzed.every((g) => g.checks.every((c) => c.ok)) &&
+      world.every((c) => c.ok),
   };
 }

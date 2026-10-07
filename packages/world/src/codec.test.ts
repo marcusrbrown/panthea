@@ -531,3 +531,238 @@ test("decode holds a stored actor's form and withheld capabilities to their shap
     expect(() => decode(copy)).toThrow();
   }
 });
+
+function patronPack(): ContentPack {
+  const base = walkPack();
+  return {
+    ...base,
+    inhabitants: [
+      { id: "zeus", name: "Zeus", locationId: "grove", deity: true },
+      { id: "hera", name: "Hera", locationId: "grove", deity: true },
+      {
+        id: "farmer",
+        name: "Farmer",
+        locationId: "grove",
+        devotion: { god: "hera", affinity: 3 },
+      },
+    ],
+    rules: { ...minimalRules(), troubleKinds: { fire: "zeus" } },
+  };
+}
+
+test("a mortal's patron and the trouble-kind table round-trip through the codec, and decode holds both to the world's actors", () => {
+  const state = createInitialWorldState(patronPack());
+  const encoded = JSON.parse(JSON.stringify(encode(state)));
+  expect(encoded.patrons).toEqual([["farmer", "hera"]]);
+  const decoded = decode(encoded);
+  expect(decoded).toEqual(state);
+  expect(decoded.patrons.get(toEntityId("farmer"))).toBe(toEntityId("hera"));
+  expect(decoded.rules.troubleKinds).toEqual({ fire: "zeus" });
+
+  const refused = (patch: Record<string, unknown>) =>
+    expect(() => decode({ ...encoded, ...patch })).toThrow();
+  // A patron is a god; a god has none; both must be actors; one patron each.
+  refused({ patrons: [["farmer", "farmer"]] });
+  refused({ patrons: [["zeus", "hera"]] });
+  refused({ patrons: [["nobody", "hera"]] });
+  refused({ patrons: [["farmer", "nike"]] });
+  refused({
+    patrons: [
+      ["farmer", "hera"],
+      ["farmer", "zeus"],
+    ],
+  });
+  refused({ patrons: "hera" });
+  // The table's god must be a god of this world, and its kinds are the known ones.
+  refused({ rules: { ...encoded.rules, troubleKinds: { fire: "farmer" } } });
+  refused({ rules: { ...encoded.rules, troubleKinds: { fire: "nike" } } });
+  refused({ rules: { ...encoded.rules, troubleKinds: { blight: "zeus" } } });
+  // Control: the same stored world, untouched, decodes.
+  expect(() => decode(encoded)).not.toThrow();
+});
+
+test("wrongs, credits, and a mortal's temperament round-trip through the codec, and decode holds them to the world's actors and kinds", () => {
+  const pack = patronPack();
+  const state = createInitialWorldState({
+    ...pack,
+    inhabitants: pack.inhabitants.map((inhabitant) =>
+      inhabitant.id === "farmer"
+        ? { ...inhabitant, temperament: "greedy" as const }
+        : inhabitant,
+    ),
+    rules: {
+      ...pack.rules,
+      temperamentOdds: { greedy: { theft: 2, revenge: 20 } },
+    },
+  });
+  const withRecords = {
+    ...state,
+    wrongs: new Map([
+      [
+        "evt-1-1" as EventId,
+        {
+          id: "evt-1-1" as EventId,
+          wrongdoer: toEntityId("farmer"),
+          victim: toEntityId("zeus"),
+          kind: "theft" as const,
+          tick: 1,
+          avenged: "evt-2-2" as EventId,
+        },
+      ],
+    ]),
+    credits: new Map([
+      [
+        "evt-3-3" as EventId,
+        {
+          id: "evt-3-3" as EventId,
+          seller: toEntityId("zeus"),
+          buyer: toEntityId("farmer"),
+          goods: { resource: "food", amount: 1 },
+          price: { resource: "currency", amount: 3 },
+          deferred: "delivery" as const,
+          deadline: 60,
+          status: "open" as const,
+        },
+      ],
+    ]),
+  };
+  const encoded = JSON.parse(JSON.stringify(encode(withRecords)));
+  expect(decode(encoded)).toEqual(withRecords);
+  expect(decode(encoded).actors.get(toEntityId("farmer"))?.temperament).toBe(
+    "greedy",
+  );
+  const refused = (patch: Record<string, unknown>) =>
+    expect(() => decode({ ...encoded, ...patch })).toThrow();
+  const wrong = encoded.wrongs[0][1];
+  const credit = encoded.credits[0][1];
+  refused({ wrongs: [["evt-1-1", { ...wrong, wrongdoer: "nobody" }]] });
+  refused({ wrongs: [["evt-1-1", { ...wrong, kind: "arson" }]] });
+  refused({ wrongs: [["evt-9-9", wrong]] });
+  refused({ wrongs: [encoded.wrongs[0], encoded.wrongs[0]] });
+  refused({ wrongs: "none" });
+  refused({ credits: [["evt-3-3", { ...credit, buyer: "nobody" }]] });
+  refused({ credits: [["evt-3-3", { ...credit, deferred: "never" }]] });
+  refused({ credits: [["evt-3-3", { ...credit, status: "lost" }]] });
+  refused({
+    credits: [
+      ["evt-3-3", { ...credit, goods: { resource: "food", amount: 0 } }],
+    ],
+  });
+  refused({ credits: [encoded.credits[0], encoded.credits[0]] });
+  refused({
+    rules: { ...encoded.rules, temperamentOdds: { greedy: { arson: 1 } } },
+  });
+  refused({
+    rules: { ...encoded.rules, temperamentOdds: { greedy: { theft: 1001 } } },
+  });
+  const actors = JSON.parse(JSON.stringify(encoded.actors));
+  actors.find(([id]: [string]) => id === "farmer")[1].temperament = "wicked";
+  refused({ actors });
+});
+
+test("the trouble table, each god's last trouble, and the director's own clock round-trip through the codec, and decode holds them to the world's gods and kinds", () => {
+  const base = patronPack();
+  const state = createInitialWorldState({
+    ...base,
+    rules: {
+      ...base.rules,
+      troubles: {
+        squall: {
+          effect: "building",
+          buildings: ["shop"],
+          seasons: { autumn: 3, winter: 3 },
+        },
+        leak: {
+          effect: "resource",
+          resources: ["food"],
+          seasons: { winter: 1000 },
+        },
+      },
+      troubleKinds: { fire: "zeus", squall: "zeus", leak: "hera" },
+    },
+  });
+  const withClock = {
+    ...state,
+    director: { lastFireTick: 17 },
+    lastTrouble: new Map([
+      [toEntityId("hera"), 40],
+      [toEntityId("zeus"), 12],
+    ]),
+  };
+  const encoded = JSON.parse(JSON.stringify(encode(withClock)));
+  expect(encoded.director).toEqual({ lastFireTick: 17 });
+  expect(encoded.lastTrouble).toEqual([
+    ["hera", 40],
+    ["zeus", 12],
+  ]);
+  const decoded = decode(encoded);
+  expect(decoded).toEqual(withClock);
+  expect(decoded.director.lastFireTick).toBe(17);
+  expect(decoded.lastTrouble.get(toEntityId("hera"))).toBe(40);
+  expect(decoded.rules.troubles?.squall?.seasons).toEqual({
+    autumn: 3,
+    winter: 3,
+  });
+
+  const refused = (patch: Record<string, unknown>) =>
+    expect(() => decode({ ...encoded, ...patch })).toThrow();
+  const rules = encoded.rules;
+  // A last trouble is a god's, once, at a whole tick.
+  refused({ lastTrouble: [["farmer", 4]] });
+  refused({ lastTrouble: [["nobody", 4]] });
+  refused({ lastTrouble: [["zeus", -1]] });
+  refused({ lastTrouble: [["zeus", 1.5]] });
+  refused({
+    lastTrouble: [
+      ["zeus", 4],
+      ["zeus", 5],
+    ],
+  });
+  refused({ lastTrouble: "zeus" });
+  refused({ lastTrouble: undefined });
+  // The director's clock is a whole tick.
+  refused({ director: { lastFireTick: -1 } });
+  refused({ director: { lastFireTick: 1.5 } });
+  refused({ director: { lastConsequentialTick: 3 } });
+  refused({ director: undefined });
+  // A trouble belongs to a god in this world, and its table is the pack's shape.
+  refused({
+    rules: {
+      ...rules,
+      troubleKinds: { fire: "zeus", squall: "zeus", leak: "farmer" },
+    },
+  });
+  refused({
+    rules: { ...rules, troubleKinds: { fire: "zeus", squall: "zeus" } },
+  });
+  refused({
+    rules: {
+      ...rules,
+      troubleKinds: {
+        fire: "zeus",
+        squall: "zeus",
+        leak: "hera",
+        plague: "hera",
+      },
+    },
+  });
+  refused({
+    rules: {
+      ...rules,
+      troubles: {
+        ...rules.troubles,
+        leak: { ...rules.troubles.leak, effect: "plague" },
+      },
+    },
+  });
+  refused({
+    rules: {
+      ...rules,
+      troubles: {
+        ...rules.troubles,
+        leak: { ...rules.troubles.leak, seasons: { winter: 1001 } },
+      },
+    },
+  });
+  refused({ rules: { ...rules, troubles: { fire: rules.troubles.leak } } });
+});

@@ -111,6 +111,21 @@ export interface BuildingDamagedEvent extends EventEnvelope {
 }
 
 /**
+ * A deity's strike fell on a mortal: the world took `amount` of the mortal's `resource`, its most valuable carried
+ * good up to the strike cap, and credited the harm to `actor`. A mortal carrying nothing is still struck, with no
+ * `resource` and an `amount` of 0. The loss is taken, never given to anyone.
+ */
+export interface MortalStruckEvent extends EventEnvelope {
+  readonly kind: "mortal-struck";
+  /** The mortal struck. */
+  readonly entityId: EntityId;
+  /** The deity that struck. */
+  readonly actor: EntityId;
+  readonly resource?: string;
+  readonly amount: number;
+}
+
+/**
  * What started a fire, stored on the ignition event itself and never worked
  * out later. A strike is a root: the proposal that committed it is its cause.
  * A spread names the source building's own ignition event, and carries the
@@ -297,7 +312,7 @@ export interface StockSpoiledEvent extends EventEnvelope {
   readonly cause: "director";
 }
 
-/** What a petition asks: help with a need, or punishment of an offender who owns buildings. */
+/** What a petition asks: help with a need, or punishment of an offender (and the buildings it owns, when it owns any). */
 export type PetitionRequest =
   | {
       readonly kind: "help";
@@ -313,7 +328,7 @@ export type PetitionRequest =
   | {
       readonly kind: "punish";
       readonly offender: EntityId;
-      /** The offender's buildings when the prayer was made; never empty. */
+      /** The offender's buildings when the prayer was made; empty when it owns none, or is a god. */
       readonly buildings: readonly EntityId[];
     };
 
@@ -367,6 +382,128 @@ export interface PetitionLapsedEvent extends EventEnvelope {
   readonly entityId: EntityId;
   readonly god: EntityId;
   readonly petitionId: EventId;
+}
+
+/** `entityId` (a god) refused the petition `petitionId` of `petitioner`: an answer that closes it, and costs the god the petitioner's affinity as a lapse does. Private to the two. */
+export interface PetitionRefusedEvent extends EventEnvelope {
+  readonly kind: "petition-refused";
+  readonly entityId: EntityId;
+  readonly petitioner: EntityId;
+  readonly petitionId: EventId;
+}
+
+/**
+ * `entityId` (a mortal) took `to` as its patron in place of `from`: its affinity for `from` fell below the
+ * defection threshold and `to` was the last other god to answer it. `unanswered` are the prayers to `from` that
+ * lapsed or were refused, newest first; `answered` is the prayer `to` answered. Private to the two gods, who
+ * each remember it (`patronage` memory).
+ */
+export interface PatronChangedEvent extends EventEnvelope {
+  readonly kind: "patron-changed";
+  readonly entityId: EntityId;
+  readonly from: EntityId;
+  readonly to: EntityId;
+  readonly answered: EventId;
+  readonly unanswered: readonly EventId[];
+}
+
+/** How a mortal is disposed to wrong others: authored on each inhabitant, and what sets its odds of each kind of wrong. */
+export const TEMPERAMENTS = [
+  "greedy",
+  "quarrelsome",
+  "proud",
+  "honest",
+] as const;
+export type Temperament = (typeof TEMPERAMENTS)[number];
+
+/** The ways one mortal wrongs another. */
+export const WRONG_KINDS = [
+  "theft",
+  "cheating",
+  "feud",
+  "unpaid-debt",
+  "broken-agreement",
+] as const;
+export type WrongKind = (typeof WRONG_KINDS)[number];
+
+/**
+ * `entityId` wronged `victim`, who knows it and who did it. `resource` and `amount` are the loss: taken from the
+ * victim and kept by the wrongdoer (theft, cheating), spoiled (feud), or owed and never paid or delivered
+ * (unpaid debt, broken agreement, which name the `credit` that failed). A revenge is a feud that names the wrong
+ * it answers (`revenge`). `temperament` and `needy` record what set the odds.
+ */
+export interface WrongEvent extends EventEnvelope {
+  readonly kind: "wrong";
+  readonly entityId: EntityId;
+  readonly victim: EntityId;
+  readonly wrong: WrongKind;
+  readonly resource: string;
+  readonly amount: number;
+  readonly temperament: Temperament;
+  readonly needy: boolean;
+  readonly revenge?: EventId;
+  readonly credit?: EventId;
+}
+
+/** The seasons of the year, in order: the world turns through them on a fixed number of ticks (`seasonTicks`), starting in spring at tick 0. */
+export const SEASONS = ["spring", "summer", "autumn", "winter"] as const;
+export type Season = (typeof SEASONS)[number];
+
+/**
+ * The world turned into `season` from `previous`, on a boundary tick. The season itself is derived from the tick,
+ * so this event only records the turn: what the next draw's odds are is read from the tick, never from it.
+ */
+export interface SeasonTurnedEvent extends EventEnvelope {
+  readonly kind: "season-turned";
+  readonly season: Season;
+  readonly previous: Season;
+}
+
+/** What a domain trouble took: some of a good the mortal carried, or the condition of a building it owns. */
+export type TroubleLoss =
+  | {
+      readonly kind: "resource";
+      readonly resource: string;
+      readonly amount: number;
+    }
+  | { readonly kind: "building"; readonly building: EntityId };
+
+/**
+ * A trouble in a god's domain befell `entityId` (a mortal): the trouble named `trouble` in the pack's trouble table,
+ * whose god is `god`, took `loss`. No mortal did it and no god acted: it is the world's, drawn on a season's odds
+ * (`source` "season") or fired to keep the god's guaranteed floor (`source` "floor"). The mortal can pray about it,
+ * and the prayer goes to `god`.
+ */
+export interface TroubleEvent extends EventEnvelope {
+  readonly kind: "trouble";
+  readonly entityId: EntityId;
+  readonly trouble: string;
+  readonly god: EntityId;
+  readonly season: Season;
+  readonly source: "season" | "floor";
+  readonly loss: TroubleLoss;
+}
+
+/**
+ * `entityId` (the seller) and `buyer` struck a credit trade: one side is handed over now and the other is owed by
+ * `deadline` (a world tick, inclusive). A deferred `payment` means the goods went to the buyer now; a deferred
+ * `delivery` means the buyer paid now. The world judges it at the deadline.
+ */
+export interface CreditExtendedEvent extends EventEnvelope {
+  readonly kind: "credit-extended";
+  readonly entityId: EntityId;
+  readonly buyer: EntityId;
+  readonly goods: ResourceAmount;
+  readonly price: ResourceAmount;
+  readonly deferred: "payment" | "delivery";
+  readonly deadline: number;
+}
+
+/** `entityId` kept a credit trade: it paid, or delivered, what it owed. */
+export interface CreditSettledEvent extends EventEnvelope {
+  readonly kind: "credit-settled";
+  readonly entityId: EntityId;
+  readonly credit: EventId;
 }
 
 /** Why a god's goal change was refused. */
@@ -667,6 +804,12 @@ export const UNPLACED_EVENT_KINDS = [
   "loss-noticed",
   "petition-answered",
   "petition-lapsed",
+  "petition-refused",
+  "patron-changed",
+  "credit-extended",
+  "credit-settled",
+  "season-turned",
+  "trouble",
   "goal-change-refused",
   "practice-opened",
   "practice-moved",
@@ -730,13 +873,13 @@ export interface ToldMemoryRecordedEvent extends MemoryRecordedBase {
 
 /**
  * A mortal remembers a god's answer, or its silence: the sign of an answered
- * petition (a kindness by the god) or a lapse (harm by its neglect). The
- * consequence is what moves the mortal's affinity toward the god.
+ * petition (a kindness by the god), a lapse (harm by its neglect), or a refusal
+ * (the same harm). The consequence is what moves the mortal's affinity toward the god.
  */
 export interface SignMemoryRecordedEvent extends MemoryRecordedBase {
   readonly memoryKind: "sign";
   readonly god: EntityId;
-  readonly outcome: "answered" | "lapsed";
+  readonly outcome: "answered" | "lapsed" | "refused";
   readonly petitionId: EventId;
   readonly consequence: Consequence;
 }
@@ -752,11 +895,25 @@ export interface NoticedMemoryRecordedEvent extends MemoryRecordedBase {
   readonly causeEventId: EventId;
 }
 
+/**
+ * A god remembers that a mortal changed patron, as the god it left or the god it came to: the mortal, its home,
+ * and the other god. `sourceEventId` is the `patron-changed` event, which is what a contest over the defection cites.
+ * `subjects` are the mortal, its home, and the other god.
+ */
+export interface PatronageMemoryRecordedEvent extends MemoryRecordedBase {
+  readonly memoryKind: "patronage";
+  readonly mortal: EntityId;
+  readonly home: EntityId;
+  readonly from: EntityId;
+  readonly to: EntityId;
+}
+
 export type MemoryRecordedEvent =
   | WitnessedMemoryRecordedEvent
   | ToldMemoryRecordedEvent
   | SignMemoryRecordedEvent
-  | NoticedMemoryRecordedEvent;
+  | NoticedMemoryRecordedEvent
+  | PatronageMemoryRecordedEvent;
 
 /**
  * A relationship changed because of one memory: `entityId` now feels
@@ -782,6 +939,7 @@ export type WorldEvent =
   | ResourceTradedEvent
   | ResourceConsumedEvent
   | BuildingDamagedEvent
+  | MortalStruckEvent
   | BuildingIgnitedEvent
   | BuildingBurnTickedEvent
   | BuildingDestroyedEvent
@@ -806,6 +964,13 @@ export type WorldEvent =
   | BlessingGrantedEvent
   | PetitionAnsweredEvent
   | PetitionLapsedEvent
+  | PetitionRefusedEvent
+  | PatronChangedEvent
+  | WrongEvent
+  | CreditExtendedEvent
+  | CreditSettledEvent
+  | SeasonTurnedEvent
+  | TroubleEvent
   | GoalChangeRefusedEvent
   | PracticeOpenedEvent
   | PracticeMovedEvent
@@ -825,6 +990,7 @@ const EVENT_KIND_SET: Record<WorldEvent["kind"], true> = {
   "resource-traded": true,
   "resource-consumed": true,
   "building-damaged": true,
+  "mortal-struck": true,
   "building-ignited": true,
   "building-burn-ticked": true,
   "building-destroyed": true,
@@ -849,6 +1015,13 @@ const EVENT_KIND_SET: Record<WorldEvent["kind"], true> = {
   "blessing-granted": true,
   "petition-answered": true,
   "petition-lapsed": true,
+  "petition-refused": true,
+  "patron-changed": true,
+  wrong: true,
+  "credit-extended": true,
+  "credit-settled": true,
+  "season-turned": true,
+  trouble: true,
   "goal-change-refused": true,
   "practice-opened": true,
   "practice-moved": true,
@@ -926,6 +1099,24 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
       case "petition-answered":
       case "petition-lapsed":
         return [event.entityId, event.god];
+      case "petition-refused":
+        return [event.entityId, event.petitioner];
+      case "patron-changed":
+        return [event.entityId, event.from, event.to];
+      case "wrong":
+        return [event.entityId, event.victim];
+      case "credit-extended":
+        return [event.entityId, event.buyer];
+      case "trouble":
+        return [
+          event.entityId,
+          event.god,
+          ...(event.loss.kind === "building" ? [event.loss.building] : []),
+        ];
+      case "season-turned":
+        return [];
+      case "mortal-struck":
+        return [event.entityId, event.actor];
       case "practice-opened":
         return [event.entityId, event.counterparty];
       case "practice-ended":
@@ -934,6 +1125,7 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
       case "contest-opened":
       case "contest-closed":
         return [event.entityId, event.rival, event.place];
+      case "credit-settled":
       case "practice-moved":
       case "practice-refused":
       case "motif-applied":
@@ -993,8 +1185,15 @@ export function eventCause(event: WorldEvent): EventId | undefined {
       return event.causeEventId;
     case "petition-answered":
     case "petition-lapsed":
+    case "petition-refused":
     case "blessing-granted":
       return event.petitionId;
+    case "patron-changed":
+      return event.answered;
+    case "wrong":
+      return event.revenge ?? event.credit;
+    case "credit-settled":
+      return event.credit;
     case "practice-opened":
       return event.causes[0];
     case "practice-moved":
@@ -1183,12 +1382,6 @@ export function parsePetitionRequest(
       parseEntityId,
     );
     if (!buildings.ok) return buildings;
-    if (buildings.value.length === 0) {
-      return fail(
-        `${path}.buildings`,
-        "a punish request needs an offender who owns a building",
-      );
-    }
     return ok({
       kind: "punish",
       offender: offender.value,
@@ -1312,6 +1505,7 @@ function parseMemoryRecorded(
       const outcome = parseEnum(input.outcome, "outcome", [
         "answered",
         "lapsed",
+        "refused",
       ] as const);
       if (!outcome.ok) return outcome;
       const petitionId = parseEventId(input.petitionId, "petitionId");
@@ -1326,6 +1520,27 @@ function parseMemoryRecorded(
         outcome: outcome.value,
         petitionId: petitionId.value,
         consequence: consequence.value,
+      });
+    }
+    case "patronage": {
+      const mortal = parseEntityId(input.mortal, "mortal");
+      if (!mortal.ok) return mortal;
+      const home = parseEntityId(input.home, "home");
+      if (!home.ok) return home;
+      const from = parseEntityId(input.from, "from");
+      if (!from.ok) return from;
+      const to = parseEntityId(input.to, "to");
+      if (!to.ok) return to;
+      if (consequence.value !== undefined) {
+        return fail("consequence", "a change of patron blames no one");
+      }
+      return ok({
+        ...base,
+        memoryKind: "patronage",
+        mortal: mortal.value,
+        home: home.value,
+        from: from.value,
+        to: to.value,
       });
     }
     default:
@@ -1533,6 +1748,33 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
         entityId: entityId.value,
         amount: amount.value,
         actor: actor.value,
+      });
+    }
+    case "mortal-struck": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const actor = parseEntityId(input.actor, "actor");
+      if (!actor.ok) return actor;
+      const amount = parseNonNegativeInteger(input.amount, "amount");
+      if (!amount.ok) return amount;
+      const resource =
+        input.resource === undefined
+          ? ok<string | undefined>(undefined)
+          : parseString(input.resource, "resource");
+      if (!resource.ok) return resource;
+      if ((resource.value === undefined) !== (amount.value === 0)) {
+        return fail(
+          "resource",
+          "a strike took a resource exactly when it took an amount",
+        );
+      }
+      return ok({
+        ...envelope,
+        kind: "mortal-struck",
+        entityId: entityId.value,
+        actor: actor.value,
+        amount: amount.value,
+        ...(resource.value === undefined ? {} : { resource: resource.value }),
       });
     }
     case "building-ignited": {
@@ -1986,6 +2228,208 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
         kind: "petition-lapsed",
         entityId: entityId.value,
         god: god.value,
+        petitionId: petitionId.value,
+      });
+    }
+    case "wrong": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const victim = parseEntityId(input.victim, "victim");
+      if (!victim.ok) return victim;
+      if (victim.value === entityId.value) {
+        return fail("victim", "a mortal does not wrong itself");
+      }
+      const wrong = parseEnum(input.wrong, "wrong", WRONG_KINDS);
+      if (!wrong.ok) return wrong;
+      const resource = parseString(input.resource, "resource");
+      if (!resource.ok) return resource;
+      const amount = parsePositiveInteger(input.amount, "amount");
+      if (!amount.ok) return amount;
+      const temperament = parseEnum(
+        input.temperament,
+        "temperament",
+        TEMPERAMENTS,
+      );
+      if (!temperament.ok) return temperament;
+      if (typeof input.needy !== "boolean") {
+        return fail("needy", "expected true or false");
+      }
+      const revenge = parseOptionalEventId(input.revenge, "revenge");
+      if (!revenge.ok) return revenge;
+      const credit = parseOptionalEventId(input.credit, "credit");
+      if (!credit.ok) return credit;
+      if (revenge.value !== undefined && wrong.value !== "feud") {
+        return fail("revenge", "only a feud is a revenge");
+      }
+      const owed =
+        wrong.value === "unpaid-debt" || wrong.value === "broken-agreement";
+      if (owed !== (credit.value !== undefined)) {
+        return fail(
+          "credit",
+          "a debt or an agreement names the credit that failed, and no other wrong does",
+        );
+      }
+      return ok({
+        ...envelope,
+        kind: "wrong",
+        entityId: entityId.value,
+        victim: victim.value,
+        wrong: wrong.value,
+        resource: resource.value,
+        amount: amount.value,
+        temperament: temperament.value,
+        needy: input.needy,
+        ...(revenge.value === undefined ? {} : { revenge: revenge.value }),
+        ...(credit.value === undefined ? {} : { credit: credit.value }),
+      });
+    }
+    case "credit-extended": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const buyer = parseEntityId(input.buyer, "buyer");
+      if (!buyer.ok) return buyer;
+      if (buyer.value === entityId.value) {
+        return fail("buyer", "a mortal does not trade with itself");
+      }
+      const goods = parseResourceAmount(input.goods, "goods");
+      if (!goods.ok) return goods;
+      const price = parseResourceAmount(input.price, "price");
+      if (!price.ok) return price;
+      if (goods.value.amount < 1 || price.value.amount < 1) {
+        return fail("goods", "a credit trade moves a positive amount each way");
+      }
+      const deferred = parseEnum(input.deferred, "deferred", [
+        "payment",
+        "delivery",
+      ] as const);
+      if (!deferred.ok) return deferred;
+      const deadline = parseNonNegativeInteger(input.deadline, "deadline");
+      if (!deadline.ok) return deadline;
+      return ok({
+        ...envelope,
+        kind: "credit-extended",
+        entityId: entityId.value,
+        buyer: buyer.value,
+        goods: goods.value,
+        price: price.value,
+        deferred: deferred.value,
+        deadline: deadline.value,
+      });
+    }
+    case "season-turned": {
+      const season = parseEnum(input.season, "season", SEASONS);
+      if (!season.ok) return season;
+      const previous = parseEnum(input.previous, "previous", SEASONS);
+      if (!previous.ok) return previous;
+      if (
+        SEASONS.indexOf(season.value) !==
+        (SEASONS.indexOf(previous.value) + 1) % SEASONS.length
+      ) {
+        return fail("season", "a season follows the one before it");
+      }
+      return ok({
+        ...envelope,
+        kind: "season-turned",
+        season: season.value,
+        previous: previous.value,
+      });
+    }
+    case "trouble": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const trouble = parseString(input.trouble, "trouble");
+      if (!trouble.ok) return trouble;
+      const god = parseEntityId(input.god, "god");
+      if (!god.ok) return god;
+      const season = parseEnum(input.season, "season", SEASONS);
+      if (!season.ok) return season;
+      const source = parseEnum(input.source, "source", [
+        "season",
+        "floor",
+      ] as const);
+      if (!source.ok) return source;
+      if (!isRecord(input.loss)) return fail("loss", "expected what it took");
+      let loss: TroubleLoss;
+      if (input.loss.kind === "resource") {
+        const resource = parseString(input.loss.resource, "loss.resource");
+        if (!resource.ok) return resource;
+        const amount = parsePositiveInteger(input.loss.amount, "loss.amount");
+        if (!amount.ok) return amount;
+        loss = {
+          kind: "resource",
+          resource: resource.value,
+          amount: amount.value,
+        };
+      } else if (input.loss.kind === "building") {
+        const building = parseEntityId(input.loss.building, "loss.building");
+        if (!building.ok) return building;
+        loss = { kind: "building", building: building.value };
+      } else {
+        return fail("loss.kind", "expected a resource or a building");
+      }
+      return ok({
+        ...envelope,
+        kind: "trouble",
+        entityId: entityId.value,
+        trouble: trouble.value,
+        god: god.value,
+        season: season.value,
+        source: source.value,
+        loss,
+      });
+    }
+    case "credit-settled": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const credit = parseEventId(input.credit, "credit");
+      if (!credit.ok) return credit;
+      return ok({
+        ...envelope,
+        kind: "credit-settled",
+        entityId: entityId.value,
+        credit: credit.value,
+      });
+    }
+    case "patron-changed": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const from = parseEntityId(input.from, "from");
+      if (!from.ok) return from;
+      const to = parseEntityId(input.to, "to");
+      if (!to.ok) return to;
+      if (from.value === to.value) {
+        return fail("to", "a mortal changes to another god");
+      }
+      const answered = parseEventId(input.answered, "answered");
+      if (!answered.ok) return answered;
+      const unanswered = parseArray(
+        input.unanswered,
+        "unanswered",
+        parseEventId,
+      );
+      if (!unanswered.ok) return unanswered;
+      return ok({
+        ...envelope,
+        kind: "patron-changed",
+        entityId: entityId.value,
+        from: from.value,
+        to: to.value,
+        answered: answered.value,
+        unanswered: unanswered.value,
+      });
+    }
+    case "petition-refused": {
+      const entityId = parseEntityId(input.entityId, "entityId");
+      if (!entityId.ok) return entityId;
+      const petitioner = parseEntityId(input.petitioner, "petitioner");
+      if (!petitioner.ok) return petitioner;
+      const petitionId = parseEventId(input.petitionId, "petitionId");
+      if (!petitionId.ok) return petitionId;
+      return ok({
+        ...envelope,
+        kind: "petition-refused",
+        entityId: entityId.value,
+        petitioner: petitioner.value,
         petitionId: petitionId.value,
       });
     }

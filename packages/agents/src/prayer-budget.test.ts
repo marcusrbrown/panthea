@@ -326,6 +326,18 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
     prng = result.prng;
     log.push(...result.events);
   }
+  // Mortals go short rarely now, so the routines alone no longer crowd a god's prayers: the day ends with a crowd of
+  // prayers to Zeus, staged as the world would have committed them.
+  const crowd = new Run();
+  crowd.state = state;
+  const petitioners = [...state.actors.values()]
+    .filter((actor) => !actor.isDeity && actor.drives)
+    .map((actor) => String(actor.id));
+  for (let i = 0; i < 30; i += 1) {
+    crowd.prays(petitioners[i % petitioners.length] as string);
+  }
+  state = crowd.state;
+  log.push(...crowd.events);
   const worst = { chars: 0, god: "" };
   let crowded = 0;
   for (const profile of allGodProfiles) {
@@ -356,8 +368,8 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
   }
   // The world kept prayers the prompt could not hold, so the cap was exercised.
   expect(crowded).toBeGreaterThan(0);
-  // At about 3.3 characters a token (measured on qwen3-8b-4k) this is under 2.7K tokens of a 4K context
-  // that Ollama truncates silently past about 4,090. The bound was 8,500 before a god's way out became a
-  // line naming every place it can travel to (ids and steps, about 250 characters for the authored map).
-  expect(worst.chars).toBeLessThanOrEqual(8700);
+  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`, 2026-10-05): the busiest routine-town prompt, 8,845
+  // characters, was 2,554 tokens (3.46 a token), and the busiest crowded one (all of the world's wrongs and troubles in) 10,046 and 2,870. At 3.3 a token 10,500
+  // characters is under 3,200 tokens, some 900 under the 4,090 past which Ollama silently drops the start of a prompt.
+  expect(worst.chars).toBeLessThanOrEqual(10500);
 });

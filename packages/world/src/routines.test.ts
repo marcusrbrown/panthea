@@ -1,10 +1,21 @@
 import { expect, test } from "bun:test";
-import type { ContentPack } from "@panthea/contracts";
-import { decideRoutineProposal } from "./routines";
+import type { ContentPack, EventId, WorldEvent } from "@panthea/contracts";
+import { runTick } from "./actions";
 import {
+  decideRoutineProposal,
+  foodWant,
+  isMealtime,
+  surplusWant,
+} from "./routines";
+import {
+  type ActorState,
   buildingBase,
   createInitialWorldState,
+  createPrng,
+  getActor,
+  needKey,
   toEntityId,
+  type WorldState,
   withActor,
   withBuilding,
 } from "./state";
@@ -192,6 +203,8 @@ test("a hungry actor with currency buys food from a co-located seller over gathe
     alive: true,
     capabilities: [],
     inventory: new Map([["food", 5]]),
+    // Only a food producer sells food.
+    gathers: "food",
     revision: 0,
   });
   const result = decideRoutineProposal(state, toEntityId("hungry"));
@@ -413,4 +426,407 @@ test("an actor without a gatherable resource and nothing else eligible gets no p
     drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
   });
   expect(decideRoutineProposal(state, toEntityId("idle"))).toBeUndefined();
+});
+
+// --- Occasional hunger ------------------------------------------------------------------------
+
+const MEAL_RULES = { gatherAmount: 2, consumeAmount: 1, value_food: 3 };
+
+/** A routine mortal at `at` holding `inventory`, with `extra` set over the defaults. */
+function mortal(
+  name: string,
+  at: string,
+  inventory: Record<string, number>,
+  extra: Partial<ActorState> = {},
+): ActorState {
+  return {
+    id: toEntityId(name),
+    locationId: toEntityId(at),
+    alive: true,
+    capabilities: [],
+    inventory: new Map(Object.entries(inventory)),
+    revision: 0,
+    drives: { thrift: 0, appetite: 0.12, greed: 0, piety: 0 },
+    ...extra,
+  };
+}
+
+/** Square, path and field in a line: two steps from the square to the field. */
+const LINE: ContentPack["locations"] = [
+  {
+    id: "square",
+    realm: "mortal",
+    name: "Square",
+    edges: [{ to: "path", transport: "path", bidirectional: true }],
+  },
+  {
+    id: "path",
+    realm: "mortal",
+    name: "Path",
+    edges: [{ to: "field", transport: "path", bidirectional: true }],
+  },
+  { id: "field", realm: "mortal", name: "Field", edges: [] },
+];
+
+function lineWorld(
+  mealIntervalTicks: number | undefined,
+  actors: readonly ActorState[],
+): WorldState {
+  let state = createInitialWorldState(
+    pack({
+      locations: LINE,
+      rules: rules({
+        ...MEAL_RULES,
+        ...(mealIntervalTicks === undefined ? {} : { mealIntervalTicks }),
+      }),
+    }),
+  );
+  for (const actor of actors) state = withActor(state, actor);
+  return state;
+}
+
+/** The world's tick, set directly: routines read only the last committed state. */
+const atTick = (state: WorldState, tick: number): WorldState => ({
+  ...state,
+  tick,
+});
+
+test("with a meal interval, a mortal holding food eats once every interval and no more, even when a sale would otherwise outrank the meal", () => {
+  const diner = mortal(
+    "diner",
+    "square",
+    { food: 9, wood: 4 },
+    {
+      gathers: "wood",
+      drives: { thrift: 0, appetite: 0.12, greed: 0.9, piety: 0 },
+    },
+  );
+  const base = lineWorld(5, [
+    diner,
+    mortal("buyer", "square", { currency: 50 }),
+  ]);
+  const eatingTicks: number[] = [];
+  for (let tick = 0; tick < 15; tick += 1) {
+    const proposal = decideRoutineProposal(
+      atTick(base, tick),
+      toEntityId("diner"),
+    )?.proposal;
+    if (proposal?.kind === "consume") eatingTicks.push(tick);
+    // Off its mealtime the same mortal sells its wood instead.
+    else expect(proposal?.kind).toBe("trade");
+  }
+  expect(eatingTicks).toHaveLength(3);
+  expect(eatingTicks[1]).toBe((eatingTicks[0] as number) + 5);
+  expect(eatingTicks[2]).toBe((eatingTicks[0] as number) + 10);
+});
+
+test("a scheduled meal outranks any ordinary trade, whatever the drives: a mortal whose sale scores above the meal still eats at its mealtime", () => {
+  // greed 1, thrift 1: a surplus sale scores 1 (0.6 + 0.4), above the 0.9 a meal once carried.
+  const base = lineWorld(5, [
+    mortal(
+      "diner",
+      "square",
+      { food: 9, wood: 4 },
+      {
+        gathers: "wood",
+        drives: { thrift: 1, appetite: 0.12, greed: 1, piety: 0 },
+      },
+    ),
+    mortal("buyer", "square", { currency: 50 }),
+  ]);
+  const kinds = [...Array(15).keys()].map(
+    (tick) =>
+      decideRoutineProposal(atTick(base, tick), toEntityId("diner"))?.proposal
+        .kind,
+  );
+  const meals = kinds.flatMap((kind, tick) =>
+    kind === "consume" ? [tick] : [],
+  );
+  expect(meals).toHaveLength(3);
+  expect(meals[1]).toBe((meals[0] as number) + 5);
+  // Off its mealtime it sells its wood, so the sale really was in the running.
+  expect(kinds.filter((kind) => kind === "trade")).toHaveLength(12);
+});
+
+test("a meal still yields to repair: only ordinary choices rank below it", () => {
+  let state = createInitialWorldState(
+    pack({
+      locations: LINE,
+      rules: rules({
+        ...MEAL_RULES,
+        mealIntervalTicks: 5,
+        repairCostPlanks: 2,
+        repairAmountPerTick: 1,
+      }),
+      buildings: [
+        {
+          id: "workshop",
+          locationId: "square",
+          name: "Workshop",
+          material: "wood",
+          combustible: true,
+          services: [],
+          inventory: [],
+          owner: "owner",
+        },
+      ],
+    }),
+  );
+  const workshop = state.buildings.get(toEntityId("workshop"));
+  if (!workshop) throw new Error("expected the workshop fixture building");
+  state = withBuilding(state, {
+    ...buildingBase(workshop),
+    status: "destroyed",
+  });
+  state = withActor(state, mortal("owner", "square", { food: 9, planks: 3 }));
+  const mealtime = [...Array(5).keys()].find((tick) =>
+    isMealtime(atTick(state, tick), toEntityId("owner")),
+  ) as number;
+  expect(
+    decideRoutineProposal(atTick(state, mealtime), toEntityId("owner"))
+      ?.proposal.kind,
+  ).toBe("repair");
+});
+
+test("mortals do not all sit down at once: mealtime is offset by who they are", () => {
+  const state = lineWorld(7, []);
+  const names = ["woodcutter", "farmer", "iris", "kallias", "ismene", "damon"];
+  const mealtimes = new Set(
+    names.map((name) =>
+      [...Array(7).keys()].find((tick) =>
+        isMealtime(atTick(state, tick), toEntityId(name)),
+      ),
+    ),
+  );
+  expect(mealtimes.size).toBeGreaterThan(1);
+});
+
+test("with no meal interval a mortal eats whenever it holds food, as before", () => {
+  const base = lineWorld(undefined, [mortal("fed", "square", { food: 9 })]);
+  for (let tick = 0; tick < 4; tick += 1) {
+    expect(
+      decideRoutineProposal(atTick(base, tick), toEntityId("fed"))?.proposal
+        .kind,
+    ).toBe("consume");
+  }
+});
+
+test("only a food producer sells food: a mortal that merely holds a meal keeps it", () => {
+  const state = lineWorld(undefined, [
+    mortal("hungry", "square", { currency: 10 }),
+    mortal("holder", "square", { food: 5, currency: 10 }),
+  ]);
+  const want = foodWant(
+    state,
+    toEntityId("hungry"),
+    getActor(state, toEntityId("hungry")) as ActorState,
+  );
+  expect(want).toMatchObject({ resource: "food", unmet: "no-seller" });
+});
+
+test("a food producer does not push its food on buyers who are not hungry: it keeps gathering, and sells only to whoever asks", () => {
+  const state = lineWorld(undefined, [
+    mortal(
+      "farmer",
+      "square",
+      { food: 6 },
+      {
+        gathers: "food",
+        drives: { thrift: 0, appetite: 0, greed: 0.9, piety: 0 },
+      },
+    ),
+    // Flush, and already holding its meal.
+    mortal("neighbour", "square", { currency: 40, food: 1 }),
+  ]);
+  const farmer = getActor(state, toEntityId("farmer")) as ActorState;
+  expect(surplusWant(state, farmer.id, farmer)).toBeUndefined();
+  expect(decideRoutineProposal(state, farmer.id)?.proposal.kind).toBe("gather");
+});
+
+/** `state` with the mortal's food shortfall open since `since`, as the need scan records it. */
+function hungryFor(state: WorldState, since: number): WorldState {
+  const needs = new Map(state.needs);
+  needs.set(needKey(toEntityId("hungry"), "food"), {
+    actor: toEntityId("hungry"),
+    resource: "food",
+    reason: "no-seller",
+    eventId: "evt-1-1" as EventId,
+    tick: since,
+  });
+  return { ...state, needs };
+}
+
+const wantOf = (state: WorldState, name = "hungry") =>
+  foodWant(
+    state,
+    toEntityId(name),
+    getActor(state, toEntityId(name)) as ActorState,
+  );
+
+test("a hungry mortal where no producer works walks toward the nearest one instead of failing in place", () => {
+  const state = lineWorld(undefined, [
+    mortal("hungry", "square", { currency: 10 }),
+    mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
+  ]);
+  // Two steps away: the first is the path. The shortfall is still real, so it is still an unmet need.
+  expect(wantOf(state)).toMatchObject({
+    resource: "food",
+    unmet: "no-seller",
+    trip: "path",
+  });
+  expect(
+    decideRoutineProposal(state, toEntityId("hungry"))?.proposal,
+  ).toMatchObject({ kind: "move", to: "path" });
+});
+
+test("with a meal interval a mortal first waits that long, less a tick, for a producer to turn up where it stands, then walks", () => {
+  const base = atTick(
+    lineWorld(5, [
+      mortal("hungry", "square", { currency: 10 }),
+      mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
+    ]),
+    10,
+  );
+  // The shortfall opened 2 ticks ago: still patient (it waits 4 ticks).
+  expect(wantOf(hungryFor(base, 8))).toEqual({
+    resource: "food",
+    unmet: "no-seller",
+  });
+  // Opened 4 ticks ago: it walks.
+  expect(wantOf(hungryFor(base, 6))).toMatchObject({ trip: "path" });
+});
+
+test("no walk when it would lead nowhere: no producer holds food, none is reachable, or one stands here and will restock", () => {
+  const hungry = () => mortal("hungry", "square", { currency: 10 });
+  const noTrip = { resource: "food", unmet: "no-seller" } as const;
+
+  // The only producer is out of food.
+  expect(
+    wantOf(
+      lineWorld(undefined, [
+        hungry(),
+        mortal("farmer", "field", {}, { gathers: "food" }),
+      ]),
+    ),
+  ).toEqual(noTrip);
+
+  // The only producer is on an island no route reaches.
+  expect(
+    wantOf(
+      lineWorld(undefined, [
+        hungry(),
+        mortal("farmer", "nowhere", { food: 4 }, { gathers: "food" }),
+      ]),
+    ),
+  ).toEqual(noTrip);
+
+  // A producer stands here but is momentarily out: waiting beats wandering off, however long the wait, even with food elsewhere.
+  const crowded = lineWorld(undefined, [
+    hungry(),
+    mortal("local", "square", {}, { gathers: "food" }),
+    mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
+  ]);
+  expect(wantOf(hungryFor(atTick(crowded, 500), 1))).toEqual(noTrip);
+});
+
+/** Runs `ticks` ticks of the routines of every mortal in `state`. */
+function runDay(state: WorldState, ticks: number) {
+  let current = state;
+  let prng = createPrng(1);
+  const events: WorldEvent[] = [];
+  for (let tick = 0; tick < ticks; tick += 1) {
+    const proposals = [...current.actors.keys()].flatMap((actorId) => {
+      const decided = decideRoutineProposal(current, actorId);
+      return decided ? [decided.proposal] : [];
+    });
+    const result = runTick(current, prng, proposals);
+    current = result.state;
+    prng = result.prng;
+    events.push(...result.events);
+  }
+  return { state: current, events };
+}
+
+test("a hungry mortal with no producer at hand walks to one, buys a meal, and eats: its shortfall is recorded once and closes when it is fed, not every tick", () => {
+  const { state, events } = runDay(
+    lineWorld(4, [
+      mortal("hungry", "square", { currency: 10 }),
+      mortal("farmer", "field", { food: 4 }, { gathers: "food" }),
+    ]),
+    16,
+  );
+  expect(getActor(state, toEntityId("hungry"))?.locationId).toBe(
+    toEntityId("field"),
+  );
+  expect(
+    events.some(
+      (e) =>
+        e.kind === "resource-traded" &&
+        e.entityId === "hungry" &&
+        e.counterpartyId === "farmer" &&
+        e.receive.some((line) => line.resource === "food"),
+    ),
+  ).toBe(true);
+  expect(
+    events.some(
+      (e) => e.kind === "resource-consumed" && e.entityId === "hungry",
+    ),
+  ).toBe(true);
+  // One shortfall while it walked (the other, at the very end, is it running out of money after three meals), closed once it was fed.
+  const noSeller = events.filter(
+    (e) =>
+      e.kind === "unmet-need" &&
+      e.entityId === "hungry" &&
+      e.reason === "no-seller",
+  );
+  expect(noSeller).toHaveLength(1);
+  expect(
+    events.some((e) => e.kind === "need-met" && e.entityId === "hungry"),
+  ).toBe(true);
+});
+
+test("no meal passes back and forth: over a long stretch, food moves only from a producer to someone who asked, never the other way, and never between the same pair in both directions", () => {
+  const { events } = runDay(
+    lineWorld(3, [
+      mortal(
+        "farmer",
+        "square",
+        { food: 2, currency: 10 },
+        {
+          gathers: "food",
+          drives: { thrift: 0.2, appetite: 0.12, greed: 0.5, piety: 0 },
+        },
+      ),
+      mortal(
+        "herder",
+        "square",
+        { food: 2, currency: 10 },
+        {
+          gathers: "food",
+          drives: { thrift: 0.2, appetite: 0.12, greed: 0.5, piety: 0 },
+        },
+      ),
+      mortal("ann", "square", { food: 1, currency: 30 }),
+      mortal("bea", "square", { food: 1, currency: 30 }),
+    ]),
+    60,
+  );
+  const sales = new Set<string>();
+  for (const e of events) {
+    if (e.kind !== "resource-traded") continue;
+    const sold = e.give.some((line) => line.resource === "food");
+    const bought = e.receive.some((line) => line.resource === "food");
+    if (sold === bought) continue;
+    const [seller, buyer] = sold
+      ? [e.entityId, e.counterpartyId]
+      : [e.counterpartyId, e.entityId];
+    sales.add(`${seller}>${buyer}`);
+    // Only producers sell food.
+    expect(["farmer", "herder"]).toContain(String(seller));
+  }
+  expect(sales.size).toBeGreaterThan(0);
+  for (const sale of sales) {
+    const [seller, buyer] = sale.split(">");
+    expect(sales.has(`${buyer}>${seller}`)).toBe(false);
+  }
 });

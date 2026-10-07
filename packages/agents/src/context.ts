@@ -12,6 +12,7 @@ import type { GodAbility, GodProfile } from "@panthea/content";
 import {
   type Brand,
   type Consequence,
+  createObservationId,
   type EntityId,
   type EventId,
   GOAL_OUTCOMES,
@@ -22,7 +23,9 @@ import {
   MAX_GOAL_LENGTH,
   MAX_REPORT_LENGTH,
   type PracticeRefusedEvent,
+  type Proposal,
   type RejectionReasonCode,
+  type Season,
   type WorldEvent,
 } from "@panthea/contracts";
 import {
@@ -40,6 +43,8 @@ import {
   type RelationshipState,
   routeLength,
   routeLengths,
+  seasonAt,
+  validateProposal,
   type WorldState,
 } from "@panthea/world";
 import type { ParseResult } from "./config";
@@ -73,6 +78,7 @@ export const GOD_INTENT_ACTIONS = [
   "legend",
   "report",
   "bless",
+  "refuse",
   "practice",
   "wait",
 ] as const;
@@ -113,6 +119,8 @@ type GodAction =
     }
   /** Bless the mortal behind one open help petition, standing with it. */
   | { readonly action: "bless"; readonly petition: EventId }
+  /** Refuse one open prayer addressed to the god: it closes, and the one who prayed holds it against the god as it would silence. */
+  | { readonly action: "refuse"; readonly petition: EventId }
   /** One move in a practice thread with another god: a demand, or an answer to one. */
   | PracticeIntent
   /** Do nothing this turn. Always allowed; nothing is journaled. */
@@ -200,10 +208,39 @@ export interface PetitionView {
   }[];
   /** Whether the petitioner stands with the god, so a bless is possible. */
   readonly petitionerHere: boolean;
+  /** A worshipper (it reveres this god) or a prayer about a trouble in this god's domain from anyone: the routing the world applied. */
+  readonly origin: "worshipper" | "domain";
+  /** The domain trouble the prayer is about, when one is. */
+  readonly trouble?: string;
+  /** The offender is a god: it cannot be struck, only made to answer. */
+  readonly offenderGod?: true;
+  /** The strike on a mortal offender the world would take (the offender itself, so no building or travel), written out in the intent to send. */
+  readonly strikeMortal?: Readonly<Record<string, unknown>>;
+  /** The refusal the world would take, written out in the intent to send. */
+  readonly refuse?: Readonly<Record<string, unknown>>;
+  /** For harm a god did the one who prayed: the demand for redress the world would take, written out in the intent to send. */
+  readonly redress?: Readonly<Record<string, unknown>>;
   /** The terms the god could offer on this prayer, written out in the intent it would send; absent when the world would take none. */
   readonly offer?: Readonly<Record<string, unknown>>;
   /** The god set terms on this prayer and the mortal accepted: the boon is owed, and the prayer is no longer a favour to do freely. */
   readonly agreed?: true;
+}
+
+/** The season now, and the one that follows it with the tick it begins at. */
+export interface SeasonView {
+  readonly now: Season;
+  readonly next: Season;
+  readonly turnsAt: number;
+}
+
+/** The mortals that revere a god: how many, and where most of them live. */
+export interface FlockView {
+  readonly total: number;
+  /** The places the most of them live in, most first, at most two. */
+  readonly places: readonly {
+    readonly place: EntityId;
+    readonly count: number;
+  }[];
 }
 
 /** A refusal of the god's last goal change, as the prompt tells it. */
@@ -248,6 +285,10 @@ export interface Remembered {
   readonly petitions: readonly PetitionView[];
   /** How many open petitions the budget left out of `petitions`. */
   readonly morePrayers: number;
+  /** The season now and when it turns, when the world has seasons. */
+  readonly season: SeasonView | undefined;
+  /** The mortals that revere this god: its flock. */
+  readonly flock: FlockView | undefined;
   /** Ticks a goal stays locked, when goals are gated; absent when they are not. */
   readonly goalLockTicks: number | undefined;
   /** Divinity a bless costs. */
@@ -337,13 +378,18 @@ function goalInstruction(remembered: Remembered): string {
 function prayerInstructions(remembered: Remembered): string[] {
   if (remembered.petitions.length === 0) return [];
   return [
-    `Mortals pray to you, and you hear them wherever you are. Answering a prayer is how you are worshipped: strike the offender's building (action "strike") where it stands, or, for a petitioner who is here, bless them (action "bless", naming the petition, at a cost of ${remembered.blessCost} divinity). If the petitioner or the building is elsewhere, travel there first; each prayer below says how.`,
+    `Mortals pray to you, and you hear them wherever you are. Answering a prayer is how you are worshipped: strike the offender's building (action "strike") where it stands, or, for a petitioner who is here, bless them (action "bless", naming the petition, at a cost of ${remembered.blessCost} divinity). If the petitioner or the building is elsewhere, travel there first; each prayer below says how. Your worshippers are the mortals who revere you; a prayer about a trouble in your domain may come from anyone.`,
   ];
 }
 
 function describeCause(petition: Petition): string {
   // What the petitioner knew when it prayed, not what the world recorded: an offender it never learned stays unknown.
   const cause = petition.about;
+  if (cause.trouble !== undefined) {
+    return cause.kind === "damage"
+      ? `${cause.building} was damaged by a ${cause.trouble}`
+      : `a ${cause.trouble} took its ${cause.resource}`;
+  }
   switch (cause.kind) {
     case "damage":
       return `${cause.building} was damaged${cause.offender === undefined ? "" : ` by ${cause.offender}`}`;
@@ -359,6 +405,12 @@ function describeCause(petition: Petition): string {
       return `it lacked ${cause.resource}`;
     case "grudge":
       return `it holds a grudge against ${cause.offender}`;
+    case "harm":
+      return cause.resource === undefined
+        ? `${cause.offender} struck it`
+        : `${cause.offender} struck it and took its ${cause.resource}`;
+    case "wrong":
+      return `${cause.offender} wronged it: ${cause.wrong}`;
   }
 }
 
@@ -409,6 +461,22 @@ function petitionView(
     const place = placeFor(state, god, at);
     return place === undefined ? [] : [{ who, place }];
   });
+  const offender = request.kind === "punish" ? request.offender : undefined;
+  const offenderActor =
+    offender === undefined ? undefined : getActor(state, offender);
+  const proposal = (fields: Record<string, unknown>) =>
+    ({
+      schemaVersion: 1,
+      actor: god.id,
+      targets: [],
+      expectedRevisions: [],
+      source: "model",
+      observationId: createObservationId(),
+      ...fields,
+    }) as unknown as Proposal;
+  // The strike on a mortal offender and the refusal are each written out only when the world would take them.
+  const strike = { action: "strike", target: offender, power: 1 };
+  const refuse = { action: "refuse", petition: petition.id };
   return {
     id: petition.id,
     petitioner: petition.petitioner,
@@ -417,6 +485,29 @@ function petitionView(
     whereabouts,
     petitionerHere:
       getActor(state, petition.petitioner)?.locationId === god.locationId,
+    origin:
+      state.patrons.get(petition.petitioner) === god.id
+        ? "worshipper"
+        : "domain",
+    ...(petition.about.trouble === undefined
+      ? {}
+      : { trouble: petition.about.trouble }),
+    ...(offenderActor?.isDeity === true ? { offenderGod: true as const } : {}),
+    ...(offender !== undefined &&
+    offenderActor?.alive === true &&
+    offenderActor.isDeity !== true &&
+    validateProposal(
+      state,
+      proposal({ kind: "strike", target: offender, power: 1 }),
+    ).ok
+      ? { strikeMortal: strike }
+      : {}),
+    ...(validateProposal(
+      state,
+      proposal({ kind: "refuse", petition: petition.id }),
+    ).ok
+      ? { refuse }
+      : {}),
   };
 }
 
@@ -437,6 +528,30 @@ function newestPerKey<T>(
     kept.push(item);
   }
   return kept.reverse();
+}
+
+/** The living mortals whose patron `god` is, and where most of them live. */
+function flockOf(
+  state: WorldState,
+  god: EntityId,
+  isGod: boolean,
+): FlockView | undefined {
+  if (!isGod) return undefined;
+  const counts = new Map<EntityId, number>();
+  let total = 0;
+  for (const [mortal, patron] of state.patrons) {
+    const actor = getActor(state, mortal);
+    if (patron !== god || actor?.alive !== true) continue;
+    total += 1;
+    const place = actor.home ?? actor.locationId;
+    counts.set(place, (counts.get(place) ?? 0) + 1);
+  }
+  if (total === 0) return undefined;
+  const places = [...counts]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, 2)
+    .map(([place, count]) => ({ place, count }));
+  return { total, places };
 }
 
 export function rememberedBy(
@@ -507,11 +622,15 @@ export function rememberedBy(
     views.map((petition) => petition.petitioner),
     refused,
   );
-  const withOffers = views.map((petition) =>
-    everything.options.offerTerms[petition.id] === undefined
-      ? petition
-      : { ...petition, offer: everything.options.offerTerms[petition.id] },
-  );
+  const withOffers = views.map((petition) => ({
+    ...petition,
+    ...(everything.options.offerTerms[petition.id] === undefined
+      ? {}
+      : { offer: everything.options.offerTerms[petition.id] }),
+    ...(everything.options.redress[petition.id] === undefined
+      ? {}
+      : { redress: everything.options.redress[petition.id] }),
+  }));
   const { shown, more } = choosePrayers(state, actorId, open, withOffers);
   // When some prayers are left out, ask again with only the shown ones, so what may be offered, named as a party, or opened with is what the god can see.
   const { threads, options } =
@@ -530,9 +649,11 @@ export function rememberedBy(
       (view) => view.owedBoon?.petition === petition.id,
     );
     const offer = options.offerTerms[petition.id];
+    const redress = options.redress[petition.id];
     return {
       ...petition,
       ...(offer === undefined ? {} : { offer }),
+      ...(redress === undefined ? {} : { redress }),
       ...(agreed ? { agreed: true as const } : {}),
     };
   });
@@ -562,6 +683,16 @@ export function rememberedBy(
             : {}),
         }
       : undefined;
+  const seasonLength = petitionBalanceOf(state.rules, "seasonTicks");
+  const season: SeasonView | undefined =
+    state.rules.troubles === undefined || !self?.isDeity
+      ? undefined
+      : {
+          now: seasonAt(state),
+          next: seasonAt(state, state.tick + seasonLength),
+          turnsAt: (Math.floor(state.tick / seasonLength) + 1) * seasonLength,
+        };
+  const flock = flockOf(state, actorId, self?.isDeity === true);
   const lock =
     state.rules.petitionBalance === undefined
       ? undefined
@@ -576,6 +707,8 @@ export function rememberedBy(
     goalHistory: goalHistory.slice(-MAX_GOAL_HISTORY),
     petitions: prayers,
     morePrayers: more,
+    season,
+    flock,
     goalLockTicks: lock,
     blessCost: petitionBalanceOf(state.rules, "blessDivinityCost"),
     refusal:
@@ -608,6 +741,8 @@ export const NOTHING_REMEMBERED: Remembered = {
   goalHistory: [],
   petitions: [],
   morePrayers: 0,
+  season: undefined,
+  flock: undefined,
   goalLockTicks: undefined,
   blessCost: 0,
   refusal: undefined,
@@ -705,6 +840,8 @@ interface Offer {
   readonly goalTargets: readonly EntityId[];
   /** Open help petitions whose petitioner stands here and whose bless the god can pay for. */
   readonly blessPetitions: readonly EventId[];
+  /** The prayers shown whose refusal the world would take. */
+  readonly refusable: readonly EventId[];
   /** What a practice move may name, when the god has a move to make or a cause to demand over. */
   readonly practice: PracticeOffer | undefined;
 }
@@ -735,8 +872,18 @@ function offerFor(
 ): Offer {
   const listeners = snapshot.actors.map((actor) => actor.id);
   const strikeCap = strikePowerCap(abilityFor(profile, "strike"), snapshot);
+  // A building in the scene, or the mortal a shown prayer asks the god to punish: the world strikes its goods wherever it is.
   const strikeTargets =
-    strikeCap >= 1 ? snapshot.buildings.map((building) => building.id) : [];
+    strikeCap >= 1
+      ? [
+          ...snapshot.buildings.map((building) => building.id),
+          ...remembered.petitions.flatMap((petition) =>
+            petition.strikeMortal === undefined
+              ? []
+              : [petition.strikeMortal.target as EntityId],
+          ),
+        ]
+      : [];
   return {
     destinations: snapshot.destinations.map((place) => place.id),
     strikeTargets,
@@ -756,6 +903,11 @@ function offerFor(
     hasGoal: remembered.goal !== undefined,
     goalTargets: shownIds(snapshot, remembered),
     blessPetitions: blessablePetitions(snapshot, remembered),
+    refusable: remembered.petitions.flatMap((petition) =>
+      petition.refuse === undefined || petition.agreed === true
+        ? []
+        : [petition.id],
+    ),
     practice: practiceOffer(
       snapshot.self.id,
       remembered.threads,
@@ -772,6 +924,7 @@ function availableActions(offer: Offer): readonly GodIntentAction[] {
   if (offer.canLegend) actions.push("legend");
   if (offer.listeners.length > 0) actions.push("report");
   if (offer.blessPetitions.length > 0) actions.push("bless");
+  if (offer.refusable.length > 0) actions.push("refuse");
   if (offer.practice !== undefined) actions.push("practice");
   actions.push("wait");
   return actions;
@@ -796,6 +949,7 @@ export function godAvailableActions(
     ...profile.abilities.map((ability) => ability.action),
     "report",
     "bless",
+    "refuse",
     "practice",
     "wait",
   ];
@@ -1003,6 +1157,20 @@ function parseAction(
           }
         : petition;
     }
+    case "refuse": {
+      const petition = parseMember(
+        fields.petition,
+        "petition",
+        offer.refusable,
+        "petition",
+      );
+      return petition.ok
+        ? {
+            ok: true,
+            value: { action: "refuse", petition: petition.value as EventId },
+          }
+        : petition;
+    }
     case "practice": {
       if (offer.practice === undefined) {
         return invalid("action", "you have no practice move to make");
@@ -1138,7 +1306,7 @@ export function godIntentSchema(
       type: "string",
       enum: [...offer.strikeTargets],
       description:
-        'The building a strike hits: for the action "strike" only, never a place to go.',
+        'The building, or the mortal a prayer asks you to punish, that a strike hits: for the action "strike" only, never a place to go.',
     };
     properties.power = {
       type: "integer",
@@ -1173,11 +1341,65 @@ export function godIntentSchema(
       additionalProperties: false,
     };
   }
-  if (offer.blessPetitions.length > 0) {
-    properties.petition = { type: "string", enum: [...offer.blessPetitions] };
+  // One field for both: a bless names a prayer whose petitioner is here, a refusal any prayer it may refuse; each
+  // action's own ids and its need for the field are conditions below, and the parser enforces the same.
+  const petitionIds = [
+    ...new Set([...offer.blessPetitions, ...offer.refusable]),
+  ];
+  if (petitionIds.length > 0) {
+    properties.petition = { type: "string", enum: petitionIds };
   }
-  const conditions =
-    offer.practice === undefined ? [] : practiceConditions(offer.practice);
+  const forPetition = (action: "bless" | "refuse", ids: readonly EventId[]) =>
+    ids.length === 0
+      ? []
+      : [
+          {
+            if: {
+              properties: { action: { const: action } },
+              required: ["action"],
+            },
+            // biome-ignore lint/suspicious/noThenProperty: `then` is JSON Schema's conditional keyword; this is a schema fragment, never awaited.
+            then: {
+              required: ["petition"],
+              properties: { petition: { enum: [...ids] } },
+            },
+          },
+        ];
+  // A legend's words are its assertion: the schema says so as the parser does (a server that ignores a condition still has
+  // the parser; the instructions show the shape).
+  const legendNeedsWords = offer.canLegend
+    ? [
+        {
+          if: {
+            properties: { action: { const: "legend" } },
+            required: ["action"],
+          },
+          // biome-ignore lint/suspicious/noThenProperty: `then` is JSON Schema's conditional keyword; this is a schema fragment, never awaited.
+          then: { required: ["assertion"] },
+        },
+      ]
+    : [];
+  // A report needs a listener and its words, as the parser requires.
+  const reportNeedsListener =
+    offer.listeners.length > 0
+      ? [
+          {
+            if: {
+              properties: { action: { const: "report" } },
+              required: ["action"],
+            },
+            // biome-ignore lint/suspicious/noThenProperty: `then` is JSON Schema's conditional keyword; this is a schema fragment, never awaited.
+            then: { required: ["listener", "content"] },
+          },
+        ]
+      : [];
+  const conditions = [
+    ...legendNeedsWords,
+    ...reportNeedsListener,
+    ...forPetition("bless", offer.blessPetitions),
+    ...forPetition("refuse", offer.refusable),
+    ...(offer.practice === undefined ? [] : practiceConditions(offer.practice)),
+  ];
   if (offer.practice !== undefined) {
     Object.assign(properties, practiceProperties(offer.practice));
   }
@@ -1273,6 +1495,9 @@ function describeMemory(memory: MemoryEntry, self?: EntityId): string {
     // A god's own memory is never a sign (signs go to mortals), but the type allows it.
     return `- ${memory.god} ${memory.outcome === "answered" ? "answered" : "did not answer"} a petition`;
   }
+  if (memory.kind === "patronage") {
+    return `- ${memory.mortal} of ${memory.home} left ${memory.from} for ${memory.to} [${memory.sourceEventId}]`;
+  }
   return `- ${memory.teller} told you: "${memory.content}"${what === "" ? "" : ` (claiming ${what})`}`;
 }
 
@@ -1355,6 +1580,8 @@ function targetIsHere(snapshot: PerceptionSnapshot, target: EntityId): boolean {
  */
 type StrikeCheck = (
   target: EntityId,
+  /** A mortal is struck wherever it is: no building to find in view. */
+  kind?: "mortal",
 ) =>
   | { readonly ok: true; readonly cap: number }
   | { readonly ok: false; readonly why: string };
@@ -1374,13 +1601,14 @@ function strikeCheckFor(
   snapshot: PerceptionSnapshot,
 ): StrikeCheck {
   const cap = strikePowerCap(ability, snapshot);
-  return (target) => {
+  return (target, kind) => {
     if (ability === undefined) {
       return { ok: false, why: "you have no power to strike with" };
     }
     if (cap < 1) {
       return { ok: false, why: "a strike costs divinity and you hold none" };
     }
+    if (kind === "mortal") return { ok: true, cap };
     const building = snapshot.buildings.find((b) => b.id === target);
     if (building === undefined) {
       return { ok: false, why: `${target} is not in your view` };
@@ -1413,31 +1641,65 @@ function answerGuidance(
           `  - set terms (your boon for an offering, to be judged by the world): ${send(petition.offer)}`,
         ];
   const letBe = "  - or let it be: waiting is always allowed.";
+  // Refusing is a choice among the others, written out whole: it is no kinder than silence, which the one who prayed holds against the god alike.
+  const refusal =
+    petition.refuse === undefined
+      ? []
+      : [
+          `  - refuse it (the one who prayed holds that against you as it would your silence): ${send(petition.refuse)}`,
+        ];
   const free = (lines: readonly string[]) => [
     "  Your choices:",
     ...lines,
     ...terms,
+    ...refusal,
     letBe,
   ];
+  // Harm a god did the one who prayed, whether it asked for its goods back or for the god's punishment: the god may be made to answer for it.
+  const answerFor = (god: unknown) =>
+    petition.redress === undefined
+      ? []
+      : [
+          `  - demand redress of ${String(god)}, a god (a thread the world judges): ${send(petition.redress)}`,
+        ];
+  const redressee = (petition.redress?.term as { party?: unknown } | undefined)
+    ?.party;
   if (request.kind === "help") {
     const bless = { action: "bless", petition: petition.id };
     if (petition.petitionerHere) {
       return free([
         `  - help freely: ${petition.petitioner} is here: ${send(bless)}`,
+        ...answerFor(redressee),
       ]);
     }
     const place = petition.whereabouts.find((entry) =>
       entry.who.includes(petition.petitioner),
     )?.place;
-    return free(
-      place === undefined || !place.reachable
+    return free([
+      ...(place === undefined || !place.reachable
         ? []
         : [
             `  - help freely: ${petition.petitioner} is not here; if you choose this, travel to them ${send({ action: "travel", to: place.id })} (${place.name}); the world walks you there, and once you are with them, bless them ${send(bless)}.`,
-          ],
-    );
+          ]),
+      ...answerFor(redressee),
+    ]);
   }
   const buildings = request.buildings;
+  // The offender itself: a mortal is struck where it stands (the world takes its goods, no building or travel needed); a god is not struck, but made to answer for the harm.
+  const itself =
+    petition.strikeMortal === undefined
+      ? []
+      : (() => {
+          const check = strike(request.offender, "mortal");
+          return [
+            check.ok
+              ? `  - punish ${request.offender} itself, wherever it is: ${send({ ...petition.strikeMortal, power: 1 })} (the world takes its most valuable carried good, a few units at most; a power from 1 to ${check.cap}, 1 is shown).`
+              : `  - punish ${request.offender} itself: you cannot strike now: ${check.why}.`,
+          ];
+        })();
+  if (buildings.length === 0) {
+    return free([...itself, ...answerFor(request.offender)]);
+  }
   const here = petition.whereabouts.find(
     (entry) =>
       entry.place.here && entry.who.some((id) => buildings.includes(id)),
@@ -1451,18 +1713,20 @@ function answerGuidance(
       check.ok
         ? `  - punish freely: ${aim} is here: ${send({ action: "strike", target: aim, power: 1 })} (a power from 1 to ${check.cap}; 1 is shown).`
         : `  - punish freely: ${aim} is here, but you cannot strike it now: ${check.why}.`,
+      ...itself,
     ]);
   }
   const away = petition.whereabouts.find(
     (entry) => entry.place.reachable && target(entry) !== undefined,
   );
-  return free(
-    away === undefined
+  return free([
+    ...(away === undefined
       ? []
       : [
           `  - punish freely: if you choose this, travel to ${away.place.name} ${send({ action: "travel", to: away.place.id })}; the world walks you there, and once you are there, strike ${target(away)}.`,
-        ],
-  );
+        ]),
+    ...itself,
+  ]);
 }
 
 /** The heading of the scene's list of places the god may travel to, with the steps each is away. */
@@ -1479,12 +1743,23 @@ function describePrayer(
   const request = petition.request;
   const ask =
     request.kind === "punish"
-      ? `asks you to punish ${request.offender}, who owns ${request.buildings.join(", ")}`
+      ? request.buildings.length > 0
+        ? `asks you to punish ${request.offender}, who owns ${request.buildings.join(", ")}`
+        : petition.offenderGod === true
+          ? `asks that ${request.offender}, a god, answer for it`
+          : `asks you to punish ${request.offender}`
       : request.need.kind === "building"
         ? `asks for help with ${request.need.building}`
         : `asks for help with ${request.need.resource}`;
+  // Whose prayer it is, as the world routed it: a worshipper's, or about a trouble in this god's domain.
+  const from =
+    petition.origin === "worshipper"
+      ? "your worshipper"
+      : petition.trouble === undefined
+        ? "not of your flock"
+        : `a ${petition.trouble} in your domain`;
   const lines = [
-    `- [${petition.id}] ${petition.petitioner} ${ask} (${petition.cause}).`,
+    `- [${petition.id}] ${petition.petitioner} (${from}) ${ask} (${petition.cause}).`,
   ];
   for (const { who, place } of petition.whereabouts) {
     lines.push(
@@ -1707,6 +1982,13 @@ export function buildGodContext(
     // Every god, every tick: how to decide, how to act, how to speak, how to reply.
     "Decide what you do next, in character, using only what you are shown as perceived. You know nothing else about the world, and you may only name ids listed in the scene.",
     `You may also travel to any place you can reach, naming it in "to": ${JSON.stringify({ action: "travel", to: "<place id>" })}. The world walks you there, one step a tick.`,
+    // The shape of a legend, next to travel's, for a god that can tell one: with no named field for its words a god sent the
+    // cited event, or its words as a report's `content`, and no `assertion`.
+    ...(offer.canLegend
+      ? [
+          `For a legend: ${JSON.stringify({ action: "legend", assertion: "<what you say, one or two short sentences>" })}`,
+        ]
+      : []),
     "Speak your report and legend words in the first person, to those who hear them, without using your own name.",
     `Keep a legend assertion (at most ${MAX_ASSERTION_LENGTH} characters) and report content (at most ${MAX_REPORT_LENGTH} characters) to one or two short sentences.`,
     goalInstruction(remembered),
@@ -1726,6 +2008,10 @@ export function buildGodContext(
     ...(snapshot.actors.length > 0
       ? [
           'You may also tell someone here something (action "report", naming the listener, your words, and optionally a claim of who harmed or did a kindness to whom, and an event you saw). It is your own account, told as you choose.',
+          // Its shape, for a god with someone here to tell: a report named a place in `to` (travel's field) when its listener had no
+          // named place. Here, with the report's other guidance, and not in the start every god shares: whether anyone is here
+          // changes from god to god and tick to tick.
+          `For a report: ${JSON.stringify({ action: "report", listener: "<who is here>", content: "<what you tell, one or two short sentences>" })}`,
           citationGuidance("report", offer.witnessedEventIds),
         ]
       : []),
@@ -1754,6 +2040,16 @@ export function buildGodContext(
     ...describeRemembered(remembered),
     ...describeSelf(snapshot, remembered),
     `You are at ${snapshot.location.name} [${snapshot.location.id}] in the ${snapshot.location.realm} realm, tick ${snapshot.tick}.`,
+    ...(remembered.season === undefined
+      ? []
+      : [
+          `It is ${remembered.season.now}; ${remembered.season.next} begins at tick ${remembered.season.turnsAt}.`,
+        ]),
+    ...(remembered.flock === undefined
+      ? []
+      : [
+          `Your flock: ${remembered.flock.total} ${remembered.flock.total === 1 ? "mortal reveres" : "mortals revere"} you, most at ${remembered.flock.places.map((entry) => `${entry.place} (${entry.count})`).join(", ")}.`,
+        ]),
     `You hold: ${held}.`,
     "Here with you:",
     ...(snapshot.actors.length === 0

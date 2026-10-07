@@ -8,8 +8,13 @@
 //
 // The scripted part is the gods' choices; the mortals decide for themselves.
 
-import { type Petition, type PracticeThread, toEntityId } from "@panthea/world";
-import { GODS, type God } from "../provider";
+import {
+  nextHop,
+  type Petition,
+  type PracticeThread,
+  toEntityId,
+} from "@panthea/world";
+import type { God } from "../provider";
 import type { Recorder, Story } from "./context";
 import {
   eventsOfKind,
@@ -21,7 +26,7 @@ import {
   threadsOf,
   walkTo,
 } from "./practice";
-import { check, stateOf, waitFor } from "./support";
+import { check, postFixture, stateOf, waitFor } from "./support";
 
 const id = toEntityId;
 
@@ -171,6 +176,93 @@ async function offerTerms(
   return accepted;
 }
 
+/**
+ * Stages a prayer's cause, as S4 stages a burning tavern, instead of leaning on
+ * whatever the town happens to go short of: `owner` is walked to its own
+ * `building` by fixture moves, Zeus goes there and damages it (power 1, below
+ * the ignition threshold, so nothing burns), and the owner notices the loss
+ * standing there.
+ * A mortal that has noticed a loss prays about it, to the god it weighs most.
+ */
+async function stageLoss(
+  story: Story,
+  owner: string,
+  buildingId: string,
+): Promise<void> {
+  const building = (await stateOf(story)).buildings.get(id(buildingId));
+  check(
+    building !== undefined && building.owner === id(owner),
+    `${owner} owns ${buildingId}`,
+    String(building?.owner),
+  );
+  for (let hop = 0; hop < 12; hop += 1) {
+    const state = await stateOf(story);
+    const mortal = state.actors.get(id(owner));
+    check(mortal?.alive === true, `${owner} is alive`, "gone");
+    if (mortal.locationId === building.locationId) break;
+    const next = nextHop(
+      state,
+      mortal.locationId,
+      building.locationId,
+      mortal.capabilities,
+    );
+    check(next !== undefined, `${owner} can walk to ${buildingId}`, "no route");
+    await postFixture(
+      story,
+      owner,
+      { kind: "move", to: next },
+      `${owner} walks toward ${buildingId}`,
+    );
+  }
+  // The world's troubles may have taken the owner's stock, and an owner with nothing to hold goes to work the tick
+  // after it is put anywhere, so the fixture is posted again each tick until the loss is noticed: the owner is
+  // standing at its building when Zeus damages it.
+  let holding = true;
+  const hold = (async () => {
+    while (holding) {
+      await postFixture(
+        story,
+        owner,
+        { kind: "move", to: building.locationId },
+        `${owner} stays at ${buildingId}`,
+      );
+    }
+  })();
+  try {
+    // A god names only what it could see: Zeus goes to the building first.
+    await walkTo(story, "zeus", building.locationId);
+    await godMoves(
+      story,
+      "zeus",
+      JSON.stringify({ action: "strike", target: buildingId, power: 1 }),
+      `zeus damages ${buildingId}`,
+    );
+    await waitFor(
+      `${owner} notices the damage to ${buildingId}`,
+      () =>
+        eventsOfKind(
+          story,
+          "loss-noticed",
+          (e) => e.entityId === owner && e.building === buildingId,
+        )[0],
+      { timeoutMs: 20_000, intervalMs: 100 },
+    );
+  } finally {
+    holding = false;
+    await hold;
+  }
+}
+
+/** The good (never coin) `mortal` holds the most of, when it holds at least three: one it can offer by any deadline. */
+function stockOf(
+  state: Awaited<ReturnType<typeof stateOf>>,
+  mortal: string,
+): string | undefined {
+  return [...(state.actors.get(id(mortal))?.inventory ?? [])]
+    .filter(([resource, amount]) => resource !== "currency" && amount >= 3)
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0];
+}
+
 export async function stepSupplication(
   recorder: Recorder,
   story: Story,
@@ -178,14 +270,19 @@ export async function stepSupplication(
   return recorder.run(
     "S16",
     "Supplication: terms kept are fulfilled; terms broken cost the stake, and the mortal keeps its memory and identity",
-    "Two mortals have prayed. A god answers one prayer by offering terms (its boon for one offering of currency by the mortal, no counteroffers); the mortal's routine accepts, the god blesses it, and the mortal makes its offering: the thread is fulfilled, its ending cites the half that came last (the offering or the boon), and the blessing and the offering are each recorded as seen. A god answers the other with the same terms and a stake, the wolf; the mortal accepts and is blessed, then cannot make its offering by the deadline: the thread is breached, the stake changes the mortal's form and capabilities, citing the breach, and its memories, feelings, and identity are kept.",
+    "Two mortals have prayed. A god answers one prayer by offering terms (its boon for one offering by the mortal of a unit of what it gathers, no counteroffers); the mortal's routine accepts, the god blesses it, and the mortal makes its offering: the thread is fulfilled, its ending cites the half that came last (the offering or the boon), and the blessing and the offering are each recorded as seen. A god answers the other with the same terms and a stake, the wolf; the mortal accepts and is blessed, then cannot make its offering by the deadline: the thread is breached, the stake changes the mortal's form and capabilities, citing the breach, and its memories, feelings, and identity are kept.",
     async (step) => {
       // The town is twenty mortals and seven gods, and the story scripts only Zeus and Hera, so
       // the step answers the prayers made to them. The term to be broken is a promise of nearly
       // all that its mortal could hold by the deadline of what it gathers, which no wealth in
-      // the town changes; the term to be kept is one coin.
+      // the town changes; the term to be kept is one unit of a good its mortal holds a stock of.
+      //
+      // The town goes short rarely now, so the step makes its own causes: the woodcutter and the
+      // farmer, whose patrons are Zeus and Hera, each lose a building and pray about it.
+      await stageLoss(story, "woodcutter", "woodshed");
+      await stageLoss(story, "farmer", "agora-shop");
       const { first, second } = await waitFor(
-        "two prayers wait for an answer from two mortals, one of whom gathers something and the other holds a coin",
+        "two prayers wait for an answer from two mortals who each gather something",
         async () => {
           const state = await stateOf(story);
           // Only a prayer the god's latest prompt offers terms on: one answered or lapsed since is not worth a turn.
@@ -210,14 +307,32 @@ export async function stepSupplication(
             .sort((a, b) => b.tick - a.tick);
           const gathers = (mortal: string) =>
             state.actors.get(id(mortal))?.gathers;
-          const purse = (mortal: string) =>
-            state.actors.get(id(mortal))?.inventory.get("currency") ?? 0;
-          const breaker = prayers.find(
-            (p) => gathers(p.petitioner) !== undefined,
-          );
+          // What a mortal holds plenty of: a weaver turns all her wool into cloth, so a gatherer does not always
+          // have a unit of what it gathers to offer, and a mortal with a stock of something does.
+          const stock = (mortal: string) => stockOf(state, mortal);
+          // The one who breaks gathers a good its own work turns into something else (wood into planks, wool into
+          // cloth, ore into tools), so it cannot hold what it promised. A mortal that gathers a good nothing makes
+          // use of (fish, food) only sells it when asked, and can hold nearly all it could gather in the time.
+          const breaker = prayers.find((p) => {
+            const resource = gathers(p.petitioner);
+            return (
+              resource !== undefined &&
+              Object.values(state.recipes).some((recipe) =>
+                recipe.inputs.some((input) => input.resource === resource),
+              )
+            );
+          });
+          // Mortals pray to their patrons, so Zeus and Hera hear only their own few, some of them poor: the
+          // keeper is asked for a unit of a good it holds a stock of, not a coin: a poor mortal spends its coins eating and
+          // buying between the god's turn and its own, and a mortal with a stock has the unit by the deadline. It must
+          // be pious enough to take the terms at all.
           const keeper = prayers.find(
             (p) =>
-              p.petitioner !== breaker?.petitioner && purse(p.petitioner) >= 1,
+              p.petitioner !== breaker?.petitioner &&
+              stock(p.petitioner) !== undefined &&
+              Math.round(
+                (state.actors.get(p.petitioner)?.drives?.piety ?? 0) * 100,
+              ) >= 10,
           );
           return breaker === undefined || keeper === undefined
             ? undefined
@@ -226,8 +341,21 @@ export async function stepSupplication(
         { timeoutMs: 240_000, intervalMs: 500 },
       );
 
-      // Terms kept.
-      const keptThread = await offerTerms(story, first, 1, 40);
+      // Terms kept: one unit of a good the mortal holds a stock of.
+      const keptGood = stockOf(await stateOf(story), first.petitioner);
+      check(
+        keptGood !== undefined,
+        `${first.petitioner} holds a stock of something to offer`,
+        String(keptGood),
+      );
+      const keptThread = await offerTerms(
+        story,
+        first,
+        1,
+        90,
+        undefined,
+        keptGood,
+      );
       const keptBoon = await giveBoon(
         story,
         first,
@@ -306,6 +434,13 @@ export async function stepSupplication(
       // few before the offer lands): the world accepts the term, and the mortal, who spends its
       // ticks eating, selling, and walking to the altar, cannot hold that much by the deadline.
       const gatherAmount = before.rules.economyBalance.gatherAmount ?? 1;
+      // The god first walks to where the mortal stands, so the blessing is a hop away when the terms are taken and the
+      // thirty-tick deadline is the mortal's to keep or break, not the god's walk across the map to race.
+      const mortalAt = before.actors.get(id(mortal))?.locationId;
+      check(mortalAt !== undefined, `${mortal} is somewhere`, "gone");
+      if (mortalAt !== undefined) {
+        await walkTo(story, second.god as God, String(mortalAt));
+      }
       const promised =
         (before.actors.get(id(mortal))?.inventory.get(gathered ?? "") ?? 0) +
         gatherAmount * (30 - 6);
@@ -377,10 +512,15 @@ export async function stepSupplication(
           capabilities: changed?.capabilities,
         }),
       );
+      // The form change forgets nothing. A mortal that already holds as many as it can (the town's wrongs fill a
+      // memory) forgets its least salient as new ones form, as every full memory does, so a missing one is allowed
+      // only from a full memory.
+      const capacity = after.rules.memoryBalance?.capacity ?? 24;
       check(
-        memoriesBefore.every((m) => kept_.includes(m.id)),
-        "every memory it held before is still held",
-        `${memoriesBefore.length} before, ${kept_.length} after`,
+        memoriesBefore.every((m) => kept_.includes(m.id)) ||
+          kept_.length >= capacity,
+        "every memory it held before is still held, unless a full memory forgot it as new ones formed",
+        `${memoriesBefore.length} before, ${kept_.length} after, capacity ${capacity}`,
       );
       // The boon and the breach may move how it feels about the gods (it remembers a kindness, and a broken term); the form
       // change itself moves nothing, and every feeling it held is still held, toward everyone but the gods unchanged.
@@ -389,16 +529,23 @@ export async function stepSupplication(
           .filter(([key]) => key.startsWith(`${mortal}>`))
           .map(([key, value]) => [key, JSON.stringify(value)]),
       );
-      const gods = new Set<string>(GODS);
+      // The town's own wrongs move how a mortal feels about other mortals, so what is held is that no feeling is
+      // lost and that the change of form itself formed no memory, and so moved no feeling.
+      const formedByChange = storedEvents(story).filter(
+        (e) =>
+          e.kind === "memory-recorded" &&
+          e.entityId === mortal &&
+          e.sourceEventId === change.id,
+      );
       check(
-        feelingsBefore.every(
-          ([key, value]) =>
-            feelingsAfter.has(key as string) &&
-            (gods.has(String(key).split(">")[1] as string) ||
-              feelingsAfter.get(key as string) === value),
-        ),
-        "every feeling it held is still held, and none toward a mortal changed",
-        JSON.stringify({ before: feelingsBefore, after: [...feelingsAfter] }),
+        feelingsBefore.every(([key]) => feelingsAfter.has(key as string)) &&
+          formedByChange.length === 0,
+        "every feeling it held is still held, and the change of form formed no memory or feeling of its own",
+        JSON.stringify({
+          before: feelingsBefore,
+          after: [...feelingsAfter],
+          formedByChange,
+        }),
       );
       step.done(
         `${first.god} offered ${first.petitioner} terms on ${first.id}: ${first.petitioner}'s routine accepted, the blessing ${keptBoon} and its offering ${offering?.id} fulfilled ${keptThread.id}; ${second.god} offered ${mortal} the same with the wolf as stake: it took the boon and had nothing to offer, ${brokenThread.id} breached (${brokenEnd?.id}) and ${change?.id} made it a wolf with its ${memoriesBefore.length} memories kept`,

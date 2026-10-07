@@ -26,6 +26,7 @@ import {
   blessability,
   canStillPerform,
   contestableActs,
+  contestableDefections,
   favourOf,
   getActor,
   getMemories,
@@ -52,15 +53,15 @@ export const PRACTICES_HEADING = "Your open practices:";
 export const DIGEST_BUDGET_CHARS = 1600;
 
 /**
- * Characters the prayers section may use, heading and the closing "and N more" line included.
- * Ollama silently drops the start of a prompt (the system instructions) past about 4,090 tokens, and a
- * crowd of prayers is the one section that grows without bound: measured on qwen3-8b-4k at about 3.3
- * characters a token, the busiest seven-god prompt had 3,212 characters of prayers in 9,227 and 2,770
- * tokens, so about seven more would have crossed it. At 2,400 characters (three or four prayers with
- * their choices) the same prompt is about 8,400 characters and 2,500 tokens, with some 1,500 tokens
- * of headroom for a longer digest, memories, and the answer. A prayer a live practice names is never cut.
+ * Characters the prayers section may use, heading and the closing "and N more" line included. A
+ * crowd of prayers is the one section that grows without bound. Measured on qwen3-8b-4k (Ollama's
+ * `prompt_eval_count`, 2026-10-05) at 3.3 to 3.8 characters a token: the busiest routine-town prompt
+ * is 8,845 characters and 2,554 tokens, and the busiest crowded one, with the town's wrongs and the gods' troubles in, 10,046 and 2,870.
+ * A prayer with its choices (set terms, punish, demand redress, refuse, let it be) is about 700
+ * characters, so 3,000 holds four with a live practice's prayers never cut: some 1,200 tokens under
+ * the point where Ollama silently drops the start of a prompt (about 4,090). A prayer a live practice names is never cut.
  */
-export const PRAYERS_BUDGET_CHARS = 2400;
+export const PRAYERS_BUDGET_CHARS = 3000;
 
 /**
  * The heading of the contests section: the contests the god is in and the rival acts it may open one over, as
@@ -209,6 +210,8 @@ export interface DemandCause {
   readonly id: EventId;
   readonly memoryId: EventId;
   readonly text: string;
+  /** The fact an observation cites for it when it is not a memory: the prayer that told the god of it. */
+  readonly fact?: string;
 }
 
 /** What a term may name, from the world the god can know of: the other gods, the places on the map, the mortals it was shown, the resources that exist. */
@@ -228,6 +231,8 @@ export interface PracticeOptions {
   readonly offerTerms: Readonly<
     Record<string, Readonly<Record<string, unknown>>>
   >;
+  /** For each prayer addressed to the god that tells of harm another god did its worshipper, the demand for redress the world would take, written out in the intent the god would send. The harm is also a cause the god may demand over (`causes`). */
+  readonly redress: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /** At most two bargains the god could begin, each legal as written; empty while a thread needs the god's answer or performance. */
   readonly openings: readonly Opening[];
   /** The rival acts the god may open a contest over and the prompt shows, newest first, within `CONTESTS_BUDGET_CHARS`: the schema and the parser name these and no others. Empty while a thread needs the god's answer or performance. */
@@ -249,11 +254,13 @@ export interface Opening {
 /** A rival's act the god perceived and may open a contest over: the world has already said it would take it. */
 export interface ContestAct {
   readonly id: EventId;
-  /** The rival that did it. */
+  /** The rival that did it: for a defection, the god the mortal went to. */
   readonly god: EntityId;
   readonly place: EntityId;
   readonly placeName: string;
-  readonly kind: ServiceKind;
+  readonly kind: ServiceKind | "defection";
+  /** What it was, in words, for a defection (a rival's act is told by its kind). */
+  readonly text?: string;
 }
 
 /** A contest the god is in, as it sees it: where, against whom, until when, and how many mortals favour each of you so far. */
@@ -284,6 +291,7 @@ export const NO_PRACTICE: PracticeOptions = {
   offerable: [],
   stakes: [],
   offerTerms: {},
+  redress: {},
   openings: [],
   contests: [],
   moreActs: 0,
@@ -355,6 +363,8 @@ function describeBasis(memory: MemoryEntry, self: EntityId): string {
       return `you noticed a loss (${memory.subjects.join(", ")})`;
     case "sign":
       return `${memory.god} ${memory.outcome === "answered" ? "answered" : "did not answer"} a petition`;
+    case "patronage":
+      return `${memory.mortal} of ${memory.home} left ${memory.from} for ${memory.to}`;
   }
 }
 
@@ -369,6 +379,8 @@ function basisOf(memory: MemoryEntry): EventId | undefined {
       return memory.causeEventId;
     case "sign":
       return undefined;
+    case "patronage":
+      return memory.sourceEventId;
   }
 }
 
@@ -851,7 +863,7 @@ export function practiceBy(
     }
   }
   const byId = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  const options: PracticeOptions = {
+  let options: PracticeOptions = {
     gods: [...state.actors.values()]
       .filter((a) => a.isDeity && a.alive && a.id !== actorId)
       .map((a) => a.id)
@@ -866,7 +878,7 @@ export function practiceBy(
     resources: [...resources].sort(byId),
     minTicks: practiceBalanceOf(state.rules, "minTermTicks"),
     maxTicks: practiceBalanceOf(state.rules, "maxTermTicks"),
-    causes: demandCauses(shownMemories, actorId),
+    causes: [],
     // A prayer to this god that is still open to an answer, with no terms standing on it, from a petitioner still living.
     offerable: openPetitionsFor(state, actorId)
       .filter(
@@ -886,10 +898,40 @@ export function practiceBy(
       .map(([id, stake]) => ({ id, form: stake.form }))
       .sort((a, b) => byId(a.id, b.id)),
     offerTerms: {},
+    redress: {},
     openings: [],
     contests: [],
     moreActs: 0,
     heldContests: [],
+  };
+  // The harm a god did a worshipper, which its prayer tells this god of, is a cause to demand redress over, and the
+  // demand is written out where the world would take it. The newest few only: the prompt has a budget.
+  const redress: Record<string, Record<string, unknown>> = {};
+  const prayerCauses: DemandCause[] = [];
+  for (const petition of [...openPetitionsFor(state, actorId)].sort(
+    (a, b) => b.sequence - a.sequence,
+  )) {
+    if (prayerCauses.length >= MAX_REDRESS_CAUSES) break;
+    if (shownPrayers !== undefined && !shownPrayers.has(petition.id)) continue;
+    if (!inAnswerWindow(state, petition, state.tick)) continue;
+    const intent = redressDemand(state, actorId, petition, options);
+    if (intent === undefined) continue;
+    redress[petition.id] = intent;
+    prayerCauses.push({
+      id: petition.cause,
+      memoryId: petition.id,
+      fact: `petition:${petition.id}`,
+      text: `${petition.petitioner} of your flock prayed that ${petition.about.offender} struck it`,
+    });
+  }
+  const known = demandCauses(shownMemories, actorId);
+  options = {
+    ...options,
+    redress,
+    causes: [
+      ...known,
+      ...prayerCauses.filter((cause) => !known.some((k) => k.id === cause.id)),
+    ],
   };
   // A boon owed is a bargain already struck: no new terms are written out beside the prayers while it is.
   const owing = threads.some((view) => view.owedBoon !== undefined);
@@ -941,7 +983,7 @@ function heldLine(held: HeldContest): string {
 
 /** One rival act's line: who did what where, with the object that would open a contest over it. */
 function actLine(act: ContestAct): string {
-  return `- ${act.god} ${ACT_WORDS[act.kind]} at ${placeLabel(act.placeName, act.place)} [${act.id}]: ${JSON.stringify(contestIntent(act.id))}`;
+  return `- ${act.god} ${act.text ?? ACT_WORDS[act.kind as ServiceKind]} at ${placeLabel(act.placeName, act.place)} [${act.id}]: ${JSON.stringify(contestIntent(act.id))}`;
 }
 
 /** The object a god sends to open a contest over `act`. */
@@ -993,15 +1035,29 @@ function chooseActs(
   actorId: EntityId,
   held: readonly HeldContest[],
 ): { shown: ContestAct[]; more: number } {
-  const acts = [...contestableActs(state, actorId)].reverse().map(
-    (act): ContestAct => ({
-      id: act.id,
-      god: act.god,
-      place: act.place,
-      placeName: state.locations.get(act.place)?.name ?? act.place,
-      kind: act.kind,
+  // A worshipper lost to another god comes first: it is the god's own loss, and its home is the place contested.
+  const defections = contestableDefections(state, actorId).map(
+    (defection): ContestAct => ({
+      id: defection.id,
+      god: defection.to,
+      place: defection.home,
+      placeName: state.locations.get(defection.home)?.name ?? defection.home,
+      kind: "defection",
+      text: `took ${defection.mortal} of ${defection.home} from your flock`,
     }),
   );
+  const acts = [
+    ...defections,
+    ...[...contestableActs(state, actorId)].reverse().map(
+      (act): ContestAct => ({
+        id: act.id,
+        god: act.god,
+        place: act.place,
+        placeName: state.locations.get(act.place)?.name ?? act.place,
+        kind: act.kind,
+      }),
+    ),
+  ];
   if (acts.length === 0) return { shown: [], more: 0 };
   let used =
     sizeOf([CONTESTS_HEADING, ...held.map(heldLine), CONTEST_CHOICES]) +
@@ -1049,6 +1105,8 @@ const proposalBase = (actor: EntityId) => ({
 
 /** How many ticks an opening's term allows: long enough to travel and act, inside the world's bounds. */
 const OPENING_TICKS = 90;
+/** Most harms done to its worshippers a god is shown as causes to demand redress over. */
+const MAX_REDRESS_CAUSES = 2;
 const termTicks = (options: PracticeOptions) =>
   Math.min(options.maxTicks, Math.max(options.minTicks, OPENING_TICKS));
 
@@ -1158,6 +1216,80 @@ function offerOpening(
 }
 
 /**
+ * The demand `actorId` could open of `god` over `cause` that the world would take, written out in the intent to
+ * send: the first of these terms the world accepts: tell a legend where mortals are with it, come to where it
+ * stands (when it is not already there), ally with it, or come to where it stands regardless.
+ */
+function demandOver(
+  state: WorldState,
+  actorId: EntityId,
+  god: EntityId,
+  cause: EventId,
+  options: PracticeOptions,
+): Record<string, unknown> | undefined {
+  const self = getActor(state, actorId);
+  if (self === undefined) return undefined;
+  const ticks = termTicks(options);
+  const here = self.locationId;
+  const mortalsHere = [...state.actors.values()].some(
+    (actor) =>
+      actor.alive && actor.isDeity !== true && actor.locationId === here,
+  );
+  const there = getActor(state, god)?.locationId === here;
+  const terms: PracticeTermOffer[] = [
+    ...(mortalsHere
+      ? [
+          {
+            kind: "tell-legend" as const,
+            party: god,
+            place: here,
+            deadlineTicks: ticks,
+          },
+        ]
+      : []),
+    ...(there
+      ? []
+      : [
+          {
+            kind: "be-at" as const,
+            party: god,
+            place: here,
+            deadlineTicks: ticks,
+          },
+        ]),
+    { kind: "ally" as const, party: god, to: actorId, deadlineTicks: ticks },
+    { kind: "be-at" as const, party: god, place: here, deadlineTicks: ticks },
+  ];
+  for (const term of terms) {
+    const verdict = validatePractice(state, {
+      ...proposalBase(actorId),
+      kind: "practice",
+      move: "demand",
+      counterparty: god,
+      cause,
+      term,
+    } satisfies PracticeProposal);
+    if (verdict.ok) {
+      return { action: "practice", move: "demand", cause, term };
+    }
+  }
+  return undefined;
+}
+
+/** The demand for redress a prayer tells of: harm a god did the one who prayed, which the world would take a demand over. */
+function redressDemand(
+  state: WorldState,
+  actorId: EntityId,
+  petition: Petition,
+  options: PracticeOptions,
+): Record<string, unknown> | undefined {
+  const { about } = petition;
+  if (about.kind !== "harm" || about.offender === undefined) return undefined;
+  if (!options.gods.includes(about.offender)) return undefined;
+  return demandOver(state, actorId, about.offender, petition.cause, options);
+}
+
+/**
  * A demand over a grievance the god knows: a harm one of its shown memories
  * names, by or against another god, that the world would take a demand over.
  * The most salient such memory comes first, then the most recent. The term is
@@ -1171,8 +1303,6 @@ function demandOpening(
   shown: readonly MemoryEntry[],
   options: PracticeOptions,
 ): Opening | undefined {
-  const self = getActor(state, actorId);
-  if (self === undefined) return undefined;
   const causeOf = new Map(
     options.causes.map((cause) => [cause.memoryId, cause]),
   );
@@ -1187,12 +1317,6 @@ function demandOpening(
         b.recordedAt - a.recordedAt ||
         (a.id < b.id ? -1 : 1),
     );
-  const ticks = termTicks(options);
-  const here = self.locationId;
-  const mortalsHere = [...state.actors.values()].some(
-    (actor) =>
-      actor.alive && actor.isDeity !== true && actor.locationId === here,
-  );
   for (const memory of grievances) {
     const cause = causeOf.get(memory.id) as DemandCause;
     const consequence = memory.consequence;
@@ -1208,62 +1332,13 @@ function demandOpening(
     ];
     for (const god of [...new Set(named)]) {
       if (!options.gods.includes(god)) continue;
-      const there = getActor(state, god)?.locationId === here;
-      const terms: PracticeTermOffer[] = [
-        ...(mortalsHere
-          ? [
-              {
-                kind: "tell-legend" as const,
-                party: god,
-                place: here,
-                deadlineTicks: ticks,
-              },
-            ]
-          : []),
-        ...(there
-          ? []
-          : [
-              {
-                kind: "be-at" as const,
-                party: god,
-                place: here,
-                deadlineTicks: ticks,
-              },
-            ]),
-        {
-          kind: "ally" as const,
-          party: god,
-          to: actorId,
-          deadlineTicks: ticks,
-        },
-        {
-          kind: "be-at" as const,
-          party: god,
-          place: here,
-          deadlineTicks: ticks,
-        },
-      ];
-      for (const term of terms) {
-        const verdict = validatePractice(state, {
-          ...proposalBase(actorId),
-          kind: "practice",
-          move: "demand",
-          counterparty: god,
-          cause: cause.id,
-          term,
-        } satisfies PracticeProposal);
-        if (verdict.ok) {
-          return {
-            kind: "demand",
-            label: `demand of ${god} (${cause.text} [${cause.id}])`,
-            intent: {
-              action: "practice",
-              move: "demand",
-              cause: cause.id,
-              term,
-            },
-          };
-        }
+      const found = demandOver(state, actorId, god, cause.id, options);
+      if (found !== undefined) {
+        return {
+          kind: "demand",
+          label: `demand of ${god} (${cause.text} [${cause.id}])`,
+          intent: found,
+        };
       }
     }
   }

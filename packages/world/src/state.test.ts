@@ -417,8 +417,29 @@ test("a devotion seeds the mortal's affinity toward its god and nothing else, so
   expect(routePetition(state, toEntityId("fisher"))).toBe(
     toEntityId("poseidon"),
   );
-  // Without a devotion the old tie-break holds: the god with the fewest petitions, then the first id.
+  // A mortal built outside a content pack has no patron, and the old tie-break holds: the god with the fewest petitions, then the first id.
   expect(routePetition(state, toEntityId("idler"))).toBe(toEntityId("athena"));
+});
+
+test("the authored devotion is the stored patron: a devotion to Hera makes Hera the patron, and a pack mortal with none (a fixture) has no patron entry", () => {
+  const state = createInitialWorldState(devotionPack());
+  expect([...state.patrons]).toEqual([
+    [toEntityId("fisher"), toEntityId("poseidon")],
+  ]);
+  const hera = devotionPack();
+  const swapped = {
+    ...hera,
+    inhabitants: [
+      ...hera.inhabitants.map((i) =>
+        i.id === "athena" ? { ...i, id: "hera" } : i,
+      ),
+    ].map((i) =>
+      i.id === "fisher" ? { ...i, devotion: { god: "hera", affinity: 2 } } : i,
+    ),
+  } as ContentPack;
+  expect(
+    createInitialWorldState(swapped).patrons.get(toEntityId("fisher")),
+  ).toBe(toEntityId("hera"));
 });
 
 test("a pack that parses always yields an initial world that decodes: a devotion at the pack's own affinity limit round-trips through JSON, and the world's limit is the contract's", async () => {
@@ -440,6 +461,10 @@ test("a pack that parses always yields an initial world that decodes: a devotion
     raw.inhabitants.find((i: { id: string }) => i.id === "fisher").devotion = {
       god: "poseidon",
       affinity,
+    };
+    raw.inhabitants.find((i: { id: string }) => i.id === "idler").devotion = {
+      god: "athena",
+      affinity: 1,
     };
     const parsed = parseContentPack(raw);
     if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);

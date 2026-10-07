@@ -1247,12 +1247,18 @@ export function castPractices(
         if (practice !== undefined) credit(event.entityId, practice);
         break;
       }
-      case "contest-opened":
+      case "contest-opened": {
         credit(event.entityId, "contest");
-        if (byId.get(event.cause)?.entityId === event.rival) {
+        const caused = byId.get(event.cause);
+        if (
+          caused !== undefined &&
+          "entityId" in caused &&
+          caused.entityId === event.rival
+        ) {
           credit(event.rival, "contest");
         }
         break;
+      }
       case "journey-started":
         credit(event.entityId, "travel");
         break;

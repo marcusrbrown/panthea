@@ -57,6 +57,10 @@ export const DEFAULT_MEMORY_BALANCE: Readonly<Record<string, number>> = {
   /** Most memories one actor keeps. */
   capacity: 24,
   "salience_building-damaged": 5,
+  /** A wrong between mortals: whoever was beside it remembers who did it to whom. */
+  salience_wrong: 6,
+  /** A strike on a mortal: the struck mortal, and anyone at its place, remembers the god that did it. */
+  "salience_mortal-struck": 5,
   "salience_building-ignited": 8,
   "salience_building-destroyed": 9,
   "salience_building-repaired": 4,
@@ -71,6 +75,8 @@ export const DEFAULT_MEMORY_BALANCE: Readonly<Record<string, number>> = {
   "salience_practice-ended": 7,
   /** A loss the mortal noticed. */
   salience_noticed: 5,
+  /** A god's memory that a mortal left it, or came to it: what a contest over the defection rests on. */
+  salience_patronage: 8,
   /** Affinity lost toward whoever did harm one witnessed. */
   harmAffinity: 2,
   /** Affinity gained toward whoever did one a kindness. */
@@ -147,6 +153,15 @@ function memoryEntryOf(event: MemoryRecordedEvent): MemoryEntry {
         god: event.god,
         outcome: event.outcome,
         petitionId: event.petitionId,
+      };
+    case "patronage":
+      return {
+        ...base,
+        kind: "patronage",
+        mortal: event.mortal,
+        home: event.home,
+        from: event.from,
+        to: event.to,
       };
     case "told":
       return {
@@ -310,6 +325,10 @@ function consequenceOf(
     case "worship-performed":
       return { effect: "kindness", agent: event.entityId, target: event.deity };
     case "theft":
+      return { effect: "harm", agent: event.entityId, target: event.victim };
+    case "mortal-struck":
+      return { effect: "harm", agent: event.actor, target: event.entityId };
+    case "wrong":
       return { effect: "harm", agent: event.entityId, target: event.victim };
     default:
       return undefined;
@@ -574,9 +593,16 @@ export function noticedMemory(
  */
 export function signMemory(
   after: WorldState,
-  event: Extract<WorldEvent, { kind: "petition-answered" | "petition-lapsed" }>,
+  event: Extract<
+    WorldEvent,
+    { kind: "petition-answered" | "petition-lapsed" | "petition-refused" }
+  >,
 ): DerivedDraft | undefined {
-  if (!after.actors.get(event.entityId)?.alive) return undefined;
+  // A refusal is the god's own event: its petitioner is the one who remembers it.
+  const refused = event.kind === "petition-refused";
+  const petitioner = refused ? event.petitioner : event.entityId;
+  const god = refused ? event.entityId : event.god;
+  if (!after.actors.get(petitioner)?.alive) return undefined;
   const salience = balanceOf(after, "salience_sign");
   if (salience < 1) return undefined;
   const answered = event.kind === "petition-answered";
@@ -585,20 +611,60 @@ export function signMemory(
     draft: {
       kind: "memory-recorded",
       memoryKind: "sign",
-      entityId: event.entityId,
+      entityId: petitioner,
       sourceEventId: event.id,
-      god: event.god,
-      outcome: answered ? "answered" : "lapsed",
+      god,
+      outcome: answered ? "answered" : refused ? "refused" : "lapsed",
       petitionId: event.petitionId,
-      subjects: [event.god],
+      subjects: [god],
       salience,
       consequence: {
         effect: answered ? "kindness" : "harm",
-        agent: event.god,
-        target: event.entityId,
+        agent: god,
+        target: petitioner,
       },
     },
   };
+}
+
+/**
+ * What the two gods of a change of patron remember: the god the mortal left and the god it came to, each
+ * naming the mortal, its home, and the other god. No one else learns of it. A god no longer living remembers
+ * nothing.
+ */
+export function patronageMemories(
+  after: WorldState,
+  event: Extract<WorldEvent, { kind: "patron-changed" }>,
+): readonly DerivedDraft[] {
+  const salience = balanceOf(after, "salience_patronage");
+  if (salience < 1) return [];
+  const mortal = after.actors.get(event.entityId);
+  if (mortal === undefined) return [];
+  const home = mortal.home ?? mortal.locationId;
+  return [
+    { god: event.from, other: event.to },
+    { god: event.to, other: event.from },
+  ].flatMap(({ god, other }) =>
+    after.actors.get(god)?.alive === true
+      ? [
+          {
+            cause: event,
+            draft: {
+              kind: "memory-recorded" as const,
+              memoryKind: "patronage" as const,
+              entityId: god,
+              sourceEventId: event.id,
+              mortal: event.entityId,
+              home,
+              from: event.from,
+              to: event.to,
+              subjects: unique([event.entityId, home, other]),
+              salience,
+            },
+          },
+        ]
+      : [],
+  );
 }
 
 /**

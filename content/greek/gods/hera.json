@@ -188,6 +188,11 @@
   ],
   "inventions": [
     {
+      "id": "domain-troubles",
+      "statement": "Hera's domain troubles are the game's own.",
+      "reason": "A roof that leaks onto stores, and damp that spoils household cloth or food, are troubles the game draws on a season's odds and a floor, taking goods. Hera's claim to weather is weak in the sources, so the game gives her the household instead; the cited line is adapted, not quoted, and no source tells these episodes."
+    },
+    {
       "id": "wrath-as-strike",
       "statement": "Hera's wrath is expressed in play as a damaging strike on structures, below the ignition threshold.",
       "reason": "The world has no action that harms a person or curses. Her myths aim her anger at people (Io, Semele, Heracles), not buildings, so this mapping is a game stand-in."
@@ -201,6 +206,30 @@
       "id": "authored-tuning",
       "statement": "The drive weights and the starting disposition toward Zeus are authored tuning.",
       "reason": "The sources describe temperament in prose; the numbers are a design choice to be revised against play."
+    }
+  ],
+  "troubles": [
+    {
+      "id": "roof-leak",
+      "statement": "A leaking roof spoils a household's stores. Autumn and winter.",
+      "cites": [
+        {
+          "source": "iliad",
+          "locator": "16.431-434"
+        }
+      ],
+      "invention": "domain-troubles"
+    },
+    {
+      "id": "damp",
+      "statement": "Damp spoils household cloth or food. Winter.",
+      "cites": [
+        {
+          "source": "iliad",
+          "locator": "16.431-434"
+        }
+      ],
+      "invention": "domain-troubles"
     }
   ],
   "sprite": "placeholder-hera"

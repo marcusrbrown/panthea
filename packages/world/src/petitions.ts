@@ -3,7 +3,7 @@
 //
 // A prayer has a recorded cause (an event the mortal remembers in `causes`, or
 // one of its open unmet needs), one god, and one request: help with what was
-// lost, or punishment of an offender who owns a building. The routine walks the
+// lost, or punishment of an offender (a strike on its building, or on the mortal itself). The routine walks the
 // mortal to the altar and back; the validator opens the petition and routes it.
 // Everything here is a pure function of world state, and a petition is state
 // changed only by events, so a replay rebuilds it.
@@ -18,6 +18,7 @@ import type {
   PetitionAnsweredEvent,
   PetitionLapsedEvent,
   PetitionOpenedEvent,
+  PetitionRefusedEvent,
   PetitionRequest,
   WorldEvent,
   WorldRules,
@@ -39,12 +40,13 @@ import {
 /** Defaults for `rules.petitionBalance`, in simulation ticks unless a count. */
 export const DEFAULT_PETITION_BALANCE: Readonly<Record<string, number>> = {
   /**
-   * How long after a petition opens a god's answer still counts. At least
-   * twice the longest route from the great hall to a petition target, plus the
-   * answering action, at the slowest god pace measured (one action per 25
-   * ticks): 2 x (4 + 1) x 25. A test holds it to the map.
+   * How long after a petition opens a god's answer still counts. Owner
+   * decision 2026-10-05 (SC6): 150, so every devotion (2 to 4) can defect inside
+   * a 300-tick episode. It covers one trip from the great hall to a petition
+   * target plus the answering action at the slowest god pace measured (one
+   * action per 25 ticks): (4 + 1) x 25 = 125.
    */
-  answerWindowTicks: 250,
+  answerWindowTicks: 150,
   /** How long after it happened an event stays something a mortal will pray about. */
   causePrayableTicks: 150,
   /** Fewest ticks between two prayers by one mortal. */
@@ -58,9 +60,34 @@ export const DEFAULT_PETITION_BALANCE: Readonly<Record<string, number>> = {
   /** Most a bless returns of stock a mortal lost to theft or spoilage. */
   blessResourceCap: 4,
   /** Ticks without a consequential event before the director causes trouble. */
-  directorQuietTicks: 120,
+  directorIntervalTicks: 120,
+  /** Ticks in a season: spring at tick 0, then summer, autumn, winter. At most 300, so a 5-minute episode always sees a season turn, and 200 so the hour's 3,600 ticks turn 18 times. */
+  seasonTicks: 200,
+  /** The window in which each god's domain trouble fires at least once, at a tick the persisted PRNG picks: half a 300-tick episode, so every episode holds a whole window. */
+  troubleFloorTicks: 150,
+  /** Most units one domain trouble takes: what one answered prayer gives (`blessResourceAmount`), so a prayer can make it good. */
+  troubleLossCap: 2,
   /** Ticks a goal stays unreplaceable without a reason. */
   goalLockTicks: 40,
+  /** Most units a god's strike takes of the struck mortal's most valuable carried good: what one answered prayer gives (`blessResourceAmount`), so a punishment costs about as much as help is worth. */
+  strikeGoodsCap: 2,
+  /**
+   * A mortal defects when its affinity for its patron falls below this: it no longer feels warmly toward the god,
+   * 0 or less. A devotion starts at 2 to 4 and a lapse or a refusal costs 2 (`harmAffinity`), so one ignored prayer
+   * turns a devotion of 2 and two turn any authored devotion, which two prayers in the first 30 ticks put inside
+   * a 300-tick episode (a test holds it).
+   */
+  defectionAffinity: 1,
+  /** Fewest ticks between two wrongs one mortal draws: a temperament sets the odds in a tick, so this keeps one from wronging every tick. */
+  wrongCooldownTicks: 30,
+  /** What an open need multiplies a mortal's odds of wronging by. */
+  wrongNeedMultiplier: 2,
+  /** Most units one wrong takes or spoils: what one answered prayer gives (`blessResourceAmount`), so a prayer can make it good. */
+  wrongLossCap: 2,
+  /** Ticks a credit trade runs before it is judged. */
+  creditDeadlineTicks: 100,
+  /** Ticks after a wrong in which its victim may still take revenge: the answer window (150, when a prayer lapses and a lapse makes its victim eligible) and a further 150. */
+  revengeWindowTicks: 300,
 };
 
 /** A petition tunable from `rules`, or its default. */
@@ -83,6 +110,8 @@ export const MAX_CAUSES = 8;
  * - a memory of a loss it noticed (`planNoticeStep`): it knows what it lost and
  *   not who did it, so the offender is dropped;
  * - its own unmet need, or its own grudge, which it always knows;
+ * - a god's strike on it, which it always knows, and who struck;
+ * - another mortal's wrong to it, which it always knows, and who did it;
  * - its own stolen or spoiled stock, which it always knows it lost.
  */
 export function knownCause(
@@ -91,7 +120,15 @@ export function knownCause(
   cause: PetitionCause,
 ): PetitionCause | undefined {
   const { offender: _unknown, ...withoutOffender } = cause;
-  if (cause.kind === "need" || cause.kind === "grudge") return cause;
+  if (
+    cause.kind === "need" ||
+    cause.kind === "grudge" ||
+    cause.kind === "harm" ||
+    cause.kind === "wrong" ||
+    cause.trouble !== undefined
+  ) {
+    return cause;
+  }
   const memories = getMemories(state, actorId);
   const namesOffender = memories.some(
     (memory) =>
@@ -180,6 +217,15 @@ export function applyLossNoticed(
 
 /** What a cause is about, for the one-open-petition rule: a resource, or a building. A grudge, or a cause with neither, is about nothing and blocks nothing. */
 function subjectOfCause(cause: PetitionCause): string | undefined {
+  // A harm by a god, a wrong, and a trouble in a god's domain are each their own matter: none waits behind a prayer
+  // about the goods it took (a trouble's prayer goes to its domain god, an open need's to the patron).
+  if (
+    cause.kind === "harm" ||
+    cause.kind === "wrong" ||
+    cause.trouble !== undefined
+  ) {
+    return undefined;
+  }
   if (cause.building !== undefined) return `building:${cause.building}`;
   if (cause.resource !== undefined) return `resource:${cause.resource}`;
   return undefined;
@@ -314,6 +360,8 @@ export function prayableCauses(
     )
     .sort(
       (a, b) =>
+        // A harm a god did leads, so its patron hears the god's name before any need is prayed about.
+        Number(b.kind === "harm") - Number(a.kind === "harm") ||
         b.tick - a.tick ||
         (a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0),
     );
@@ -336,8 +384,11 @@ function buildingsOwnedBy(state: WorldState, owner: EntityId): EntityId[] {
 
 /**
  * What a mortal would ask for about `cause`: punishment of an offender who owns
- * a building, otherwise help with what was lost. A grudge with no such offender
- * has nothing to ask for, so it is not prayable.
+ * a building, otherwise help with what was lost. A grudge against a living
+ * mortal asks for its punishment, building or none (the world strikes its goods).
+ * A harm by a god asks for the goods back, or, when nothing was taken, for the
+ * god to answer for it. A grudge against anyone else has nothing to ask for, so
+ * it is not prayable.
  */
 export function requestFor(
   state: WorldState,
@@ -376,8 +427,48 @@ export function requestFor(
             kind: "help",
             need: { kind: "resource", resource: cause.resource },
           };
-    case "grudge":
-      return undefined;
+    case "grudge": {
+      const offender =
+        cause.offender === undefined
+          ? undefined
+          : getActor(state, cause.offender);
+      return offender?.alive === true && offender.isDeity !== true
+        ? { kind: "punish", offender: offender.id, buildings: [] }
+        : undefined;
+    }
+    case "wrong": {
+      const offender =
+        cause.offender === undefined
+          ? undefined
+          : getActor(state, cause.offender);
+      if (offender?.alive === true && offender.isDeity !== true) {
+        return { kind: "punish", offender: offender.id, buildings: [] };
+      }
+      return cause.resource === undefined
+        ? undefined
+        : {
+            kind: "help",
+            need: {
+              kind: "resource",
+              resource: cause.resource,
+              ...(cause.amount === undefined ? {} : { amount: cause.amount }),
+            },
+          };
+    }
+    case "harm":
+      if (cause.resource !== undefined && (cause.amount ?? 0) > 0) {
+        return {
+          kind: "help",
+          need: {
+            kind: "resource",
+            resource: cause.resource,
+            ...(cause.amount === undefined ? {} : { amount: cause.amount }),
+          },
+        };
+      }
+      return cause.offender === undefined
+        ? undefined
+        : { kind: "punish", offender: cause.offender, buildings: [] };
   }
 }
 
@@ -392,15 +483,65 @@ function petitionsReceivedBy(state: WorldState, god: EntityId): number {
   return count;
 }
 
+function livingGod(state: WorldState, id: EntityId): EntityId | undefined {
+  const actor = getActor(state, id);
+  return actor?.alive === true && actor.isDeity === true ? id : undefined;
+}
+
+/** The god `mortal` belongs to, when it has a patron and the patron lives. */
+export function patronOf(
+  state: WorldState,
+  mortal: EntityId,
+): EntityId | undefined {
+  const patron = state.patrons.get(mortal);
+  return patron === undefined ? undefined : livingGod(state, patron);
+}
+
 /**
- * The god `mortal` prays to: the living deity it weighs most, which is how it feels toward it (its affinity)
- * plus the god's lasting standing at the place the mortal lives, which a contest, a settlement performed there,
- * or a breach moves for good. On a tie, the one that has received the fewest petitions; then by id.
+ * The god of the domain a trouble falls in, from the pack's trouble-kind table: fire, spoiled stock, and a
+ * director's theft have no mortal wrongdoer to answer for them. A fire or a theft a god's own act
+ * caused is a harm by that god, which belongs to the victim's patron, so it has no domain god here.
+ */
+function domainGod(
+  state: WorldState,
+  cause: PetitionCause,
+): EntityId | undefined {
+  if (cause.trouble !== undefined) {
+    const god = state.rules.troubleKinds?.[cause.trouble];
+    return god === undefined ? undefined : livingGod(state, god as EntityId);
+  }
+  if (
+    cause.kind !== "fire" &&
+    cause.kind !== "spoilage" &&
+    cause.kind !== "theft"
+  ) {
+    return undefined;
+  }
+  if (
+    cause.offender !== undefined &&
+    getActor(state, cause.offender)?.isDeity === true
+  ) {
+    return undefined;
+  }
+  const god = state.rules.troubleKinds?.[cause.kind];
+  return god === undefined ? undefined : livingGod(state, god as EntityId);
+}
+
+/**
+ * The god `mortal` prays to about `cause`. A trouble in a god's domain goes to that god. Everything else (a
+ * wrong, a grudge, a harm, a need, hunger included) goes to the mortal's patron. A mortal with no patron,
+ * one built outside a content pack, prays to the living deity it weighs most: its affinity plus the god's
+ * lasting standing at the place it lives. On a tie, the one that has received the fewest petitions; then by id.
  */
 export function routePetition(
   state: WorldState,
   mortal: EntityId,
+  cause?: PetitionCause,
 ): EntityId | undefined {
+  const domain = cause === undefined ? undefined : domainGod(state, cause);
+  if (domain !== undefined) return domain;
+  const patron = patronOf(state, mortal);
+  if (patron !== undefined) return patron;
   const gods = [...state.actors.values()]
     .filter((actor) => actor.alive && actor.isDeity === true)
     .map((actor) => actor.id)
@@ -439,7 +580,7 @@ export function petitionFor(
   );
   if (cause === undefined) return undefined;
   const request = requestFor(state, cause);
-  const god = routePetition(state, mortal);
+  const god = routePetition(state, mortal, cause);
   return request === undefined || god === undefined
     ? undefined
     : { god, request };
@@ -509,6 +650,17 @@ export function prayerStep(
 
 // --- Reducers ----------------------------------------------------------------------------
 
+/** Whether the memory that moved this feeling rests on a wrong between mortals. */
+function fromWrong(
+  state: WorldState,
+  event: Extract<WorldEvent, { kind: "relationship-changed" }>,
+): boolean {
+  const memory = getMemories(state, event.entityId).find(
+    (held) => held.id === event.memoryEventId,
+  );
+  return memory !== undefined && state.wrongs.has(memory.sourceEventId);
+}
+
 /** Records `cause` for `owner`, keeping only the newest `MAX_CAUSES`. */
 function recordCause(
   state: WorldState,
@@ -566,8 +718,42 @@ export function recordCauses(state: WorldState, event: WorldEvent): WorldState {
         resource: event.resource,
         amount: event.amount,
       });
+    case "trouble":
+      return recordCause(state, event.entityId, {
+        eventId: event.id,
+        tick: event.tick,
+        trouble: event.trouble,
+        ...(event.loss.kind === "building"
+          ? { kind: "damage" as const, building: event.loss.building }
+          : {
+              kind: "spoilage" as const,
+              resource: event.loss.resource,
+              amount: event.loss.amount,
+            }),
+      });
+    case "wrong":
+      return recordCause(state, event.victim, {
+        eventId: event.id,
+        tick: event.tick,
+        kind: "wrong",
+        offender: event.entityId,
+        resource: event.resource,
+        amount: event.amount,
+        wrong: event.wrong,
+      });
+    case "mortal-struck":
+      return recordCause(state, event.entityId, {
+        eventId: event.id,
+        tick: event.tick,
+        kind: "harm",
+        offender: event.actor,
+        ...(event.resource === undefined
+          ? {}
+          : { resource: event.resource, amount: event.amount }),
+      });
     case "relationship-changed":
-      return event.grudgeDelta > 0
+      // A grudge a wrong left is that wrong's own cause, prayed about once: not a second prayer.
+      return event.grudgeDelta > 0 && !fromWrong(state, event)
         ? recordCause(state, event.entityId, {
             eventId: event.id,
             tick: event.tick,
@@ -618,7 +804,7 @@ export function applyBlessingGranted(
 function closePetition(
   state: WorldState,
   petitionId: EventId,
-  status: "answered" | "lapsed",
+  status: "answered" | "lapsed" | "refused",
 ): WorldState {
   const petition = state.petitions.get(petitionId);
   if (petition === undefined || petition.status !== "open") return state;
@@ -639,6 +825,13 @@ export function applyPetitionLapsed(
   event: PetitionLapsedEvent,
 ): WorldState {
   return closePetition(state, event.petitionId, "lapsed");
+}
+
+export function applyPetitionRefused(
+  state: WorldState,
+  event: PetitionRefusedEvent,
+): WorldState {
+  return closePetition(state, event.petitionId, "refused");
 }
 
 // --- Judging ----------------------------------------------------------------------------
@@ -728,6 +921,32 @@ export function blessability(
   return { ok: true, petition, blessing };
 }
 
+/**
+ * Whether `god` may refuse petition `petitionId`: it is addressed to that god, still open, and inside its
+ * answer window, the same standing a bless needs. A refusal asks nothing of the world beyond that.
+ */
+export function refusability(
+  state: WorldState,
+  petitionId: EventId,
+  god: EntityId,
+):
+  | { readonly ok: true; readonly petition: Petition }
+  | { readonly ok: false; readonly message: string } {
+  const petition = state.petitions.get(petitionId);
+  if (
+    petition === undefined ||
+    petition.god !== god ||
+    petition.status !== "open" ||
+    !inAnswerWindow(state, petition, state.tick)
+  ) {
+    return {
+      ok: false,
+      message: `${petitionId} is not an open petition addressed to this god`,
+    };
+  }
+  return { ok: true, petition };
+}
+
 /** A judged answer: the petition it answers and the event that answered it. */
 export interface Answer {
   readonly petition: Petition;
@@ -741,7 +960,8 @@ export interface Answer {
  * building as it stood. `petitions` is the world the petitions live in now.
  *
  * A strike by the named god on an operational building the offender owns
- * answers every open punish petition against that offender that lists it. A
+ * answers every open punish petition against that offender that lists it; a
+ * strike on the offender itself answers every one. A
  * blessing answers the one petition it names. An answer inside the window
  * counts; the lapse check runs afterwards, so an answer on a petition's last
  * tick wins over its lapse.
@@ -770,6 +990,18 @@ export function judgeAnswers(
     if (event.kind === "blessing-granted") {
       const petition = petitions.petitions.get(event.petitionId);
       if (petition && open(petition)) answer(petition);
+    } else if (event.kind === "mortal-struck") {
+      // A strike on the mortal answers every open punish petition against it that is addressed to the striker.
+      for (const petition of petitions.petitions.values()) {
+        if (
+          petition.god === event.actor &&
+          petition.request.kind === "punish" &&
+          petition.request.offender === event.entityId &&
+          open(petition)
+        ) {
+          answer(petition);
+        }
+      }
     } else if (
       event.kind === "building-damaged" ||
       event.kind === "building-ignited"

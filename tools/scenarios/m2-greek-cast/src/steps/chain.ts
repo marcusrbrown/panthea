@@ -29,6 +29,7 @@ import {
   check,
   driveGod,
   lastInputOrder,
+  modelProposals,
   postFixture,
   stateOf,
   waitFor,
@@ -120,6 +121,24 @@ export async function stepStrike(
         { kind: "move", to: "tavern" },
         "the farmer goes to the tavern",
       );
+      // A farmer with no stock left (a trouble took it) goes to work the tick after, so the fixture is posted again
+      // each tick until Zeus's strike is journaled: the farmer stays where his turn finds him.
+      const deadline = Date.now() + 30_000;
+      while (
+        Date.now() < deadline &&
+        !modelProposals(story, "zeus").some(
+          (entry) =>
+            entry.inputOrder > afterStrikeOrder &&
+            (entry.proposal as { kind?: string }).kind === "strike",
+        )
+      ) {
+        await postFixture(
+          story,
+          "farmer",
+          { kind: "move", to: "tavern" },
+          "the farmer stays at the tavern",
+        );
+      }
       const journaled = await waitForModelProposal(
         story,
         "zeus",
