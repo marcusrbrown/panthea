@@ -2833,7 +2833,7 @@ test("all the new state replays equal: a patron and a temperament the seed chang
 });
 
 test("the season, floor, loss, and director tunables survive commit, reopen, rebuild, and export at their boundary values: a season of one tick, a floor window of one tick, a loss cap of one unit, and an interval too long to come", () => {
-  const run = (balance: Record<string, number>) => {
+  const runBalance = (balance: Record<string, number>) => {
     const storeDir = tempDir("panthea-sim-seasonbal-");
     const exportDir = tempDir("panthea-sim-seasonbal-export-");
     const slotsDir = tempDir("panthea-sim-seasonbal-slots-");
@@ -2864,30 +2864,53 @@ test("the season, floor, loss, and director tunables survive commit, reopen, reb
       rmSync(slotsDir, { recursive: true, force: true });
     }
   };
-  // A season of one tick turns every tick; 200 turns none in 40 ticks; 1,000,000 none either.
-  expect(
-    [1, 200, 1_000_000].map((seasonTicks) => run({ seasonTicks }).turns),
-  ).toEqual([40, 0, 0]);
-  // A floor window of one tick gives each god a trouble in every tick it has one that can happen: every god has them,
-  // and a god's building troubles run out as its buildings are damaged.
-  const floor = run({ troubleFloorTicks: 1 });
-  const floors = floor.troubles.filter((e) => e.source === "floor");
-  expect(floors.length).toBeGreaterThan(40);
-  expect(new Set(floors.map((e) => e.god)).size).toBe(7);
-  // A loss cap of one takes one unit at a time; the authored 2 and a cap above what is held take more.
-  const largest = (cap: number) =>
+  const largestLoss = (run: ReturnType<typeof runBalance>) =>
     Math.max(
-      ...run({ troubleLossCap: cap, troubleFloorTicks: 1 }).troubles.flatMap(
-        (e) => (e.loss.kind === "resource" ? [e.loss.amount] : []),
+      ...run.troubles.flatMap((e) =>
+        e.loss.kind === "resource" ? [e.loss.amount] : [],
       ),
     );
-  expect([largest(1), largest(2), largest(1000)]).toEqual([
-    1,
-    2,
-    expect.any(Number),
-  ]);
-  expect(largest(1000)).toBeGreaterThan(2);
-  // An interval too long to come never fires the director; one tick long fires it every tick it can.
-  expect(run({ directorIntervalTicks: 1_000_000 }).director).toBe(0);
-  expect(run({ directorIntervalTicks: 1 }).director).toBe(40);
+  const floorsOf = (run: ReturnType<typeof runBalance>) =>
+    run.troubles.filter((e) => e.source === "floor");
+  // The four tunables do not interfere across these three round trips, so each trip carries one boundary of each.
+  // Every trip has a floor window of one tick: each god gets a trouble in every tick it has one that can happen
+  // (every god has them, and a god's building troubles run out as its buildings are damaged).
+  // Low: a season of one tick turns every tick; a loss cap of one takes one unit at a time; a director interval of
+  // one tick fires it every tick it can.
+  const low = runBalance({
+    seasonTicks: 1,
+    troubleFloorTicks: 1,
+    troubleLossCap: 1,
+    directorIntervalTicks: 1,
+  });
+  expect(low.turns).toBe(40);
+  expect(largestLoss(low)).toBe(1);
+  expect(low.director).toBe(40);
+  expect(floorsOf(low).length).toBeGreaterThan(40);
+  expect(new Set(floorsOf(low).map((e) => e.god)).size).toBe(7);
+  // Authored: a season of 200 turns none in 40 ticks; the authored loss cap of 2 takes two; a director interval too
+  // long to come never fires it.
+  const authored = runBalance({
+    seasonTicks: 200,
+    troubleFloorTicks: 1,
+    troubleLossCap: 2,
+    directorIntervalTicks: 1_000_000,
+  });
+  expect(authored.turns).toBe(0);
+  expect(largestLoss(authored)).toBe(2);
+  expect(authored.director).toBe(0);
+  expect(floorsOf(authored).length).toBeGreaterThan(40);
+  expect(new Set(floorsOf(authored).map((e) => e.god)).size).toBe(7);
+  // High: a season of 1,000,000 turns none either; a cap above what is held takes more than the authored two.
+  const high = runBalance({
+    seasonTicks: 1_000_000,
+    troubleFloorTicks: 1,
+    troubleLossCap: 1000,
+    directorIntervalTicks: 1_000_000,
+  });
+  expect(high.turns).toBe(0);
+  expect(largestLoss(high)).toBeGreaterThan(2);
+  expect(high.director).toBe(0);
+  expect(floorsOf(high).length).toBeGreaterThan(40);
+  expect(new Set(floorsOf(high).map((e) => e.god)).size).toBe(7);
 });
