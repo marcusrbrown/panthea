@@ -454,6 +454,33 @@ Per god in gate 3 (committed actions over the three episodes): Athena 9 legends,
 
 **Next options (not taken).** (1) Compare a different local model on the same prompt (granite3.3-8b-4k, llama3.1-8b-4k, gemma4-e4b-4k are installed) to separate the model from the prompt; one variable, a few minutes. (2) Put the answer ahead of the idle choices in a prayer's menu or name it the default; that is tuning, and the owner rejected it before the system is built. (3) Look at why Hephaestus's smiths pray to no one. (4) A scheduler priority is no longer the limit: the queue wait is within the target. (5) Rate as it stands.
 
+**Status (2026-10-07), the same gate on a second local model, llama3.1-8b-4k.** The identical rated gate (3 × 300 s, 4K context, `--reasoning-effort=none`, which Ollama accepted for llama3.1 without error; no prompt or rate changed; only `--model=llama3.1-8b-4k`) ran once on main 4bea553 (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T15-44-00/`), against the qwen3-8b-4k gate on the same tree (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T14-02-54/`, the evidence of the answer-from-afar gate, #159). The load average was 3.34 at the start and 4.98 at the end (other work, light). Exit 1: 119 passed and 67 failed of 186 checks (qwen3: 143 and 43).
+
+| | qwen3-8b-4k (gate 3) | llama3.1-8b-4k (gate 4) |
+| --- | --- | --- |
+| Failed checks | 43 | 67 |
+| Walks (travel) | 57 | 21 |
+| Blesses / strikes on mortals / strikes on buildings / refusals | 3 / 0 / 0 / 0 | 1 / 1 / 0 / 0 |
+| Offers of terms | 6 | 3 |
+| Legends / reports | 18 / 28 | 9 / 19 |
+| Demands or contests between gods | 0 | 0 |
+| Turns where a prayer was open to the god: walk / answer or offer / other | 36 / 9 / 33 (of 78) | 12 / 5 / 18 (of 35) |
+| Prayers opened; closed (lapsed / answered / refused) | 95; 40 (37 / 3 / 0) | 93; 40 (38 / 2 / 0) |
+| Revenges / defections | 4 / 0 | 5 / 1 |
+| Cross-patron wrongs; prayed to the victim's patron; with a consequence | 27; 16; 4 | 29; 17; 6 |
+| Requests; exhausted; rejected proposals | 114; 0; 2 | 60; 2; 1 |
+| Latency p50 / p95 per episode | 8.3, 8.3, 6.3 s / 12.2, 13.0, 12.4 s | 13.3, 12.4, 15.0 s / 23.7, 25.2, 20.0 s |
+| Turns per god per episode; queue-wait p95 range; god-episodes over 90 s | 5 to 7; 59 to 73 s; 0 of 21 | 2 to 4; 78 to 137 s; 18 of 21 |
+| Food lines; food-prayer share per episode | 68, 65, 95; 52%, 58%, 50% | 62, 52, 69; 48%, 56%, 61% |
+
+**Verdicts, mortal-wrongs plan (llama3.1).** SC1: lines pass (62, 52, 69); the share is under half in one episode of three: not met. SC2: each god's trouble fired 2 to 3 times an episode; every god received a prayer across the run (Hephaestus 1, Hades 2), not in every god-episode (4 had none): not met per episode. SC3: met (29 cross-patron wrongs, 17 prayed to the victim's patron, 6 wrongs with a consequence; the run held 5 revenges, a punishment (Poseidon's strike) and a defection). SC4 and SC5: not met (no demand or contest between gods in any episode). SC6: shown in one episode of three: in episode 1 a trouble in Athena's domain took the farmer's planks, it prayed to Athena (not its patron Hera), Athena blessed it at tick 132 having taken no other action since tick 18 (so from where she stood), Hera let two prayers lapse, and at tick 211 the farmer left Hera for Athena. SC7: the owner rates.
+
+**One sampled turn (Hera, request 4 of 20, a help prayer from the farmer open and `help freely, from where you stand: {"action":"bless","petition":"evt-3-60"}` written out whole in her prompt):** episode 1, `{"action":"report","listener":"zeus","content":"I will travel to town-square to see what is happening there"}` (a report that says it will travel); episode 2, a report to Zeus about a grudge; episode 3, exhausted, an offer sent without the term's `to`, `resource` and `amount`. qwen3 on the same request travelled to the ancient olive tree in all three episodes.
+
+**Is the walk-by-default habit the model's or the prompt's?** The habit of not answering is shared; the idle action it is replaced by is the model's. With a prayer open, qwen3 took a direct answer (bless, strike, refusal) on 3 of 78 turns and llama3.1 on 2 of 35, 4% and 6%; counting offers, 12% and 14%. The rest went to idle actions: qwen3 walked on 46% of those turns and reported on 35%; llama3.1 walked on 34% and reported on 37% (and told legends on 11%). So walking is qwen3's favourite idle action (llama walks on 39% of all its actions against qwen3's 51%), but neither model answers a prayer written out whole in its prompt on more than about one turn in seven. That points to the prompt's menu (the answer is one line among four, and waiting, walking, reporting and telling a legend are always on offer) as much as to either model: the removal of the old walk-first instruction did not make the gods answer. Llama3.1 did produce the two unprompted answers from afar the qwen3 gate did not (Athena's blessing, and Poseidon's strike on a mortal at tick 73, his first action, with no walk before it), and one defection; with 2 to 4 turns a god, that is a count of one or two, not a rate.
+
+**Problems specific to llama3.1.** (1) Throughput: 13 to 15 s median latency against 6 to 8 s, so 60 requests where qwen3 made 114, 2 to 4 turns a god, and a p95 queue wait over ADR-0005's 90 s in 18 of 21 god-episodes (qwen3: 0); the harness showed degraded frames in 3% and 5% of polls in two episodes. (2) Two requests exhausted on an offer sent without the term's `to`, `resource` and `amount`, which the prompt's copyable offer shows: the same class of fault the legend and report fixes cured (a field the model drops from a nested object), now in the offer's term. (3) A report that announces a journey in its `content` instead of travelling (see the sampled turn). (4) The world refused Zeus's one offer, `insufficient-resources`. Nothing in the harness failed for this model: the schema format, the 4K context (prompts up to 9,721 characters) and `reasoning_effort` all worked.
+
 ## System-Wide Impact
 
 - **Interaction graph:**
