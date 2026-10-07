@@ -206,8 +206,10 @@ export interface PetitionView {
     readonly who: readonly EntityId[];
     readonly place: PetitionPlace;
   }[];
-  /** Whether the petitioner stands with the god, so a bless is possible. */
+  /** Whether the petitioner stands with the god: only where it stands is said, a blessing is answered from anywhere. */
   readonly petitionerHere: boolean;
+  /** The blessing the world would take (a help prayer addressed to this god, the petitioner living, the divinity to pay), written out in the intent to send; absent when the world would take none. */
+  readonly bless?: Readonly<Record<string, unknown>>;
   /** A worshipper (it reveres this god) or a prayer about a trouble in this god's domain from anyone: the routing the world applied. */
   readonly origin: "worshipper" | "domain";
   /** The domain trouble the prayer is about, when one is. */
@@ -474,9 +476,10 @@ function petitionView(
       observationId: createObservationId(),
       ...fields,
     }) as unknown as Proposal;
-  // The strike on a mortal offender and the refusal are each written out only when the world would take them.
+  // The strike on a mortal offender, the blessing, and the refusal are each written out only when the world would take them.
   const strike = { action: "strike", target: offender, power: 1 };
   const refuse = { action: "refuse", petition: petition.id };
+  const bless = { action: "bless", petition: petition.id };
   return {
     id: petition.id,
     petitioner: petition.petitioner,
@@ -507,6 +510,17 @@ function petitionView(
       proposal({ kind: "refuse", petition: petition.id }),
     ).ok
       ? { refuse }
+      : {}),
+    ...(request.kind === "help" &&
+    validateProposal(
+      state,
+      proposal({
+        kind: "bless",
+        petition: petition.id,
+        targets: [petition.petitioner],
+      }),
+    ).ok
+      ? { bless }
       : {}),
   };
 }
@@ -838,7 +852,7 @@ interface Offer {
   readonly hasGoal: boolean;
   /** The ids a new goal may name as its target (`shownIds`). */
   readonly goalTargets: readonly EntityId[];
-  /** Open help petitions whose petitioner stands here and whose bless the god can pay for. */
+  /** The shown help prayers whose blessing the world would take, wherever the petitioner stands. */
   readonly blessPetitions: readonly EventId[];
   /** The prayers shown whose refusal the world would take. */
   readonly refusable: readonly EventId[];
@@ -846,22 +860,10 @@ interface Offer {
   readonly practice: PracticeOffer | undefined;
 }
 
-/** Help petitions whose petitioner is here, the one thing a bless can answer. */
-function blessablePetitions(
-  snapshot: PerceptionSnapshot,
-  remembered: Remembered,
-): readonly EventId[] {
-  const divinity =
-    snapshot.self.inventory.find((item) => item.resource === "divinity")
-      ?.amount ?? 0;
-  if (divinity < remembered.blessCost) return [];
+/** The shown help petitions whose blessing the world would take (the god can pay, the petitioner is living): a bless is answered from wherever either stands. */
+function blessablePetitions(remembered: Remembered): readonly EventId[] {
   return remembered.petitions
-    .filter(
-      (petition) =>
-        petition.request.kind === "help" &&
-        petition.petitionerHere &&
-        snapshot.actors.some((actor) => actor.id === petition.petitioner),
-    )
+    .filter((petition) => petition.bless !== undefined)
     .map((petition) => petition.id);
 }
 
@@ -902,7 +904,7 @@ function offerFor(
     ),
     hasGoal: remembered.goal !== undefined,
     goalTargets: shownIds(snapshot, remembered),
-    blessPetitions: blessablePetitions(snapshot, remembered),
+    blessPetitions: blessablePetitions(remembered),
     refusable: remembered.petitions.flatMap((petition) =>
       petition.refuse === undefined || petition.agreed === true
         ? []
@@ -1665,22 +1667,12 @@ function answerGuidance(
   const redressee = (petition.redress?.term as { party?: unknown } | undefined)
     ?.party;
   if (request.kind === "help") {
-    const bless = { action: "bless", petition: petition.id };
-    if (petition.petitionerHere) {
-      return free([
-        `  - help freely: ${petition.petitioner} is here: ${send(bless)}`,
-        ...answerFor(redressee),
-      ]);
-    }
-    const place = petition.whereabouts.find((entry) =>
-      entry.who.includes(petition.petitioner),
-    )?.place;
+    // A blessing is answered from where the god stands, so it is a choice like the others: written out whole when the
+    // world would take it (the god has the divinity to pay), and not shown when it would not.
     return free([
-      ...(place === undefined || !place.reachable
+      ...(petition.bless === undefined
         ? []
-        : [
-            `  - help freely: ${petition.petitioner} is not here; if you choose this, travel to them ${send({ action: "travel", to: place.id })} (${place.name}); the world walks you there, and once you are with them, bless them ${send(bless)}.`,
-          ]),
+        : [`  - help freely, from where you stand: ${send(petition.bless)}`]),
       ...answerFor(redressee),
     ]);
   }
@@ -1761,15 +1753,10 @@ function describePrayer(
   const lines = [
     `- [${petition.id}] ${petition.petitioner} (${from}) ${ask} (${petition.cause}).`,
   ];
+  // Where each is: a prayer is answered from where the god stands, so no way there is said.
   for (const { who, place } of petition.whereabouts) {
     lines.push(
-      `  ${who.join(", ")} at ${place.name} [${place.id}]${
-        place.here
-          ? " (here)"
-          : !place.reachable
-            ? ": no way there"
-            : `: you can travel there (action "travel", to "${place.id}")`
-      }.`,
+      `  ${who.join(", ")} at ${place.name} [${place.id}]${place.here ? " (here)" : ""}.`,
     );
   }
   lines.push(...answerGuidance(petition, strike));

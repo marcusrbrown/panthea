@@ -148,7 +148,7 @@ const prayersOf = (text: string) => {
   return lines.slice(start, end).join("\n");
 };
 
-test("Hera on Olympus is shown the farmer's punish petition: who asked, the request, the offender and the building, where each is, and travel to the town square", () => {
+test("Hera on Olympus is shown the farmer's punish petition: who asked, the request, the offender and the building, and where each is", () => {
   const run = greek();
   const opened = run.prayAboutTheft("farmer", "woodcutter");
   expect(String(opened.god)).toBe("hera");
@@ -166,9 +166,9 @@ test("Hera on Olympus is shown the farmer's punish petition: who asked, the requ
   expect(prayers).toContain("punish woodcutter");
   expect(prayers).toContain("woodshed");
   expect(prayers).toContain("Town Square");
-  // The place the people are at, and that the god can travel there (the world walks it the way).
+  // The place the people are at, with no way there said: a prayer is answered from where the god stands.
   expect(prayers).toContain(
-    'farmer, woodcutter, woodshed at Town Square [town-square]: you can travel there (action "travel", to "town-square")',
+    "farmer, woodcutter, woodshed at Town Square [town-square].",
   );
   // The theft it was about, as the cause.
   expect(prayers).toContain("woodcutter stole food");
@@ -223,7 +223,7 @@ test("the woodshed becomes a strike target only once it is in the scene: not fro
   expect(prayersOf(run.prompt("hera"))).not.toContain("take ");
 });
 
-test("bless is offered only for a petitioner who is present, naming one of its open help petitions", () => {
+test("bless is offered for each open help petition shown to the god, wherever the petitioner stands, and for no other god or kind of prayer", () => {
   const run = greek();
   // The farmer's tavern was damaged: a help petition for the building.
   const cause = run.apply({
@@ -273,14 +273,14 @@ test("bless is offered only for a petitioner who is present, naming one of its o
       petitions: bless?.then.properties?.petition?.enum,
     };
   };
-  // The god is in the hall; the farmer is at the altar: not present, so no bless.
-  expect(blessProps(god).actions).not.toContain("bless");
-  expect(blessProps(god).petitions).toBeUndefined();
-  // The god stands with the farmer: bless is offered, naming that one petition.
-  run.state = actorAt(run.state, god, "altar");
+  // The god is in the hall; the farmer is at the altar: a blessing is answered from where the god stands, so bless is
+  // offered, naming that one petition.
   expect(blessProps(god).actions).toContain("bless");
   expect(blessProps(god).petitions).toEqual([opened.id]);
-  expect(run.prompt(god)).toContain('action "bless"');
+  expect(run.prompt(god)).toContain('"action":"bless"');
+  // And the same with the god standing with the farmer.
+  run.state = actorAt(run.state, god, "altar");
+  expect(blessProps(god).petitions).toEqual([opened.id]);
   // A punish petition's petitioner who is present does not get a bless: that is a strike.
   const other = god === "hera" ? "zeus" : "hera";
   expect(blessProps(other).actions).not.toContain("bless");
@@ -755,32 +755,7 @@ test("prayers are per-tick state, so they come after what the god remembers and 
   expect(text.indexOf("What do you do?")).toBeGreaterThan(prayers);
 });
 
-test("a help prayer from afar offers the way to help as a choice: travel to the petitioner if you choose to help, and bless once there", () => {
-  const run = greek();
-  const theft = run.apply({
-    kind: "theft",
-    entityId: "woodcutter",
-    victim: "farmer",
-    resource: "currency",
-    amount: 1,
-    cause: "director",
-  });
-  const opened = prayAbout(run, "farmer", theft.id);
-  const prayers = prayersOf(run.prompt(String(opened.god)));
-  expect(prayers).toContain("help freely");
-  expect(prayers).toContain('{"action":"travel","to":"altar"} (Altar of Zeus)');
-  expect(prayers).toContain("bless");
-  // It takes several steps, and the hint is for one who chooses to help: a condition, not a command.
-  expect(prayers).toContain("if you choose this");
-  expect(prayers).toContain("the world walks you there");
-  expect(prayers).not.toContain("turn by turn");
-  expect(prayers).not.toContain("To answer it");
-  expect(prayers).not.toContain("keep going each turn");
-  // Not the guidance for a petitioner who is here.
-  expect(prayers).not.toContain("is here (action");
-});
-
-test("a help prayer from a petitioner who is here offers bless as one of the choices, not as an order", () => {
+test("a help prayer from afar offers the blessing directly, as an object to copy: no travel step, no 'once you are there'", () => {
   const run = greek();
   const theft = run.apply({
     kind: "theft",
@@ -792,14 +767,200 @@ test("a help prayer from a petitioner who is here offers bless as one of the cho
   });
   const opened = prayAbout(run, "farmer", theft.id);
   const god = String(opened.god);
-  run.state = actorAt(run.state, god, "altar");
+  // The god is in its hall and the farmer at the altar.
+  expect(getActor(run.state, id(god))?.locationId).not.toBe(id("altar"));
   const prayers = prayersOf(run.prompt(god));
   expect(prayers).toContain(
-    `help freely: farmer is here: {"action":"bless","petition":"${opened.id}"}`,
+    `help freely, from where you stand: {"action":"bless","petition":"${opened.id}"}`,
   );
   expect(prayers).toContain("let it be");
-  expect(prayers).not.toContain("bless them now");
+  expect(prayers).not.toContain("travel");
+  expect(prayers).not.toContain("once you are with them");
+  expect(prayers).not.toContain("if you choose this");
   expect(prayers).not.toContain("To answer it");
+  expect(prayers).not.toContain("is here (action");
+});
+
+test("a help prayer shows the same blessing to a god standing with the petitioner: where the god stands changes nothing about what it may send", () => {
+  const run = greek();
+  const theft = run.apply({
+    kind: "theft",
+    entityId: "woodcutter",
+    victim: "farmer",
+    resource: "currency",
+    amount: 1,
+    cause: "director",
+  });
+  const opened = prayAbout(run, "farmer", theft.id);
+  const god = String(opened.god);
+  const afar = prayersOf(run.prompt(god));
+  run.state = actorAt(run.state, god, "altar");
+  const near = prayersOf(run.prompt(god));
+  const line = `help freely, from where you stand: {"action":"bless","petition":"${opened.id}"}`;
+  expect(afar).toContain(line);
+  expect(near).toContain(line);
+  expect(near).not.toContain("bless them now");
+  expect(near).not.toContain("To answer it");
+});
+
+test("a god with too little divinity is shown no bless line and no bless in the schema; with the divinity back, both return", () => {
+  const run = greek();
+  const theft = run.apply({
+    kind: "theft",
+    entityId: "woodcutter",
+    victim: "farmer",
+    resource: "currency",
+    amount: 1,
+    cause: "director",
+  });
+  const opened = prayAbout(run, "farmer", theft.id);
+  const god = String(opened.god);
+  const held = getActor(run.state, id(god));
+  if (!held) throw new Error(god);
+  const rich = run.state;
+  run.state = withActor(run.state, {
+    ...held,
+    inventory: new Map([...held.inventory].filter(([r]) => r !== "divinity")),
+  });
+  const prayers = prayersOf(run.prompt(god));
+  expect(prayers).not.toContain('{"action":"bless"');
+  expect(prayers).not.toContain("help freely");
+  // The other choices are still there.
+  expect(prayers).toContain("let it be");
+  const poorProps = run.schema(god).jsonSchema as {
+    properties: { action: { enum: string[] } };
+    allOf?: { if: { properties: { action?: { const?: string } } } }[];
+  };
+  expect(poorProps.properties.action.enum).not.toContain("bless");
+  expect(
+    (poorProps.allOf ?? []).some(
+      (c) => c.if.properties.action?.const === "bless",
+    ),
+  ).toBe(false);
+  expect(
+    run.schema(god).parse({ action: "bless", petition: opened.id }).ok,
+  ).toBe(false);
+  run.state = rich;
+  expect(prayersOf(run.prompt(god))).toContain('{"action":"bless"');
+  expect(
+    run.schema(god).parse({ action: "bless", petition: opened.id }).ok,
+  ).toBe(true);
+});
+
+test("the bless enum names only prayers that were shown: another god's help prayer is refused by the schema, and a punish prayer is no bless", () => {
+  const run = greek();
+  const theft = run.apply({
+    kind: "theft",
+    entityId: "woodcutter",
+    victim: "farmer",
+    resource: "currency",
+    amount: 1,
+    cause: "director",
+  });
+  const opened = prayAbout(run, "farmer", theft.id);
+  const god = String(opened.god);
+  const other = god === "hera" ? "zeus" : "hera";
+  const snapshot = perceive(run.state, id(other), []);
+  if (!snapshot) throw new Error("snapshot");
+  expect(
+    run.schema(other).parse({ action: "bless", petition: opened.id }).ok,
+  ).toBe(false);
+  expect(
+    run.schema(god).parse({ action: "bless", petition: opened.id }).ok,
+  ).toBe(true);
+  expect(
+    run.schema(god).parse({ action: "bless", petition: "evt-404" }).ok,
+  ).toBe(false);
+  // A punish prayer is answered by a strike: its id is no bless.
+  const punish = run.prayAboutTheft("woodcutter", "farmer", "food");
+  const punisher = String(punish.god);
+  expect(punish.request.kind).toBe("punish");
+  expect(
+    run.schema(punisher).parse({ action: "bless", petition: punish.id }).ok,
+  ).toBe(false);
+});
+
+test("a remote bless built from the prayer commits through runTick, answers it, and moves nobody; the petitioner dying between prompt and commit is refused cleanly", () => {
+  const run = greek();
+  const theft = run.apply({
+    kind: "theft",
+    entityId: "woodcutter",
+    victim: "farmer",
+    resource: "currency",
+    amount: 1,
+    cause: "director",
+  });
+  const opened = prayAbout(run, "farmer", theft.id);
+  const god = String(opened.god);
+  const snapshot = perceive(run.state, id(god), []);
+  if (!snapshot) throw new Error("snapshot");
+  const remembered = rememberedBy(run.state, id(god));
+  // The farmer is not in the god's scene: the bless is built from the prayer.
+  expect(snapshot.actors.some((a) => a.id === id("farmer"))).toBe(false);
+  const parsed = run
+    .schema(god)
+    .parse({ action: "bless", petition: opened.id });
+  if (!parsed.ok) throw new Error(parsed.message);
+  const built = buildModelProposal(id(god), snapshot, parsed.value, remembered);
+  if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+  expect(built.proposal).toMatchObject({
+    kind: "bless",
+    petition: opened.id,
+    targets: ["farmer"],
+  });
+  expect(built.proposal.expectedRevisions).toEqual([]);
+  expect(built.observation.factsRead).toContain(`petition:${opened.id}`);
+  const godAt = getActor(run.state, id(god))?.locationId;
+  const ran = runTick(run.state, createPrng(1), [built.proposal]);
+  expect(ran.rejected).toEqual([]);
+  expect(ran.events.map((e) => e.kind)).toContain("blessing-granted");
+  expect(ran.state.petitions.get(opened.id)?.status).toBe("answered");
+  expect(getActor(ran.state, id(god))?.locationId).toBe(godAt);
+
+  // The petitioner died after the prompt: the world refuses it and the state is untouched.
+  const farmer = getActor(run.state, id("farmer"));
+  if (!farmer) throw new Error("farmer");
+  const dead = withActor(run.state, { ...farmer, alive: false });
+  const refused = runTick(dead, createPrng(1), [built.proposal]);
+  expect(refused.rejected.map((r) => r.reason)).toEqual(["dead-actor"]);
+  expect(refused.state.petitions.get(opened.id)?.status).toBe("open");
+});
+
+test("a remote bless stays unpinned: a worshipper's worship raised the god's revision while it thought, and the bless still commits", () => {
+  const run = greek();
+  const theft = run.apply({
+    kind: "theft",
+    entityId: "woodcutter",
+    victim: "farmer",
+    resource: "currency",
+    amount: 1,
+    cause: "director",
+  });
+  const opened = prayAbout(run, "farmer", theft.id);
+  const god = String(opened.god);
+  const snapshot = perceive(run.state, id(god), []);
+  if (!snapshot) throw new Error("snapshot");
+  const remembered = rememberedBy(run.state, id(god));
+  const parsed = run
+    .schema(god)
+    .parse({ action: "bless", petition: opened.id });
+  if (!parsed.ok) throw new Error(parsed.message);
+  const built = buildModelProposal(id(god), snapshot, parsed.value, remembered);
+  if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+  expect(built.proposal.expectedRevisions).toEqual([]);
+  const before = getActor(run.state, id(god))?.revision ?? 0;
+  // A real worship event: a mortal worships the god, and the god's own revision rises.
+  run.apply({
+    kind: "worship-performed",
+    entityId: "woodcutter",
+    deity: god,
+    favorEffect: "blessing",
+    favorExpiresAtTick: run.state.tick + 100,
+  });
+  expect(getActor(run.state, id(god))?.revision ?? 0).toBeGreaterThan(before);
+  const ran = runTick(run.state, createPrng(1), [built.proposal]);
+  expect(ran.rejected).toEqual([]);
+  expect(ran.events.map((e) => e.kind)).toContain("blessing-granted");
 });
 
 test("a punish prayer offers striking the offender's building as a choice: travel to it from afar if you choose to, and strike it where it stands once there", () => {
@@ -842,15 +1003,14 @@ function godAtTheGate() {
   return { run, god };
 }
 
-test("whatever the god's place, a prayer's guidance names one action, travel, to the place the people are: the world works out the way, so no hop and no crossing is named", () => {
+test("whatever the god's place, a help prayer's guidance is one bless, and no hop, crossing or travel is named", () => {
   for (const place of ["olympus-gate", "great-hall"]) {
     const { run, god } = godAtTheGate();
     run.state = actorAt(run.state, god, place);
     const prayers = prayersOf(run.prompt(god));
-    expect(prayers).toContain('{"action":"travel","to":"altar"}');
-    expect(prayers).toContain(
-      'farmer at Altar of Zeus [altar]: you can travel there (action "travel", to "altar")',
-    );
+    expect(prayers).toMatch(/\{"action":"bless","petition":"evt-[^"]+"\}/);
+    expect(prayers).toContain("farmer at Altar of Zeus [altar].");
+    expect(prayers).not.toContain("travel");
     expect(prayers).not.toContain('"action":"move"');
     expect(prayers).not.toContain("realm-transition");
   }

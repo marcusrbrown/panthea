@@ -264,29 +264,20 @@ export function buildModelProposal(
       const petition = remembered.petitions.find(
         (candidate) => candidate.id === intent.petition,
       );
-      const petitioner = snapshot.actors.find(
-        (actor) => actor.id === petition?.petitioner,
-      );
-      if (!petition || !petitioner) {
-        return refuse(
-          `${intent.petition} is not a petition whose petitioner is here`,
-        );
+      if (!petition || petition.bless === undefined) {
+        return refuse(`${intent.petition} is not a prayer the god was shown`);
       }
-      factsRead.push(
-        `petition:${petition.id}`,
-        `actor:${petitioner.id}.location`,
-      );
-      // A bless pins no revision. Everything it depends on is judged again when
-      // it is validated: the god's power and divinity, the petitioner alive and
-      // at the god's location, the petition open, addressed to this god, of a
-      // kind a bless answers, and inside its window. A pin only added refusals
-      // for changes it does not depend on (a routine gathering raises the
-      // petitioner's revision, any mortal passing through raises the
-      // location's) and hid the real reason when one did apply.
+      factsRead.push(`petition:${petition.id}`);
+      // A bless answers the prayer, wherever the god and the petitioner stand, so it is built from the prayer and not from
+      // the scene. It pins no revision. Everything it depends on is judged again when it is validated: the god's divinity,
+      // the petitioner alive, the petition open, addressed to this god, of a kind a bless answers, and inside its window.
+      // A pin only added refusals for changes it does not depend on (a routine gathering raises the petitioner's
+      // revision, any mortal passing through raises the location's, a mortal's worship raises the god's own) and hid
+      // the real reason when one did apply.
       proposal = {
         ...base,
         expectedRevisions: [],
-        targets: [petitioner.id],
+        targets: [petition.petitioner],
         kind: "bless",
         petition: petition.id,
       };

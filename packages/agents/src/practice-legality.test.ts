@@ -879,12 +879,13 @@ test("the way to the petitioner is an object to copy, in the form the parser tak
   expect(parses(here, "zeus", { action: "bless", petition: p }).ok).toBe(true);
 });
 
-test("a prayer's way is one travel to where the petitioner is, from across a realm as from beside it", () => {
+test("a prayer is answered by one bless, from across a realm as from beside it: no way to the petitioner is shown", () => {
   const run = new Run();
   run.state = actorAt(run.state, "zeus", "olympus-gate");
-  run.prays("farmer", "zeus");
+  const petition = run.prays("farmer", "zeus");
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
-  expect(prayers).toContain('{"action":"travel","to":"town-square"}');
+  expect(prayers).toContain(`{"action":"bless","petition":"${petition}"}`);
+  expect(prayers).not.toContain("travel");
   expect(prayers).not.toContain("realm-transition");
 });
 
