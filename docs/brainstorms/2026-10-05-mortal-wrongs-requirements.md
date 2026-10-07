@@ -119,6 +119,7 @@ M05 requires conflict with valid resolution paths. W04 requires remembered outco
 - Every god opens at least one thread of its own toward another god across the gate's episodes (R19).
 - The tunables are set so that a mortal whose patron ignores its prayers defects within one 5-minute episode, and the transcript shows why.
 - The owner rates the gate on whether the town feels alive and the gods' choices matter.
+- Status (2026-10-06), from the first gate on the built system (`tools/scenarios/m2-greek-cast/episodes/2026-10-07T00-52-07/`, 3 × 300 s on qwen3-8b-4k, exit 1): the food line count is met (69, 59, 65) and the food-prayer share is not (58%, 50%, 51%); the domain troubles occur every episode and every god received a prayer in at least one episode (3 of 21 god-episodes had none, Hephaestus in two of three); an unscripted wrong with a consequence is met (5 revenges, and a director theft the farmer prayed about that Hera punished); no demand or contest between gods opened in any episode, so the harm-or-defection thread and every god's initiative are not met; no mortal defected, since only 2 of 105 prayers were answered; the owner's rating is pending.
 - Planning can build this without inventing behavior. The plan's open questions are the tunables, the content (temperaments, domains, troubles, seasons), and the measured items below.
 
 ---
