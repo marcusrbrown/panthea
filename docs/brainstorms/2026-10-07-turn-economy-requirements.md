@@ -41,8 +41,8 @@ Two rated seven-god gates ran on 2026-10-07: `tools/scenarios/m2-greek-cast/epis
 ## Requirements
 
 **Answering from afar**
-- R1. A god may bless the mortal whose open prayer is addressed to it, wherever the god stands.
-- R2. A god may strike the wrongdoer an open prayer addressed to it asks it to punish, or a building of the wrongdoer's that the prayer lists, wherever the god stands.
+- R1. A god may bless the mortal whose open prayer is addressed to it, wherever the god stands. This includes a boon the god owes under accepted terms on that prayer.
+- R2. A god may strike the wrongdoer an open prayer addressed to it asks it to punish, or a building of the wrongdoer's that the prayer lists, wherever the god stands. This includes a strike the god owes under accepted terms on that prayer.
 - R3. A god may offer terms on an open prayer addressed to it (a supplication), wherever the god stands.
 - R4. A god may refuse an open prayer addressed to it from anywhere, as today.
 
@@ -50,8 +50,8 @@ Two rated seven-god gates ran on 2026-10-07: `tools/scenarios/m2-greek-cast/epis
 - R5. Any act that doesn't answer an open prayer addressed to the god keeps today's rules. Blessing unprompted still needs the god present, and legends and reports are still told to those present. Demands, contests and settlements between gods keep their current checks, and no new presence check is added to them.
 
 **World authority and perception**
-- R6. The world checks every answer made from afar: the prayer is open, it is addressed to this god, and the target is the mortal who prayed, the wrongdoer it names, or a building of the wrongdoer's that it lists. The god's abilities and power rules apply unchanged.
-- R7. An answer made from afar takes effect at the target's place. Those present there perceive it as they would any act at that place. It doesn't move the god or reveal where the god is.
+- R6. The world checks every blessing or refusal made from afar: the prayer is open, it is addressed to this god, and the target is the mortal who prayed. Strikes keep today's world rules, so a god may strike anywhere. A strike answers a punish prayer only if it hits the named wrongdoer or a listed building while that prayer is still open. The god's side offers strike targets only from the prayers it was shown. The god's abilities and power rules apply unchanged.
+- R7. An answer made from afar takes effect at the target's place. Those present there perceive it as they would any act at that place, and they don't learn where the god is. The answer doesn't move the god. Those standing with the god see it spend divinity, as they do today.
 
 **Prompt**
 - R8. For a distant prayer, the god's prompt offers each answer as a move the god can copy and send as written, with no travel step. Travel is no longer shown as the way to answer a prayer.
@@ -68,7 +68,7 @@ Two rated seven-god gates ran on 2026-10-07: `tools/scenarios/m2-greek-cast/epis
     - the world accepts the strike;
     - Lykos loses goods as a strike takes them;
     - mortals in the market perceive the strike;
-    - nobody learns where Poseidon is.
+    - nobody in the market learns where Poseidon is.
 - AE3. **Covers R5.** Given Hera is far from a mortal who hasn't prayed to her, when she tries to bless that mortal, the world refuses it as it does today.
 - AE4. **Covers R6.** Given a prayer addressed to Zeus, when Hera tries to bless its petitioner from afar, the world refuses it.
 
@@ -119,8 +119,6 @@ Two rated seven-god gates ran on 2026-10-07: `tools/scenarios/m2-greek-cast/epis
 ### Deferred to Planning
 
 - [Affects R1][Technical] Find every point on the god's side that limits a blessing to a petitioner standing with the god: the action list, the parser and the proposal builder.
-- [Affects R2, R3][Technical] Verify the current location checks on striking a mortal and on offering terms on a prayer. The research couldn't confirm them.
-- [Affects R2, R7][Technical] Confirm that a strike made from afar still counts as a contest service act at the struck mortal's place, as a mortal strike does today.
 - [Affects R8][Technical] Re-measure the busiest prompt against the 10,500-character guard once the travel-first lines are replaced.
 
 ---
