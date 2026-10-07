@@ -124,12 +124,17 @@ export function crossPatronWrongs(
     if (kindOf(events, "wrong").some((w) => w.revenge === wrong.id)) {
       consequences.push("revenge");
     }
+    // A defection follows the recorded provenance: it is this wrong's only if the change cites the wrong's own
+    // prayer among the ones its patron left unanswered, not merely because the victim left that patron later.
     if (
+      prayer !== undefined &&
       kindOf(events, "patron-changed").some(
         (c) =>
           c.entityId === victim &&
           String(c.from) === victimPatron &&
-          Number(c.sequence) > Number(wrong.sequence),
+          Number(c.sequence) > Number(wrong.sequence) &&
+          Array.isArray(c.unanswered) &&
+          (c.unanswered as unknown[]).includes(prayer.id),
       )
     ) {
       consequences.push("defection");
@@ -165,10 +170,16 @@ export function mortalWrongCheck(
   };
 }
 
-/** Demands and contests between gods over a worshipper's harm (SC4): a strike's harm, or a defection. */
+/**
+ * Demands and contests between gods over a worshipper's harm (SC4): a strike's harm, or a defection. Both parties are
+ * gods of the cast, and an offer made on a prayer (a supplication, whose counterparty is the mortal who prayed) is
+ * not a demand: terms offered to a mortal are no dispute between gods, as `ownThreads` already holds.
+ */
 export function godThreadsOverHarm(
   events: readonly StoredEvent[],
+  gods: readonly string[],
 ): StoredEvent[] {
+  const isGod = new Set(gods);
   const harms = new Set([
     ...kindOf(events, "mortal-struck").map((e) => e.id),
     ...kindOf(events, "patron-changed").map((e) => e.id),
@@ -176,11 +187,17 @@ export function godThreadsOverHarm(
   return [
     ...kindOf(events, "practice-opened").filter(
       (e) =>
+        isGod.has(String(e.entityId)) &&
+        isGod.has(String(e.counterparty)) &&
+        e.petition === undefined &&
         Array.isArray(e.causes) &&
         (e.causes as unknown[]).some((cause) => harms.has(String(cause))),
     ),
-    ...kindOf(events, "contest-opened").filter((e) =>
-      harms.has(String(e.cause)),
+    ...kindOf(events, "contest-opened").filter(
+      (e) =>
+        isGod.has(String(e.entityId)) &&
+        isGod.has(String(e.rival)) &&
+        harms.has(String(e.cause)),
     ),
   ];
 }
@@ -188,8 +205,9 @@ export function godThreadsOverHarm(
 /** SC4, across the episodes: at least one demand or contest between gods opened citing a worshipper's harm or a defection. */
 export function godThreadOverHarmCheck(
   episodes: readonly GateEpisode[],
+  gods: readonly string[],
 ): GateCheck {
-  const threads = episodes.flatMap((e) => godThreadsOverHarm(e.events));
+  const threads = episodes.flatMap((e) => godThreadsOverHarm(e.events, gods));
   return {
     name: "god thread over harm or defection",
     ok: threads.length > 0,
@@ -287,7 +305,7 @@ export function gateChecks(
 ): GateCheck[] {
   return [
     mortalWrongCheck(episodes, authored),
-    godThreadOverHarmCheck(episodes),
+    godThreadOverHarmCheck(episodes, gods),
     ...initiativeChecks(episodes, gods),
   ];
 }

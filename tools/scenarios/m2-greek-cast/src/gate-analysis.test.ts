@@ -153,6 +153,8 @@ test("SC3 holds on revenge or a defection too, and fails on a wrong nobody praye
     entityId: "doris",
     from: "poseidon",
     to: "athena",
+    answered: "evt-3-9",
+    unanswered: [prayed.id],
   });
   expect(mortalWrongCheck([episode([w, prayed, defected])], AUTHORED).ok).toBe(
     true,
@@ -162,6 +164,8 @@ test("SC3 holds on revenge or a defection too, and fails on a wrong nobody praye
     entityId: "doris",
     from: "poseidon",
     to: "athena",
+    answered: "evt-0-1",
+    unanswered: [],
   });
   const toAthena = event("petition-opened", 2, {
     entityId: "doris",
@@ -195,7 +199,65 @@ test("SC3 holds on revenge or a defection too, and fails on a wrong nobody praye
   expect(crossPatronWrongs(episode([same, prayed]), AUTHORED)).toEqual([]);
 });
 
+test("SC3 follows the recorded provenance: a defection counts as the wrong's consequence only if it cites the wrong's own prayer among its ignored ones", () => {
+  const w = wrong(1);
+  const prayed = event("petition-opened", 2, {
+    entityId: "doris",
+    god: "poseidon",
+    cause: w.id,
+  });
+  // Doris prays to Poseidon about the theft and that prayer stays open. Poseidon refuses a separate food prayer,
+  // and Doris defects citing only the food prayer.
+  const food = event("petition-opened", 3, {
+    entityId: "doris",
+    god: "poseidon",
+    cause: "evt-3-77",
+  });
+  const refusedFood = event("petition-refused", 4, {
+    entityId: "poseidon",
+    petitioner: "doris",
+    petitionId: food.id,
+  });
+  const foodDefection = event("patron-changed", 5, {
+    entityId: "doris",
+    from: "poseidon",
+    to: "athena",
+    answered: "evt-4-9",
+    unanswered: [food.id],
+  });
+  const unrelated = episode([w, prayed, food, refusedFood, foodDefection]);
+  expect(crossPatronWrongs(unrelated, AUTHORED)).toMatchObject([
+    { prayer: prayed.id, consequences: [] },
+  ]);
+  const unrelatedCheck = mortalWrongCheck([unrelated], AUTHORED);
+  expect(unrelatedCheck.ok).toBe(false);
+  expect(unrelatedCheck.detail).toContain(
+    "1 prayed to the victim's patron, 0 with a consequence",
+  );
+  // The same defection citing the wrong's prayer among its ignored ones is its consequence, and only then.
+  const cites = event("patron-changed", 5, {
+    entityId: "doris",
+    from: "poseidon",
+    to: "athena",
+    answered: "evt-4-9",
+    unanswered: [food.id, prayed.id],
+  });
+  const related = episode([w, prayed, food, refusedFood, cites]);
+  expect(crossPatronWrongs(related, AUTHORED)).toMatchObject([
+    { prayer: prayed.id, consequences: ["defection"] },
+  ]);
+  expect(mortalWrongCheck([related], AUTHORED).ok).toBe(true);
+  // A wrong whose victim never prayed has no prayer to be ignored, so no defection is attributed to it either.
+  const silent = episode([w, cites]);
+  expect(crossPatronWrongs(silent, AUTHORED)).toMatchObject([
+    { prayer: undefined, consequences: [] },
+  ]);
+  expect(mortalWrongCheck([silent], AUTHORED).ok).toBe(false);
+});
+
 // --- A thread between gods over a worshipper's harm or a defection (SC4) ---------------
+
+const WITH_HERMES = [...GODS, "hermes"];
 
 test("a demand citing a strike's harm, or a contest citing a defection, counts; a demand over another cause does not", () => {
   const struck = event("mortal-struck", 1, {
@@ -218,14 +280,79 @@ test("a demand citing a strike's harm, or a contest citing a defection, counts; 
     counterparty: "hera",
     causes: ["evt-9-9"],
   });
-  expect(godThreadOverHarmCheck([episode([struck, demand])]).ok).toBe(true);
-  expect(godThreadOverHarmCheck([episode([changed, contest])]).ok).toBe(true);
-  expect(godThreadOverHarmCheck([episode([struck, otherDemand])]).ok).toBe(
-    false,
+  const check = (...events: StoredEvent[]) =>
+    godThreadOverHarmCheck([episode(events)], WITH_HERMES);
+  expect(check(struck, demand).ok).toBe(true);
+  expect(check(changed, contest).ok).toBe(true);
+  expect(check(struck, otherDemand).ok).toBe(false);
+  expect(check(struck).detail).toContain("0 demands");
+});
+
+test("a supplication between a god and a mortal is no dispute between gods: offering terms on a prayer about a strike's harm fails SC4, and a genuine demand from one god to another citing it passes", () => {
+  const struck = event("mortal-struck", 1, {
+    entityId: "lykos",
+    actor: "poseidon",
+  });
+  const prayer = event("petition-opened", 2, {
+    entityId: "lykos",
+    god: "hermes",
+    cause: struck.id,
+  });
+  // Hermes offers Lykos terms on his prayer: the counterparty is the mortal, the offer rests on the prayer, and it
+  // cites the strike among its causes.
+  const supplication = event("practice-opened", 3, {
+    entityId: "hermes",
+    counterparty: "lykos",
+    practice: "supplication",
+    petition: prayer.id,
+    causes: [struck.id],
+  });
+  const check = (...events: StoredEvent[]) =>
+    godThreadOverHarmCheck([episode(events)], WITH_HERMES);
+  const only = check(struck, prayer, supplication);
+  expect(only.ok).toBe(false);
+  expect(only.detail).toContain("0 demands");
+  // A supplication whose petition field is missing is still no dispute between gods: its counterparty is a mortal.
+  const bare = event("practice-opened", 4, {
+    entityId: "hermes",
+    counterparty: "lykos",
+    causes: [struck.id],
+  });
+  expect(check(struck, bare).ok).toBe(false);
+  // An offer to a god that rests on a prayer is not a demand either.
+  const onPrayer = event("practice-opened", 5, {
+    entityId: "hermes",
+    counterparty: "poseidon",
+    petition: prayer.id,
+    causes: [struck.id],
+  });
+  expect(check(struck, onPrayer).ok).toBe(false);
+  // The genuine demand, from one god to another citing the harm, passes, beside the supplication or alone.
+  const demand = event("practice-opened", 6, {
+    entityId: "hermes",
+    counterparty: "poseidon",
+    practice: "demand",
+    causes: [struck.id],
+  });
+  expect(check(struck, prayer, supplication, demand).ok).toBe(true);
+  expect(check(struck, prayer, supplication, demand).detail).toContain(
+    "1 demands",
   );
-  expect(godThreadOverHarmCheck([episode([struck])]).detail).toContain(
-    "0 demands",
-  );
+  // A contest citing a harm needs both parties to be gods too.
+  const changed = event("patron-changed", 7, { entityId: "doris" });
+  const mortalContest = event("contest-opened", 8, {
+    entityId: "poseidon",
+    rival: "doris",
+    cause: changed.id,
+  });
+  expect(check(changed, mortalContest).ok).toBe(false);
+  // A demand between two beings that are not gods of the cast (a fixture's stray name) is not counted either.
+  const stray = event("practice-opened", 9, {
+    entityId: "nobody",
+    counterparty: "poseidon",
+    causes: [struck.id],
+  });
+  expect(check(struck, stray).ok).toBe(false);
 });
 
 // --- Initiative (R19, SC5) -------------------------------------------------------------
