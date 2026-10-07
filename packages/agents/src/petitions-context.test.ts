@@ -390,9 +390,9 @@ test("a bless still commits after another mortal walked through the god's locati
   expect(ran.events.map((e) => e.kind)).toContain("blessing-granted");
 });
 
-// A bless the world has really moved past is still refused, for the reason that matters.
+// A bless the world has really moved past (the prayer is gone, the petitioner dead, the divinity spent) is still refused.
 
-test("a bless is refused as not-adjacent when the petitioner walked away while the god thought", () => {
+test("a bless still commits when the petitioner walked away while the god thought: a blessing is answered from where the god stands", () => {
   const situation = blessSituation();
   situation.run.apply({
     kind: "entity-moved",
@@ -400,9 +400,9 @@ test("a bless is refused as not-adjacent when the petitioner walked away while t
     from: "altar",
     to: "town-square",
   });
-  expect(validateBless(situation).rejected.map((r) => r.reason)).toEqual([
-    "not-adjacent",
-  ]);
+  const ran = validateBless(situation);
+  expect(ran.rejected).toEqual([]);
+  expect(ran.events.map((e) => e.kind)).toContain("blessing-granted");
 });
 
 test("a bless is refused when the petition was answered or lapsed while the god thought", () => {

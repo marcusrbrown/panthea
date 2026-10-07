@@ -287,6 +287,27 @@ test("a rival's bless a god perceived at a place with a mortal is a service the 
   ]);
 });
 
+test("a blessing from afar is service at the blessed one's place, reaching the mortals there, and the god who gave it from elsewhere is not among those who perceived it", () => {
+  const town = new Town();
+  // Poseidon stands at the far place; m1 is at the square and prays to him.
+  town.place("poseidon", "far");
+  const blessing = town.blessing("poseidon", "m1");
+  expect(plain(town.state.services)).toEqual([
+    {
+      id: blessing.id,
+      kind: "bless",
+      god: "poseidon",
+      place: "square",
+      tick: blessing.tick,
+      sequence: blessing.sequence,
+      reached: ["m1"],
+      perceivedBy: ["athena", "hera"],
+    },
+  ]);
+  // The god did not move.
+  expect(getActor(town.state, id("poseidon"))?.locationId).toBe(id("far"));
+});
+
 test("a god opens a contest over a rival's act it perceived: the world finds the rival, the place, and the window, and records the cause", () => {
   const { town, act, contest } = opened();
   expect(town.rejected()).toEqual([]);
