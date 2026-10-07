@@ -560,7 +560,7 @@ Done 2026-10-04: Units 9, 10, and 11 are done through that plan. Unit 9 (the fiv
 
 **Verification:** tests; W09 traceability.
 
-- [ ] **Unit 12: Quiet-world director**
+- [x] **Unit 12: Quiet-world director**
 
 **Covered by the petitions plan:** the director is built in the world tick, with the persisted PRNG, in `docs/plans/2026-10-01-002-feat-god-petitions-plan.md` Unit 5 (`packages/world/src/director.ts`), not as an agent-side proposer. What is left of this unit is its measurement in Unit 13: the director's trigger rate across a provider outage.
 
@@ -581,6 +581,14 @@ Done 2026-10-04: Units 9, 10, and 11 are done through that plan. Unit 9 (the fiv
 - Replay: director events replay from the journal without re-deciding.
 
 **Verification:** tests; W10 traceability.
+
+**Status (2026-10-07): closed.** The director is the world's own tick step on its own interval clock (`directorIntervalTicks`, mortal-wrongs plan Unit 5), so this unit's "measures quietness over a window", its cooldown, and "proposes in-process with the `director` source" are superseded: nothing a god or mortal does resets it, and its events carry `cause: "director"` themselves. What the unit's scenarios became, and the tests that prove them (all in-process, on world ticks, no wall clock):
+- *A quiet world triggers a valid, attributed event; a greeting-only or busy world cannot delay or add to it:* `packages/world/src/director.test.ts`, "the director fires once its interval has passed since it last fired…", "the director's own clock runs from its own last fire…", and the AE6 tests (nine kinds of activity at tick 9, and gods blessing every tick, do not delay tick 10).
+- *Catastrophe, a destruction stays:* `director.test.ts`, "catastrophe: a destroyed building stays destroyed through the director's following fires…" (five seeds, twelve fires each), with its control, "catastrophe, control…". The existing "never undoes damage" test stays.
+- *Outage, the trigger is the same with and without providers:* `apps/simulation/src/agents.test.ts`, "the director across an outage": with every provider failing, and with providers answering legends, the director's fires, clock, persisted PRNG and (failing case) journal equal a world with no gods; the director's own step ignores the service's model-degraded status. Gods acting does not change the PRNG stream; the director reads only committed state and the persisted generator.
+- *Replay, director events replay from the journal without re-deciding:* `director.test.ts`, "replay does not re-decide…", and `apps/simulation/src/world-store.test.ts`, "director events replay from the journal without re-deciding…" (reopen, rebuild and the live-row read add nothing and draw nothing; a resumed world fires when an uninterrupted one does).
+- *Attribution:* `director.test.ts` (the first test, and "the director's pressure never opens a thread or a contest and never answers for a god") and the store test, which reads the attribution back from the journal.
+Real gap found: none. Each property already held; the new tests pin them, and each was checked by a mutation that fails it. The unit's remaining measurement, the director's attributions across an unattended run, stays with Unit 13.
 
 - [ ] **Unit 13: Unattended run, M2 exit gate, and workload baseline**
 
