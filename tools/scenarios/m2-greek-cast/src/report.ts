@@ -52,7 +52,7 @@ bun run --cwd tools/scenarios scenario:m2 --skip-build                       # r
 bun run --cwd tools/scenarios scenario:m2 --steps=S21,S24                    # only the staged steps S21 to S27 (each starts a world of its own); the tool for working on one
 bun run --cwd tools/scenarios scenario:m2 --positive-control=<name>          # a process control; must exit non-zero; names below
 bun run --cwd tools/scenarios scenario:m2 --real [--seconds=180]             # both gods through local Ollama; asserts properties, writes real-run.json
-bun run --cwd tools/scenarios scenario:m2 --episodes=3 --reasoning-effort=none   # the experience gate on the local baseline, qwen3-8b-4k (set up once: ollama create qwen3-8b-4k -f tools/probes/inference-baseline/Modelfile.qwen3-8b-4k)
+bun run --cwd tools/scenarios scenario:m2 --episodes=3 --reasoning-effort=none   # the experience gate on the local baseline, granite3.3-8b-4k (set up once: ollama create granite3.3-8b-4k -f tools/probes/inference-baseline/Modelfile.granite3.3-8b-4k)
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --model=<model> --base-url=https://<host>/v1 [--key-ref=<keyRef>]   # the gate against a hosted endpoint; the key is read once from the Keychain
 bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # story (with the practice and world controls in-process), then each process control four at a time (--jobs=N), rewrites this file from a fresh run and real-run.json
 \`\`\`

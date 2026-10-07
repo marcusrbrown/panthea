@@ -11,11 +11,12 @@ import {
 
 /**
  * The model the real run and the experience gate use unless told otherwise:
- * qwen3 8B at a 4K context, the M2 local baseline (owner, 2026-10-02). Create it
- * with `tools/probes/inference-baseline/Modelfile.qwen3-8b-4k`; it is meant to be
+ * granite3.3 8B at a 4K context, the M2 local baseline (owner, 2026-10-07; qwen3
+ * 8B at 4K was the baseline from 2026-10-02). Create it with
+ * `tools/probes/inference-baseline/Modelfile.granite3.3-8b-4k`; it is meant to be
  * run with `--reasoning-effort=none`.
  */
-export const DEFAULT_MODEL = "qwen3-8b-4k";
+export const DEFAULT_MODEL = "granite3.3-8b-4k";
 
 /** Positive controls `--write-readme` runs at once: each is a whole story with its own sidecar, so the cost is cores, not ports or files. */
 export const DEFAULT_JOBS = 4;
