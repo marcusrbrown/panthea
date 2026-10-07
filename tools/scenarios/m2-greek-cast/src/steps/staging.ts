@@ -245,10 +245,9 @@ export async function stagePrayer(
 }
 
 /**
- * `god` blesses the petitioner of `petition`, in one breath: the god waits at the altar, and the mortal's move to the
- * altar and the blessing are posted back to back, so they fall in one tick before the mortal's own routine can walk it
- * home. Each is a proposal the real validator judges (a god blesses only a mortal it stands with). A few tries; the
- * world is a short walk from anywhere.
+ * `god` blesses the petitioner of `petition`, from wherever the god stands: one fixture proposal the real validator
+ * judges (a blessing answers an open prayer addressed to the god, wherever either is). It is tried again a few times
+ * only if a tick collision (`busy-actor`) refuses it.
  */
 export async function stageBlessing(
   world: Story,
@@ -256,41 +255,12 @@ export async function stageBlessing(
   god: string,
   why: string,
 ): Promise<StoredEvent> {
-  const altar = toEntityId("altar");
-  for (let hop = 0; hop < 4; hop += 1) {
-    const state = await stateOf(world);
-    const actor = state.actors.get(toEntityId(god));
-    check(actor !== undefined, `${why}: ${god} is in the world`, "gone");
-    if (actor === undefined || actor.locationId === altar) break;
-    const next = nextHop(state, actor.locationId, altar, actor.capabilities);
-    if (next === undefined) break;
-    await postFixture(world, god, { kind: "move", to: String(next) }, why);
-  }
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const at = (await stateOf(world)).actors.get(
-      toEntityId(petition.petitioner),
-    )?.locationId;
-    const moving =
-      at === altar
-        ? undefined
-        : await submitFixture(
-            world,
-            petition.petitioner,
-            { kind: "move", to: "altar" },
-            why,
-          );
-    const blessing = await submitFixture(
+    const row = await postFixture(
       world,
       god,
       { kind: "bless", petition: petition.id },
       why,
-    );
-    if (moving !== undefined) await waitForConsumed(world, moving, why, 10_000);
-    const row = await waitForConsumed(
-      world,
-      blessing,
-      `${why}: the blessing runs`,
-      10_000,
     );
     if (row.outcome === "committed") {
       const granted = storedEvents(world).find(
@@ -298,8 +268,11 @@ export async function stageBlessing(
       );
       if (granted !== undefined) return granted;
     }
+    check(
+      row.reason === "busy-actor" && attempt < 3,
+      `${why}: the world judges the blessing`,
+      `${row.outcome} ${row.reason}`,
+    );
   }
-  throw new Error(
-    `${why}: ${god} could not bless ${petition.petitioner} in four tries`,
-  );
+  throw new Error(`${why}: ${god} could not bless ${petition.petitioner}`);
 }

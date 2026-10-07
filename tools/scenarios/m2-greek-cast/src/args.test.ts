@@ -255,7 +255,7 @@ test("--steps names staged steps that start a world of their own, and nothing el
     "--steps=S15",
     "--steps=S21,S1",
     "--steps=",
-    "--steps=S26",
+    "--steps=S28",
   ]) {
     expect(() => parseArgs([bad])).toThrow(/staged steps/);
   }
@@ -271,6 +271,8 @@ test("each staged-world control runs only its own step, and the others run the s
     "refusal-revenge": "S22",
     "no-answerer": "S24",
     "director-off": "S25",
+    "remote-bless": "S26",
+    "remote-strike": "S27",
   });
   // A control with no staged step reruns the story to the step it breaks.
   for (const control of ["chain", "isolation", "trace", "petition-privacy"]) {

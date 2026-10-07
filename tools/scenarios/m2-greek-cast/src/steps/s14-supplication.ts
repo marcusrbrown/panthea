@@ -83,41 +83,20 @@ async function giveBoon(
   why: string,
 ): Promise<string> {
   const god = petition.god as God;
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const state = await stateOf(story);
-    const mortal = state.actors.get(petition.petitioner);
-    check(mortal !== undefined, `${petition.petitioner} is somewhere`, "gone");
-    await walkTo(story, god, mortal.locationId);
-    try {
-      await waitFor(
-        `${petition.petitioner} is where ${god} stands`,
-        async () => {
-          const now = await stateOf(story);
-          return now.actors.get(petition.petitioner)?.locationId ===
-            now.actors.get(id(god))?.locationId
-            ? true
-            : undefined;
-        },
-        { timeoutMs: 60_000, intervalMs: 200 },
-      );
-      const row = await godMoves(
-        story,
-        god,
-        JSON.stringify({ action: "bless", petition: petition.id }),
-        why,
-      );
-      const blessing = eventsOfKind(
-        story,
-        "blessing-granted",
-        (e) => e.correlationId === String(row.proposal.observationId),
-      )[0];
-      check(blessing !== undefined, `${why}: a blessing is recorded`, "none");
-      return blessing.id;
-    } catch (error) {
-      if (attempt === 5) throw error;
-    }
-  }
-  throw new Error(`${why}: no blessing`);
+  // A blessing answers the prayer from wherever the god stands: one turn, no walk to the mortal first.
+  const row = await godMoves(
+    story,
+    god,
+    JSON.stringify({ action: "bless", petition: petition.id }),
+    why,
+  );
+  const blessing = eventsOfKind(
+    story,
+    "blessing-granted",
+    (e) => e.correlationId === String(row.proposal.observationId),
+  )[0];
+  check(blessing !== undefined, `${why}: a blessing is recorded`, "none");
+  return blessing.id;
 }
 
 /** The god offers terms and the mortal's own routine takes them. */
@@ -434,13 +413,6 @@ export async function stepSupplication(
       // few before the offer lands): the world accepts the term, and the mortal, who spends its
       // ticks eating, selling, and walking to the altar, cannot hold that much by the deadline.
       const gatherAmount = before.rules.economyBalance.gatherAmount ?? 1;
-      // The god first walks to where the mortal stands, so the blessing is a hop away when the terms are taken and the
-      // thirty-tick deadline is the mortal's to keep or break, not the god's walk across the map to race.
-      const mortalAt = before.actors.get(id(mortal))?.locationId;
-      check(mortalAt !== undefined, `${mortal} is somewhere`, "gone");
-      if (mortalAt !== undefined) {
-        await walkTo(story, second.god as God, String(mortalAt));
-      }
       const promised =
         (before.actors.get(id(mortal))?.inventory.get(gathered ?? "") ?? 0) +
         gatherAmount * (30 - 6);
