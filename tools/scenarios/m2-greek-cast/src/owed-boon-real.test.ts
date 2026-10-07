@@ -204,7 +204,7 @@ function punishAgreed(world: World) {
 
 const turnsOf = (world: World) => analyzePractices(world.input()).obligated;
 
-test("a strike the world does not count as the boon is not performed: Hera damages the woodshed, so it is no longer operational, and Zeus's second strike commits but answers nothing", () => {
+test("a strike the world does not count as the boon is not performed: Hera damages the woodshed, so it is no longer operational, the row shows the strike on the wrongdoer instead, and Zeus's strike on the shed commits but answers nothing", () => {
   const world = new World();
   const { thread } = punishAgreed(world);
   world.place("zeus", "town-square");
@@ -220,18 +220,40 @@ test("a strike the world does not count as the boon is not performed: Hera damag
     target: "woodshed",
     power: 1,
   });
-  // The digest showed no step, only why: and the strike commits but the world never counts it.
+  // The digest showed the strike on the wrongdoer, not the shed: the shed strike commits but the world never counts it.
   expect(committed).toBe(true);
   const rows = obligationRows(shown.prompt);
   expect(rows).toHaveLength(1);
-  expect(rows[0]?.next).toBeUndefined();
-  expect(rows[0]?.unperformable).toContain("can be struck now");
+  expect(rows[0]?.next).toEqual({
+    action: "strike",
+    target: "woodcutter",
+    power: 1,
+  });
   expect(
     world.state.threads.get(thread as never)?.progress?.boon,
   ).toBeUndefined();
   const turn = turnsOf(world).turns.find((t) => t.god === "zeus");
   expect(turn?.class).not.toBe("performed");
-  expect(turn?.class).toBe("waited for a named event");
+  expect(turn?.class).toBe("knowingly risked breach");
+});
+
+test("control: with the shed no longer operational, the strike the row showed on the wrongdoer is performed and the world counts it as the boon", () => {
+  const world = new World();
+  const { thread } = punishAgreed(world);
+  world.place("hera", "town-square");
+  world.tick({ actor: "hera", kind: "strike", target: "woodshed", power: 1 });
+  const { committed } = world.turn("zeus", {
+    action: "strike",
+    target: "woodcutter",
+    power: 1,
+  });
+  expect(committed).toBe(true);
+  expect(
+    world.state.threads.get(thread as never)?.progress?.boon,
+  ).toBeDefined();
+  expect(turnsOf(world).turns.find((t) => t.god === "zeus")?.class).toBe(
+    "performed",
+  );
 });
 
 test("control: a strike the row showed, with the building operational, is performed and the world counts it as the boon", () => {

@@ -860,22 +860,24 @@ test("a travel that names a building and no destination, as the gate's Zeus sent
   }
 });
 
-test("the way to the petitioner is an object to copy, in the form the parser takes: the owed boon's travel in the digest, and a bless once the petitioner is here", () => {
+test("the owed boon's step is an object to copy, in the form the parser takes: the bless itself in the digest, from where the god stands, whether or not the petitioner is here", () => {
   const { run } = boonOwed();
   const owed = digestOf(run.view("zeus").context.prompt).join("\n");
-  expect(owed).toContain('{"action":"travel","to":"altar"}');
-  // Not a bless object until the god is with the mortal: the parser would refuse it.
-  expect(owed).not.toContain('"action":"bless"');
-  expect(parses(run, "zeus", { action: "travel", to: "altar" })).toMatchObject({
-    ok: true,
-  });
-  // With the petitioner here, the bless is the object shown and it parses.
+  expect(owed).toContain('"action":"bless"');
+  expect(owed).not.toContain("travel");
+  expect(owed).not.toContain('"action":"travel"');
+  const shown = /\{"action":"bless","petition":"([^"]+)"\}/.exec(owed);
+  expect(shown).not.toBeNull();
+  expect(
+    parses(run, "zeus", { action: "bless", petition: shown?.[1] }),
+  ).toMatchObject({ ok: true });
+  // With the petitioner here, the bless is the object shown and it parses, as before.
   const here = new Run();
   here.state = actorAt(here.state, "zeus", "altar");
   const p = here.prays("woodcutter", "zeus");
   here.state = actorAt(here.state, "woodcutter", "altar");
-  const shown = prayersOf(here.view("zeus").context.prompt).join("\n");
-  expect(shown).toContain(`{"action":"bless","petition":"${p}"}`);
+  const seen = prayersOf(here.view("zeus").context.prompt).join("\n");
+  expect(seen).toContain(`{"action":"bless","petition":"${p}"}`);
   expect(parses(here, "zeus", { action: "bless", petition: p }).ok).toBe(true);
 });
 

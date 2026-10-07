@@ -1,7 +1,7 @@
 // A god that set terms on a prayer, and whose terms the mortal accepted, owes the
 // boon. The prompt says so (a YOU OWE row, which a digest never cuts), leads with
-// the next concrete step as an object the model can copy (a bless when it is with
-// the mortal, else the next hop toward them), shows no new bargain to begin while
+// the next concrete step as an object the model can copy (the bless itself, from
+// wherever the god stands: no walk to the mortal first), shows no new bargain to begin while
 // the boon is owed, and reads the prayer as agreed, not as a favour to do freely.
 // Every object shown parses and commits: nothing is offered the parser or the
 // world would refuse. The world is real (the authored Greek pack, real ticks, the
@@ -14,7 +14,6 @@ import {
   createPrng,
   getActor,
   isThreadOpen,
-  nextHop,
   perceive,
   runTick,
   submitProposal,
@@ -189,7 +188,7 @@ const prayerEntry = (prompt: string, petition: string) => {
   return [lines[at], ...rest.slice(0, end < 0 ? rest.length : end)].join("\n");
 };
 
-test("an accepted remote supplication puts YOU OWE first, naming the mortal, the prayer, and the deadline, with travel to the mortal as an object to copy", () => {
+test("an accepted remote supplication puts YOU OWE first, naming the mortal, the prayer, and the deadline, with the bless as an object to copy and no travel to the mortal", () => {
   const run = new Run();
   const petition = run.prays();
   const thread = run.agreed(petition);
@@ -205,28 +204,27 @@ test("an accepted remote supplication puts YOU OWE first, naming the mortal, the
   expect(digest[1]).toContain(`your boon on its prayer [${petition}]`);
   expect(digest[1]).toContain(`by tick ${thread.term.deadline}`);
   const row = digest.join("\n");
-  expect(row).toContain("is not here");
-  // One action, to where the mortal stands: the world walks the way.
-  expect(row).toContain(`{"action":"travel","to":"${farmer.locationId}"}`);
-  expect(row).not.toContain('"action":"move"');
-  // Not a bless object yet: it would be refused until the god is with the mortal.
-  expect(row).not.toContain('"action":"bless"');
+  // The bless itself, whole, from where the god stands: no walk to the mortal first.
+  expect(row).toContain(JSON.stringify({ action: "bless", petition }));
+  expect(row).toContain("from where you stand");
+  expect(row).not.toContain("is not here");
+  expect(row).not.toContain('"action":"travel"');
+  expect(row).not.toContain("travel");
   // Not the old wording, which said it was the mortal's thread.
   expect(row).not.toContain("ACCEPTED your terms");
   expect(row).not.toContain("still owed (answer the prayer");
 });
 
-test("the travel shown parses against the schema and commits in the world: the journey starts and the world takes its first step", () => {
+test("the bless shown from afar parses against the schema, builds from the prayer, and commits: the boon is given with the god where it was, and the thread sees it", () => {
   const run = new Run();
   const petition = run.prays();
-  run.agreed(petition);
+  const thread = run.agreed(petition);
   const { context, schema, snapshot, remembered } = run.view("zeus");
-  const shown = /\{"action":"(travel)","to":"([^"]+)"\}/.exec(
+  const shown = /(\{"action":"bless","petition":"[^"]+"\})/.exec(
     digestOf(context.prompt).join("\n"),
   );
   expect(shown).not.toBeNull();
-  const intent = { action: shown?.[1], to: shown?.[2] };
-  const parsed = schema.parse(intent);
+  const parsed = schema.parse(JSON.parse(shown?.[1] as string));
   expect(parsed.ok).toBe(true);
   if (!parsed.ok) return;
   const built = buildModelProposal(
@@ -236,18 +234,12 @@ test("the travel shown parses against the schema and commits in the world: the j
     remembered,
   );
   if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
-  const before = getActor(run.state, id("zeus"));
+  const zeusAt = getActor(run.state, id("zeus"))?.locationId;
   const ran = run.tick(built.proposal as never);
   expect(ran.rejected).toEqual([]);
-  // The god is on its way to the mortal, one step along (or there, when it was one step).
-  const after = getActor(run.state, id("zeus"));
-  expect(after?.locationId).not.toBe(before?.locationId);
-  const journey = run.state.journeys.get(id("zeus"));
-  expect(
-    journey === undefined
-      ? String(after?.locationId)
-      : String(journey.destination),
-  ).toBe(String(shown?.[2]));
+  expect(ran.events.some((e) => e.kind === "blessing-granted")).toBe(true);
+  expect(getActor(run.state, id("zeus"))?.locationId).toBe(zeusAt);
+  expect(run.state.threads.get(thread.id)?.progress?.boon).toBeDefined();
 });
 
 test("a co-located one shows the bless object, and it parses, builds, and commits: the boon is given and the thread sees it", () => {
@@ -258,10 +250,9 @@ test("a co-located one shows the bless object, and it parses, builds, and commit
   const { context, schema, snapshot, remembered } = run.view("zeus");
   const row = digestOf(context.prompt).join("\n");
   expect(row).toContain(`[${thread.id}] YOU OWE farmer`);
-  expect(row).toContain("farmer is here");
   const bless = { action: "bless", petition };
   expect(row).toContain(JSON.stringify(bless));
-  expect(row).not.toContain("is not here");
+  expect(row).not.toContain("travel");
 
   const parsed = schema.parse(bless);
   expect(parsed.ok).toBe(true);
@@ -431,7 +422,7 @@ test("prompt size for a god that owes one boon, against the same god with the te
 
 // --- A punish prayer's boon is a strike ---------------------------------------------------------------
 
-test("an accepted punish supplication with the god away from the building shows travel to it, as an object that parses and commits; no bless is shown for a prayer a bless does not answer", () => {
+test("an accepted punish supplication with the god away from the building shows the strike on it directly, as an object that parses and commits; no bless is shown for a prayer a bless does not answer", () => {
   const run = new Run();
   const petition = run.prayPunish();
   const thread = run.agreed(petition);
@@ -439,58 +430,19 @@ test("an accepted punish supplication with the god away from the building shows 
   const shed = run.state.buildings.get(id("woodshed"));
   if (!zeus || !shed) throw new Error("fixture");
   expect(zeus.locationId).not.toBe(shed.locationId);
-  const hop = nextHop(
-    run.state,
-    zeus.locationId,
-    shed.locationId,
-    zeus.capabilities,
-  );
-  if (hop === undefined) throw new Error("no route");
 
   const { context, schema, snapshot, remembered } = run.view("zeus");
   const digest = digestOf(context.prompt);
   expect(digest[1]).toContain(`[${thread.id}] YOU OWE farmer`);
   expect(digest[1]).toContain(`your boon on its prayer [${petition}]`);
   const row = digest.join("\n");
-  expect(row).toContain("woodshed");
-  expect(row).toContain(`{"action":"travel","to":"${shed.locationId}"}`);
-  expect(row).not.toContain('"action":"bless"');
-  expect(row).not.toContain("answered as it asks");
-  expect(row).not.toContain("You cannot give it now");
-
-  const parsed = schema.parse({ action: "travel", to: shed.locationId });
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok) return;
-  const built = buildModelProposal(
-    id("zeus"),
-    snapshot,
-    parsed.value,
-    remembered,
-  );
-  if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
-  expect(run.tick(built.proposal as never).rejected).toEqual([]);
-  // The journey is under way: the world took the first step of the way.
-  expect(String(getActor(run.state, id("zeus"))?.locationId)).toBe(String(hop));
-  expect(String(run.state.journeys.get(id("zeus"))?.destination)).toBe(
-    String(shed.locationId),
-  );
-});
-
-test("with the god at the building the row shows the strike, whole: it parses, builds, and commits, and the world sees the boon", () => {
-  const run = new Run();
-  const petition = run.prayPunish();
-  const thread = run.agreed(petition);
-  run.place(
-    "zeus",
-    String(run.state.buildings.get(id("woodshed"))?.locationId),
-  );
-  const { context, schema, snapshot, remembered } = run.view("zeus");
-  const row = digestOf(context.prompt).join("\n");
-  expect(row).toContain(`[${thread.id}] YOU OWE farmer`);
-  expect(row).toContain("[woodshed] is here");
   const strike = { action: "strike", target: "woodshed", power: 1 };
+  expect(row).toContain("woodshed");
   expect(row).toContain(JSON.stringify(strike));
+  expect(row).toContain("from where you stand");
+  expect(row).not.toContain("travel");
   expect(row).not.toContain('"action":"bless"');
+  expect(row).not.toContain("You cannot give it now");
 
   const parsed = schema.parse(strike);
   expect(parsed.ok).toBe(true);
@@ -502,6 +454,7 @@ test("with the god at the building the row shows the strike, whole: it parses, b
     remembered,
   );
   if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+  const zeusAt = zeus.locationId;
   const ran = run.tick(built.proposal as never);
   expect(ran.rejected).toEqual([]);
   expect(
@@ -509,10 +462,57 @@ test("with the god at the building the row shows the strike, whole: it parses, b
       (e) => e.kind === "building-damaged" || e.kind === "building-ignited",
     ),
   ).toBe(true);
+  // The god did not move, and the world sees the boon.
+  expect(getActor(run.state, id("zeus"))?.locationId).toBe(zeusAt);
   expect(run.state.threads.get(thread.id)?.progress?.boon).toBeDefined();
 });
 
-test("control: a punish boon the world would not take shows its reason and no object: too little divinity, a building that cannot be struck, a prayer no longer open", () => {
+test("an owed punish strike against a wrongdoer with no operational building shows the strike on the wrongdoer itself, which parses and commits and is the boon", () => {
+  const run = new Run();
+  const petition = run.prayPunish("farmer", "zeus", []);
+  const thread = run.agreed(petition);
+  const { context, schema, snapshot, remembered } = run.view("zeus");
+  const row = digestOf(context.prompt).join("\n");
+  const strike = { action: "strike", target: "woodcutter", power: 1 };
+  expect(row).toContain(`[${thread.id}] YOU OWE farmer`);
+  expect(row).toContain(JSON.stringify(strike));
+  expect(row).not.toContain("travel");
+  const parsed = schema.parse(strike);
+  if (!parsed.ok) throw new Error(parsed.message);
+  const built = buildModelProposal(
+    id("zeus"),
+    snapshot,
+    parsed.value,
+    remembered,
+  );
+  if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+  const ran = run.tick(built.proposal as never);
+  expect(ran.rejected).toEqual([]);
+  expect(ran.events.some((e) => e.kind === "mortal-struck")).toBe(true);
+  expect(run.state.threads.get(thread.id)?.progress?.boon).toBeDefined();
+});
+
+test("a listed building that cannot be struck now sends the owed strike to the wrongdoer itself", () => {
+  const run = new Run();
+  const petition = run.prayPunish();
+  run.agreed(petition);
+  const shed = run.state.buildings.get(id("woodshed"));
+  if (!shed) throw new Error("shed");
+  run.state = {
+    ...run.state,
+    buildings: new Map(run.state.buildings).set(shed.id, {
+      ...shed,
+      status: "destroyed",
+    } as never),
+  };
+  const row = digestOf(run.view("zeus").context.prompt).join("\n");
+  expect(row).toContain(
+    JSON.stringify({ action: "strike", target: "woodcutter", power: 1 }),
+  );
+  expect(row).not.toContain('"target":"woodshed"');
+});
+
+test("control: a punish boon the world would not take shows its reason and no object: too little divinity, a prayer no longer open", () => {
   const owedRow = (change: (run: Run) => void) => {
     const run = new Run();
     const petition = run.prayPunish();
@@ -547,21 +547,6 @@ test("control: a punish boon the world would not take shows its reason and no ob
   });
   noObject(poor.row);
   expect(poor.row).toContain("divinity");
-
-  const burned = owedRow((run) => {
-    here(run);
-    const shed = run.state.buildings.get(id("woodshed"));
-    if (!shed) throw new Error("shed");
-    run.state = {
-      ...run.state,
-      buildings: new Map(run.state.buildings).set(shed.id, {
-        ...shed,
-        status: "destroyed",
-      } as never),
-    };
-  });
-  noObject(burned.row);
-  expect(burned.row).toContain("woodshed");
 
   const closed = owedRow((run) => {
     here(run);
