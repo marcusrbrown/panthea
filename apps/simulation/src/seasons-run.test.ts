@@ -20,8 +20,9 @@ function town(ticks: number, seed: number) {
     .map((actor) => actor.id);
   const events: WorldEvent[] = [];
   for (let n = 0; n < ticks; n += 1) {
+    const claims = new Map();
     const proposals = mortals.flatMap((mortal) => {
-      const decision = decideRoutineProposal(state, mortal);
+      const decision = decideRoutineProposal(state, mortal, claims);
       return decision ? [decision.proposal] : [];
     });
     const ran = runTick(state, prng, proposals);
@@ -92,6 +93,29 @@ test("a trouble is a loss the afflicted prays about to the domain god: over five
     expect([god, (prayed.get(god) ?? 0) >= 1]).toEqual([god, true]);
   }
   expect(prayers / troubles).toBeGreaterThan(0.5);
+});
+
+test("on every seed tried, every god is prayed to about a trouble of its own, Hephaestus and Hades included: a smith or a fisher whose sale cannot complete prays instead of repeating it (W06, SC2)", () => {
+  // The gate's world is seed 1. There Hephaestus's two troubles fell on smiths and Hades's on weavers and fishers, who
+  // all sold their goods to the one buyer who could pay, lost the sale to a richer seller's claim, and chose it again
+  // every tick: no prayer to either god in the whole episode.
+  for (const seed of SEEDS) {
+    const day = town(300, seed);
+    const ids = new Map(day.troubles.map((e) => [e.id, e]));
+    const prayed = new Map<string, number>();
+    for (const petition of day.state.petitions.values()) {
+      const trouble = ids.get(petition.cause);
+      if (trouble === undefined) continue;
+      prayed.set(trouble.god, (prayed.get(trouble.god) ?? 0) + 1);
+    }
+    for (const god of GODS) {
+      expect([seed, god, (prayed.get(god) ?? 0) >= 1]).toEqual([
+        seed,
+        god,
+        true,
+      ]);
+    }
+  }
 });
 
 test("a season turns inside a 300-tick episode, from the authored defaults: summer at tick 200", () => {
