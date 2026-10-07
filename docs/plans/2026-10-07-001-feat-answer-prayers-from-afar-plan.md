@@ -96,7 +96,7 @@ It doesn't change the scheduler, travel or any rate.
 
 ### Institutional Learnings
 
-- `docs/solutions/logic-errors/whole-entity-revision-pins-refused-petition-answers-2026-10-02.md`: pin only what the validator rechecks. A remote building strike pins only the god, because the world rechecks the building's status itself.
+- `docs/solutions/logic-errors/whole-entity-revision-pins-refused-petition-answers-2026-10-02.md`: don't pin what the validator rechecks at commit. A blessing pins nothing, as it does today. A remote building strike pins only what strikes pin today, without the building revision, because the world rechecks the building's status itself.
 - `docs/solutions/best-practices/prompt-commanding-old-action-hides-new-option-2026-10-03.md`: replace the travel command with peer choices. Every move shown is built through the world validator.
 - `docs/solutions/logic-errors/move-realm-transition-destination-pairing-2026-10-02.md`: the schema must be at least as strict as the parser, and each enum names only ids that were shown.
 - `docs/solutions/best-practices/ollama-4k-prompts-truncate-silently-2026-10-03.md`: budget each growing section, measure `prompt_eval_count`, and keep the whole-prompt guard.
@@ -161,7 +161,8 @@ It doesn't change the scheduler, travel or any rate.
 - **Strikes keep today's world rules (owner).** The prayer link lives on the god's side and in `judgeAnswers`. A stale strike lands and answers nothing, and a test pins that.
 - **The god's side reads the prayer, not the scene.**
   - A remote bless and a listed-building strike are built from `petition:<id>` facts, mirroring the existing remote mortal strike.
-  - The builder pins only the god. The world rechecks petition state, the petitioner being alive, the building's status, and power.
+  - A remote blessing pins nothing (`expectedRevisions: []`, as today). The world rechecks petition state, the petitioner being alive, and the god's power. Worship between observation and commit raises the god's revision, so a pin would refuse a legal blessing as `stale-target`. Superseded 2026-10-07: an earlier draft of this plan pinned the god; review showed this failure.
+  - A remote building strike pins only the god, as the remote mortal strike does today. The world rechecks the building's status.
 - **Every listed operational building is offered, with no cap.** No authored mortal owns more than 2 buildings (`content/greek/world/buildings.json`: the farmer 2, the rest 1), so a punish prayer adds at most 3 strike lines. Unit 5's measurement confirms they fit `PRAYERS_BUDGET_CHARS`, and the existing "and N more" overflow still bounds a crowded section.
 - **Owed boons use the action's own predicates.**
   - `owedBoonOf` emits the remote bless when `blessability` holds and the god has the divinity.
@@ -250,7 +251,7 @@ flowchart TB
 **Approach:**
 - Drop `petitionerHere` from the bless offer. Keep the divinity gate, and gate the help-branch bless line on it too.
 - Replace the help branch's travel and reachability lines with the direct bless move, built through the world validator.
-- In the builder, source the petitioner from `remembered.petitions` with a `petition:<id>` fact read, pinning only the god, as the remote mortal strike does.
+- In the builder, source the petitioner from `remembered.petitions` with a `petition:<id>` fact read, as the remote mortal strike does. Keep the proposal unpinned, with `expectedRevisions: []`.
 
 **Patterns to follow:** the remote mortal strike in `petitionView`, `answerGuidance` and `buildModelProposal`.
 
@@ -260,6 +261,7 @@ flowchart TB
 - Edge case: the bless enum names only prayers that were shown, so an unshown prayer is refused by both the parser and the schema.
 - Edge case: a help prayer shows both the bless line and the offer-terms line.
 - Error path: the petitioner died between prompt and commit, and the world refuses the bless without corrupting state.
+- Regression: build a remote bless, apply a real `worship-performed` that raises the god's revision, then commit the bless through `runTick`. It succeeds.
 - Updated tests:
   - The tests expecting travel for a distant help prayer, or no bless for an absent petitioner, now expect the direct bless.
   - The "petitioner walked away" test now expects acceptance.
@@ -409,7 +411,7 @@ flowchart TB
 
 **Files:**
 - Create: `tools/scenarios/m2-greek-cast/episodes/<timestamp>/`
-- Modify: `docs/product/traceability.md` (dated clauses on W04, W05, M04 and O08), `docs/brainstorms/2026-10-07-turn-economy-requirements.md` (status line)
+- Modify: `docs/product/traceability.md` (implementation and gate evidence on W04, W05, M04 and O08; the planned clauses landed with this plan), `docs/brainstorms/2026-10-07-turn-economy-requirements.md` (status line)
 
 **Approach:** one rated seven-god gate, 3 × 300 s on qwen3-8b-4k, with nothing else running. Compare against the two 2026-10-07 gates:
 - actions spent on answers versus walks;
