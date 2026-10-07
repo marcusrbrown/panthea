@@ -382,7 +382,7 @@ function goalInstruction(remembered: Remembered): string {
 function prayerInstructions(remembered: Remembered): string[] {
   if (remembered.petitions.length === 0) return [];
   return [
-    `Mortals pray to you, and you hear them wherever you are. Answering a prayer is how you are worshipped: strike the offender's building (action "strike") where it stands, or, for a petitioner who is here, bless them (action "bless", naming the petition, at a cost of ${remembered.blessCost} divinity). If the petitioner or the building is elsewhere, travel there first; each prayer below says how. Your worshippers are the mortals who revere you; a prayer about a trouble in your domain may come from anyone.`,
+    `Mortals pray to you, and you hear them wherever you are. Answering a prayer is how you are worshipped, and you answer from where you stand: bless the one who prayed (action "bless", naming the petition, at a cost of ${remembered.blessCost} divinity), or strike the offender or a building the prayer lists (action "strike"); each prayer below writes its choices out whole. Your worshippers are the mortals who revere you; a prayer about a trouble in your domain may come from anyone.`,
   ];
 }
 

@@ -24,6 +24,7 @@ import {
   PRAYERS_HEADING,
   rememberedBy,
 } from "./context";
+import { buildModelProposal } from "./observation";
 import { PRAYERS_BUDGET_CHARS } from "./practices";
 import {
   allGodProfiles,
@@ -368,8 +369,140 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
   }
   // The world kept prayers the prompt could not hold, so the cap was exercised.
   expect(crowded).toBeGreaterThan(0);
-  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`, 2026-10-05): the busiest routine-town prompt, 8,845
-  // characters, was 2,554 tokens (3.46 a token), and the busiest crowded one (all of the world's wrongs and troubles in) 10,046 and 2,870. At 3.3 a token 10,500
-  // characters is under 3,200 tokens, some 900 under the 4,090 past which Ollama silently drops the start of a prompt.
+  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`; see defaults.md): 2026-10-05, the busiest routine-town prompt,
+  // 8,845 characters, was 2,554 tokens (3.46 a token); 2026-10-07, after answers from where the god stands, the busiest
+  // crowded one (Hera's) 10,354 characters was 2,962 tokens (3.50) and thirty punish prayers to Zeus 9,828 and 2,640. At
+  // 3.3 a token 10,500 characters is under 3,200 tokens, some 900 under the 4,090 past which Ollama silently drops the
+  // start of a prompt.
   expect(worst.chars).toBeLessThanOrEqual(10500);
+});
+
+// --- Answers from where the god stands: no instruction sends a god to walk first --------------------------------
+
+/** A theft by the woodcutter, and `mortal`'s prayer to `god` to punish him and his woodshed. */
+function prayPunish(run: Run, mortal: string, god = "zeus"): EventId {
+  run.later();
+  const theft = run.apply({
+    kind: "theft",
+    entityId: "woodcutter",
+    victim: mortal,
+    resource: "currency",
+    amount: 1,
+    cause: "director",
+  });
+  return run.apply({
+    kind: "petition-opened",
+    entityId: mortal,
+    god,
+    cause: theft.id,
+    request: {
+      kind: "punish",
+      offender: "woodcutter",
+      buildings: ["woodshed"],
+    },
+  }).id as EventId;
+}
+
+test("no instruction or prayer line tells a god to travel in order to answer a prayer, for a help prayer, a punish prayer, or both, from wherever the god stands", () => {
+  const run = new Run();
+  run.prays("farmer");
+  prayPunish(run, "weaver-xenia");
+  for (const god of ["zeus", "hera", "hermes"]) {
+    const { context } = run.view(god);
+    const instructions = context.instructions ?? "";
+    const guide =
+      instructions
+        .split("\n")
+        .find((l) => l.startsWith("Mortals pray to you")) ?? "";
+    if (god === "zeus") {
+      expect(guide).not.toBe("");
+      // The guidance names what a god may send, not a walk.
+      expect(guide).not.toContain("travel");
+      expect(guide).not.toContain("is here");
+      expect(guide).toContain("from where you stand");
+      expect(guide).toContain('action "bless"');
+      expect(guide).toContain('action "strike"');
+    }
+    const whole = `${instructions}\n${context.prompt}`;
+    expect(whole).not.toMatch(/travel (there|them|to them|to it) first/i);
+    expect(whole).not.toMatch(/once you are (there|with them)/i);
+    expect(whole).not.toContain("if you choose this");
+    expect(prayersSection(context.prompt)).not.toContain("travel");
+  }
+});
+
+/** Thirty punish prayers to Zeus, newest last; the first three have live terms (two open offers and one accepted). */
+function punishCrowd() {
+  const run = new Run();
+  const mortals = offeringMortals(run.state).filter(
+    (mortal) => mortal !== "woodcutter",
+  );
+  const ids: EventId[] = [];
+  for (let i = 0; i < 30; i += 1) {
+    ids.push(prayPunish(run, mortals[i % mortals.length] as string));
+  }
+  const live = [ids[0], ids[1], ids[2]] as EventId[];
+  const partyOf = (petition: EventId) =>
+    String(run.state.petitions.get(petition)?.petitioner);
+  for (const petition of live) {
+    run.tick({
+      actor: "zeus",
+      kind: "practice",
+      move: "offer",
+      petition,
+      term: gift(partyOf(petition)),
+    });
+  }
+  const accepted = [...run.state.threads.values()].find(
+    (t) => t.petition === live[2],
+  );
+  if (!accepted) throw new Error("no thread on the third prayer");
+  run.tick({
+    actor: partyOf(live[2] as EventId),
+    kind: "practice",
+    move: "accept",
+    thread: accepted.id,
+  });
+  return { run, ids, live };
+}
+
+test("a crowd of punish prayers keeps the budget and the binding rows, ends with 'and N more', and every strike line it shows commits through the world from where the god stands", () => {
+  const { run, ids, live } = punishCrowd();
+  const { context, schema, snapshot, remembered } = run.view("zeus");
+  const section = prayersSection(context.prompt);
+  expect(section.length).toBeLessThanOrEqual(PRAYERS_BUDGET_CHARS);
+  const shown = shownPrayerIds(context.prompt);
+  expect(shown.length).toBeLessThan(ids.length);
+  expect(section.split("\n").at(-1)).toBe(
+    `- and ${ids.length - shown.length} more prayers to you.`,
+  );
+  // The binding rows: every prayer a live practice names is shown, whatever the budget.
+  for (const petition of live) expect(shown).toContain(petition);
+  // Every strike line shown (on the shed, on the woodcutter) is an object that parses, builds from its prayer, and commits.
+  const lines = section
+    .split("\n")
+    .filter((l) => l.includes('{"action":"strike"'));
+  expect(lines.length).toBeGreaterThan(shown.length - live.length);
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const from = line.indexOf('{"action":"strike"');
+    const intent = JSON.parse(line.slice(from, line.indexOf("}", from) + 1));
+    const key = `${intent.target}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const parsed = schema.parse(intent);
+    if (!parsed.ok) throw new Error(`${line}: ${parsed.message}`);
+    const built = buildModelProposal(
+      id("zeus"),
+      snapshot,
+      parsed.value,
+      remembered,
+    );
+    if (!built.ok || built.kind !== "proposal") throw new Error(line);
+    const ran = runTick(run.state, createPrng(1), [built.proposal]);
+    expect([key, ran.rejected]).toEqual([key, []]);
+  }
+  expect([...seen].sort()).toEqual(["woodcutter", "woodshed"]);
+  // The god's own place does not matter: it never moved.
+  expect(getActor(run.state, id("zeus"))?.locationId).toBeDefined();
 });
