@@ -75,7 +75,8 @@ export interface StudioSession {
   ): CommandResult;
   replaceSheet(workingSetId: string, requestId: string): CommandResult;
   /** Keeps a snapshot of a done candidate for its slot; ledgered. */
-  pick(workingSetId: string, candidateId: string): CommandResult;
+  /** `slot` defaults to the candidate's own; only a portrait set accepts another. */
+  pick(workingSetId: string, candidateId: string, slot?: string): CommandResult;
   /**
    * Opens a sheet of the slots' frames for the owner to edit. Refused when a
    * slot has nothing to start from or is already in an open edit.
@@ -547,13 +548,13 @@ export function openStudioSession(root: string): StudioOpen {
           if (!next.ok) return refused(next.reason, next.message);
           return writeRecord(() => store.putWorkingSet(next.record));
         },
-        pick(workingSetId, candidateId) {
+        pick(workingSetId, candidateId, slot) {
           if (closed) return closedRefusal();
           const set = readSetOrRefuse(workingSetId);
           if (!set.ok) return set.refusal;
           const candidate = readCandidateOrRefuse(candidateId);
           if (!candidate.ok) return candidate.refusal;
-          const next = pickKeyframe(set.record, candidate.record);
+          const next = pickKeyframe(set.record, candidate.record, slot);
           if (!next.ok) return refused(next.reason, next.message);
           return ledgered("pick", candidateId, () =>
             store.putWorkingSet(next.record),

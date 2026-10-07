@@ -49,10 +49,22 @@ export interface Deps {
   /** A runtime profile other than the selected production one, for tests of a staged runtime. */
   readonly profile?: SelectedProfile;
   readonly drawSeed: () => number;
+  /** Whether a process id names a live process; status uses it to tell an open session from a crashed one. */
+  readonly isAlive: (pid: number) => boolean;
   readonly sleep: (ms: number) => Promise<void>;
   /** Progress and diagnostics: ids and statuses only, never prompts or output tails. */
   readonly log: (line: string) => void;
 }
+
+/** Signal 0 only checks that the process exists; EPERM means it exists under another user. */
+export const processAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
 
 export const defaultDeps = (log: (line: string) => void): Deps => ({
   loadContent: loadStudioContent,
@@ -61,6 +73,7 @@ export const defaultDeps = (log: (line: string) => void): Deps => ({
   openRuntime,
   createEditor: createEditorAdapter,
   drawSeed: () => crypto.getRandomValues(new Uint32Array(1))[0] as number,
+  isAlive: processAlive,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log,
 });

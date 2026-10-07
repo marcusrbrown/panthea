@@ -1273,6 +1273,113 @@ describe("working sets", () => {
     session.close();
   });
 
+  test("a portrait slot may take a candidate drawn for another expression, and the pick keeps the candidate's true source", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.submitRequest(
+      request("faces-neutral", "portrait", [{ expression: "neutral" }]),
+    );
+    expect(session.replaceSheet("zeus-faces", "faces-neutral")).toEqual({
+      ok: true,
+    });
+    session.store.putCandidate(
+      faceCandidate("neutral-0001", "neutral", "faces-neutral"),
+    );
+
+    expect(session.pick("zeus-faces", "neutral-0001", "pleased")).toEqual({
+      ok: true,
+    });
+
+    const pick = setOf(root, "zeus-faces")?.picks.pleased;
+    expect(pick?.candidateId).toBe("neutral-0001");
+    expect(pick?.source).toEqual({
+      requestId: "faces-neutral",
+      slotKey: "neutral",
+      ordinal: 0,
+    });
+    expect(Object.keys(setOf(root, "zeus-faces")?.picks ?? {})).toEqual([
+      "pleased",
+    ]);
+
+    for (const expression of content.vocabulary.expressions)
+      expect(session.pick("zeus-faces", "neutral-0001", expression)).toEqual({
+        ok: true,
+      });
+    const set = setOf(root, "zeus-faces");
+    expect(set?.status).toBe("complete");
+    for (const expression of content.vocabulary.expressions)
+      expect(set?.picks[expression]).toEqual(set?.picks.pleased);
+    expect(pickLedger(root)).toEqual(
+      Array.from({ length: 7 }, () => "neutral-0001"),
+    );
+    session.close();
+  });
+
+  test("a cross-slot portrait pick still needs a slot the set requires", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.submitRequest(
+      request("faces-two", "portrait", [
+        { expression: "neutral" },
+        { expression: "pleased" },
+      ]),
+    );
+    session.openWorkingSet("two-faces", "faces-two", content);
+    session.store.putCandidate(
+      faceCandidate("neutral-0001", "neutral", "faces-two"),
+    );
+    const before = bytesOf(root, "two-faces");
+
+    expect(session.pick("two-faces", "neutral-0001", "awed")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+
+    expect(bytesOf(root, "two-faces")).toBe(before);
+    expect(pickLedger(root)).toEqual([]);
+    session.close();
+  });
+
+  test("with no slot a pick goes to the candidate's own slot", () => {
+    const root = tempRoot();
+    const session = portraitSession(root);
+    session.store.putCandidate(faceCandidate("neutral-1", "neutral"));
+
+    expect(session.pick("zeus-faces", "neutral-1")).toEqual({ ok: true });
+
+    expect(Object.keys(setOf(root, "zeus-faces")?.picks ?? {})).toEqual([
+      "neutral",
+    ]);
+    expect(setOf(root, "zeus-faces")?.picks.neutral?.source.slotKey).toBe(
+      "neutral",
+    );
+    session.close();
+  });
+
+  test("a sprite slot only takes a candidate drawn for it", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.submitRequest(request("walk-a", "sprite", spriteSlots));
+    session.openWorkingSet("zeus-idle", "walk-a", content);
+    session.store.putCandidate(
+      doneCandidate("walk-1", { requestId: "walk-a", slotKey: "idle/south" }),
+    );
+    const before = bytesOf(root, "zeus-idle");
+
+    const refused = session.pick("zeus-idle", "walk-1", "idle/north");
+
+    expect(refused).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(!refused.ok && refused.message).toMatch(
+      /drawn for idle\/south.*not idle\/north/,
+    );
+    expect(bytesOf(root, "zeus-idle")).toBe(before);
+    expect(pickLedger(root)).toEqual([]);
+    expect(session.pick("zeus-idle", "walk-1", "idle/south")).toEqual({
+      ok: true,
+    });
+    session.close();
+  });
+
   test("a failing report may be picked; every other refusal leaves the set and the ledger unchanged", () => {
     const root = tempRoot();
     const session = portraitSession(root);

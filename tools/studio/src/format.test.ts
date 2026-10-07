@@ -249,17 +249,20 @@ describe("asset summaries", () => {
 
 describe("status summaries", () => {
   test("count records by kind and job status and list invalid files", () => {
-    const summary = statusSummary({
-      session: { schemaVersion: 1, id: "s", pid: 42, startedAt: "t" },
-      requests: [],
-      jobs: [],
-      candidates: [],
-      workingSets: [],
-      edits: [],
-      assets: [],
-      commands: [],
-      invalid: [{ file: "jobs/bad.json", message: "bad" }],
-    } as never);
+    const summary = statusSummary(
+      {
+        session: { schemaVersion: 1, id: "s", pid: 42, startedAt: "t" },
+        requests: [],
+        jobs: [],
+        candidates: [],
+        workingSets: [],
+        edits: [],
+        assets: [],
+        commands: [],
+        invalid: [{ file: "jobs/bad.json", message: "bad" }],
+      } as never,
+      () => true,
+    );
 
     expect(summary).toMatchObject({
       owner: { pid: 42, startedAt: "t", open: true },
@@ -272,6 +275,55 @@ describe("status summaries", () => {
         assets: 0,
       },
       invalid: [{ file: "jobs/bad.json" }],
+    });
+  });
+
+  describe("the owner is open only while its process is alive and the session is not ended", () => {
+    const ownerOf = (
+      session: { endedAt?: string },
+      isAlive: (pid: number) => boolean,
+    ) =>
+      (
+        statusSummary(
+          {
+            session: {
+              schemaVersion: 1,
+              id: "s",
+              pid: 42,
+              startedAt: "t",
+              ...session,
+            },
+            requests: [],
+            jobs: [],
+            candidates: [],
+            workingSets: [],
+            edits: [],
+            assets: [],
+            commands: [],
+            invalid: [],
+          } as never,
+          isAlive,
+        ) as { owner: { open: boolean } }
+      ).owner;
+
+    test("alive and not ended is open", () => {
+      const asked: number[] = [];
+      const owner = ownerOf({}, (pid) => {
+        asked.push(pid);
+        return true;
+      });
+
+      expect(owner.open).toBe(true);
+      expect(asked).toEqual([42]);
+    });
+
+    test("dead and not ended (a crashed owner) is not open", () => {
+      expect(ownerOf({}, () => false).open).toBe(false);
+    });
+
+    test("ended is not open, whether or not the pid is alive", () => {
+      expect(ownerOf({ endedAt: "u" }, () => true).open).toBe(false);
+      expect(ownerOf({ endedAt: "u" }, () => false).open).toBe(false);
     });
   });
 });

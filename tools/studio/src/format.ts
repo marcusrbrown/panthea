@@ -204,7 +204,14 @@ export function assetSummary(record: StudioAssetRecord): Json {
   };
 }
 
-export function statusSummary(status: StudioStatus): Json {
+/**
+ * `open` means the session was not ended and its owner process is still alive;
+ * a session whose owner died without ending it is not open.
+ */
+export function statusSummary(
+  status: StudioStatus,
+  isAlive: (pid: number) => boolean,
+): Json {
   const jobs: Record<string, number> = {};
   for (const { job } of status.jobs)
     jobs[job.status] = (jobs[job.status] ?? 0) + 1;
@@ -215,7 +222,9 @@ export function statusSummary(status: StudioStatus): Json {
         : {
             pid: status.session.pid,
             startedAt: status.session.startedAt,
-            open: status.session.endedAt === undefined,
+            open:
+              status.session.endedAt === undefined &&
+              isAlive(status.session.pid),
           },
     counts: {
       requests: status.requests.length,

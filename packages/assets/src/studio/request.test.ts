@@ -66,7 +66,7 @@ describe("spec derivation", () => {
       name: "Zeus",
       kind: "sprite",
       domains: zeus.domains,
-      iconography: ["thunderbolt", "storm sky", "cloud seat"],
+      iconography: ["thunderbolt"],
       cell: { id: "god", w: 64, h: 80 },
       native: { w: 64, h: 80 },
       generated: { w: 512, h: 640 },
@@ -505,7 +505,7 @@ describe("adapter inputs", () => {
     expect(a).toEqual(b);
     expect(a).toEqual({
       prompt:
-        "pixel art, Zeus, Greek god, thunderbolt, storm sky, cloud seat, full body, facing south, idle pose, plain flat background, limited colour palette",
+        "pixel art, Zeus, Greek god, thunderbolt, full body, front view, facing the viewer, idle pose, plain flat background, limited colour palette",
       negativePrompt:
         "blurry, antialiased, smooth gradients, photograph, 3d render, text, watermark",
       width: 512,
@@ -518,6 +518,62 @@ describe("adapter inputs", () => {
     expect(ok(adapterInput(build(), "idle/south", 6))).toEqual({
       ...a,
       seed: 6,
+    });
+  });
+
+  test("each direction is worded as the view it draws, never as a compass word", () => {
+    const views: [string, string][] = [
+      ["south", "front view, facing the viewer"],
+      ["north", "back view, facing away from the viewer"],
+      ["east", "side view, facing right"],
+      ["west", "side view, facing left"],
+    ];
+    for (const [direction, view] of views) {
+      const { record } = ok(
+        newRequestRecord(
+          content,
+          {
+            id: `zeus-${direction}`,
+            ...idleSouth,
+            slots: [{ state: "idle", direction }],
+            seed: 1,
+          },
+          neverDraw,
+        ),
+      );
+      const spec = ok(buildSpec(content, record.request));
+      const { prompt } = ok(adapterInput(spec, `idle/${direction}`, 1));
+
+      expect(prompt).toContain(`full body, ${view}, idle pose`);
+      expect(prompt).not.toContain(`facing ${direction}`);
+      expect(spec.slots.map((s) => s.key)).toEqual([`idle/${direction}`]);
+    }
+  });
+
+  test("a vocabulary direction with no view wording is a typed unknown-direction error, not a silent fallback", () => {
+    const widened: StudioContent = {
+      ...content,
+      vocabulary: {
+        ...content.vocabulary,
+        directions: [...content.vocabulary.directions, "up"],
+      },
+    };
+
+    expect(
+      buildSpec(widened, {
+        schemaVersion: 1,
+        subject: "zeus",
+        kind: "sprite",
+        slots: [{ state: "idle", direction: "up" }],
+        batch: 1,
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        kind: "unknown-direction",
+        direction: "up",
+        valid: content.vocabulary.directions,
+      },
     });
   });
 
@@ -537,7 +593,7 @@ describe("adapter inputs", () => {
     const spec = ok(buildSpec(content, record.request));
     expect(ok(adapterInput(spec, "awed", 1))).toMatchObject({
       prompt:
-        "pixel art portrait, Zeus, Greek god, thunderbolt, storm sky, cloud seat, bust, three-quarter view, awed expression, flat background, limited colour palette, storm light",
+        "pixel art portrait, Zeus, Greek god, thunderbolt, bust, three-quarter view, awed expression, flat background, limited colour palette, storm light",
       width: 768,
       height: 768,
     });

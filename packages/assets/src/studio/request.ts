@@ -167,13 +167,34 @@ export function slotKey(slot: GenerationSlot): string {
 const invalidSlot = (slot: GenerationSlot, message: string) =>
   bad({ kind: "invalid-slot", slotKey: slotKey(slot), message });
 
+// The image model has no use for compass words; each direction is worded as the
+// view it draws. Record<Direction, string> makes a direction added to the union
+// without wording a type error; a vocabulary direction outside the union is a
+// typed unknown-direction error in checkSlot, never a silent fallback.
+const DIRECTIONS = ["south", "north", "east", "west"] as const;
+type Direction = (typeof DIRECTIONS)[number];
+const DIRECTION_VIEW: Record<Direction, string> = {
+  south: "front view, facing the viewer",
+  north: "back view, facing away from the viewer",
+  east: "side view, facing right",
+  west: "side view, facing left",
+};
+const isDirection = (value: string): value is Direction =>
+  DIRECTIONS.some((direction) => direction === value);
+
+interface SlotCheck {
+  readonly ability: GodProfile["abilities"][number] | undefined;
+  /** The wording of a sprite slot's direction; portraits have none. */
+  readonly view: string | undefined;
+}
+
 function checkSlot(
   slot: GenerationSlot,
   kind: StudioKind,
   vocabulary: AssetVocabulary,
   god: GodProfile,
   cellId: string,
-): RequestResult<GodProfile["abilities"][number] | undefined> {
+): RequestResult<SlotCheck> {
   if (kind === "portrait") {
     if (
       slot.state !== undefined ||
@@ -189,7 +210,7 @@ function checkSlot(
         expression: slot.expression,
         valid: vocabulary.expressions,
       });
-    return good(undefined);
+    return good({ ability: undefined, view: undefined });
   }
   if (slot.expression !== undefined)
     return invalidSlot(slot, "a sprite slot takes no expression");
@@ -202,12 +223,14 @@ function checkSlot(
       state: slot.state,
       valid: vocabulary.states.map((state) => state.id),
     });
-  if (!vocabulary.directions.includes(slot.direction))
+  const { direction } = slot;
+  if (!isDirection(direction) || !vocabulary.directions.includes(direction))
     return bad({
       kind: "unknown-direction",
-      direction: slot.direction,
-      valid: vocabulary.directions,
+      direction,
+      valid: vocabulary.directions.filter(isDirection),
     });
+  const view = DIRECTION_VIEW[direction];
   if (rule.cellClasses !== undefined && !rule.cellClasses.includes(cellId))
     return invalidSlot(
       slot,
@@ -215,7 +238,7 @@ function checkSlot(
     );
   if (!rule.perAbility) {
     return slot.ability === undefined
-      ? good(undefined)
+      ? good({ ability: undefined, view })
       : invalidSlot(slot, `${slot.state} takes no ability`);
   }
   if (slot.ability === undefined)
@@ -227,7 +250,7 @@ function checkSlot(
       ability: slot.ability,
       valid: god.abilities.map((a) => a.id),
     });
-  return good(ability);
+  return good({ ability, view });
 }
 
 function promptFor(
@@ -236,6 +259,7 @@ function promptFor(
   slot: GenerationSlot,
   kind: StudioKind,
   abilityName: string | undefined,
+  view: string | undefined,
   styleNote: string | undefined,
 ): string {
   const subject = `${name}, Greek god, ${iconography.join(", ")}`;
@@ -243,7 +267,7 @@ function promptFor(
   if (kind === "portrait")
     return `pixel art portrait, ${subject}, bust, three-quarter view, ${slot.expression} expression, flat background, limited colour palette${style}`;
   const ability = abilityName === undefined ? "" : `, ${abilityName}`;
-  return `pixel art, ${subject}, full body, facing ${slot.direction}, ${slot.state} pose${ability}, plain flat background, limited colour palette${style}`;
+  return `pixel art, ${subject}, full body, ${view}, ${slot.state} pose${ability}, plain flat background, limited colour palette${style}`;
 }
 
 /** Joins the content for a root request; unknown or mismatched values are typed errors. */
@@ -311,7 +335,8 @@ export function buildSpec(
         visual.iconography,
         slot,
         kind,
-        checked.value?.name,
+        checked.value.ability?.name,
+        checked.value.view,
         request.styleNote,
       ),
     });

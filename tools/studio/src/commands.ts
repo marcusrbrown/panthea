@@ -319,7 +319,9 @@ const OPS: Record<string, OpDef> = {
     spec: {},
     run: (studio) => {
       const status = studio.readOnly();
-      return isOutcome(status) ? status : done(statusSummary(status));
+      return isOutcome(status)
+        ? status
+        : done(statusSummary(status, studio.deps.isAlive));
     },
   },
   list: {
@@ -520,17 +522,23 @@ const OPS: Record<string, OpDef> = {
     },
   },
   pick: {
-    spec: { ...str("workingSetId", true), ...str("candidateId", true) },
+    spec: {
+      ...str("workingSetId", true),
+      ...str("candidateId", true),
+      ...str("slot"),
+    },
     run: (studio, a) => {
       const session = studio.owner();
       if (isOutcome(session)) return session;
+      const slot = a.slot as string | undefined;
       return (
         fromCommand(
-          session.pick(a.workingSetId as string, a.candidateId as string),
+          session.pick(a.workingSetId as string, a.candidateId as string, slot),
         ) ??
         done({
           workingSetId: a.workingSetId as string,
           candidateId: a.candidateId as string,
+          ...(slot === undefined ? {} : { slot }),
         })
       );
     },

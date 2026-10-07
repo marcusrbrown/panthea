@@ -336,6 +336,56 @@ describe("packing portraits", () => {
     prior?: PriorRevision,
   ) => packAsset(portraitInput(over), sources(rig, "wp", prior));
 
+  test("six expressions picked from one neutral candidate pack with provenance that names that candidate's job", () => {
+    const rig = assetRig();
+    const expressions = [...rig.content.vocabulary.expressions];
+    runSlots(
+      rig,
+      "zeus-faces",
+      "portrait",
+      expressions.map((expression) => ({ expression })),
+    );
+    const [neutralJob] = runSlots(
+      rig,
+      "zeus-neutral",
+      "portrait",
+      [{ expression: "neutral" }],
+      200,
+    ) as [string];
+    rig.session.openWorkingSet("wp", "zeus-faces", rig.content);
+    expect(rig.session.replaceSheet("wp", "zeus-neutral")).toEqual({
+      ok: true,
+    });
+    for (const expression of expressions)
+      expect(rig.session.pick("wp", neutralJob, expression)).toEqual({
+        ok: true,
+      });
+
+    const status = readStudioStatus(rig.root);
+    const set = status.workingSets.find((s) => s.id === "wp");
+    for (const expression of expressions)
+      expect(set?.picks[expression]).toMatchObject({
+        candidateId: neutralJob,
+        source: { requestId: "zeus-neutral", slotKey: "neutral" },
+      });
+    expect(set?.status).toBe("complete");
+
+    const result = pp(rig);
+
+    if (!result.ok) throw new Error(result.message);
+    const { manifest } = result.value;
+    if (manifest.kind !== "portrait") throw new Error("expected a portrait");
+    expect(manifest.expressions.map((e) => e.expression)).toEqual(expressions);
+    const provenance = manifest.provenance;
+    if (provenance.method !== "generated")
+      throw new Error("expected generated");
+    expect(provenance.generations.map((g) => g.jobId)).toEqual([neutralJob]);
+    expect<unknown>(provenance.generations[0]?.used).toEqual([
+      set?.picks.neutral?.inputHash,
+    ]);
+    expect(provenance.relatedJobs.map((j) => j.jobId)).toEqual([neutralJob]);
+  });
+
   test("six picked expressions pack in vocabulary expression order, one still frame each", () => {
     const rig = assetRig();
     const { expressions } = portraitSet(rig);

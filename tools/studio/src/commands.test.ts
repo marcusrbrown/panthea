@@ -572,6 +572,96 @@ describe("conform, sets, picks and rejection through the session", () => {
     expect(set?.picks["idle/south"]?.candidateId).toBe(first);
   });
 
+  test("pick --slot puts one neutral candidate into every portrait slot and keeps its lineage; a sprite refuses another slot", async () => {
+    const rig = assetRig();
+    const expressions = [...rig.content.vocabulary.expressions];
+    runSlots(
+      rig,
+      "zeus-faces",
+      "portrait",
+      expressions.map((expression) => ({ expression })),
+    );
+    const [neutral] = runSlots(
+      rig,
+      "zeus-neutral",
+      "portrait",
+      [{ expression: "neutral" }],
+      300,
+    ) as [string];
+    const [south] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+      { state: "idle", direction: "north" },
+    ]) as [string];
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+    };
+    const over = {
+      loadContent: () => ({ ok: true as const, content: rig.content }),
+    };
+
+    const created = await run(
+      config,
+      "set-create",
+      { id: "faces", requestId: "zeus-faces" },
+      over,
+    );
+    const switched = await run(config, "set-replace-sheet", {
+      workingSetId: "faces",
+      requestId: "zeus-neutral",
+    });
+    const results = [];
+    for (const slot of expressions)
+      results.push(
+        await run(config, "pick", {
+          workingSetId: "faces",
+          candidateId: neutral,
+          slot,
+        }),
+      );
+    const sprite = await run(
+      config,
+      "set-create",
+      { id: "walk", requestId: "zeus-idle" },
+      over,
+    );
+    const refused = await run(config, "pick", {
+      workingSetId: "walk",
+      candidateId: south,
+      slot: "idle/north",
+    });
+    const own = await run(config, "pick", {
+      workingSetId: "walk",
+      candidateId: south,
+    });
+
+    expect(created.outcome.ok && switched.outcome.ok && sprite.outcome.ok).toBe(
+      true,
+    );
+    expect(results.every((r) => r.outcome.ok)).toBe(true);
+    expect(results[1]?.outcome).toMatchObject({
+      ok: true,
+      result: { workingSetId: "faces", candidateId: neutral, slot: "pleased" },
+    });
+    const status = readStudioStatus(rig.root);
+    const faces = status.workingSets.find((w) => w.id === "faces");
+    expect(faces?.status).toBe("complete");
+    for (const expression of expressions)
+      expect(faces?.picks[expression]).toMatchObject({
+        candidateId: neutral,
+        source: { slotKey: "neutral" },
+      });
+    expect(codeOf(refused.outcome)).toBe("wrong-state");
+    expect(own.outcome).toMatchObject({
+      ok: true,
+      result: { workingSetId: "walk", candidateId: south },
+    });
+    expect(
+      status.workingSets.find((w) => w.id === "walk")?.picks,
+    ).toHaveProperty("idle/south");
+  });
+
   test("a packed draft is rejected once, with the reason, and then cannot be approved", async () => {
     const rig = assetRig();
     spriteSet(rig);

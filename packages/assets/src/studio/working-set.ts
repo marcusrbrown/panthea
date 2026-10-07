@@ -566,10 +566,17 @@ export function replaceSheetOf(
   };
 }
 
-/** Snapshots a done candidate of the current sheet into its slot, replacing an earlier pick. */
+/**
+ * Snapshots a done candidate of the current sheet into a slot, replacing an
+ * earlier pick. The slot defaults to the candidate's own. A portrait may take a
+ * candidate from another expression (every expression is edited from one
+ * face); a sprite slot only takes a candidate drawn for it. Either way the
+ * keyframe keeps the candidate's real source, so lineage is never rewritten.
+ */
 export function pickKeyframe(
   set: WorkingSetRecord,
   candidate: CandidateRecord,
+  target?: string,
 ): WorkingSetResult {
   if (candidate.result.status !== "done")
     return refuse(
@@ -583,7 +590,11 @@ export function pickKeyframe(
     return refuse(
       `candidate ${candidate.id} is from request ${candidate.source.requestId}, not the current sheet ${set.sheetRequestId}`,
     );
-  const { slotKey: slot } = candidate.source;
+  const slot = target ?? candidate.source.slotKey;
+  if (slot !== candidate.source.slotKey && set.kind !== "portrait")
+    return refuse(
+      `candidate ${candidate.id} was drawn for ${candidate.source.slotKey}; a ${set.kind} slot only takes a candidate drawn for it, not ${slot}`,
+    );
   if (!set.required.includes(slot))
     return refuse(`slot ${slot} is not one this working set needs`);
   if (set.frames[slot] !== undefined)

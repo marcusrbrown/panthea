@@ -293,7 +293,7 @@ describe("native API mapping and durable results", () => {
     const body = events(r, "img_gen")[0]?.body;
     expect(body).toEqual({
       prompt:
-        "pixel art, Zeus, Greek god, thunderbolt, storm sky, cloud seat, full body, facing south, idle pose, plain flat background, limited colour palette",
+        "pixel art, Zeus, Greek god, thunderbolt, full body, front view, facing the viewer, idle pose, plain flat background, limited colour palette",
       negative_prompt: SELECTED_PROFILE.negativePrompt,
       width: 512,
       height: 640,
