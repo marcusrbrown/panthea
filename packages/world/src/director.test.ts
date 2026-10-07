@@ -735,3 +735,113 @@ test("the director does the same whatever the gods' turns are driven by: a world
     planDirectorStep(bare, createPrng(5), 10),
   );
 });
+
+// --- Unit 12 (M2 plan): catastrophe, and replay without re-deciding ---------------------------------------
+
+/** A god's strike lit the farm store, and the world's own fire step has burnt it to nothing. */
+function withDestroyedFarmStore(seed: number) {
+  const world = new World(createInitialWorldState(pack(10)), seed);
+  world.apply({
+    kind: "building-ignited",
+    entityId: "farm-store",
+    cause: { kind: "strike", actor: "zeus" },
+  });
+  // The director's own fires may land in these ticks too; the destruction is the fire step's, not a proposal's.
+  for (
+    let n = 0;
+    n < 200 &&
+    world.state.buildings.get(id("farm-store"))?.status !== "destroyed";
+    n += 1
+  ) {
+    world.tick();
+  }
+  return world;
+}
+
+test("catastrophe: a destroyed building stays destroyed through the director's following fires, which never light it again, repair it, or name it", () => {
+  for (const seed of [1, 2, 3, 5, 8]) {
+    const world = withDestroyedFarmStore(seed);
+    const store = id("farm-store");
+    expect([seed, world.state.buildings.get(store)?.status]).toEqual([
+      seed,
+      "destroyed",
+    ]);
+    const destroyedAt = world.log.findIndex(
+      (e) => e.kind === "building-destroyed" && e.entityId === store,
+    );
+    expect(destroyedAt).toBeGreaterThanOrEqual(0);
+    const firesBefore = trouble(world.log).length;
+
+    // Twelve more intervals: the director fires every one of them, with the farmer's store in ruins.
+    const after = world.run(120);
+    const fires = trouble(after);
+    expect(fires.length).toBe(12);
+    expect(firesBefore + fires.length).toBe(trouble(world.log).length);
+    expect([seed, world.state.buildings.get(store)?.status]).toEqual([
+      seed,
+      "destroyed",
+    ]);
+    // Nothing the director did touched the ruin: no ignition of it, and nothing that mends a building at all.
+    expect(
+      fires.filter(
+        (e) => e.kind === "building-ignited" && e.entityId === store,
+      ),
+    ).toEqual([]);
+    expect(
+      world.log.some(
+        (e) =>
+          e.kind === "building-repaired" ||
+          e.kind === "repair-progressed" ||
+          (e.kind === "building-damaged" && e.entityId === store),
+      ),
+    ).toBe(false);
+    // The ruin's own state never moved again: its status is the one the fire left it in.
+    expect(
+      world.log
+        .slice(destroyedAt + 1)
+        .filter((e) => "entityId" in e && e.entityId === store),
+    ).toEqual([]);
+  }
+});
+
+test("catastrophe, control: a director that could light a building that is not operational would show here, because the seeds do light the other store", () => {
+  // The woodcutter's store is operational, so across the same seeds the director does burn it: the test above is not
+  // passing because the director never burns anything.
+  let lit = 0;
+  for (const seed of [1, 2, 3, 5, 8]) {
+    const world = withDestroyedFarmStore(seed);
+    lit += trouble(world.run(120)).filter(
+      (e) => e.kind === "building-ignited" && e.entityId === id("wood-store"),
+    ).length;
+  }
+  expect(lit).toBeGreaterThan(0);
+});
+
+test("replay does not re-decide: the log applied to a state whose director interval is different, with no generator at all, gives the same director clock, theft, and spoilage the journal holds", () => {
+  const original = new World(createInitialWorldState(pack(10)), 7);
+  original.run(80);
+  const fires = trouble(original.log);
+  expect(fires.length).toBeGreaterThan(5);
+  const lastFire = fires.at(-1)?.tick ?? -1;
+
+  // A world that, asked afresh, would never fire (an interval too long to come) and has no PRNG to draw from.
+  const base = createInitialWorldState(pack(10_000_000));
+  const replayed = applyEvents(
+    base,
+    original.log.map((e, i) => ({ ...e, sequence: i + 1 })) as WorldEvent[],
+  );
+  // The clock is the journal's: the last director event, not what the interval would allow.
+  expect(replayed.director.lastFireTick).toBe(lastFire);
+  expect(original.state.director.lastFireTick).toBe(lastFire);
+  expect(
+    [...replayed.actors.entries()].map(([k, v]) => [k, [...v.inventory]]),
+  ).toEqual(
+    [...original.state.actors.entries()].map(([k, v]) => [k, [...v.inventory]]),
+  );
+  // And replaying twice is the same: the events carry every decision, so there is nothing left to draw.
+  const again = applyEvents(
+    base,
+    original.log.map((e, i) => ({ ...e, sequence: i + 1 })) as WorldEvent[],
+  );
+  expect(again.director).toEqual(replayed.director);
+});
