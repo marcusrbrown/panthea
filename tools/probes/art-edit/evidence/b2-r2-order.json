@@ -1,0 +1,58 @@
+[
+  {
+    "name": "b2-r2-sdxl-bolt-20261014",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-sdxl-bolt-20261014.png"
+  },
+  {
+    "name": "b2-r2-sdxl-bolt-20261015",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-sdxl-bolt-20261015.png"
+  },
+  {
+    "name": "b2-r2-sdxl-bolt-20261016",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-sdxl-bolt-20261016.png"
+  },
+  {
+    "name": "b2-r2-sdxl-bolt-20261017",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-sdxl-bolt-20261017.png"
+  },
+  {
+    "name": "b2-r2-zimage-bolt-20261018",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-zimage-bolt-20261018.png"
+  },
+  {
+    "name": "b2-r2-zimage-bolt-20261019",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-zimage-bolt-20261019.png"
+  },
+  {
+    "name": "b2-r2-zimage-bolt-20261020",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-zimage-bolt-20261020.png"
+  },
+  {
+    "name": "b2-r2-zimage-bolt-20261021",
+    "cell": [64, 80],
+    "opaque_bbox": [23, 27, 42, 80],
+    "figure_height": 53,
+    "output": "/Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/tools/probes/art-edit/evidence/b2-r2-candidates/b2-r2-zimage-bolt-20261021.png"
+  }
+]

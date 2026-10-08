@@ -1,0 +1,854 @@
+{
+  "schemaVersion": 1,
+  "portrait": {
+    "baseJobId": "zeus-portrait-neutral-u7-r3-0001",
+    "baseOutputSha256": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba",
+    "workingSetId": "zeus-portraits-u7-r8",
+    "cleanupEditId": "zeus-portraits-cleanup-u7-r8",
+    "pixelMatches": true,
+    "reportOnlyConformance": "pass: neutral, pleased, angry, grieving, scheming, awed",
+    "jobs": [
+      {
+        "expression": "pleased",
+        "jobId": "zeus-portrait-pleased-edit-u7-r8-0000",
+        "seed": 20261012,
+        "reused": false,
+        "studioOutputPngSha256": "a0c41cfcb3ff83867b8583bf105d87d4ccfd5ac11b12ef73fa03b1ca8c64f8e5",
+        "round2ProbePngSha256": "595c037f8f74847c406bcec798dcdfe2e22a0f2e10c7b16dc4cb96398ed7d989",
+        "round2Rgb24Md5": "d337abc5e666591d730a06d353ddcac9",
+        "studioRgb24Md5": "d337abc5e666591d730a06d353ddcac9",
+        "pixelMatch": true,
+        "provenance": {
+          "base": {
+            "kind": "job",
+            "jobId": "zeus-portrait-neutral-u7-r3-0001",
+            "output": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba"
+          },
+          "mask": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b",
+          "strength": 0.6,
+          "cue": "warm broad smile, cheeks raised, crinkled eyes",
+          "provider": {
+            "id": "sd-server-z-image-turbo",
+            "medium": "image",
+            "hosting": "local"
+          },
+          "engine": {
+            "runtime": {
+              "name": "sd-cpp-master-929-3f8527a",
+              "version": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+            },
+            "runtimeBinarySha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+            "model": {
+              "id": "z_image_turbo-Q3_K",
+              "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980"
+            },
+            "loras": [],
+            "encoder": {
+              "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+              "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+            },
+            "vae": {
+              "id": "z-image-ae",
+              "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+            },
+            "licences": [
+              {
+                "subject": "sd-cpp-master-929-3f8527a",
+                "role": "runtime",
+                "licence": "MIT"
+              },
+              {
+                "subject": "z_image_turbo-Q3_K",
+                "role": "model",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "Qwen3-4B-Instruct-2507-Q4_K_M",
+                "role": "encoder",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "z-image-ae",
+                "role": "vae",
+                "licence": "Apache-2.0"
+              }
+            ],
+            "settings": {
+              "prompt": "same Greek god Zeus, preserve the same head, hairline, face shape, eyes, beard, skin and composition; warm broad smile, cheeks raised, crinkled eyes",
+              "negative_prompt": "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth",
+              "width": 768,
+              "height": 768,
+              "batch_count": 1,
+              "sample_method": "euler",
+              "sample_steps": 8,
+              "txt_cfg": 7,
+              "distilled_guidance": 1,
+              "output_format": "png",
+              "edit_strength": 0.6,
+              "edit_base_kind": "job",
+              "edit_base_job": "zeus-portrait-neutral-u7-r3-0001",
+              "edit_base_sha256": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba",
+              "edit_mask_sha256": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b"
+            }
+          }
+        }
+      },
+      {
+        "expression": "grieving",
+        "jobId": "zeus-portrait-grieving-edit-u7-r8-0000",
+        "seed": 20261011,
+        "reused": false,
+        "studioOutputPngSha256": "5b02acd25443a6761eb340484c0923e07d1367a2531d570422ab14725ba82fee",
+        "round2ProbePngSha256": "fff68b18b8d09ecd5d9cf9e437383062053fef196692a488843bdd84245160b7",
+        "round2Rgb24Md5": "809786a368265f41b3a8127980e7e86a",
+        "studioRgb24Md5": "809786a368265f41b3a8127980e7e86a",
+        "pixelMatch": true,
+        "provenance": {
+          "base": {
+            "kind": "job",
+            "jobId": "zeus-portrait-neutral-u7-r3-0001",
+            "output": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba"
+          },
+          "mask": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b",
+          "strength": 0.6,
+          "cue": "grief-stricken, inner brows raised, eyes downcast, mouth turned down",
+          "provider": {
+            "id": "sd-server-z-image-turbo",
+            "medium": "image",
+            "hosting": "local"
+          },
+          "engine": {
+            "runtime": {
+              "name": "sd-cpp-master-929-3f8527a",
+              "version": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+            },
+            "runtimeBinarySha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+            "model": {
+              "id": "z_image_turbo-Q3_K",
+              "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980"
+            },
+            "loras": [],
+            "encoder": {
+              "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+              "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+            },
+            "vae": {
+              "id": "z-image-ae",
+              "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+            },
+            "licences": [
+              {
+                "subject": "sd-cpp-master-929-3f8527a",
+                "role": "runtime",
+                "licence": "MIT"
+              },
+              {
+                "subject": "z_image_turbo-Q3_K",
+                "role": "model",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "Qwen3-4B-Instruct-2507-Q4_K_M",
+                "role": "encoder",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "z-image-ae",
+                "role": "vae",
+                "licence": "Apache-2.0"
+              }
+            ],
+            "settings": {
+              "prompt": "same Greek god Zeus, preserve the same head, hairline, face shape, eyes, beard, skin and composition; grief-stricken, inner brows raised, eyes downcast, mouth turned down",
+              "negative_prompt": "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth",
+              "width": 768,
+              "height": 768,
+              "batch_count": 1,
+              "sample_method": "euler",
+              "sample_steps": 8,
+              "txt_cfg": 7,
+              "distilled_guidance": 1,
+              "output_format": "png",
+              "edit_strength": 0.6,
+              "edit_base_kind": "job",
+              "edit_base_job": "zeus-portrait-neutral-u7-r3-0001",
+              "edit_base_sha256": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba",
+              "edit_mask_sha256": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b"
+            }
+          }
+        }
+      },
+      {
+        "expression": "scheming",
+        "jobId": "zeus-portrait-scheming-edit-u7-r8-0000",
+        "seed": 20261012,
+        "reused": false,
+        "studioOutputPngSha256": "eb82c985ac96231d6aea1ba09071ed434a4c087d1107a2ab10abcf3d03f963a7",
+        "round2ProbePngSha256": "eccf18c43aa7595a65fec7b4b0da6563b5c6cf231d5da16489a72f58688037b0",
+        "round2Rgb24Md5": "d11afc1a7be4b0cd5a16d10deacc5024",
+        "studioRgb24Md5": "d11afc1a7be4b0cd5a16d10deacc5024",
+        "pixelMatch": true,
+        "provenance": {
+          "base": {
+            "kind": "job",
+            "jobId": "zeus-portrait-neutral-u7-r3-0001",
+            "output": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba"
+          },
+          "mask": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b",
+          "strength": 0.6,
+          "cue": "sly one-sided smirk, one brow raised",
+          "provider": {
+            "id": "sd-server-z-image-turbo",
+            "medium": "image",
+            "hosting": "local"
+          },
+          "engine": {
+            "runtime": {
+              "name": "sd-cpp-master-929-3f8527a",
+              "version": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+            },
+            "runtimeBinarySha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+            "model": {
+              "id": "z_image_turbo-Q3_K",
+              "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980"
+            },
+            "loras": [],
+            "encoder": {
+              "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+              "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+            },
+            "vae": {
+              "id": "z-image-ae",
+              "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+            },
+            "licences": [
+              {
+                "subject": "sd-cpp-master-929-3f8527a",
+                "role": "runtime",
+                "licence": "MIT"
+              },
+              {
+                "subject": "z_image_turbo-Q3_K",
+                "role": "model",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "Qwen3-4B-Instruct-2507-Q4_K_M",
+                "role": "encoder",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "z-image-ae",
+                "role": "vae",
+                "licence": "Apache-2.0"
+              }
+            ],
+            "settings": {
+              "prompt": "same Greek god Zeus, preserve the same head, hairline, face shape, eyes, beard, skin and composition; sly one-sided smirk, one brow raised",
+              "negative_prompt": "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth",
+              "width": 768,
+              "height": 768,
+              "batch_count": 1,
+              "sample_method": "euler",
+              "sample_steps": 8,
+              "txt_cfg": 7,
+              "distilled_guidance": 1,
+              "output_format": "png",
+              "edit_strength": 0.6,
+              "edit_base_kind": "job",
+              "edit_base_job": "zeus-portrait-neutral-u7-r3-0001",
+              "edit_base_sha256": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba",
+              "edit_mask_sha256": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b"
+            }
+          }
+        }
+      },
+      {
+        "expression": "awed",
+        "jobId": "zeus-portrait-awed-edit-u7-r8-0000",
+        "seed": 20261013,
+        "reused": false,
+        "studioOutputPngSha256": "0e08cc950007713af7c885d8496a3149d283b40446f154f16710deceb265a823",
+        "round2ProbePngSha256": "928b592cf7b2a32eb500905dc8b9914a00d00b4126caf0fb1c573b1665a93cb2",
+        "round2Rgb24Md5": "bbaf51292423ef6be214b104704dfd77",
+        "studioRgb24Md5": "bbaf51292423ef6be214b104704dfd77",
+        "pixelMatch": true,
+        "provenance": {
+          "base": {
+            "kind": "job",
+            "jobId": "zeus-portrait-neutral-u7-r3-0001",
+            "output": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba"
+          },
+          "mask": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b",
+          "strength": 0.6,
+          "cue": "astonished, brows high, mouth slightly open",
+          "provider": {
+            "id": "sd-server-z-image-turbo",
+            "medium": "image",
+            "hosting": "local"
+          },
+          "engine": {
+            "runtime": {
+              "name": "sd-cpp-master-929-3f8527a",
+              "version": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+            },
+            "runtimeBinarySha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+            "model": {
+              "id": "z_image_turbo-Q3_K",
+              "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980"
+            },
+            "loras": [],
+            "encoder": {
+              "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+              "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+            },
+            "vae": {
+              "id": "z-image-ae",
+              "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+            },
+            "licences": [
+              {
+                "subject": "sd-cpp-master-929-3f8527a",
+                "role": "runtime",
+                "licence": "MIT"
+              },
+              {
+                "subject": "z_image_turbo-Q3_K",
+                "role": "model",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "Qwen3-4B-Instruct-2507-Q4_K_M",
+                "role": "encoder",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "z-image-ae",
+                "role": "vae",
+                "licence": "Apache-2.0"
+              }
+            ],
+            "settings": {
+              "prompt": "same Greek god Zeus, preserve the same head, hairline, face shape, eyes, beard, skin and composition; astonished, brows high, mouth slightly open",
+              "negative_prompt": "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth",
+              "width": 768,
+              "height": 768,
+              "batch_count": 1,
+              "sample_method": "euler",
+              "sample_steps": 8,
+              "txt_cfg": 7,
+              "distilled_guidance": 1,
+              "output_format": "png",
+              "edit_strength": 0.6,
+              "edit_base_kind": "job",
+              "edit_base_job": "zeus-portrait-neutral-u7-r3-0001",
+              "edit_base_sha256": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba",
+              "edit_mask_sha256": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b"
+            }
+          }
+        }
+      },
+      {
+        "expression": "angry",
+        "jobId": "zeus-portrait-angry-edit-u7-r3-0000",
+        "seed": 20261010,
+        "reused": true,
+        "studioOutputPngSha256": "0c56cef77fc2c08734c4c0bbe385f39f986c0fbf87fbc7849f0913beb12fdc68",
+        "round2ProbePngSha256": "da897619ed862c14ef25af10a8b12392a9e80db9dd5b2d6f462d651f87b225a1",
+        "round2Rgb24Md5": "6aede7c08e21d679c29cc53855c1562b",
+        "studioRgb24Md5": "6aede7c08e21d679c29cc53855c1562b",
+        "pixelMatch": true,
+        "provenance": {
+          "base": {
+            "kind": "job",
+            "jobId": "zeus-portrait-neutral-u7-r3-0001",
+            "output": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba"
+          },
+          "mask": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b",
+          "strength": 0.6,
+          "cue": "furious scowl, brows drawn hard down",
+          "provider": {
+            "id": "sd-server-z-image-turbo",
+            "medium": "image",
+            "hosting": "local"
+          },
+          "engine": {
+            "runtime": {
+              "name": "sd-cpp-master-929-3f8527a",
+              "version": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+            },
+            "runtimeBinarySha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+            "model": {
+              "id": "z_image_turbo-Q3_K",
+              "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980"
+            },
+            "loras": [],
+            "encoder": {
+              "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+              "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+            },
+            "vae": {
+              "id": "z-image-ae",
+              "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+            },
+            "licences": [
+              {
+                "subject": "sd-cpp-master-929-3f8527a",
+                "role": "runtime",
+                "licence": "MIT"
+              },
+              {
+                "subject": "z_image_turbo-Q3_K",
+                "role": "model",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "Qwen3-4B-Instruct-2507-Q4_K_M",
+                "role": "encoder",
+                "licence": "Apache-2.0"
+              },
+              {
+                "subject": "z-image-ae",
+                "role": "vae",
+                "licence": "Apache-2.0"
+              }
+            ],
+            "settings": {
+              "prompt": "same Greek god Zeus, preserve the same head, hairline, face shape, eyes, beard, skin and composition; furious scowl, brows drawn hard down",
+              "negative_prompt": "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth",
+              "width": 768,
+              "height": 768,
+              "batch_count": 1,
+              "sample_method": "euler",
+              "sample_steps": 8,
+              "txt_cfg": 7,
+              "distilled_guidance": 1,
+              "output_format": "png",
+              "edit_strength": 0.6,
+              "edit_base_kind": "job",
+              "edit_base_job": "zeus-portrait-neutral-u7-r3-0001",
+              "edit_base_sha256": "c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba",
+              "edit_mask_sha256": "3ef085137ef68e82ce7b89ad71a1538d97b7564f6c36a2408da71da9d922830b"
+            }
+          }
+        }
+      }
+    ],
+    "reviewFiles": [
+      ".context/studio-pipeline/u7-creative/r8/review/portraits-before-1x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/portraits-before-4x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/portraits-after-1x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/portraits-after-4x.png"
+    ],
+    "cleanupProvenance": {
+      "editId": "zeus-portraits-cleanup-u7-r8",
+      "basis": {
+        "kind": "keyframe",
+        "candidateId": "zeus-portrait-pleased-edit-u7-r8-0000",
+        "imageHash": "d5a0e06be8460f5b354fcf5f7fda1a13caf0163e5e06a86a1d1c6ee4bf149abc"
+      },
+      "sheetHash": "e80495603f4b5284f894db36347c896f3956f5e4ddc4e22546816b0d67c549c1",
+      "frames": [
+        {
+          "hash": "bad440cb26ce78589086cd99a90ad38d9492cb6b71a4475e4b86391485731c14",
+          "durationMs": 100
+        }
+      ],
+      "pivot": null,
+      "handEdits": [
+        {
+          "description": "hand edit zeus-portraits-cleanup-u7-r8",
+          "hash": "e80495603f4b5284f894db36347c896f3956f5e4ddc4e22546816b0d67c549c1"
+        }
+      ]
+    },
+    "cleanupRegionInclusive": {
+      "x": [50, 65],
+      "y": [49, 56]
+    },
+    "cleanupVerification": {
+      "visibleChangedPixelsOutsideInclusivePatch": 0,
+      "patchCoordinatesInclusive": {
+        "x": [50, 65],
+        "y": [49, 56]
+      },
+      "uniqueExpressionMouthPatches": 5,
+      "orangeFlecksAndWhiteTeethRemoved": true
+    },
+    "finalFrames": [
+      {
+        "slot": "neutral",
+        "candidateId": "zeus-portrait-neutral-u7-r3-0001",
+        "sha256": "61b3150b8cc1dd937a30ef73442ae827d4f3a34fd6e3abab6e163f9ef0c1b1b6",
+        "durationMs": 100
+      },
+      {
+        "slot": "pleased",
+        "candidateId": "zeus-portrait-pleased-edit-u7-r8-0000",
+        "sha256": "bad440cb26ce78589086cd99a90ad38d9492cb6b71a4475e4b86391485731c14",
+        "durationMs": 100
+      },
+      {
+        "slot": "angry",
+        "candidateId": "zeus-portrait-angry-edit-u7-r3-0000",
+        "sha256": "a473cba2317f25f76fc3e92845abcc44af979c9a71c210b6973acd3774f214ec",
+        "durationMs": 100
+      },
+      {
+        "slot": "grieving",
+        "candidateId": "zeus-portrait-grieving-edit-u7-r8-0000",
+        "sha256": "3c1bf3e3eac262fcda6bc46f5f4431c3ad4082ddf7762a59a2151612445cbd25",
+        "durationMs": 100
+      },
+      {
+        "slot": "scheming",
+        "candidateId": "zeus-portrait-scheming-edit-u7-r8-0000",
+        "sha256": "abc9c65b771927a195b6f9930d33dca174131388f03abef369682e98446f6508",
+        "durationMs": 100
+      },
+      {
+        "slot": "awed",
+        "candidateId": "zeus-portrait-awed-edit-u7-r8-0000",
+        "sha256": "167c46a1b4596254b1b99479405d753870b005c0abe9a24d4f4f0670209347af",
+        "durationMs": 100
+      }
+    ]
+  },
+  "sprite": {
+    "initImageSha256": "65eccb3a497b717f700ea6c2ecac72a95582f2ba962945115f6abf71b273e0ac",
+    "fullMaskSha256": "849e497d445bd1a43cd0ce178a068debe11f6c237254a68e4cf87136466ddb20",
+    "boltProtectedMaskSha256": "08550d44cc1539d282dedd58f4a2e03b6ad0f4c28214b2974d0118d52e2391df",
+    "modelProvenance": {
+      "provider": {
+        "id": "sd-server-z-image-turbo",
+        "medium": "image",
+        "hosting": "local"
+      },
+      "edit": {
+        "base": {
+          "kind": "hand",
+          "image": "65eccb3a497b717f700ea6c2ecac72a95582f2ba962945115f6abf71b273e0ac",
+          "description": "Hand-blocked Zeus front-view idle sprite authored at 64x80 with flat Olympus palette blocks, including a gold thunderbolt; nearest-neighbour upscaled 8x to 512x640; no generated pixels and no B2 pixels in the init image."
+        },
+        "mask": "08550d44cc1539d282dedd58f4a2e03b6ad0f4c28214b2974d0118d52e2391df",
+        "strength": 0.6,
+        "cue": "front view, standing at rest, full-body pixel-art sprite of Zeus; preserve the hand-blocked 64x80 silhouette and proportions; white chiton covering the torso with a gold sash; grey-white hair and beard; warm skin; both arms hanging naturally down; one large, clear gold zigzag thunderbolt held low in his right hand on the viewer-left; feet flat on the ground; clean connected silhouette, limited Olympus palette, plain flat background; no other weapons or props, no motion sheet, no text"
+      },
+      "engine": {
+        "runtime": {
+          "name": "sd-cpp-master-929-3f8527a",
+          "version": "3f8527a46c54ecf4cb4ed6003da8e8982283c73c"
+        },
+        "runtimeBinarySha256": "37fa5c1dfa673262abdf8ba0b9294144c7d666dbec40e688a1596d975fe57cae",
+        "model": {
+          "id": "z_image_turbo-Q3_K",
+          "sha256": "4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980"
+        },
+        "loras": [],
+        "encoder": {
+          "id": "Qwen3-4B-Instruct-2507-Q4_K_M",
+          "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+        },
+        "vae": {
+          "id": "z-image-ae",
+          "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+        },
+        "licences": [
+          {
+            "subject": "sd-cpp-master-929-3f8527a",
+            "role": "runtime",
+            "licence": "MIT"
+          },
+          {
+            "subject": "z_image_turbo-Q3_K",
+            "role": "model",
+            "licence": "Apache-2.0"
+          },
+          {
+            "subject": "Qwen3-4B-Instruct-2507-Q4_K_M",
+            "role": "encoder",
+            "licence": "Apache-2.0"
+          },
+          {
+            "subject": "z-image-ae",
+            "role": "vae",
+            "licence": "Apache-2.0"
+          }
+        ],
+        "settings": {
+          "prompt": "same Greek god Zeus, preserve the same head, hairline, face shape, eyes, beard, skin and composition; front view, standing at rest, full-body pixel-art sprite of Zeus; preserve the hand-blocked 64x80 silhouette and proportions; white chiton covering the torso with a gold sash; grey-white hair and beard; warm skin; both arms hanging naturally down; one large, clear gold zigzag thunderbolt held low in his right hand on the viewer-left; feet flat on the ground; clean connected silhouette, limited Olympus palette, plain flat background; no other weapons or props, no motion sheet, no text, crisp 8x pixel grid, simple pixel art, plain flat background",
+          "negative_prompt": "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth",
+          "width": 512,
+          "height": 640,
+          "batch_count": 1,
+          "sample_method": "euler",
+          "sample_steps": 8,
+          "txt_cfg": 7,
+          "distilled_guidance": 1,
+          "output_format": "png",
+          "edit_strength": 0.6,
+          "edit_base_kind": "hand-authored",
+          "edit_base_sha256": "65eccb3a497b717f700ea6c2ecac72a95582f2ba962945115f6abf71b273e0ac",
+          "edit_mask_sha256": "08550d44cc1539d282dedd58f4a2e03b6ad0f4c28214b2974d0118d52e2391df"
+        }
+      }
+    },
+    "recordCorrections": {
+      "handAuthoredInitIncludedBolt": true,
+      "handAuthoredInitNote": "The hand-blocked init image already contained the gold thunderbolt; it was not a blank-armed silhouette.",
+      "deletedPixels": {
+        "reason": "The R8 cleanup removed four opaque background-colour pixels enclosed between the feet before building the bob.",
+        "coordinates": [[32, 76], [32, 77], [32, 78], [32, 79]]
+      }
+    },
+    "jobs": [
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s045-20261022-0000",
+        "seed": 20261022,
+        "strength": 0.45,
+        "mask": "full",
+        "rawOutputSha256": "bec0fdd971d599f169ac9bc2a3caea9668379489a67f6d6c98a781b310b1e081",
+        "conformedOutputSha256": "fd850ae09476698af13d6c079b35b8b6102d834ed97686cb37d41ee43b79d9f8",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s045-20261023-0000",
+        "seed": 20261023,
+        "strength": 0.45,
+        "mask": "full",
+        "rawOutputSha256": "f69ab54d604afc8cb42e59b941e5737f12b1964f91513ec93098de4e80e6f366",
+        "conformedOutputSha256": "aa58d6344662f754c631805ab613a6a303ff002ff1e8a5f5340181eda5511c15",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s045-20261024-0000",
+        "seed": 20261024,
+        "strength": 0.45,
+        "mask": "full",
+        "rawOutputSha256": "520f2aac62ada4ec82a65c29efb342b6573c53abaaaef45ae5256167116a25a3",
+        "conformedOutputSha256": "e53eb352cf0661ac903fa2f905a1a264e5d02abfaa886338de82f1c6747ddd34",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s045-20261025-0000",
+        "seed": 20261025,
+        "strength": 0.45,
+        "mask": "full",
+        "rawOutputSha256": "7995ac14f484955c93a5ae7c4b93428055a07bc1d8168ec9cc559b38c869efb4",
+        "conformedOutputSha256": "09bb6aef549f9f4b2e98bb47c94f180401cc210433122919eff3543f8e3903db",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s060-20261022-0000",
+        "seed": 20261022,
+        "strength": 0.6,
+        "mask": "full",
+        "rawOutputSha256": "f8af02e7a984f4e0a0855bb703e182fe4cd235c163f30485a7d7e946c35f1e7f",
+        "conformedOutputSha256": "22c5704f344d829f9602f14d477c857e55eb2962dc622ac59f6e89d734db4ff8",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s060-20261023-0000",
+        "seed": 20261023,
+        "strength": 0.6,
+        "mask": "full",
+        "rawOutputSha256": "dba4b0059792222072a2c1ee428fd6841fbe6c1c043996fd99540b2f83f3080c",
+        "conformedOutputSha256": "1ae9b041ab4c34e7f536fc1ef13ac7b61e661065ada473163b2b6d21bcdaf3e2",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s060-20261024-0000",
+        "seed": 20261024,
+        "strength": 0.6,
+        "mask": "full",
+        "rawOutputSha256": "06f072909e5ebdae053db0692aab5080acba00596ad76bb6934aca5d32ec3284",
+        "conformedOutputSha256": "69b3bfa0f9613c53bcb0958cbe19151c6e8995b62cd53065c8662c5d7ac004e1",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s060-20261025-0000",
+        "seed": 20261025,
+        "strength": 0.6,
+        "mask": "full",
+        "rawOutputSha256": "a1760d8a73aa5d0843ded6a8cf25d2083f7a256af2706ab79c5888cb1c62a275",
+        "conformedOutputSha256": "fb42f23f246da3381458c8efbe34ecec20c13588946350faa0054718c8ed4b40",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s075-20261022-0000",
+        "seed": 20261022,
+        "strength": 0.75,
+        "mask": "full",
+        "rawOutputSha256": "1967d0ad643d618964cd0594721de96f726b2c84c037d1d654cf1d076f788246",
+        "conformedOutputSha256": "fb9e6d039d57e72e9365e5a951bbe3c96f75e8357e83a3bd7f697cc52dc467c5",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s075-20261023-0000",
+        "seed": 20261023,
+        "strength": 0.75,
+        "mask": "full",
+        "rawOutputSha256": "db95d09f58f358038eb179193a58c5da8b6419b2b7156317fe0aaafa6c4343fb",
+        "conformedOutputSha256": "b1c15745f27ec67e80382f5d1d6ee19f139d33fca525e2401851134877b5c918",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s075-20261024-0000",
+        "seed": 20261024,
+        "strength": 0.75,
+        "mask": "full",
+        "rawOutputSha256": "c0c51b917ae74726b345cfbc465ba64afa99a149776b2d6755d346a2e34be0aa",
+        "conformedOutputSha256": "4b5232762b4c31e8bf5ea88c18642a05aa9e65692c14eda13093c0808f38b954",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-full-s075-20261025-0000",
+        "seed": 20261025,
+        "strength": 0.75,
+        "mask": "full",
+        "rawOutputSha256": "bd1846877754726d626f3b59e2f9e8146ee4b0d1427e15b6305cc649fcfebe3c",
+        "conformedOutputSha256": "fa5dbc5c7eb2bc0c4b9638e289723a5816fde18f47544937ad08c1fa443fcb21",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-boltprotected-s060-20261022-0000",
+        "seed": 20261022,
+        "strength": 0.6,
+        "mask": "bolt-protected",
+        "rawOutputSha256": "a0c0539678bd7edb389556fdd400629f3ac19d00d6738b2bfba887b178dfb369",
+        "conformedOutputSha256": "a34f4458afd33d01aab836656f9b9eeb7202c2851655133afa5c947f73c52a5f",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-boltprotected-s060-20261023-0000",
+        "seed": 20261023,
+        "strength": 0.6,
+        "mask": "bolt-protected",
+        "rawOutputSha256": "b18f61393939b9e51df2df64a92df67cbca4611a379c375c1ecc028c7b9a4907",
+        "conformedOutputSha256": "a55a6a040057faedab38c21792f5c51de05ee0ca65a3c93c002447824cd2c217",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-boltprotected-s060-20261024-0000",
+        "seed": 20261024,
+        "strength": 0.6,
+        "mask": "bolt-protected",
+        "rawOutputSha256": "0cd4c7f87e80067bf52be942e816f6a60f7d7fd6592f4d87ef478f4fdf76fa69",
+        "conformedOutputSha256": "f6f3ff3eee0c17b484db38300262775154140069a8a0faf2534274fc785aa30b",
+        "conformance": "pass",
+        "failedChecks": []
+      },
+      {
+        "jobId": "zeus-idle-south-u7-r8-boltprotected-s060-20261025-0000",
+        "seed": 20261025,
+        "strength": 0.6,
+        "mask": "bolt-protected",
+        "rawOutputSha256": "abd50cda5289440969209770c683c763c3ad6951942a61df5453769cb8856c97",
+        "conformedOutputSha256": "8b33ab6fab875b7ce8d002b06a12bdb585249e2340ec66a5312fb466f8f6fc20",
+        "conformance": "fail",
+        "failedChecks": ["silhouette"]
+      }
+    ],
+    "selectedJobId": "zeus-idle-south-u7-r8-boltprotected-s060-20261022-0000",
+    "workingSetId": "zeus-idle-south-u7-r8-final",
+    "editId": "zeus-idle-south-u7-r8-edit",
+    "finalFrames": [
+      {
+        "index": 1,
+        "sha256": "2b34ad853ef4a5152af4ee86bb19f67f0683394fbdfbdbf2292b55cfb49fff64",
+        "durationMs": 167
+      },
+      {
+        "index": 2,
+        "sha256": "10e5d91c8ad7d71d30097a82c59bbd011707d8fabf788467d0c9888b0d064eea",
+        "durationMs": 166
+      },
+      {
+        "index": 3,
+        "sha256": "10e5d91c8ad7d71d30097a82c59bbd011707d8fabf788467d0c9888b0d064eea",
+        "durationMs": 167
+      },
+      {
+        "index": 4,
+        "sha256": "2b34ad853ef4a5152af4ee86bb19f67f0683394fbdfbdbf2292b55cfb49fff64",
+        "durationMs": 166
+      }
+    ],
+    "pivot": {
+      "x": 32,
+      "y": 80
+    },
+    "reportOnlyConformance": "pass: all 4 final frames",
+    "reviewFiles": [
+      ".context/studio-pipeline/u7-creative/r8/review/sprite-sweep-1x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/sprite-sweep-4x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/sprite-idle-final-1x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/sprite-idle-final-4x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/sprite-idle-silhouette-threshold-1x.png",
+      ".context/studio-pipeline/u7-creative/r8/review/sprite-idle-silhouette-threshold-4x.png"
+    ],
+    "finalProvenance": {
+      "editId": "zeus-idle-south-u7-r8-edit",
+      "basis": {
+        "kind": "keyframe",
+        "candidateId": "zeus-idle-south-u7-r8-boltprotected-s060-20261022-0000",
+        "imageHash": "a34f4458afd33d01aab836656f9b9eeb7202c2851655133afa5c947f73c52a5f"
+      },
+      "sheetHash": "9a8ade3c260faa89ec7bc694947d1b15bd2c047741e8393cce3679806e89bd8a",
+      "frames": [
+        {
+          "hash": "2b34ad853ef4a5152af4ee86bb19f67f0683394fbdfbdbf2292b55cfb49fff64",
+          "durationMs": 167
+        },
+        {
+          "hash": "10e5d91c8ad7d71d30097a82c59bbd011707d8fabf788467d0c9888b0d064eea",
+          "durationMs": 166
+        },
+        {
+          "hash": "10e5d91c8ad7d71d30097a82c59bbd011707d8fabf788467d0c9888b0d064eea",
+          "durationMs": 167
+        },
+        {
+          "hash": "2b34ad853ef4a5152af4ee86bb19f67f0683394fbdfbdbf2292b55cfb49fff64",
+          "durationMs": 166
+        }
+      ],
+      "pivot": {
+        "x": 32,
+        "y": 80
+      },
+      "handEdits": [
+        {
+          "description": "hand edit zeus-idle-south-u7-r8-edit",
+          "hash": "9a8ade3c260faa89ec7bc694947d1b15bd2c047741e8393cce3679806e89bd8a"
+        }
+      ]
+    },
+    "measurements": {
+      "canvas": [64, 80],
+      "figureHeightPx": [54, 55],
+      "headHeightPx": 13,
+      "headToFigureRatio": [0.2407, 0.2364],
+      "feetRow": 79,
+      "feetSegmentsHalfOpen": [[27, 32], [33, 38]],
+      "feetMidpointX": 32,
+      "opaqueColours": 10,
+      "binaryAlpha": true,
+      "outline": "visible 1px palette edge; not a uniform single-colour contour"
+    }
+  }
+}
