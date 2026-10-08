@@ -156,7 +156,7 @@ export function readRealRequests(path: string): RealRequest[] {
     (
       db
         .query(
-          "SELECT proposal_id, role, outcome, steps, elapsed_ms, prompt_payload, recorded_at FROM trace_model_requests ORDER BY recorded_at ASC",
+          "SELECT proposal_id, role, outcome, steps, elapsed_ms, prompt_payload, recorded_at, exhausted_reason FROM trace_model_requests ORDER BY recorded_at ASC",
         )
         .all() as {
         proposal_id: string | null;
@@ -166,6 +166,7 @@ export function readRealRequests(path: string): RealRequest[] {
         elapsed_ms: number;
         prompt_payload: string | null;
         recorded_at: number;
+        exhausted_reason: string | null;
       }[]
     ).map((row) => ({
       proposalId: row.proposal_id ?? undefined,
@@ -175,6 +176,9 @@ export function readRealRequests(path: string): RealRequest[] {
       promptPayload: row.prompt_payload ?? undefined,
       steps: JSON.parse(row.steps) as RealRequest["steps"],
       recordedAt: row.recorded_at,
+      ...(row.exhausted_reason === null
+        ? {}
+        : { exhaustedReason: row.exhausted_reason }),
     })),
   );
 }

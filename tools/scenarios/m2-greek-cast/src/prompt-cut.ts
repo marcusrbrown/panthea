@@ -55,8 +55,14 @@ export function joinResponses(
     .sort((a, b) => a.record.at - b.record.at);
   const used = new Set<ProxyRecord>();
   const samples: PromptSample[] = [];
+  // A turn the prompt cap stopped sent nothing, so no response is its own.
   const ordered = requests
-    .filter((r) => r.recordedAt !== undefined && r.promptPayload !== undefined)
+    .filter(
+      (r) =>
+        r.exhaustedReason === undefined &&
+        r.recordedAt !== undefined &&
+        r.promptPayload !== undefined,
+    )
     .sort((a, b) => (a.recordedAt as number) - (b.recordedAt as number));
   for (const request of ordered) {
     const finish = request.recordedAt as number;

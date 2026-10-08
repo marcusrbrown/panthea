@@ -116,6 +116,24 @@ test("a request the model never answered has no response to join, and neither do
   expect(samples.map((s) => s.god)).not.toContain("hera");
 });
 
+test("a turn the prompt cap stopped sent nothing, so it joins no response, even one that ends at its own time", () => {
+  const { requests, proxy } = turns(2);
+  const stopped: RealRequest = {
+    proposalId: undefined,
+    role: "hera",
+    outcome: "exhausted",
+    elapsedMs: 0,
+    promptPayload: "x".repeat(12_000),
+    steps: [],
+    exhaustedReason: "prompt-over-cap",
+    // Ahead of the real request in time order, so it would take the response first if it could.
+    recordedAt: T0 + 20_000 - 3,
+  };
+  const samples = joinResponses([stopped, ...requests], proxy);
+  expect(samples).toHaveLength(2);
+  expect(samples.map((s) => s.god)).toEqual(["athena", "zeus"]);
+});
+
 test("an hour like the failed one: 9 of 214 responses report 2,050 for prompts of about 12,000 characters, the largest ordinary count is 4,094, and all 9 are found, by god", () => {
   const { requests, proxy } = turns(205);
   const samples: PromptSample[] = joinResponses(requests, proxy);
