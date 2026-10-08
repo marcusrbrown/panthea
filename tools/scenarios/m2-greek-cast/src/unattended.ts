@@ -380,6 +380,8 @@ export async function driveUnattended(
   let lastFrame: FrameReading | undefined;
   let frameFailures = 0;
   let proxyRecordsWritten = 0;
+  /** When the observation the gate judges ended: the last boundary, or the moment a run ended early. */
+  let observationEndedAt: number | undefined;
   let lastSampleAt: number | undefined;
 
   const runningMs = (): number =>
@@ -687,6 +689,8 @@ export async function driveUnattended(
     while (runningMs() < plan.runMs) await poll();
     const finalFrame = (await readFrameNow()) ?? lastFrame;
     await record("ended");
+    // The observation ends here. What follows (the export, the stop, the rebuild) is not part of what the gate measures.
+    observationEndedAt = deps.now();
     addCheck(
       "the catch-up summary is still the summary at the end",
       summary !== undefined && finalFrame?.catchUpSummary?.id === summary.id,
@@ -713,6 +717,7 @@ export async function driveUnattended(
   }
 
   if (end !== undefined) {
+    observationEndedAt ??= deps.now();
     // A run that ends early still stops what it started and keeps what it has.
     if (world !== undefined && exitSeen === undefined) {
       try {
@@ -745,11 +750,21 @@ export async function driveUnattended(
       baselineFailure = error instanceof Error ? error.message : String(error);
     }
   }
-  const samples = deps.sampler.stop();
+  const everySample = deps.sampler.stop();
   flush();
+  // The gate's samples stop where the observation does. Later ones (the sidecar is stopped while the archive is
+  // exported and rebuilt) stay in memory.jsonl, marked as post-run, and are in no trend.
+  const samples =
+    observationEndedAt === undefined
+      ? everySample
+      : everySample.filter((sample) => sample.atMs <= observationEndedAt);
+  const postRun = everySample.slice(samples.length);
   writeFileSync(
     file("memory.jsonl"),
-    samples.map((sample) => jsonl(sample)).join(""),
+    [
+      ...samples.map((sample) => jsonl({ ...sample, phase: "observation" })),
+      ...postRun.map((sample) => jsonl({ ...sample, phase: "post-run" })),
+    ].join(""),
   );
   const summary = summarizeMemory(samples);
 
@@ -781,7 +796,7 @@ export async function driveUnattended(
     );
     writeFileSync(
       join(dir, "memory.json"),
-      `${JSON.stringify({ last: samples.at(-1), summary }, null, 2)}\n`,
+      `${JSON.stringify({ last: samples.at(-1), summary, postRunSamples: postRun.length }, null, 2)}\n`,
     );
   }
 

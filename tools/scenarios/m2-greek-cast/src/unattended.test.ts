@@ -13,7 +13,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "./args";
 import type { BaselineRecord } from "./baseline";
-import type { MemorySample } from "./memory";
+import {
+  type MemorySample,
+  type MemorySampler,
+  summarizeMemory,
+} from "./memory";
 import type { ProxyRecord } from "./outage-proxy";
 import {
   CATCH_UP_CAP_MS,
@@ -126,6 +130,8 @@ interface Script {
   readonly proxyRecordsAfterRestore?: readonly Omit<ProxyRecord, "at">[];
   /** God proposals journaled and not yet consumed, until this many running ms (forever when `Infinity`). */
   readonly pendingUntil?: number;
+  /** The memory samples the sampler hands back when it stops, given when the observation ended. */
+  readonly memory?: (when: { readonly endedAt: number }) => MemorySample[];
 }
 
 const ALL_GODS_BY = Object.fromEntries(
@@ -145,6 +151,8 @@ interface Harness {
     stopsSoFar: number;
   }[];
   readonly clock: () => number;
+  /** The wall time of the `ended` boundary, once the run reached it. */
+  readonly endedAt: { value: number | undefined };
   readonly endHook: { world: RunningWorld | undefined };
 }
 
@@ -159,6 +167,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
   const diagnoses = { count: 0 };
   const stops: string[] = [];
   const captures: Harness["captures"] = [];
+  const endedAt: { value: number | undefined } = { value: undefined };
   const endHook: { world: RunningWorld | undefined } = { world: undefined };
   let starts = 0;
   let live: ReturnType<typeof makeWorld> | undefined;
@@ -354,7 +363,10 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
         : 0,
     sampler: {
       start() {},
-      stop: () => [] as readonly MemorySample[],
+      stop: () =>
+        endedAt.value === undefined || script.memory === undefined
+          ? ([] as readonly MemorySample[])
+          : script.memory({ endedAt: endedAt.value }),
       peek: () => ({
         atMs: clock,
         runner:
@@ -374,6 +386,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
     },
     onEnd: async (world) => {
       endHook.world = world;
+      endedAt.value = clock;
     },
     discardedMs: () =>
       script.catchUp?.skippedMs ?? GAP_MS - CATCH_UP_CAP_MS + 4_000,
@@ -396,6 +409,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
     stops,
     captures,
     clock: () => clock,
+    endedAt,
     endHook,
   };
 }
@@ -1320,4 +1334,156 @@ test("a run with nothing pending starts its outage at once, as before", async ()
   expect(
     result.boundaries.find((b) => b.phase === "outage-started")?.runningMs,
   ).toBeLessThan(24_000 + 3 * POLL_MS);
+});
+
+// --- Blocker 3: the gate's memory samples stop where the observation does -----------------------
+
+/** A flat sidecar series every 10 s for `minutes` before `endedAt`, present throughout. */
+function flatSeries(endedAt: number, minutes: number): MemorySample[] {
+  const samples: MemorySample[] = [];
+  for (let at = endedAt - minutes * MINUTE; at <= endedAt; at += 10_000) {
+    samples.push({
+      atMs: at,
+      runner: { state: "present", pids: [9], rssBytes: 4_000_000_000 },
+      sidecar: { state: "present", pid: 4001, rssBytes: 900_000_000 },
+      swap: undefined,
+    });
+  }
+  return samples;
+}
+
+/** Samples taken after the observation: the sidecar has been stopped for the export and the rebuild. */
+function afterStop(endedAt: number, count: number): MemorySample[] {
+  return Array.from({ length: count }, (_, i) => ({
+    atMs: endedAt + (i + 1) * 10_000,
+    runner: { state: "present" as const, pids: [9], rssBytes: 4_000_000_000 },
+    sidecar: { state: "absent" as const },
+    swap: undefined,
+  }));
+}
+
+test("samples taken after the observation ended, while the export and rebuild run with the sidecar stopped, are kept out of the gate's trend: a flat series is still judged, and levelling off", async () => {
+  const h = harness(phasePlan(60), {
+    memory: ({ endedAt }) => [
+      ...flatSeries(endedAt, 25),
+      ...afterStop(endedAt, 6),
+    ],
+  });
+  let handed: readonly MemorySample[] = [];
+  h.deps.renderReport = (_result, samples) => {
+    handed = samples;
+    return undefined;
+  };
+  const result = await driveUnattended(h.deps);
+
+  expect(result.status).toBe("completed");
+  expect(handed.some((s) => s.sidecar.state === "absent")).toBe(false);
+  const trend = summarizeMemory(handed).sidecarTrend;
+  expect(trend.judgeable).toBe(true);
+  expect(trend.judgeable && trend.levellingOff).toBe(true);
+  // The run record's own summary is the observation's.
+  const run = JSON.parse(read(h.outDir, "run.json")) as {
+    memory: ReturnType<typeof summarizeMemory>;
+  };
+  expect(run.memory.sidecarTrend.judgeable).toBe(true);
+  expect(run.memory.sidecar.absent).toBe(0);
+  // Without the freeze the same samples are not judgeable: the control that the fix is what makes the difference.
+  const all = [
+    ...flatSeries(h.endedAt.value ?? 0, 25),
+    ...afterStop(h.endedAt.value ?? 0, 6),
+  ];
+  expect(summarizeMemory(all).sidecarTrend.judgeable).toBe(false);
+});
+
+test("the later samples stay in memory.jsonl, marked as post-run, and the observation's are marked as such", async () => {
+  const h = harness(phasePlan(60), {
+    memory: ({ endedAt }) => [
+      ...flatSeries(endedAt, 25),
+      ...afterStop(endedAt, 3),
+    ],
+  });
+  await driveUnattended(h.deps);
+  const lines = read(h.outDir, "memory.jsonl")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as MemorySample & { phase: string });
+  expect(lines.filter((l) => l.phase === "post-run")).toHaveLength(3);
+  expect(
+    lines
+      .filter((l) => l.phase === "post-run")
+      .every((l) => l.sidecar.state === "absent"),
+  ).toBe(true);
+  expect(
+    lines
+      .filter((l) => l.phase === "observation")
+      .every((l) => l.sidecar.state === "present"),
+  ).toBe(true);
+  expect(
+    lines.every((l) => l.phase === "observation" || l.phase === "post-run"),
+  ).toBe(true);
+  // The last observation sample is at the observation's end, and nothing after it is an observation.
+  const firstPost = lines.findIndex((l) => l.phase === "post-run");
+  expect(lines.slice(firstPost).every((l) => l.phase === "post-run")).toBe(
+    true,
+  );
+});
+
+test("an absent sidecar inside the observation still makes the trend not judgeable: the freeze moves the end, it does not hide a gap", async () => {
+  const h = harness(phasePlan(60), {
+    memory: ({ endedAt }) => {
+      const series = flatSeries(endedAt, 25);
+      const gap = series.findIndex((s) => s.atMs === endedAt - 10 * MINUTE);
+      series[gap] = {
+        ...(series[gap] as MemorySample),
+        sidecar: { state: "absent" },
+      };
+      return [...series, ...afterStop(endedAt, 6)];
+    },
+  });
+  let handed: readonly MemorySample[] = [];
+  h.deps.renderReport = (_result, samples) => {
+    handed = samples;
+    return undefined;
+  };
+  await driveUnattended(h.deps);
+
+  expect(handed.filter((s) => s.sidecar.state === "absent")).toHaveLength(1);
+  const trend = summarizeMemory(handed).sidecarTrend;
+  expect(trend.judgeable).toBe(false);
+  expect(!trend.judgeable && trend.reason).toContain("absent");
+});
+
+test("a run that ends early freezes its samples at the end, not at the shutdown that follows", async () => {
+  // A fault at 100 s of running time: the stop that follows is the driver's, and its absent samples are post-run.
+  const h = harness(phasePlan(6), { emptyAt: 100_000 });
+  let freeze = 0;
+  (h.deps as unknown as { sampler: MemorySampler }).sampler = {
+    start() {},
+    stop: () => [
+      {
+        atMs: T0 + 90_000,
+        runner: { state: "absent" as const },
+        sidecar: { state: "present" as const, pid: 1, rssBytes: 5 },
+        swap: undefined,
+      },
+      {
+        atMs: T0 + 400_000,
+        runner: { state: "absent" as const },
+        sidecar: { state: "absent" as const },
+        swap: undefined,
+      },
+    ],
+    peek: () => undefined,
+  };
+  let handed: readonly MemorySample[] = [];
+  h.deps.renderReport = (_result, samples) => {
+    handed = samples;
+    freeze = h.clock();
+    return undefined;
+  };
+  const result = await driveUnattended(h.deps);
+  expect(result.status).toBe("fault");
+  expect(handed).toHaveLength(1);
+  expect(handed[0]?.atMs).toBe(T0 + 90_000);
+  expect(freeze).toBeGreaterThan(0);
 });
