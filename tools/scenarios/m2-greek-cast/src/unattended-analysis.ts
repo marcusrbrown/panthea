@@ -33,7 +33,13 @@ import {
   serviceTimings,
   type TickWindow,
 } from "./request-timing";
-import type { Boundary, PhaseName, UnattendedResult } from "./unattended";
+import type {
+  Boundary,
+  GateOutcome,
+  GateVerdict,
+  PhaseName,
+  UnattendedResult,
+} from "./unattended";
 
 /** ADR-0005's queue-wait target for a god on one model, in service ticks (a tick is a second). */
 export const QUEUE_WAIT_TARGET_TICKS = 90;
@@ -90,11 +96,7 @@ export interface ThresholdRow {
   readonly threshold: string;
 }
 
-export type Verdict =
-  | "PASS"
-  | "FAIL"
-  | "INFRASTRUCTURE FAULT"
-  | "not a gate run";
+export type Verdict = GateVerdict;
 
 export interface GodReport {
   readonly god: string;
@@ -170,6 +172,14 @@ export interface UnattendedAnalysis {
 }
 
 // --- Windows and phases -------------------------------------------------------------------------
+
+/** The verdict and failed rows the exit code is decided on. */
+export function gateOutcomeOf(analysis: UnattendedAnalysis): GateOutcome {
+  return {
+    verdict: analysis.verdict,
+    failedRows: analysis.rows.filter((r) => !r.ok).map((r) => r.id),
+  };
+}
 
 const boundary = (
   result: UnattendedResult,

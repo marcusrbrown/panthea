@@ -55,7 +55,7 @@ import {
   type ControlName,
   runStory,
 } from "./story";
-import { exitCodeOf, runUnattended } from "./unattended";
+import { exitCodeOf, failureText, runUnattended } from "./unattended";
 
 const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
   chain:
@@ -209,12 +209,17 @@ async function runUnattendedMode(args: Args): Promise<void> {
   for (const check of result.checks) {
     console.log(`${check.ok ? "PASS" : "FAIL"} ${check.name}: ${check.detail}`);
   }
+  if (result.gate !== undefined) {
+    console.log(
+      `threshold table: ${result.gate.verdict}${result.gate.failedRows.length === 0 ? "" : ` (${result.gate.failedRows.length} rows failed: ${result.gate.failedRows.join("; ")})`}`,
+    );
+  }
   const code = exitCodeOf(result);
   if (code === 2) {
     // Not a FAIL line: an infrastructure fault is no gate result, and the run is rerun.
-    console.error(`\nINFRASTRUCTURE FAULT ${result.reason}`);
+    console.error(`\nINFRASTRUCTURE FAULT ${failureText(result)}`);
   } else if (code === 1) {
-    console.error(`\nFAIL ${result.reason}`);
+    console.error(`\nFAIL ${failureText(result)}`);
   }
   if (code !== 0) process.exit(code);
 }

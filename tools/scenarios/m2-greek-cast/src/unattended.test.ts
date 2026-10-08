@@ -21,9 +21,12 @@ import {
   driveUnattended,
   exitCodeOf,
   FRAME_FAILURES_MAX,
+  failureText,
   GAP_MS,
+  type GateOutcome,
   OUTAGE_GODS,
   type PhaseName,
+  type PhasePlan,
   POLL_MS,
   phasePlan,
   type RunningWorld,
@@ -35,6 +38,7 @@ import {
   unattendedSettings,
 } from "./unattended";
 import type { OllamaState } from "./unattended-diagnostics";
+import { baseResult } from "./unattended-test-data";
 
 const MINUTE = 60_000;
 const GODS = [
@@ -873,7 +877,7 @@ test("the end hook sees the live world before the run stops it, and a failure in
 });
 
 test("exit codes: completed is 0, a failure is 1, and only an infrastructure fault is 2", () => {
-  const base = { boundaries: [], checks: [] } as unknown as UnattendedResult;
+  const base = driveBase(phasePlan(6));
   expect(exitCodeOf({ ...base, status: "completed" })).toBe(0);
   expect(exitCodeOf({ ...base, status: "failed" })).toBe(1);
   expect(exitCodeOf({ ...base, status: "fault" })).toBe(2);
@@ -1134,4 +1138,140 @@ test("a catch-up pass that starts and never finishes fails the run at the timeou
   const result = await driveUnattended(h.deps);
   expect(result.status).toBe("failed");
   expect(result.reason).toContain("catch-up");
+});
+
+// --- Blocker 1: the threshold table decides the exit ------------------------------------------
+
+/** A finished run's result with the given plan, for the exit code. */
+const driveBase = (plan: PhasePlan): UnattendedResult => ({
+  ...baseResult(),
+  plan,
+});
+
+const gateOf = (
+  verdict: GateOutcome["verdict"],
+  failedRows: string[] = [],
+): GateOutcome => ({ verdict, failedRows });
+
+test("a full gate run whose threshold table has a failed row exits 1, though it completed; a passing one exits 0", () => {
+  const base = driveBase(phasePlan(60));
+  expect(exitCodeOf({ ...base, gate: gateOf("FAIL", ["prompt.tokens"]) })).toBe(
+    1,
+  );
+  expect(exitCodeOf({ ...base, gate: gateOf("PASS") })).toBe(0);
+  // A full run with no threshold result at all is not a pass.
+  expect(exitCodeOf({ ...base, gate: undefined })).toBe(1);
+});
+
+test("a development run keeps its exit whatever its rows say: it is not a gate run", () => {
+  const base = driveBase(phasePlan(6));
+  expect(
+    exitCodeOf({
+      ...base,
+      gate: gateOf("not a gate run", [
+        "prompt.tokens",
+        "memory.sidecar-levels-off",
+      ]),
+    }),
+  ).toBe(0);
+  expect(exitCodeOf({ ...base, gate: undefined })).toBe(0);
+  // Its lifecycle failures still count.
+  expect(exitCodeOf({ ...base, status: "failed" })).toBe(1);
+});
+
+test("the infrastructure fault is exit 2 and only that; a failed run is 1 whatever the table says", () => {
+  const base = driveBase(phasePlan(60));
+  expect(
+    exitCodeOf({
+      ...base,
+      status: "fault",
+      gate: gateOf("INFRASTRUCTURE FAULT"),
+    }),
+  ).toBe(2);
+  expect(
+    exitCodeOf({ ...base, status: "fault", gate: gateOf("FAIL", ["x"]) }),
+  ).toBe(2);
+  expect(exitCodeOf({ ...base, status: "failed", gate: gateOf("PASS") })).toBe(
+    1,
+  );
+});
+
+test("a report that could not be generated fails the command, on a development run too", () => {
+  for (const plan of [phasePlan(6), phasePlan(60)]) {
+    const base = driveBase(plan);
+    expect(
+      exitCodeOf({
+        ...base,
+        gate: gateOf("PASS"),
+        reportError: "the report could not be rendered: boom",
+      }),
+    ).toBe(1);
+  }
+});
+
+test("the driver keeps the report hook's threshold result on the run, writes it to run.json, and the hook's text is the report", async () => {
+  const h = harness(phasePlan(6));
+  h.deps.renderReport = () => ({
+    text: "# the report\n",
+    gate: gateOf("not a gate run", ["prompt.tokens"]),
+  });
+  const result = await driveUnattended(h.deps);
+  expect(result.gate).toEqual(gateOf("not a gate run", ["prompt.tokens"]));
+  expect(exitCodeOf(result)).toBe(0);
+  expect(read(h.outDir, "report.md")).toBe("# the report\n");
+  const run = JSON.parse(read(h.outDir, "run.json")) as UnattendedResult;
+  expect(run.gate).toEqual(gateOf("not a gate run", ["prompt.tokens"]));
+  expect(run.reportError).toBeUndefined();
+});
+
+test("a hook that fails a full run's table makes the run exit 1 and the failure line names the rows", async () => {
+  // A development-length plan marked as a gate plan: the exit is what is under test, not the length.
+  const h = harness({ ...phasePlan(6), gate: true });
+  h.deps.renderReport = () => ({
+    text: "x",
+    gate: gateOf("FAIL", ["prompt.tokens", "queue.wait"]),
+  });
+  const result = await driveUnattended(h.deps);
+  expect(result.status).toBe("completed");
+  expect(exitCodeOf(result)).toBe(1);
+  expect(failureText(result)).toBe(
+    "2 threshold rows failed: prompt.tokens; queue.wait",
+  );
+});
+
+test("a report that throws is recorded on the run, falls back to the driver's summary, and fails the command", async () => {
+  const h = harness(phasePlan(6));
+  h.deps.renderReport = () => {
+    throw new Error("identities missing");
+  };
+  const result = await driveUnattended(h.deps);
+  expect(result.reportError).toBe(
+    "the report could not be rendered: identities missing",
+  );
+  expect(exitCodeOf(result)).toBe(1);
+  expect(failureText(result)).toContain(
+    "the report could not be rendered: identities missing",
+  );
+  expect(read(h.outDir, "report.md")).toContain(
+    "COMPLETED, REPORT FAILED (exit 1)",
+  );
+  expect(read(h.outDir, "report.md")).toContain(
+    "the report could not be rendered: identities missing",
+  );
+  const run = JSON.parse(read(h.outDir, "run.json")) as UnattendedResult;
+  expect(run.reportError).toBe(result.reportError);
+});
+
+test("failureText says nothing for a run that exits 0, the reason for a failure, and the rows for a failed table", () => {
+  const base = driveBase(phasePlan(60));
+  expect(failureText({ ...base, gate: gateOf("PASS") })).toBeUndefined();
+  expect(
+    failureText({ ...base, status: "failed", reason: "the sidecar exited" }),
+  ).toBe("the sidecar exited");
+  expect(failureText({ ...base, status: "fault", reason: "five empty" })).toBe(
+    "five empty",
+  );
+  expect(failureText({ ...base, gate: gateOf("FAIL", ["a"]) })).toBe(
+    "1 threshold row failed: a",
+  );
 });

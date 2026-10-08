@@ -61,6 +61,7 @@ import {
   type RealOptions,
 } from "./real";
 import type { RealInput } from "./real-analysis";
+import { analyzeUnattended, gateOutcomeOf } from "./unattended-analysis";
 import {
   captureOllamaState,
   type OllamaState,
@@ -209,11 +210,26 @@ export interface UnattendedDeps {
   log?(line: string): void;
   /** The milliseconds of wall time the journal records the world discarded as over the catch-up cap, summed. */
   discardedMs(): number;
-  /** Renders the report from the finished run and the samples, or `undefined` to keep the driver's own summary. */
+  /**
+   * Renders the report from the finished run and the samples of the observation, or `undefined` to keep the driver's own
+   * summary. It returns the report's text with the threshold result the report's verdict rests on, which sets the exit.
+   */
   renderReport?(
     result: UnattendedResult,
     samples: readonly MemorySample[],
-  ): string | undefined;
+  ): { readonly text: string; readonly gate: GateOutcome } | undefined;
+}
+
+/** What the threshold table concluded: a gate run's verdict, and the rows that failed. */
+export type GateVerdict =
+  | "PASS"
+  | "FAIL"
+  | "INFRASTRUCTURE FAULT"
+  | "not a gate run";
+
+export interface GateOutcome {
+  readonly verdict: GateVerdict;
+  readonly failedRows: readonly string[];
 }
 
 export interface Check {
@@ -226,6 +242,10 @@ export type UnattendedStatus = "completed" | "failed" | "fault";
 
 export interface UnattendedResult {
   readonly status: UnattendedStatus;
+  /** The threshold table's result, when a report was rendered. */
+  readonly gate?: GateOutcome;
+  /** Why the report could not be generated, when it could not. */
+  readonly reportError?: string;
   readonly settings?: RunSettings;
   /** The end capture: sizes, the rebuild from genesis and the import proof. Absent when it could not be taken. */
   readonly baseline?: BaselineRecord;
@@ -272,11 +292,41 @@ export interface UnattendedResult {
   };
 }
 
-/** 0 for a completed run, 1 for a failure, 2 for the infrastructure fault only. */
+/**
+ * 2 for the infrastructure fault and only that; 1 for a failed run, a report that could not be generated, and a
+ * full-length run whose threshold table failed a row or has no result; 0 otherwise. A development run is not a gate
+ * run: its failed rows are shown and do not change its exit.
+ */
 export function exitCodeOf(
-  result: Pick<UnattendedResult, "status">,
+  result: Pick<UnattendedResult, "status" | "plan" | "gate" | "reportError">,
 ): 0 | 1 | 2 {
-  return result.status === "completed" ? 0 : result.status === "fault" ? 2 : 1;
+  if (result.status === "fault") return 2;
+  if (result.status === "failed") return 1;
+  if (result.reportError !== undefined) return 1;
+  if (
+    result.plan.gate &&
+    (result.gate === undefined || result.gate.verdict === "FAIL")
+  ) {
+    return 1;
+  }
+  return 0;
+}
+
+/** The line that says why a run exits non-zero; `undefined` for a run that exits 0. */
+export function failureText(
+  result: Pick<
+    UnattendedResult,
+    "status" | "plan" | "gate" | "reportError" | "reason"
+  >,
+): string | undefined {
+  if (exitCodeOf(result) === 0) return undefined;
+  if (result.status !== "completed") return result.reason;
+  if (result.reportError !== undefined) return result.reportError;
+  const rows = result.gate?.failedRows ?? [];
+  if (result.gate === undefined) {
+    return "the report returned no threshold result for a full-length run";
+  }
+  return `${rows.length} threshold ${rows.length === 1 ? "row" : "rows"} failed: ${rows.join("; ")}`;
 }
 
 /** The requests that arrived after `startedAt` and before the finish line, less the tolerance. */
@@ -718,7 +768,7 @@ export async function driveUnattended(
   }
 
   const endedWallMs = deps.now();
-  const result: UnattendedResult = {
+  const finished: UnattendedResult = {
     status,
     ...(deps.settings === undefined ? {} : { settings: deps.settings }),
     ...(baseline === undefined ? {} : { baseline }),
@@ -734,19 +784,27 @@ export async function driveUnattended(
     ...(restore === undefined ? {} : { restore }),
     ...(catchUp === undefined ? {} : { catchUp }),
   };
+  // The report is rendered before the run is written, so the threshold result it reaches is part of the record and of
+  // the exit. A report that cannot be generated fails the run.
+  let rendered: ReturnType<NonNullable<UnattendedDeps["renderReport"]>>;
+  let reportError: string | undefined;
+  try {
+    rendered = deps.renderReport?.(finished, samples);
+  } catch (error) {
+    reportError = `the report could not be rendered: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const result: UnattendedResult = {
+    ...finished,
+    ...(rendered === undefined ? {} : { gate: rendered.gate }),
+    ...(reportError === undefined ? {} : { reportError }),
+  };
   writeFileSync(
     file("run.json"),
     `${JSON.stringify({ ...result, memory: summary }, null, 2)}\n`,
   );
-  let report: string | undefined;
-  try {
-    report = deps.renderReport?.(result, samples);
-  } catch (error) {
-    baselineFailure ??= `the report could not be rendered: ${error instanceof Error ? error.message : String(error)}`;
-  }
   writeFileSync(
     file("report.md"),
-    report ?? renderRunSummary(result, baselineFailure),
+    rendered?.text ?? renderRunSummary(result, baselineFailure),
   );
   return result;
 }
@@ -761,15 +819,21 @@ export function renderRunSummary(
   baselineFailure?: string,
 ): string {
   const heading =
-    result.status === "completed"
-      ? "COMPLETED"
-      : result.status === "fault"
-        ? "INFRASTRUCTURE FAULT (exit 2)"
-        : "FAILED (exit 1)";
+    result.status === "fault"
+      ? "INFRASTRUCTURE FAULT (exit 2)"
+      : result.status === "failed" || result.reportError !== undefined
+        ? result.status === "completed"
+          ? "COMPLETED, REPORT FAILED (exit 1)"
+          : "FAILED (exit 1)"
+        : "COMPLETED";
   const lines = [
     `# Unattended run: ${heading}`,
     "",
     result.reason === undefined ? "" : `Reason: ${result.reason}`,
+    "",
+    result.reportError === undefined
+      ? ""
+      : `Report: ${result.reportError}. This summary stands in for it, and the command fails.`,
     "",
     result.plan.gate
       ? "A full-length run: the gate verdict is the threshold table's, not this summary's."
@@ -1090,7 +1154,7 @@ export async function runUnattended(
           endTick: last?.tick ?? 0,
         },
       };
-      return renderUnattendedReport({
+      const data = {
         result: finished,
         input,
         proxy: proxy.records(),
@@ -1099,7 +1163,12 @@ export async function runUnattended(
           ...GODS,
         ]),
         gods: [...GODS],
-      });
+      };
+      const analysis = analyzeUnattended(data);
+      return {
+        text: renderUnattendedReport(data, analysis),
+        gate: gateOutcomeOf(analysis),
+      };
     },
     onEnd: async (world) => {
       await exportForBaseline(world, archivePath);

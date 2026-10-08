@@ -12,10 +12,11 @@ import {
   type TickWindow,
 } from "./request-timing";
 import type { UnattendedResult } from "./unattended";
-import { phasePlan } from "./unattended";
+import { exitCodeOf, phasePlan } from "./unattended";
 import {
   analyzeUnattended,
   exhaustionReason,
+  gateOutcomeOf,
   phaseOfTick,
   QUEUE_WAIT_TARGET_TICKS,
   QUIET_LIMIT_TICKS,
@@ -635,6 +636,47 @@ test("the outage window is left out of the per-god counts: a legend repeated onl
   expect(rowOf(rows, "gods.repetition").ok).toBe(true);
   // It is still reported: the outage control above is what fails.
   expect(rowOf(rows, "outage.no-god-action").ok).toBe(false);
+});
+
+// --- The threshold table reaches the exit code ----------------------------------------------
+
+test("a full-length analysis with a failed row exits 1 and one that holds exits 0: the exit is decided on the table, not on the lifecycle", () => {
+  // The reproduction: no proxy record carries a prompt token count, so the prompt-size row fails on a run that completed.
+  const failed = runData({ proxy: [] });
+  const failedAnalysis = analyzeUnattended(failed);
+  expect(failed.result.status).toBe("completed");
+  expect(failedAnalysis.verdict).toBe("FAIL");
+  expect(rowOf(failedAnalysis.rows, "prompt.tokens").ok).toBe(false);
+  const outcome = gateOutcomeOf(failedAnalysis);
+  expect(outcome).toEqual({ verdict: "FAIL", failedRows: ["prompt.tokens"] });
+  expect(exitCodeOf({ ...failed.result, gate: outcome })).toBe(1);
+
+  const holds = runData();
+  const holdsAnalysis = analyzeUnattended(holds);
+  expect(holdsAnalysis.verdict).toBe("PASS");
+  const passing = gateOutcomeOf(holdsAnalysis);
+  expect(passing).toEqual({ verdict: "PASS", failedRows: [] });
+  expect(exitCodeOf({ ...holds.result, gate: passing })).toBe(0);
+});
+
+test("a development-length analysis with failed rows keeps exit 0, and a fault keeps exit 2, whatever the table holds", () => {
+  const development = runData({ proxy: [], result: { plan: phasePlan(6) } });
+  const analysis = analyzeUnattended(development);
+  expect(analysis.verdict).toBe("not a gate run");
+  expect(analysis.rows.some((r) => !r.ok)).toBe(true);
+  expect(
+    exitCodeOf({ ...development.result, gate: gateOutcomeOf(analysis) }),
+  ).toBe(0);
+
+  const fault = runData({
+    proxy: [],
+    result: { status: "fault", reason: "five empty" },
+  });
+  const faultAnalysis = analyzeUnattended(fault);
+  expect(faultAnalysis.verdict).toBe("INFRASTRUCTURE FAULT");
+  expect(
+    exitCodeOf({ ...fault.result, gate: gateOutcomeOf(faultAnalysis) }),
+  ).toBe(2);
 });
 
 // --- Reading the run ---------------------------------------------------------------------------
