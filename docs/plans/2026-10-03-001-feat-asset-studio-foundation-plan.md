@@ -229,7 +229,7 @@ flowchart TB
 - **Verification:** The owner approved the current `greek-master` palette digest on 2026-10-05. This approval is not canon asset approval. Any guide-default change is a separate owner question.
 
 ### Unit 5. Shared pipeline and CLI
-- [ ] Exercise request, edit and publish flows headlessly.
+- [x] Exercise request, edit and publish flows headlessly. PR #174 published the six-expression Zeus portrait. The idle-south sprite is deferred (owner, 2026-10-08); the child plan's Unit 7 note records the evidence, and Zeus keeps `placeholder-zeus`.
 - **Requirements:** R2, R4–R12, R18, R20; F1, F2, F4; AE3, AE5, AE6.
 - **Dependencies:** Units 2, 3; Unit 1's selected draft generator (Z-Image-Turbo without a LoRA), Unit 4 approval for canon.
 - **Child plan:** `docs/plans/2026-10-05-001-feat-studio-pipeline-cli-plan.md` is the authoritative Unit 5 implementation plan.
