@@ -40,10 +40,13 @@ export const STRIKERS: readonly string[] = [
 /** Gods that can answer a loss with a blessing. */
 export const BLESSERS: readonly string[] = ["athena", "hephaestus", "hermes"];
 
-/** The model config every staged world and the story's own launch with: every god on one scripted endpoint. */
+/**
+ * The model config every staged world and the story's own launch with: every god on one scripted endpoint. The
+ * endpoint presents granite3.3-8b-4k, the M2 baseline, so the story runs under the prompt cap at that model's ratio.
+ */
 export const launchConfigFor = (baseUrl: string): LaunchConfigLine => ({
   models: {
-    endpoints: [{ id: "scripted", baseUrl, model: "scripted" }],
+    endpoints: [{ id: "scripted", baseUrl, model: "granite3.3-8b-4k" }],
     roles: Object.fromEntries(
       GODS.map((god) => [god, { endpoint: "scripted" }]),
     ),
