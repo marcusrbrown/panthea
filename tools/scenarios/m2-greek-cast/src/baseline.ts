@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activeStorePath } from "../../m1-living-world/src/world-db";
 import type { ChildReading } from "./baseline-child";
+import { formatJson } from "./json-format";
 
 export { firstDifference } from "./baseline-compare";
 
@@ -256,10 +257,7 @@ export async function captureBaseline(
     }
 
     const record: BaselineRecord = { store, archive, rebuild, importProof };
-    writeFileSync(
-      join(input.runDir, "baseline.json"),
-      `${JSON.stringify(record, null, 2)}\n`,
-    );
+    writeFileSync(join(input.runDir, "baseline.json"), formatJson(record));
     return record;
   } finally {
     rmSync(work, { recursive: true, force: true });

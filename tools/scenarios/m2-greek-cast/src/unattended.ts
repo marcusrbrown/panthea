@@ -35,6 +35,7 @@ import {
   readStoredEvents,
 } from "./db";
 import { loadGodIdentities } from "./episodes";
+import { formatJson } from "./json-format";
 import {
   createMemorySampler,
   findOllamaServePid,
@@ -831,17 +832,18 @@ export async function driveUnattended(
     const state = await deps.diagnose();
     const dir = join(outDir, "diagnostics");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "ollama-ps.json"),
-      `${JSON.stringify(state.ps, null, 2)}\n`,
-    );
+    writeFileSync(join(dir, "ollama-ps.json"), formatJson(state.ps));
     writeFileSync(
       join(dir, "ollama-log-tail.txt"),
       renderLogTail(state.logTail),
     );
     writeFileSync(
       join(dir, "memory.json"),
-      `${JSON.stringify({ last: samples.at(-1), summary, postRunSamples: postRun.length }, null, 2)}\n`,
+      formatJson({
+        last: samples.at(-1),
+        summary,
+        postRunSamples: postRun.length,
+      }),
     );
   }
 
@@ -876,10 +878,7 @@ export async function driveUnattended(
     ...(rendered === undefined ? {} : { gate: rendered.gate }),
     ...(reportError === undefined ? {} : { reportError }),
   };
-  writeFileSync(
-    file("run.json"),
-    `${JSON.stringify({ ...result, memory: summary }, null, 2)}\n`,
-  );
+  writeFileSync(file("run.json"), formatJson({ ...result, memory: summary }));
   writeFileSync(
     file("report.md"),
     rendered?.text ?? renderRunSummary(result, baselineFailure),

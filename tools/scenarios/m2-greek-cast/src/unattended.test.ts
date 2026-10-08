@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { REPO_ROOT } from "../../m1-living-world/src/sidecar";
 import { parseArgs } from "./args";
 import type { BaselineRecord } from "./baseline";
 import {
@@ -1638,4 +1639,75 @@ test("a run that ends early freezes its samples at the end, not at the shutdown 
   expect(handed).toHaveLength(1);
   expect(handed[0]?.atMs).toBe(T0 + 90_000);
   expect(freeze).toBeGreaterThan(0);
+});
+
+// --- Committed JSON is written the way biome formats it ----------------------------------------
+
+/** What biome's formatter makes of `text` as a .json file. */
+function biomeFormatted(text: string): string {
+  const run = Bun.spawnSync(
+    [
+      join(REPO_ROOT, "node_modules/.bin/biome"),
+      "format",
+      "--stdin-file-path=evidence.json",
+    ],
+    { stdin: new TextEncoder().encode(text), stdout: "pipe", stderr: "pipe" },
+  );
+  if (run.exitCode !== 0) throw new Error(new TextDecoder().decode(run.stderr));
+  return new TextDecoder().decode(run.stdout);
+}
+
+test("every JSON file a run writes, the diagnostics included, is exactly what biome's formatter would make of it, so CI's lint passes on a committed run folder", async () => {
+  // A fault writes the diagnostics; the memory summary is real, so its arrays and nested objects are the real shapes.
+  const h = harness(phasePlan(6), { emptyAt: 40_000 });
+  (h.deps as unknown as { sampler: MemorySampler }).sampler = {
+    start() {},
+    stop: () => [
+      {
+        atMs: T0 + 1_000,
+        runner: { state: "present", pids: [9, 10], rssBytes: 4_000_000_000 },
+        sidecar: { state: "present", pid: 4001, rssBytes: 900_000_000 },
+        swap: { usedMiB: 12.5, totalMiB: 4096 },
+      },
+      {
+        atMs: T0 + 11_000,
+        runner: { state: "absent" },
+        sidecar: { state: "present", pid: 4001, rssBytes: 901_000_000 },
+        swap: undefined,
+      },
+    ],
+    peek: () => undefined,
+  } as unknown as MemorySampler;
+  h.deps.diagnose = async () => ({
+    ps: {
+      ok: true,
+      body: {
+        models: [
+          {
+            name: "granite3.3-8b-4k",
+            size: 5_300_000_000,
+            digest: "a".repeat(64),
+            details: { families: ["granite"], parameter_size: "8.2B" },
+            expires_at: "2026-10-08T10:00:00-07:00",
+          },
+        ],
+      },
+    },
+    logTail: { ok: true, lines: ["a", "b"], stale: false },
+  });
+  await driveUnattended(h.deps);
+
+  const files = [
+    "run.json",
+    "diagnostics/ollama-ps.json",
+    "diagnostics/memory.json",
+  ];
+  for (const name of files) {
+    const written = read(h.outDir, name);
+    expect([name, biomeFormatted(written)]).toEqual([name, written]);
+  }
+  // The control that the oracle can fail: JSON.stringify's layout of the same data is not what biome writes.
+  const psData = JSON.parse(read(h.outDir, "diagnostics/ollama-ps.json"));
+  const plainLayout = `${JSON.stringify(psData, null, 2)}\n`;
+  expect(biomeFormatted(plainLayout)).not.toBe(plainLayout);
 });
