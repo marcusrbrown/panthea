@@ -65,10 +65,12 @@ export {
   PROMPT_TOKEN_CAP,
   schedulingSignals,
 } from "./practices";
+export type { CapInput, Capped, ShedCounts } from "./prompt-cap";
 export {
   DEFAULT_RATIO,
   estimateTokens,
   fitsCap,
+  fitToCap,
   MODEL_RATIOS,
   routeRatio,
 } from "./prompt-cap";

@@ -1786,6 +1786,27 @@ const morePrayersLine = (count: number) =>
   `- and ${count} more prayers to you.`;
 
 /**
+ * The prayers a live practice names: an open thread of `actorId`'s that answers the prayer, which an
+ * owed boon is. They bind the god, so no budget and no cap cuts one.
+ */
+export function protectedPrayers(
+  state: WorldState,
+  actorId: EntityId,
+): ReadonlySet<EventId> {
+  const live = new Set<EventId>();
+  for (const thread of state.threads.values()) {
+    if (
+      thread.petition !== undefined &&
+      isThreadOpen(thread) &&
+      (thread.demander === actorId || thread.obligated === actorId)
+    ) {
+      live.add(thread.petition);
+    }
+  }
+  return live;
+}
+
+/**
  * Which prayers the prompt shows. Prayers a live practice names (an open offer, or an accepted term
  * that names the prayer) come first and are never cut. After them the newest: a prayer just made is
  * one whose petitioner is still in the need it prayed about, and the oldest open ones are those
@@ -1800,16 +1821,7 @@ function choosePrayers(
   open: readonly Petition[],
   views: readonly PetitionView[],
 ): { shown: PetitionView[]; more: number } {
-  const live = new Set<EventId>();
-  for (const thread of state.threads.values()) {
-    if (
-      thread.petition !== undefined &&
-      isThreadOpen(thread) &&
-      (thread.demander === actorId || thread.obligated === actorId)
-    ) {
-      live.add(thread.petition);
-    }
-  }
+  const live = protectedPrayers(state, actorId);
   const sequence = new Map(open.map((p) => [p.id, p.sequence]));
   const newest = (a: PetitionView, b: PetitionView) =>
     (sequence.get(b.id) ?? 0) - (sequence.get(a.id) ?? 0) ||
