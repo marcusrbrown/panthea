@@ -1994,12 +1994,11 @@ export function buildGodContext(
   // model server reuses the longest start a new request shares with the last one
   // it read, so what is first is read least often: what every god is told alike,
   // then what this god is, then what changes with the tick. The lines are the
-  // same lines a god has always been shown; only where each one sits changed.
+  // same lines a god has always been shown; only where each one sits changed (and travel's is shown only to a god with a place to go).
   const instructions = [
     // Every god, every tick: how to decide, how to act, how to speak, how to reply.
     "Decide what you do next, in character, using only what you are shown as perceived. You know nothing else about the world, and you may only name ids listed in the scene.",
-    `You may also travel to any place you can reach, naming it in "to": ${JSON.stringify({ action: "travel", to: "<place id>" })}. The world walks you there, one step a tick.`,
-    // The shape of a legend, next to travel's, for a god that can tell one: with no named field for its words a god sent the
+    // The shape of a legend, for a god that can tell one: with no named field for its words a god sent the
     // cited event, or its words as a report's `content`, and no `assertion`.
     ...(offer.canLegend
       ? [
@@ -2022,6 +2021,12 @@ export function buildGodContext(
     "Your powers:",
     ...abilities,
     // What this turn's scene and prayers add to the guidance: last, since it can change with every tick.
+    // A move's rules are told only when the move is offered: travel needs a place to go.
+    ...(offer.destinations.length > 0
+      ? [
+          `You may also travel to any place you can reach, naming it in "to": ${JSON.stringify({ action: "travel", to: "<place id>" })}. The world walks you there, one step a tick.`,
+        ]
+      : []),
     ...(snapshot.actors.length > 0
       ? [
           'You may also tell someone here something (action "report", naming the listener, your words, and optionally a claim of who harmed or did a kindness to whom, and an event you saw). It is your own account, told as you choose.',

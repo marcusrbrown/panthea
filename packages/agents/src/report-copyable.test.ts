@@ -66,8 +66,8 @@ test("a god with someone to tell is shown the report's exact shape, on the line 
   // Beside the report's own guidance: the line after its description, shown once, and not as a command.
   expect(lines[lines.indexOf(REPORT_GUIDANCE) + 1]).toBe(REPORT_LINE);
   expect(context.instructions?.split(REPORT_LINE).length).toBe(2);
-  // The legend's line stays where it was, after travel's.
-  expect(lines[lines.indexOf(TRAVEL_LINE) + 1]).toBe(LEGEND_LINE);
+  // The legend's line stays in the start every god shares, and travel's is not in it.
+  expect(lines.indexOf(LEGEND_LINE)).toBeLessThan(lines.indexOf(TRAVEL_LINE));
 
   // No one here: a report has no listener to name, so the action is not offered and its shape is not shown.
   const alone = viewOf("athena", "ancient-olive-tree", true);

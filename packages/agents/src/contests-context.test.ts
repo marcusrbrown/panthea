@@ -28,7 +28,13 @@ import {
   rememberedBy,
 } from "./context";
 import { buildModelProposal } from "./observation";
-import { CONTESTS_BUDGET_CHARS, CONTESTS_HEADING } from "./practices";
+import {
+  CONTESTS_BUDGET_CHARS,
+  CONTESTS_HEADING,
+  PROMPT_TOKEN_CAP,
+} from "./practices";
+import { fitsCap, fitToCap } from "./prompt-cap";
+import type { RouteContext } from "./router";
 import {
   allGodProfiles,
   godProfile,
@@ -37,6 +43,9 @@ import {
 } from "./test-fixtures";
 
 const id = toEntityId;
+
+/** Characters a token takes on granite3.3-8b-4k, the model the cap is sized for. */
+const GRANITE_RATIO = 2.85;
 
 class Run {
   state: WorldState;
@@ -424,7 +433,7 @@ test("a crowd of rival acts stays within the section's budget: the newest are of
   }
 });
 
-test("a busy world with rival acts, open contests, and a crowd of prayers still builds every god's prompt within the whole-prompt guard", () => {
+test("a busy world with rival acts, open contests, and a crowd of prayers: every god's contests section stays within its budget, and the cap brings the whole prompt to 3,000 tokens at the granite3.3 ratio", () => {
   // The town's own wrongs and the gods' troubles are in: the guard is measured with everything the world does.
   let state = withoutFireSpread(greekState());
   let prng = createPrng(1);
@@ -459,6 +468,7 @@ test("a busy world with rival acts, open contests, and a crowd of prayers still 
   }
   const crowd = stage.state;
   const worst = { chars: 0, god: "" };
+  let worstBuilt: RouteContext | undefined;
   let sections = 0;
   for (const profile of allGodProfiles) {
     const recent = log.filter((event) => event.tick > crowd.tick - 10);
@@ -472,12 +482,23 @@ test("a busy world with rival acts, open contests, and a crowd of prayers still 
       section.reduce((sum, line) => sum + line.length + 1, 0),
     ).toBeLessThanOrEqual(CONTESTS_BUDGET_CHARS);
     const chars = (built.instructions?.length ?? 0) + built.prompt.length;
-    if (chars > worst.chars) Object.assign(worst, { chars, god: profile.id });
+    if (chars > worst.chars) {
+      Object.assign(worst, { chars, god: profile.id });
+      worstBuilt = built;
+    }
+    // The whole prompt is bounded by the runtime cap, not by a character guard.
+    const capped = fitToCap({
+      profile,
+      state: crowd,
+      actorId: id(profile.id),
+      snapshot,
+      remembered,
+      ratio: GRANITE_RATIO,
+    });
+    expect(capped.fits).toBe(true);
+    expect(capped.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
   }
   expect(sections).toBeGreaterThan(0);
-  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`; see defaults.md): 2026-10-05, 10,046 characters of this busiest
-  // prompt (Hera's) were 2,870 tokens (3.50 a token); 2026-10-07, after answers from where the god stands, 10,354 were
-  // 2,962 (3.50), and the lowest ratio seen in any measured prompt was 3.34. At 3.3 a token 10,500 characters is under
-  // 3,200 tokens, with some 900 under the 4,090 past which Ollama silently drops the start of a prompt.
-  expect(worst.chars).toBeLessThanOrEqual(10500);
+  // Positive control: the busiest prompt, built without the cap, is over it at the granite3.3 ratio.
+  expect(worstBuilt && fitsCap(worstBuilt, GRANITE_RATIO)).toBe(false);
 });

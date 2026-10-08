@@ -19,8 +19,14 @@ import {
   toEntityId,
   type WorldState,
 } from "@panthea/world";
-import { buildGodContext, PRAYERS_HEADING, rememberedBy } from "./context";
-import { PRACTICES_HEADING } from "./practices";
+import {
+  buildGodContext,
+  godIntentSchema,
+  PRAYERS_HEADING,
+  rememberedBy,
+} from "./context";
+import { PRACTICES_HEADING, PROMPT_TOKEN_CAP } from "./practices";
+import { fitToCap } from "./prompt-cap";
 import { allGodProfiles, greekState, withoutFireSpread } from "./test-fixtures";
 
 const id = toEntityId;
@@ -95,11 +101,10 @@ test("all seven gods' requests start with the same text, byte for byte, and it i
   const requests = GODS.map((god) => requestOf(world, god).whole);
   expect(GODS).toHaveLength(7);
   const shared = sharedLines(requests);
-  // Most of the generic guidance is in it: how to decide, how to travel, how to speak, what a goal is, how to wait, how to reply.
+  // Most of the generic guidance is in it: how to decide, how to speak, what a goal is, how to wait, how to reply.
   expect(shared.length).toBeGreaterThan(1_000);
   for (const line of [
     "Decide what you do next, in character",
-    "You may also travel to any place you can reach",
     "Speak your report and legend words in the first person",
     "You may keep one goal across turns",
     'You may also choose to wait (action "wait")',
@@ -107,6 +112,8 @@ test("all seven gods' requests start with the same text, byte for byte, and it i
   ]) {
     expect(shared).toContain(line);
   }
+  // Travel is not in it: a god is told how to travel only when it has places to go.
+  expect(shared).not.toContain("travel");
   // And none of what makes the gods different.
   for (const god of allGodProfiles) {
     expect(shared).not.toContain(god.name);
@@ -146,6 +153,37 @@ test("a god is named by the persona line right after the shared block, and its t
     expect(powers).toBeGreaterThan(persona);
     expect(a.slice(0, powers)).toBe(b.slice(0, powers));
   }
+});
+
+// --- A move's rules appear only when the move is offered ---------------------------------------------------------
+
+test("a god with places to go is told how to travel and may name travel; a god with none is told neither", () => {
+  const world = aged(400);
+  const profile = allGodProfiles[0];
+  if (!profile) throw new Error("no gods");
+  const recent = world.events.filter((e) => e.tick > world.state.tick - 10);
+  const snapshot = perceive(world.state, id(profile.id), recent);
+  if (!snapshot) throw new Error("no snapshot");
+  const remembered = rememberedBy(world.state, id(profile.id), recent);
+  const TRAVEL = "You may also travel to any place you can reach";
+  const actions = (schema: ReturnType<typeof godIntentSchema>) =>
+    (schema.jsonSchema as { properties: { action: { enum: string[] } } })
+      .properties.action.enum;
+
+  expect(snapshot.destinations.length).toBeGreaterThan(0);
+  const withPlaces = buildGodContext(profile, snapshot, remembered);
+  expect(withPlaces.instructions).toContain(TRAVEL);
+  expect(actions(godIntentSchema(profile, snapshot, remembered))).toContain(
+    "travel",
+  );
+
+  const stranded = { ...snapshot, destinations: [] };
+  const without = buildGodContext(profile, stranded, remembered);
+  expect(without.instructions).not.toContain(TRAVEL);
+  expect(without.instructions).not.toContain('"action":"travel"');
+  expect(actions(godIntentSchema(profile, stranded, remembered))).not.toContain(
+    "travel",
+  );
 });
 
 // --- A god's start is unchanged while only this tick's state changed ------------------------------------------
@@ -339,11 +377,21 @@ test("prayers, practice threads, openings, and contests are the last sections be
 
 // --- The budget -------------------------------------------------------------------------------------------------------
 
-test("a god's request stays inside the 4K-token budget the context was built for", () => {
+test("every god's request, shed to the cap, stays inside 3,000 tokens at the granite3.3 ratio", () => {
   const world = aged(450);
-  for (const god of GODS) {
-    const { whole } = requestOf(world, god);
-    // About four characters to a token: the busiest seven-god request stays under 4,096 tokens with room for the reply and the schema.
-    expect(whole.length).toBeLessThan(11_000);
+  const recent = world.events.filter((e) => e.tick > world.state.tick - 10);
+  for (const profile of allGodProfiles) {
+    const snapshot = perceive(world.state, id(profile.id), recent);
+    if (!snapshot) throw new Error(`no snapshot for ${profile.id}`);
+    const capped = fitToCap({
+      profile,
+      state: world.state,
+      actorId: id(profile.id),
+      snapshot,
+      remembered: rememberedBy(world.state, id(profile.id), recent),
+      ratio: 2.85,
+    });
+    expect([profile.id, capped.fits]).toEqual([profile.id, true]);
+    expect(capped.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
   }
 });
