@@ -353,6 +353,59 @@ describe("validation before anything reaches the browser", () => {
   });
 });
 
+describe("atlas URLs are pinned to the pixel key they were resolved with", () => {
+  const selection = { source: "draft", id: "zeus-take" } as const;
+
+  test("after a pixel change the old URL is 404, the new URL serves the new bytes, and a URL with no key is 404", () => {
+    const w = world();
+    writeDraft(w.studioRoot, "zeus-take", spriteFixture("placeholder-zeus", 1));
+    const r = rig(w);
+    const first = resolve(r, selection);
+    if (first.kind !== "frames") throw new Error("expected frames");
+    expect(atlasBytes(r, first.bytes).status).toBe(200);
+
+    writeDraft(w.studioRoot, "zeus-take", spriteFixture("placeholder-zeus", 2));
+    r.watchers[1]?.touch("assets/zeus-take.json");
+    r.tick();
+
+    const second = resolve(r, selection);
+    if (second.kind !== "frames") throw new Error("expected frames");
+    expect(second.bytes.pixelKey).not.toBe(first.bytes.pixelKey);
+
+    const stale = atlasBytes(r, first.bytes);
+    expect(stale.status).toBe(404);
+    expect(String(stale.body)).not.toContain("PNG");
+
+    const fresh = atlasBytes(r, second.bytes);
+    expect(fresh.status).toBe(200);
+    expect(sha256Hex(fresh.body as Uint8Array)).toBe(
+      sha256Hex(firstBlob(spriteFixture("placeholder-zeus", 2))),
+    );
+
+    const bare = `${BRIDGE_PREFIX}/atlas/draft/zeus-take`;
+    expect(r.bridge.handle("GET", bare).status).toBe(404);
+    expect(r.bridge.handle("GET", `${bare}?v=`).status).toBe(404);
+    expect(
+      r.bridge.handle("GET", `${bare}?x=${second.bytes.pixelKey}`).status,
+    ).toBe(404);
+  });
+
+  test("an RGB-only re-export keeps the pixel key, so the URL the browser holds still serves", () => {
+    const w = world();
+    publishCanon(w.registryRoot, hiddenRgbSprite(10, 1));
+    const r = rig(w);
+    const held = resolve(r, { source: "canon", id: "placeholder-zeus" });
+    if (held.kind !== "frames") throw new Error("expected frames");
+
+    publishCanon(w.registryRoot, hiddenRgbSprite(10, 200));
+    r.watchers[0]?.touch("index.json");
+    r.tick();
+
+    expect(r.events).toEqual([]);
+    expect(atlasBytes(r, held.bytes).status).toBe(200);
+  });
+});
+
 describe("change events", () => {
   test("five writes inside the window produce one event and the final bytes win", () => {
     const w = world();

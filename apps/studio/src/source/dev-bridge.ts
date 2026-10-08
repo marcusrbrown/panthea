@@ -456,12 +456,12 @@ export function createAssetBridge(options: BridgeOptions): AssetBridge {
     };
   };
 
-  const atlas = (rest: string): BridgeResponse => {
+  const atlas = (rest: string, pixelKey: string | null): BridgeResponse => {
     const [source, id, ...extra] = rest.split("/");
     if (extra.length > 0 || !isSourceKind(source) || !isSlug(id))
       return refused(400, "malformed atlas id");
     const found = model.held.get(keyOf({ source, id }));
-    return found === undefined
+    return found === undefined || found.pixelKey !== pixelKey
       ? refused(404, "no validated atlas for this selection")
       : png(found.atlas);
   };
@@ -492,7 +492,7 @@ export function createAssetBridge(options: BridgeOptions): AssetBridge {
       }
       const atlasPrefix = `${BRIDGE_PREFIX}/atlas/`;
       if (path.startsWith(atlasPrefix))
-        return atlas(path.slice(atlasPrefix.length));
+        return atlas(path.slice(atlasPrefix.length), url.searchParams.get("v"));
       const placeholderPrefix = `${BRIDGE_PREFIX}/placeholder/`;
       if (path.startsWith(placeholderPrefix))
         return placeholderEndpoint(path.slice(placeholderPrefix.length));
