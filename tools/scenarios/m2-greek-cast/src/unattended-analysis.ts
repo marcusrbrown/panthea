@@ -474,8 +474,8 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     "the catch-up is bracketed by its own log lines": "catch-up.bracketed",
     "the catch-up applies the cap and discards the rest": "catch-up.cap",
     "no provider request is made during the catch-up": "catch-up.no-requests",
-    "the catch-up summary is still the summary at the end":
-      "catch-up.summary-survives",
+    "the catch-up summary persists to the end, or a later catch-up pass replaced it":
+      "catch-up.summary-persists",
   };
   for (const [name, id] of Object.entries(catchUpChecks)) {
     const found = result.checks.find((c) => c.name === name);

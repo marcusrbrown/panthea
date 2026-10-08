@@ -100,7 +100,7 @@ export function baseResult(
         detail: "0 requests inside it",
       },
       {
-        name: "the catch-up summary is still the summary at the end",
+        name: "the catch-up summary persists to the end, or a later catch-up pass replaced it",
         ok: true,
         detail: "same",
       },

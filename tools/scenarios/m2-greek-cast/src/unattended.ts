@@ -157,6 +157,8 @@ export interface FrameReading {
     readonly id: string;
     readonly appliedMs: number;
     readonly skippedMs: number;
+    /** The committed sequence at which that pass finished; a later pass's is greater. */
+    readonly atSequence: number;
   };
 }
 
@@ -285,8 +287,12 @@ export interface UnattendedResult {
     readonly skippedMs: number;
     readonly startedWallMs: number;
     readonly finishedWallMs: number;
-    /** Catch-up passes the sidecar logged. */
+    /** The sequence at which the settled pass finished. */
+    readonly atSequence: number;
+    /** Catch-up passes the sidecar logged for the restart. */
     readonly passes: number;
+    /** Distinct summaries the frames showed after it settled: small passes the sidecar ran on its own later (a lower bound). */
+    readonly laterPasses: number;
     /** What the journal and the tick hold, which later passes do not overwrite. */
     readonly journal: {
       /** Ticks from the stop to the settled tick, as milliseconds. */
@@ -378,6 +384,8 @@ export async function driveUnattended(
   let upBeforeMs = 0;
   let upSince: number | undefined;
   let lastFrame: FrameReading | undefined;
+  /** The summary ids the frames have carried, in order, each once. */
+  const summaryTrail: string[] = [];
   let frameFailures = 0;
   let proxyRecordsWritten = 0;
   /** When the observation the gate judges ended: the last boundary, or the moment a run ended early. */
@@ -437,6 +445,10 @@ export async function driveUnattended(
       const frame = await world.frame();
       frameFailures = 0;
       lastFrame = frame;
+      const shown = frame.catchUpSummary?.id;
+      if (shown !== undefined && summaryTrail.at(-1) !== shown) {
+        summaryTrail.push(shown);
+      }
       appendFileSync(
         file("frames.jsonl"),
         jsonl({
@@ -681,7 +693,9 @@ export async function driveUnattended(
         skippedMs: summary.skippedMs,
         startedWallMs: lines.started ?? restartedAt,
         finishedWallMs: lines.finished ?? deps.now(),
+        atSequence: summary.atSequence,
         passes: lines.passes,
+        laterPasses: 0,
         journal: { appliedMs: journalApplied, discardedMs: journalDiscarded },
       };
     }
@@ -691,11 +705,42 @@ export async function driveUnattended(
     await record("ended");
     // The observation ends here. What follows (the export, the stop, the rebuild) is not part of what the gate measures.
     observationEndedAt = deps.now();
+    // The sidecar keeps one persisted summary, the latest pass's. The catch-up's own summary is therefore still there at
+    // the end if no pass has run since; if one has (the sidecar runs a small pass of its own after a stall), the summary
+    // at the end is that pass's, which is later in the journal, and the discard the catch-up made is still in the journal.
+    const final = finalFrame?.catchUpSummary;
+    const journalDiscardedAtEnd = deps.discardedMs();
+    const settledAt =
+      summary === undefined ? -1 : summaryTrail.indexOf(summary.id);
+    const laterPasses =
+      settledAt < 0 ? 0 : Math.max(0, summaryTrail.length - 1 - settledAt);
+    const unchanged = summary !== undefined && final?.id === summary.id;
+    const replacedByLater =
+      summary !== undefined &&
+      final !== undefined &&
+      final.id !== summary.id &&
+      final.atSequence > summary.atSequence;
+    const journalHolds = journalDiscardedAtEnd >= journalDiscarded;
+    let detail: string;
+    if (summary === undefined)
+      detail = "the catch-up left no summary to persist";
+    else if (final === undefined)
+      detail = `no summary at the end (the catch-up's was ${summary.id})`;
+    else if (unchanged) detail = `${summary.id} unchanged at the end`;
+    else if (replacedByLater) {
+      detail = `${summary.id} (sequence ${summary.atSequence}) was replaced by ${final.id} (sequence ${final.atSequence}), a later pass's, ${laterPasses} later ${laterPasses === 1 ? "pass" : "passes"} seen`;
+    } else {
+      detail = `${summary.id} (sequence ${summary.atSequence}) became ${final.id} (sequence ${final.atSequence}), not a later pass's`;
+    }
+    if (!journalHolds) {
+      detail += `; the journal holds ${(journalDiscardedAtEnd / MINUTE).toFixed(1)} min discarded at the end against ${(journalDiscarded / MINUTE).toFixed(1)} min at the settle`;
+    }
     addCheck(
-      "the catch-up summary is still the summary at the end",
-      summary !== undefined && finalFrame?.catchUpSummary?.id === summary.id,
-      `${summary?.id} .. ${finalFrame?.catchUpSummary?.id}`,
+      "the catch-up summary persists to the end, or a later catch-up pass replaced it",
+      (unchanged || replacedByLater) && journalHolds,
+      detail,
     );
+    if (catchUp !== undefined) catchUp = { ...catchUp, laterPasses };
     if (world !== undefined) {
       try {
         await deps.onEnd?.(world);
@@ -1115,6 +1160,7 @@ export async function runUnattended(
                     id: frame.catchUpSummary.id,
                     appliedMs: frame.catchUpSummary.appliedMs,
                     skippedMs: frame.catchUpSummary.skippedMs,
+                    atSequence: frame.catchUpSummary.atSequence,
                   },
                 }),
           };
