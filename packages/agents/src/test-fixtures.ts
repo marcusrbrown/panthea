@@ -7,10 +7,14 @@ import {
   loadContentPack,
   loadGodProfiles,
 } from "@panthea/content";
-import type { WorldEvent } from "@panthea/contracts";
+import type { EventId, WorldEvent } from "@panthea/contracts";
 import {
+  applyEvent,
   createInitialWorldState,
+  createPrng,
   getActor,
+  runTick,
+  submitProposal,
   toEntityId,
   type WorldState,
   withActor,
@@ -122,4 +126,68 @@ export function actorWithCapabilities(
   const actor = getActor(state, toEntityId(actorId));
   if (!actor) throw new Error(`the Greek pack has no actor ${actorId}`);
   return withActor(state, { ...actor, capabilities });
+}
+
+/** A real Greek world that tests grow by applying events and running ticks, as the agents suites do. */
+export class WorldRun {
+  state: WorldState = withoutFireSpread(greekState());
+  readonly events: WorldEvent[] = [];
+  private n = 0;
+  apply(overrides: Record<string, unknown>): WorldEvent {
+    this.n += 1;
+    const event = {
+      schemaVersion: 1,
+      id: `evt-${this.state.tick}-${900 + this.n}`,
+      sequence: this.state.lastSequence + 1,
+      simTime: 0,
+      tick: this.state.tick,
+      correlationId: "fixture",
+      causationId: "fixture",
+      approximate: false,
+      ...overrides,
+    } as unknown as WorldEvent;
+    this.state = applyEvent(this.state, event);
+    this.events.push(event);
+    return event;
+  }
+  tick(...raws: Record<string, unknown>[]) {
+    const proposals = raws.map((raw) => {
+      this.n += 1;
+      const submitted = submitProposal({
+        schemaVersion: 1,
+        targets: [],
+        expectedRevisions: [],
+        source: "fixture",
+        observationId: `obs-run-${this.n}`,
+        ...raw,
+      });
+      if (!submitted.ok) throw new Error(submitted.rejection.message);
+      return submitted.proposal;
+    });
+    const result = runTick(this.state, createPrng(1), proposals);
+    this.state = result.state;
+    this.events.push(...result.events);
+    return result;
+  }
+  /** `mortal` prays to `god` about food that spoiled; a tick passes first, so the next prayer is newer. */
+  prays(mortal: string, god = "zeus"): EventId {
+    this.state = { ...this.state, tick: this.state.tick + 1 };
+    const cause = this.apply({
+      kind: "stock-spoiled",
+      entityId: mortal,
+      resource: "food",
+      amount: 1,
+      cause: "director",
+    });
+    return this.apply({
+      kind: "petition-opened",
+      entityId: mortal,
+      god,
+      cause: cause.id,
+      request: {
+        kind: "help",
+        need: { kind: "resource", resource: "food", amount: 1 },
+      },
+    }).id as EventId;
+  }
 }

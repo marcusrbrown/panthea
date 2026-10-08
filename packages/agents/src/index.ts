@@ -100,6 +100,7 @@ export type { EndpointStatus, RouteOutcome } from "./status";
 export { initialEndpointStatus, recordRouteOutcome } from "./status";
 export type {
   AnsweredRequest,
+  CapFigures,
   ExhaustedRequest,
   GodTurnDeps,
   GodTurnResult,

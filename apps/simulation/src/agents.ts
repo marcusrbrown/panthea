@@ -262,7 +262,13 @@ export function createGodTurnRunner(deps: GodTurnRunnerDeps): GodTurnRunner {
 
   /** Records the request, then journals the proposal: a committed proposal always has its request, and a crash between the two leaves at worst a request with no proposal. */
   function conclude(result: GodTurnResult): void {
-    reportModelOutcome(deps.statusRef, result.request.route);
+    // A turn the cap stopped before any request says nothing about the model: no provider was asked.
+    if (
+      result.kind !== "exhausted" ||
+      result.request.exhaustedReason === undefined
+    ) {
+      reportModelOutcome(deps.statusRef, result.request.route);
+    }
     const db = deps.store.db;
     if (result.kind !== "proposal") {
       record(db, result.request);

@@ -9,6 +9,7 @@ import {
   createRouter,
   DEFAULT_ROUTE_LIMITS,
   type IntentSchema,
+  MAX_FEEDBACK_CHARS,
   type RouteLimits,
   type RouterOptions,
 } from "./router";
@@ -1223,5 +1224,186 @@ describe("default route limits", () => {
     expect(DEFAULT_ROUTE_LIMITS.maxAttempts).toBe(2);
     expect(DEFAULT_ROUTE_LIMITS.backoffBaseMs).toBe(250);
     expect(DEFAULT_ROUTE_LIMITS.backoffMaxMs).toBe(2_000);
+  });
+});
+
+// --- The character limit on every send ----------------------------------------------------------
+
+describe("route: maxChars", () => {
+  /** A context whose request, instructions and prompt joined by a blank line, is `chars` long. */
+  const sized = (chars: number) => ({
+    instructions: "S".repeat(10),
+    prompt: "P".repeat(chars - 12),
+  });
+  /** What a stub saw, joined as the turn counts a request. */
+  const sentChars = (seen: Seen): number =>
+    (seen.body.messages as { content: string }[])
+      .map((message) => message.content)
+      .join("\n\n").length;
+  const configOn = (stub: Stub) =>
+    configFor([{ id: "ollama", baseUrl: stub.baseUrl }], {
+      roles: { zeus: { endpoint: "ollama" } },
+    });
+
+  test("a request over the limit is not sent: the step fails prompt-over-cap and the route is exhausted", async () => {
+    const stub = startStub(always({ content: SAY }));
+    const router = routerFor(configOn(stub));
+
+    const result = await router.route("zeus", sized(1001), sayIntent, {
+      maxChars: 1000,
+    });
+
+    expect(stub.seen).toHaveLength(0);
+    expect(result.kind).toBe("exhausted");
+    if (result.kind === "exhausted") {
+      expect(result.steps).toHaveLength(1);
+      expect(result.steps[0]).toMatchObject({
+        endpoint: "ollama",
+        reason: "prompt-over-cap",
+        attempts: 1,
+      });
+    }
+  });
+
+  test("a request exactly at the limit is sent", async () => {
+    const stub = startStub(always({ content: SAY }));
+    const router = routerFor(configOn(stub));
+
+    const result = await router.route("zeus", sized(1000), sayIntent, {
+      maxChars: 1000,
+    });
+
+    expect(result.kind).toBe("intent");
+    expect(stub.seen).toHaveLength(1);
+    expect(sentChars(stub.seen[0] as Seen)).toBe(1000);
+  });
+
+  test("every step is judged by the same limit: with the text over it, no endpoint is sent it", async () => {
+    const first = startStub(always({ content: SAY }));
+    const second = startStub(always({ content: SAY }));
+    const router = routerFor(
+      configFor(
+        [
+          { id: "a", baseUrl: first.baseUrl },
+          { id: "b", baseUrl: second.baseUrl },
+        ],
+        { roles: { zeus: { endpoint: "a" } }, fallback: ["b"] },
+      ),
+    );
+
+    const result = await router.route("zeus", sized(1001), sayIntent, {
+      maxChars: 1000,
+    });
+
+    expect(first.seen).toHaveLength(0);
+    expect(second.seen).toHaveLength(0);
+    expect(result.kind === "exhausted" && result.steps.length).toBe(2);
+  });
+
+  test("a retry carrying refusal feedback is sent when it stays within the limit", async () => {
+    const stub = startStub(
+      sequence({ content: '{"kind":"nope"}' }, { content: SAY }),
+    );
+    const router = routerFor(configOn(stub));
+    const limit = 1000;
+
+    const result = await router.route(
+      "zeus",
+      sized(limit - MAX_FEEDBACK_CHARS),
+      sayIntent,
+      { maxChars: limit },
+    );
+
+    expect(result.kind).toBe("intent");
+    expect(stub.seen).toHaveLength(2);
+    expect(sentChars(stub.seen[1] as Seen)).toBeGreaterThan(
+      sentChars(stub.seen[0] as Seen),
+    );
+    expect(sentChars(stub.seen[1] as Seen)).toBeLessThanOrEqual(limit);
+  });
+
+  test("a retry whose feedback would pass the limit is not sent", async () => {
+    const stub = startStub(always({ content: '{"kind":"nope"}' }));
+    const router = routerFor(configOn(stub));
+    const limit = 1000;
+
+    const result = await router.route("zeus", sized(limit - 5), sayIntent, {
+      maxChars: limit,
+    });
+
+    expect(stub.seen).toHaveLength(1);
+    expect(result.kind).toBe("exhausted");
+    if (result.kind === "exhausted") {
+      expect(result.steps[0]).toMatchObject({
+        reason: "prompt-over-cap",
+        attempts: 2,
+      });
+    }
+  });
+
+  for (const status of [400, 422]) {
+    test(`the plain-text fallback after a ${status} carries the whole schema: sent when that fits, not sent when it does not`, async () => {
+      const fallback = (extra: string) => ({
+        ...sayIntent,
+        jsonSchema: {
+          ...(sayIntent.jsonSchema as Record<string, unknown>),
+          description: extra,
+        },
+      });
+      const script = () =>
+        sequence(
+          { status, body: "response_format is not supported" },
+          { content: SAY },
+        );
+      // Measure the fallback's size without a limit.
+      const probe = startStub(script());
+      await routerFor(configOn(probe)).route("zeus", sized(500), fallback(""));
+      expect(probe.seen).toHaveLength(2);
+      const fallbackChars = sentChars(probe.seen[1] as Seen);
+
+      const fits = startStub(script());
+      const sent = await routerFor(configOn(fits)).route(
+        "zeus",
+        sized(500),
+        fallback(""),
+        { maxChars: fallbackChars },
+      );
+      expect(sent.kind).toBe("intent");
+      expect(fits.seen).toHaveLength(2);
+
+      const over = startStub(script());
+      const refused = await routerFor(configOn(over)).route(
+        "zeus",
+        sized(500),
+        fallback(""),
+        { maxChars: fallbackChars - 1 },
+      );
+      expect(over.seen).toHaveLength(1);
+      expect(refused.kind).toBe("exhausted");
+      if (refused.kind === "exhausted") {
+        expect(refused.steps[0]).toMatchObject({ reason: "prompt-over-cap" });
+      }
+
+      // A larger schema pushes the same context over the same limit.
+      const bigger = startStub(script());
+      const big = await routerFor(configOn(bigger)).route(
+        "zeus",
+        sized(500),
+        fallback("d".repeat(300)),
+        { maxChars: fallbackChars },
+      );
+      expect(bigger.seen).toHaveLength(1);
+      expect(big.kind).toBe("exhausted");
+    });
+  }
+
+  test("without a limit every send goes out, as before", async () => {
+    const stub = startStub(always({ content: SAY }));
+    const result = await routerFor(configOn(stub)).route(
+      "zeus",
+      sized(50_000),
+      sayIntent,
+    );
+    expect(result.kind).toBe("intent");
   });
 });

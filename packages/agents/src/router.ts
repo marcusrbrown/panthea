@@ -107,6 +107,8 @@ export type FailureReason =
   | "invalid-output"
   /** The endpoint needs a key and none is set: nothing was sent. */
   | "key-missing"
+  /** The request to send was longer than the caller's character limit: nothing was sent. */
+  | "prompt-over-cap"
   | "unknown";
 
 export interface StepMetadata {
@@ -157,7 +159,11 @@ export interface Router {
     role: string,
     context: RouteContext,
     schema: IntentSchema<T>,
-    options?: { readonly signal?: AbortSignal },
+    options?: {
+      readonly signal?: AbortSignal;
+      /** The most characters any one send may carry (instructions, a blank line, the prompt, and what an attempt adds: a retry's feedback, the plain-text fallback's schema). A send over it is not made. */
+      readonly maxChars?: number;
+    },
   ): Promise<RouteResult<T>>;
 }
 
@@ -325,6 +331,7 @@ export function createRouter(options: RouterOptions): Router {
     caller: AbortSignal | undefined,
     reasoningEffort: "none" | undefined,
     feedback?: string,
+    maxChars?: number,
   ): Promise<Attempt<T>> {
     const startedAt = performance.now();
     const request = (timeoutMs: number) => ({
@@ -354,6 +361,26 @@ export function createRouter(options: RouterOptions): Router {
         ? context.prompt
         : `${context.prompt}\n\n${feedback}`;
 
+    /** A send over the limit is refused before anything leaves. */
+    const overCap = (extra: string): Attempt<T> | undefined => {
+      if (maxChars === undefined) return undefined;
+      const size = requestChars({
+        ...(context.instructions === undefined
+          ? {}
+          : { instructions: context.instructions }),
+        prompt: `${asked}${extra}`,
+      });
+      return size > maxChars
+        ? {
+            ok: false,
+            reason: "prompt-over-cap",
+            detail: `the request is ${size} characters, over the ${maxChars} limit`,
+          }
+        : undefined;
+    };
+
+    const first = overCap("");
+    if (first !== undefined) return first;
     let text: string | undefined;
     try {
       const result = await generateText({
@@ -382,6 +409,8 @@ export function createRouter(options: RouterOptions): Router {
     }
 
     if (text === undefined) {
+      const fallback = overCap(`\n\n${schemaInstruction(schema)}`);
+      if (fallback !== undefined) return fallback;
       try {
         const remaining = Math.max(
           1,
@@ -410,6 +439,7 @@ export function createRouter(options: RouterOptions): Router {
     chain: AbortSignal,
     chainDeadline: number,
     caller: AbortSignal | undefined,
+    maxChars: number | undefined,
   ): Promise<
     | { readonly ok: true; readonly intent: T; readonly step: StepMetadata }
     | {
@@ -486,6 +516,7 @@ export function createRouter(options: RouterOptions): Router {
         caller,
         step.endpoint.reasoningEffort,
         feedback,
+        maxChars,
       );
       if (outcome.ok) {
         return {
@@ -577,6 +608,7 @@ export function createRouter(options: RouterOptions): Router {
           chain,
           chainDeadline,
           caller,
+          routeOptions?.maxChars,
         );
         if (outcome.ok) {
           return {

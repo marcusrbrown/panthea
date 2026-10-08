@@ -4,15 +4,10 @@
 import { describe, expect, test } from "bun:test";
 import type { EventId, WorldEvent } from "@panthea/contracts";
 import {
-  applyEvent,
-  createPrng,
   type PerceivedEvent,
   type PerceptionSnapshot,
   perceive,
-  runTick,
-  submitProposal,
   toEntityId,
-  type WorldState,
 } from "@panthea/world";
 import { parseRoutingConfig, planRoute, type RoutePlan } from "./config";
 import {
@@ -31,7 +26,7 @@ import {
   routeRatio,
 } from "./prompt-cap";
 import { createRouter, MAX_FEEDBACK_CHARS, requestChars } from "./router";
-import { godProfile, greekState, withoutFireSpread } from "./test-fixtures";
+import { godProfile, WorldRun } from "./test-fixtures";
 
 const id = toEntityId;
 
@@ -194,69 +189,6 @@ describe("the estimate", () => {
 // events. The world is real; the recent events are plain data on the snapshot,
 // so their ids are known.
 
-class Run {
-  state: WorldState = withoutFireSpread(greekState());
-  readonly events: WorldEvent[] = [];
-  private n = 0;
-  apply(overrides: Record<string, unknown>): WorldEvent {
-    this.n += 1;
-    const event = {
-      schemaVersion: 1,
-      id: `evt-${this.state.tick}-${900 + this.n}`,
-      sequence: this.state.lastSequence + 1,
-      simTime: 0,
-      tick: this.state.tick,
-      correlationId: "fixture",
-      causationId: "fixture",
-      approximate: false,
-      ...overrides,
-    } as unknown as WorldEvent;
-    this.state = applyEvent(this.state, event);
-    this.events.push(event);
-    return event;
-  }
-  tick(...raws: Record<string, unknown>[]) {
-    const proposals = raws.map((raw) => {
-      this.n += 1;
-      const submitted = submitProposal({
-        schemaVersion: 1,
-        targets: [],
-        expectedRevisions: [],
-        source: "fixture",
-        observationId: `obs-cap-${this.n}`,
-        ...raw,
-      });
-      if (!submitted.ok) throw new Error(submitted.rejection.message);
-      return submitted.proposal;
-    });
-    const result = runTick(this.state, createPrng(1), proposals);
-    this.state = result.state;
-    this.events.push(...result.events);
-    return result;
-  }
-  /** `mortal` prays to Zeus about food that spoiled; a tick passes first, so the next prayer is newer. */
-  prays(mortal: string): EventId {
-    this.state = { ...this.state, tick: this.state.tick + 1 };
-    const cause = this.apply({
-      kind: "stock-spoiled",
-      entityId: mortal,
-      resource: "food",
-      amount: 1,
-      cause: "director",
-    });
-    return this.apply({
-      kind: "petition-opened",
-      entityId: mortal,
-      god: "zeus",
-      cause: cause.id,
-      request: {
-        kind: "help",
-        need: { kind: "resource", resource: "food", amount: 1 },
-      },
-    }).id as EventId;
-  }
-}
-
 interface WorldOptions {
   readonly prayers?: number;
   /** The salience of each memory. */
@@ -278,7 +210,7 @@ function busyZeus(options: WorldOptions = {}) {
     actions = 5,
     live = 3,
   } = options;
-  const run = new Run();
+  const run = new WorldRun();
   const people = [...run.state.actors.values()]
     .filter((actor) => actor.alive && actor.isDeity !== true)
     .map((actor) => String(actor.id))

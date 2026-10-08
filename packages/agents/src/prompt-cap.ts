@@ -38,6 +38,11 @@ export function routeRatio(plan: RoutePlan): number {
   return ratios.length === 0 ? DEFAULT_RATIO : Math.min(...ratios);
 }
 
+/** The most characters one send may carry at `ratio`: the cap, in the characters that count it. */
+export function maxCharsFor(ratio: number): number {
+  return Math.floor(PROMPT_TOKEN_CAP * ratio + 1e-6);
+}
+
 /**
  * Tokens `context` is counted as at `ratio`: its request plus the most a retry's
  * feedback can add. The epsilon keeps a request exactly at the cap from rounding up

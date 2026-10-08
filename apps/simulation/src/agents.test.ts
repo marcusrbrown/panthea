@@ -2485,3 +2485,103 @@ describe("a god's refused practice moves", () => {
     ).toBeUndefined();
   });
 });
+
+// --- The cap on the whole prompt ---------------------------------------------------------------
+
+describe("the prompt cap", () => {
+  const CAP_COLUMNS =
+    "SELECT outcome, exhausted_reason, estimated_tokens, token_ratio, shed_events, shed_actions, shed_memories, shed_prayers FROM trace_model_requests";
+
+  /** Zeus's persona is part of the protected floor: a lore line this long leaves nothing the cap may shed to fit. */
+  function heavyRunner(world: World, provider: Provider): GodTurnRunner {
+    const base = deps(provider, ["zeus"]);
+    return createGodTurnRunner({
+      ...base,
+      profiles: new Map(
+        [...base.profiles].map(([god, profile]) => [
+          god,
+          {
+            ...profile,
+            lore: [
+              ...profile.lore,
+              { id: "heavy", statement: "x".repeat(9_000), cites: [] },
+            ],
+          },
+        ]),
+      ),
+      store: world.store,
+      getState: () => world.state,
+      lifecycle: world.lifecycle,
+      statusRef: world.statusRef,
+    });
+  }
+
+  test("an under-cap turn's trace row carries the estimate, the ratio and zero sheds", async () => {
+    const world = newWorld();
+    const provider = startProvider(() => '{"action":"wait"}');
+    const runner = runnerFor(world, provider, ["zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+
+    const [row] = world.store.db.query(CAP_COLUMNS).all() as Record<
+      string,
+      unknown
+    >[];
+    expect(row).toMatchObject({
+      outcome: "intent",
+      exhausted_reason: null,
+      token_ratio: 2.8,
+      shed_events: 0,
+      shed_actions: 0,
+      shed_memories: 0,
+      shed_prayers: 0,
+    });
+    expect(row?.estimated_tokens).toBeGreaterThan(0);
+    expect(row?.estimated_tokens).toBeLessThanOrEqual(3_000);
+  });
+
+  test("a turn over the cap at the protected floor sends nothing, is recorded exhausted for prompt-over-cap, and leaves the model status and every endpoint as they were", async () => {
+    const world = newWorld();
+    world.statusRef.modelEndpoints = [{ endpoint: "local", state: "ok" }];
+    const provider = startProvider(() => '{"action":"wait"}');
+    const runner = heavyRunner(world, provider);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+
+    expect(provider.requests).toEqual([]);
+    expect(listExternalProposals(world.store.db)).toEqual([]);
+    const rows = world.store.db.query(CAP_COLUMNS).all() as Record<
+      string,
+      unknown
+    >[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      outcome: "exhausted",
+      exhausted_reason: "prompt-over-cap",
+      token_ratio: 2.8,
+    });
+    expect(rows[0]?.estimated_tokens).toBeGreaterThan(3_000);
+    // No provider failed: the model is not degraded and no endpoint changed.
+    expect(world.statusRef.modelDegraded).toBeUndefined();
+    expect(world.statusRef.modelEndpoints).toEqual([
+      { endpoint: "local", state: "ok" },
+    ]);
+
+    // The store reopens with the new columns.
+    restart(world);
+    expect(world.store.db.query(CAP_COLUMNS).all()).toHaveLength(1);
+  });
+
+  test("an ordinary exhausted chain still marks the model degraded", async () => {
+    const world = newWorld();
+    const provider = startProvider(() => 500);
+    const runner = runnerFor(world, provider, ["zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+
+    expect(world.statusRef.modelDegraded).toBe(true);
+    expect(world.store.db.query(CAP_COLUMNS).all()).toMatchObject([
+      { outcome: "exhausted", exhausted_reason: null },
+    ]);
+  });
+});

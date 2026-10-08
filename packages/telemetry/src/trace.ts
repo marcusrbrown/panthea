@@ -92,6 +92,9 @@ export function ensureTraceSchema(db: Database): void {
   // One row per model call chain (see `recordModelRequest`). `proposal_id` is
   // the proposal the request produced; it is null when the chain was
   // exhausted or the intent was refused before it became a proposal.
+  // `exhausted_reason` names why a turn ended with no chain run. The cap
+  // columns are what the prompt cap measured and shed for the request; null
+  // for a request recorded by a caller that has no cap.
   db.exec(`
     CREATE TABLE IF NOT EXISTS trace_model_requests (
       id TEXT PRIMARY KEY,
@@ -105,8 +108,16 @@ export function ensureTraceSchema(db: Database): void {
       prompt_payload TEXT,
       output_payload TEXT,
       recorded_at INTEGER NOT NULL,
+      exhausted_reason TEXT,
+      estimated_tokens INTEGER,
+      token_ratio REAL,
+      shed_events INTEGER,
+      shed_actions INTEGER,
+      shed_memories INTEGER,
+      shed_prayers INTEGER,
       CHECK (outcome IN ('intent', 'exhausted')),
-      CHECK (outcome <> 'exhausted' OR proposal_id IS NULL)
+      CHECK (outcome <> 'exhausted' OR proposal_id IS NULL),
+      CHECK (outcome = 'exhausted' OR exhausted_reason IS NULL)
     ) STRICT
   `);
   db.exec(`
@@ -410,9 +421,23 @@ export interface ModelRequestStep {
   readonly schema?: string;
 }
 
+/** What the prompt cap did to a request: the tokens it was counted as, at which characters-per-token ratio, and how many units each tier shed. */
+export interface ModelRequestCap {
+  readonly estimatedTokens: number;
+  readonly ratio: number;
+  readonly shed: {
+    readonly events: number;
+    readonly actions: number;
+    /** Memories and feelings together. */
+    readonly memories: number;
+    readonly prayers: number;
+  };
+}
+
 interface ModelRequestBase {
   readonly role: string;
   readonly prompt: string;
+  readonly cap?: ModelRequestCap;
 }
 
 /** A chain that produced an intent. */
@@ -422,6 +447,7 @@ export interface IntentModelRequest extends ModelRequestBase {
   readonly proposalId?: ProposalId;
   /** What the model answered (the raw reply, or its parsed intent as JSON). */
   readonly output?: string;
+  readonly exhaustedReason?: never;
 }
 
 /** A chain that produced nothing: no proposal and no output, so neither can be given. */
@@ -429,6 +455,8 @@ export interface ExhaustedModelRequest extends ModelRequestBase {
   readonly route: Extract<ModelRouteResult, { readonly kind: "exhausted" }>;
   readonly proposalId?: never;
   readonly output?: never;
+  /** Why the turn ended without running the chain, when it did (`prompt-over-cap`: the prompt was over the cap and nothing was sent). */
+  readonly exhaustedReason?: string;
 }
 
 /**
@@ -443,6 +471,8 @@ export interface ModelRequestRow {
   readonly proposalId: ProposalId | undefined;
   readonly role: string;
   readonly outcome: "intent" | "exhausted";
+  readonly exhaustedReason: string | undefined;
+  readonly cap: ModelRequestCap | undefined;
   readonly steps: readonly ModelRequestStep[];
   readonly elapsedMs: number;
   readonly promptDigest: string;
@@ -546,8 +576,9 @@ export function recordModelRequest(
   const result = db.run(
     // Only a repeat of the proposal is ignored; a CHECK violation still throws.
     `INSERT INTO trace_model_requests
-       (id, proposal_id, role, outcome, steps, elapsed_ms, prompt_digest, output_digest, prompt_payload, output_payload, recorded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, proposal_id, role, outcome, steps, elapsed_ms, prompt_digest, output_digest, prompt_payload, output_payload, recorded_at,
+        exhausted_reason, estimated_tokens, token_ratio, shed_events, shed_actions, shed_memories, shed_prayers)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (proposal_id) DO NOTHING`,
     [
       id,
@@ -561,6 +592,13 @@ export function recordModelRequest(
       bounded(prompt),
       output === undefined ? null : bounded(output),
       now,
+      input.exhaustedReason ?? null,
+      input.cap?.estimatedTokens ?? null,
+      input.cap?.ratio ?? null,
+      input.cap?.shed.events ?? null,
+      input.cap?.shed.actions ?? null,
+      input.cap?.shed.memories ?? null,
+      input.cap?.shed.prayers ?? null,
     ],
   );
   if (result.changes === 0 && input.proposalId !== undefined) {
@@ -585,6 +623,13 @@ interface ModelRequestSqlRow {
   prompt_payload: string | null;
   output_payload: string | null;
   recorded_at: number;
+  exhausted_reason: string | null;
+  estimated_tokens: number | null;
+  token_ratio: number | null;
+  shed_events: number | null;
+  shed_actions: number | null;
+  shed_memories: number | null;
+  shed_prayers: number | null;
 }
 
 function decodeModelRequest(row: ModelRequestSqlRow): ModelRequestRow {
@@ -593,6 +638,25 @@ function decodeModelRequest(row: ModelRequestSqlRow): ModelRequestRow {
     proposalId: (row.proposal_id ?? undefined) as ProposalId | undefined,
     role: row.role,
     outcome: row.outcome as "intent" | "exhausted",
+    exhaustedReason: row.exhausted_reason ?? undefined,
+    cap:
+      row.estimated_tokens === null ||
+      row.token_ratio === null ||
+      row.shed_events === null ||
+      row.shed_actions === null ||
+      row.shed_memories === null ||
+      row.shed_prayers === null
+        ? undefined
+        : {
+            estimatedTokens: row.estimated_tokens,
+            ratio: row.token_ratio,
+            shed: {
+              events: row.shed_events,
+              actions: row.shed_actions,
+              memories: row.shed_memories,
+              prayers: row.shed_prayers,
+            },
+          },
     steps: JSON.parse(row.steps) as ModelRequestStep[],
     elapsedMs: row.elapsed_ms,
     promptDigest: row.prompt_digest,
