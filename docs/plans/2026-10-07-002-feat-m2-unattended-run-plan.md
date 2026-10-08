@@ -142,6 +142,7 @@ The per-turn and per-god measurements mostly exist. The single-world lifecycle, 
 
 - **One single-world mode, `--unattended`, on the existing harness.** This is not `--episodes=1 --episode-seconds=3600`, because that path deletes its store and injects nothing. The mode owns one data directory under the run's evidence folder and keeps it.
 - **The outage runs through a local pass-through proxy (owner, 2026-10-07).** The harness points routing at a small Bun proxy in front of Ollama, then switches it to fail every request fast and back again. The outage stays separate from the restart, `ollama serve` stays up so memory sampling keeps working, and an outage longer than Ollama's 10-minute keep-alive measures a real cold reload.
+  - Note (2026-10-08): the 10 minutes apply only to the harness's warm request. The gods' requests take Ollama's default keep-alive, which unloaded the runner after about 5 minutes on this machine. A 12-minute outage still crosses it. The report records whether the runner was present at `proxyRestoredAt` and the first request's latency after it, and quotes no keep-alive figure.
 - **The proxy also detects the empty-200 fault.** It records each response's status, latency and whether the body is the empty shape: HTTP 200 with `"model":""` and the zero `created` date. It records no prompt or completion text. Five empty-shape responses in a row, in any phase, mark the run an infrastructure fault (owner, 2026-10-07). The harness then stops, captures Ollama's `/api/ps`, the tail of the server log and memory, writes the report marked as a fault, exits 2, and is rerun. Exit 2 means only this. Every gate fail exits 1, including a process that dies.
 - **Phases are triggered by condition and bounded by time.** The outage starts once at least 5 of the 7 gods have committed an action, or at 15 minutes, whichever comes first. It lasts 12 minutes and ends at `proxyRestoredAt`, when the proxy passes requests again. The stop comes 10 minutes after `proxyRestoredAt`. The gap is 90 minutes, which crosses the 60-minute catch-up cap (owner, 2026-10-07). The run ends after 60 minutes of running time, which counts the time the sidecar is up and not the stopped gap. The report prints both running time and elapsed wall time. Every boundary is recorded as wall time and tick.
 - **Queue wait leaves out only the windows with no service (owner, 2026-10-07).** The gate's p95 per god is computed outside two windows: from the outage start to `proxyRestoredAt`, and from the stop to the end of catch-up. Waiting after the proxy is restored counts. The p95 including those windows is reported beside it. Without the second exclusion, the catch-up's 3,600 ticks would count as one god's wait.
@@ -202,7 +203,7 @@ stateDiagram-v2
 
 ## Implementation Units
 
-- [ ] **Unit 1: Outage proxy and empty-200 detection**
+- [x] **Unit 1: Outage proxy and empty-200 detection**
 
 **Goal:** a pass-through proxy that the harness can switch between passing requests, failing them, and passing them again. It classifies every response without keeping any content.
 
@@ -232,7 +233,7 @@ stateDiagram-v2
 
 **Verification:** the proxy tests pass, and the router run against the proxy sees `fail()` as a retryable failure.
 
-- [ ] **Unit 2: Memory sampler**
+- [x] **Unit 2: Memory sampler**
 
 **Goal:** sample Ollama runner RSS, sidecar RSS and swap every 10 s, and summarize the samples into a baseline.
 
@@ -259,7 +260,7 @@ stateDiagram-v2
 
 **Verification:** the sampler tests pass. A short run of the development mode logs real runner RSS within a few percent of Activity Monitor's figure for the runner.
 
-- [ ] **Unit 3: Unattended run driver**
+- [x] **Unit 3: Unattended run driver**
 
 **Goal:** `--unattended` drives one world through the phases and keeps every artifact.
 
@@ -293,7 +294,7 @@ stateDiagram-v2
 
 **Verification:** the development-mode run on the scripted provider completes all phases in about 6 minutes and leaves a full evidence folder.
 
-- [ ] **Unit 4: End capture and workload baseline**
+- [x] **Unit 4: End capture and workload baseline**
 
 **Goal:** export, rebuild out of process, compare, time and size.
 
@@ -320,7 +321,7 @@ stateDiagram-v2
 
 **Verification:** the baseline tests pass, and the development-mode run's report carries all baseline fields.
 
-- [ ] **Unit 5: Run report and threshold table**
+- [x] **Unit 5: Run report and threshold table**
 
 **Goal:** a report the owner can read and rate without opening the database.
 
@@ -372,6 +373,15 @@ The threshold table's verdict is PASS, FAIL or INFRASTRUCTURE FAULT, and it list
 - Privacy: the report contains no host, port or key reference, only "a local OpenAI-compatible endpoint".
 
 **Verification:** the analysis and report tests pass. The development-mode report reads end to end, and every positive control fails its own row.
+
+Status (2026-10-08): Units 1–5 are built on `feat/unattended-run`. A 6-minute scripted development run went through every phase and rendered "not a gate run". Where the build differs from the plan:
+
+- **RSS helpers:** they come from `tools/probes/coexistence/src/sample.ts`, which already exports them with an injectable command runner. The `inference-baseline` copies are private to its entry file. No probe file changed.
+- **`real.ts`:** it needed no keep-store or base-URL change. `routingConfigFor` gained only an explicit local kind, so the proxied run is labelled local rather than hosted.
+- **Catch-up check:** the sidecar can run a second short catch-up pass that overwrites the persisted summary. The "applies the cap and discards the rest" row reads the journal and the settled tick, and reports the number of passes.
+- **Provider subset:** `--steps` accepts only the staged steps S21–S27, so the provider change was checked with S21, S23 and S24.
+- **Development flag:** `--scripted=answer|empty-200` drives the unattended mode with the scripted provider. No gate uses it.
+- **Store:** the kept store and archive are git-ignored under `unattended/`. The report, run record, frames, proxy records and memory samples stay committable.
 
 - [ ] **Unit 6: Procedure, the run, and the M2 decision**
 

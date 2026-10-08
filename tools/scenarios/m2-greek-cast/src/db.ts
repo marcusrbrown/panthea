@@ -222,3 +222,23 @@ export function readSampleRows(path: string): SampleRow[] {
     })),
   );
 }
+
+/**
+ * The milliseconds of wall time the world has discarded as over the catch-up cap, summed over the operator observations
+ * the catch-up journals (`operator:catch-up-discard:<ms>`). The persisted catch-up summary is overwritten by a later
+ * pass; these observations are not.
+ */
+export function readCatchUpDiscardedMs(path: string): number {
+  return withWorldDb(path, (db) =>
+    (
+      db
+        .query(
+          "SELECT json_extract(payload, '$.factsRead[0]') AS fact FROM trace_observations WHERE source = 'operator'",
+        )
+        .all() as { fact: string | null }[]
+    ).reduce((total, { fact }) => {
+      const match = /^operator:catch-up-discard:(\d+)$/.exec(fact ?? "");
+      return match === null ? total : total + Number(match[1]);
+    }, 0),
+  );
+}

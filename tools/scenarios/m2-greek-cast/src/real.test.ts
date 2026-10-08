@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { parseRoutingConfig, planRoute } from "@panthea/agents";
 import { loadContentPack } from "@panthea/content";
 import { REPO_ROOT } from "../../m1-living-world/src/sidecar";
+import { parseArgs } from "./args";
 import {
+  endpointKind,
   KeyMissing,
   launchConfigFor,
   OllamaUnreachable,
@@ -212,4 +214,60 @@ test("a missing or empty Keychain entry fails naming only the key reference", as
     expect(message).toContain("hosted-key");
     expect(message).not.toContain(SENTINEL);
   }
+});
+
+// --- Which endpoint a run names, and what its record says it was -------------------------------
+
+test("a base URL that is only a pass-through to the local Ollama names the endpoint ollama and records local, and sends no key", () => {
+  const viaProxy = {
+    ...options,
+    baseUrl: "http://127.0.0.1:53211/v1",
+    upstreamIsLocal: true as const,
+  };
+  const config = routingConfigFor(viaProxy) as {
+    endpoints: Record<string, unknown>[];
+    roles: Record<string, { endpoint: string }>;
+    fallback: string[];
+  };
+  expect(config.endpoints[0]).toEqual({
+    id: "ollama",
+    baseUrl: "http://127.0.0.1:53211/v1",
+    model: "gemma4-e4b-4k",
+  });
+  expect(config.roles.zeus?.endpoint).toBe("ollama");
+  expect(config.fallback).toEqual(["ollama"]);
+  expect(JSON.stringify(config)).not.toContain("hosted");
+  expect(endpointKind(viaProxy)).toBe("local");
+  expect(launchConfigFor(viaProxy).keys).toEqual({});
+  // The flag, not the URL, is what says it: the same URL without it is an explicit endpoint as before.
+  expect(
+    (
+      routingConfigFor({ ...viaProxy, upstreamIsLocal: undefined }) as {
+        endpoints: { id: string }[];
+      }
+    ).endpoints[0]?.id,
+  ).toBe("hosted");
+});
+
+test("the existing paths are unchanged: the default Ollama, a hosted endpoint, and an explicit local base URL", () => {
+  const idOf = (o: Parameters<typeof routingConfigFor>[0]) =>
+    (routingConfigFor(o) as { endpoints: { id: string }[] }).endpoints[0]?.id;
+  // The default Ollama: named ollama, and a run record says nothing about it.
+  expect(idOf(options)).toBe("ollama");
+  expect(endpointKind(options)).toBeUndefined();
+  // A hosted endpoint: named hosted, recorded hosted.
+  expect(idOf(hosted)).toBe("hosted");
+  expect(endpointKind(hosted)).toBe("hosted");
+  // An explicit local base URL (a llama-server, a LAN box) keeps the name it always had and is recorded local.
+  const lan = { ...options, baseUrl: "http://192.168.1.20:8080/v1" };
+  expect(idOf(lan)).toBe("hosted");
+  expect(endpointKind(lan)).toBe("local");
+  // The key-reference guard is still the argument parser's: a key reference with a local base URL is refused there.
+  expect(() =>
+    parseArgs([
+      "--episodes=1",
+      "--base-url=http://localhost:11434/v1",
+      "--key-ref=k",
+    ]),
+  ).toThrow(/--key-ref is sent only to a non-local https:\/\/ --base-url/);
 });

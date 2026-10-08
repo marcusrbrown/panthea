@@ -194,3 +194,8 @@ tools/probes/backend-lifecycle/lifecycle-results.txt
 # considered.
 tools/probes/*/results/*
 tools/probes/*/scratch/
+
+# An unattended run's world store (with its WAL and SHM), its lock, and the archives exported from it stay local: they run to
+# hundreds of megabytes. The report, run record, frames, proxy records, memory series and diagnostics beside them are evidence.
+tools/scenarios/m2-greek-cast/unattended/*/app-data/
+tools/scenarios/m2-greek-cast/unattended/**/*.sqlite*
