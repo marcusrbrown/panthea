@@ -4,6 +4,7 @@
 //
 // It names no host, port, path, key reference or user: the endpoint is "a local OpenAI-compatible endpoint".
 
+import type { CutPrompts } from "./prompt-cut";
 import { RUBRIC_SCALE, rubricTable } from "./transcript";
 import type { Boundary } from "./unattended";
 import type { UnattendedRunData } from "./unattended-analysis";
@@ -151,6 +152,19 @@ const ratingSheet = (analysis: UnattendedAnalysis): string[] => {
 };
 
 /** The whole report. */
+/** What the cut-prompt check found, in a sentence: Ollama cuts an over-long prompt and reports what is left, so the busiest count alone cannot show it. */
+function cutSentence(cut: CutPrompts): string {
+  const gods = Object.entries(cut.byGod)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([god, n]) => `${god} ${n}`);
+  const how = `A response is taken as cut when it reports exactly ${cut.collapsedAt} tokens (what Ollama reports for a cut prompt at this context)${cut.calibrated ? ` or far fewer tokens than its prompt's length predicts from this run's median of ${cut.medianTokensPerChar?.toFixed(3)} a character` : ""}.`;
+  const found =
+    cut.cut === 0
+      ? "None was cut."
+      : `${cut.cut} ${cut.cut === 1 ? "was" : "were"} cut${gods.length === 0 ? "" : ` (${gods.join(", ")})`}${cut.unattributed === 0 ? "" : `, ${cut.unattributed} with the god unknown`}.`;
+  return `${how} ${found}${cut.calibrated ? "" : ` The length check was not run: only ${cut.matched} responses matched a request.`}`;
+}
+
 export function renderUnattendedReport(
   data: UnattendedRunData,
   analysis: UnattendedAnalysis = analyzeUnattended(data),
@@ -220,7 +234,7 @@ export function renderUnattendedReport(
     "",
     analysis.promptTokens.busiest === undefined
       ? "No response carried a prompt token count."
-      : `The busiest prompt was ${analysis.promptTokens.busiest} tokens of ${CONTEXT_TOKENS} (${analysis.promptTokens.recorded} responses counted).`,
+      : `The busiest prompt was ${analysis.promptTokens.busiest} tokens of ${CONTEXT_TOKENS} (${analysis.promptTokens.recorded} responses counted). ${cutSentence(analysis.promptTokens.cut)}`,
     `Ollama's empty-200 response occurred ${analysis.empty.total} times, at most ${analysis.empty.longestRun} in a row.`,
     "",
     "## Director events by kind and phase",

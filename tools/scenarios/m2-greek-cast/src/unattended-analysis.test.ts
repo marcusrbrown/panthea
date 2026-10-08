@@ -32,6 +32,7 @@ import {
   MINUTE,
   proxyRecords,
   refusal,
+  responsesFor,
   runData,
   T0,
   TICKS,
@@ -668,6 +669,101 @@ test("positive control: a prompt at the context size fails the prompt-tokens row
   expect(rowOf(none.rows, "prompt.tokens").measured).toContain(
     "no response carried",
   );
+});
+
+/** A healthy scene whose first `count` answered requests of `gods` were shown a 12,000-character prompt. */
+function longPrompts(
+  scene: Scene,
+  gods: readonly string[],
+): { index: number; request: RealRequest }[] {
+  const picked: { index: number; request: RealRequest }[] = [];
+  scene.requests.forEach((request, index) => {
+    if (gods.length > picked.length && request.role === gods[picked.length]) {
+      scene.requests[index] = {
+        ...request,
+        promptPayload: `${request.promptPayload}${"x".repeat(12_000)}`,
+      };
+      picked.push({ index, request: scene.requests[index] as RealRequest });
+    }
+  });
+  return picked;
+}
+
+test("positive control: the failed hour's shape, nine responses reporting exactly 2,050 for prompts of about 12,000 characters and 4,094 the largest ordinary count, fails the prompt row naming 9 cut and the gods", () => {
+  const scene = healthyScene();
+  const picked = longPrompts(scene, [
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "hephaestus",
+  ]);
+  // One ordinary response just under the context, and every other response at the run's usual 0.33 a character.
+  const proxy = responsesFor(scene);
+  const cutIndexes = new Set(picked.map((p) => p.request.proposalId));
+  const records = scene.requests
+    .filter((r) => r.outcome === "intent")
+    .map((r, i) => ({ r, record: proxy[i] as ProxyRecord }));
+  for (const { r, record } of records) {
+    if (cutIndexes.has(r.proposalId)) {
+      Object.assign(record, { promptTokens: 2050 });
+    }
+  }
+  const largest = records.find(({ r }) => !cutIndexes.has(r.proposalId));
+  Object.assign(largest?.record as ProxyRecord, { promptTokens: 4094 });
+
+  const { rows, promptTokens } = analyzeUnattended(runData({ scene, proxy }));
+  const row = rowOf(rows, "prompt.tokens");
+  expect(promptTokens.busiest).toBe(4094);
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("4094 tokens of 4096");
+  expect(row.measured).toContain("9 cut");
+  expect(row.measured).toContain("athena 8");
+  expect(row.measured).toContain("hephaestus 1");
+  expect(promptTokens.cut.cut).toBe(9);
+  expect(failing(rows)).toEqual(["prompt.tokens"]);
+});
+
+test("a run whose largest prompt is 4,094 tokens, with no response cut, passes the prompt row", () => {
+  const scene = healthyScene();
+  const proxy = responsesFor(scene);
+  Object.assign(proxy[3] as ProxyRecord, { promptTokens: 4094 });
+  const { rows } = analyzeUnattended(runData({ scene, proxy }));
+  const row = rowOf(rows, "prompt.tokens");
+  expect(row.measured).toContain("4094 tokens of 4096");
+  expect(row.measured).toContain("0 cut");
+  expect(row.ok).toBe(true);
+});
+
+test("positive control: a response that reports far fewer tokens than its prompt's length predicts fails the row though it is not 2,050 and the largest count is small", () => {
+  const scene = healthyScene();
+  const [picked] = longPrompts(scene, ["zeus"]);
+  const proxy = responsesFor(scene);
+  const at = scene.requests
+    .filter((r) => r.outcome === "intent")
+    .findIndex((r) => r.proposalId === picked?.request.proposalId);
+  Object.assign(proxy[at] as ProxyRecord, { promptTokens: 2400 });
+  const { rows, promptTokens } = analyzeUnattended(runData({ scene, proxy }));
+  expect(promptTokens.busiest).toBeLessThan(4096);
+  expect(rowOf(rows, "prompt.tokens").ok).toBe(false);
+  expect(rowOf(rows, "prompt.tokens").measured).toContain("1 cut (zeus 1)");
+});
+
+test("positive control: a response at exactly 2,050 fails the row even when no request can be joined to it, saying the god is unknown, and the length check is reported as not run", () => {
+  const { rows } = analyzeUnattended(
+    runData({
+      proxy: proxyRecords([{ promptTokens: 2050, at: T0 + 400 * MINUTE }]),
+    }),
+  );
+  const row = rowOf(rows, "prompt.tokens");
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("1 cut");
+  expect(row.measured).toContain("god unknown");
+  expect(row.measured).toContain("length check not run");
 });
 
 test("positive control: five empty responses in a row fail the empty-200 row; four with a normal one between do not", () => {

@@ -372,6 +372,28 @@ export function proxyRecords(over: Partial<ProxyRecord>[] = []): ProxyRecord[] {
   ];
 }
 
+/**
+ * The responses the proxy would have recorded for every answered request in `scene`: each ends 6 ms before its trace
+ * row was written, took the request's elapsed time, and counts 0.33 tokens a character of the prompt it was shown.
+ */
+export function responsesFor(scene: Scene): ProxyRecord[] {
+  return scene.requests.flatMap((r) =>
+    r.outcome === "intent" && r.recordedAt !== undefined
+      ? [
+          {
+            at: r.recordedAt - 6 - r.elapsedMs,
+            status: 200,
+            latencyMs: r.elapsedMs,
+            outcome: "forwarded" as const,
+            kind: "completion" as const,
+            empty: false,
+            promptTokens: Math.round((r.promptPayload?.length ?? 0) * 0.33),
+          },
+        ]
+      : [],
+  );
+}
+
 export function runData(
   over: {
     scene?: Scene;

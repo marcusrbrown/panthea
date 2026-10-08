@@ -6,6 +6,7 @@ import { CLAIMS, renderUnattendedReport } from "./unattended-report";
 import {
   baseResult,
   healthyScene,
+  responsesFor,
   runData,
   T0,
   TICKS,
@@ -75,6 +76,19 @@ test("a failing row shows FAIL in the table and a FAIL verdict, and an infrastru
     "The run did not complete: five empty responses in a row.",
   );
   expect(fault).not.toContain("**Verdict: FAIL**");
+});
+
+test("the prompt section says how many prompts were cut and by which gods, and how a cut is told", () => {
+  const scene = healthyScene();
+  const proxy = responsesFor(scene);
+  Object.assign(proxy[0] ?? {}, { promptTokens: 2050 });
+  const text = report({ scene, proxy });
+  expect(text).toContain("exactly 2050 tokens");
+  expect(text).toMatch(/1 was cut \(\w+ 1\)/);
+  expect(report({ scene: healthyScene(), proxy })).not.toContain(
+    "None was cut",
+  );
+  expect(report({ scene })).toContain("None was cut");
 });
 
 test("the claims are exactly what the run proves: A14 is export and rebuild only, P07 a local outage only, no A15, one hour", () => {

@@ -19,6 +19,7 @@ import {
 import type { MemorySample, MemorySummary } from "./memory";
 import { summarizeMemory } from "./memory";
 import type { ProxyRecord } from "./outage-proxy";
+import { type CutPrompts, findCutPrompts, joinResponses } from "./prompt-cut";
 import {
   analyzeReal,
   committedInOrder,
@@ -154,6 +155,8 @@ export interface UnattendedAnalysis {
   readonly promptTokens: {
     readonly busiest: number | undefined;
     readonly recorded: number;
+    /** The responses that show a prompt was cut, by either signal. */
+    readonly cut: CutPrompts;
   };
   readonly empty: { readonly total: number; readonly longestRun: number };
   readonly director: Readonly<
@@ -702,15 +705,32 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
       : [],
   );
   const busiest = tokens.length === 0 ? undefined : Math.max(...tokens);
+  // The largest count stays under the context even when Ollama cut the prompt, because it reports what was left; so
+  // the row also reads each count against the prompt that produced it.
+  const cut = findCutPrompts(
+    joinResponses(input.requests, data.proxy),
+    data.proxy,
+    CONTEXT_TOKENS,
+  );
+  const cutGods = Object.entries(cut.byGod)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([god, n]) => `${god} ${n}`);
+  const cutText = [
+    `${cut.cut} cut`,
+    ...(cutGods.length === 0 ? [] : [`(${cutGods.join(", ")})`]),
+    ...(cut.unattributed === 0
+      ? []
+      : [`${cut.unattributed} at ${cut.collapsedAt} with god unknown`]),
+  ].join(" ");
   row(
     "prompt.tokens",
     "resources",
-    "the busiest prompt fits the model's context",
-    busiest !== undefined && busiest < CONTEXT_TOKENS,
+    "the busiest prompt fits the model's context, and no prompt was cut",
+    busiest !== undefined && busiest < CONTEXT_TOKENS && cut.cut === 0,
     busiest === undefined
       ? "no response carried a prompt token count"
-      : `${busiest} tokens of ${CONTEXT_TOKENS} (${tokens.length} responses counted)`,
-    `under ${CONTEXT_TOKENS}`,
+      : `${busiest} tokens of ${CONTEXT_TOKENS} (${tokens.length} responses counted); ${cutText}${cut.calibrated ? "" : `; length check not run (${cut.matched} responses matched a request)`}`,
+    `under ${CONTEXT_TOKENS}, and no response cut`,
   );
   let longestEmpty = 0;
   let run = 0;
@@ -869,7 +889,7 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
       firstAfterRecoveryMs: result.restore?.firstRequestAfterRestore?.latencyMs,
       runnerAtRestore: result.restore?.runnerAtRestore ?? "unsampled",
     },
-    promptTokens: { busiest, recorded: tokens.length },
+    promptTokens: { busiest, recorded: tokens.length, cut },
     empty: { total: emptyTotal, longestRun: longestEmpty },
     director,
     memory,
