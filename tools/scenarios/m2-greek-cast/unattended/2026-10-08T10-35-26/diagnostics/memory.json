@@ -3,9 +3,7 @@
     "atMs": 1791459330177,
     "runner": {
       "state": "present",
-      "pids": [
-        16301
-      ],
+      "pids": [16301],
       "rssBytes": 6178635776
     },
     "sidecar": {

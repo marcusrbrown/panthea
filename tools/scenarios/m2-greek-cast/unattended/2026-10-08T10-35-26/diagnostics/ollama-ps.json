@@ -11,9 +11,7 @@
           "parent_model": "",
           "format": "gguf",
           "family": "granite",
-          "families": [
-            "granite"
-          ],
+          "families": ["granite"],
           "parameter_size": "8.2B",
           "quantization_level": "Q4_K_M"
         },
