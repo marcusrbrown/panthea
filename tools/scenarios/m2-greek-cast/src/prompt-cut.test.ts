@@ -6,6 +6,7 @@ import {
   findCutPrompts,
   joinResponses,
   MIN_CALIBRATION,
+  namesSuspected,
   type PromptSample,
 } from "./prompt-cut";
 import type { RealRequest } from "./real-analysis";
@@ -71,7 +72,7 @@ test("the count Ollama reports for a cut prompt is half the context plus two", (
   expect(collapsedTokens(8192)).toBe(4098);
 });
 
-test("a response joins the request whose span its end falls in, and a retry's first response is the one used", () => {
+test("a response joins the request whose span its end falls in, and each of a retried request's responses is a sample of its prompt", () => {
   const { requests, proxy } = turns(3);
   // The second request made two attempts: a first response, then a repair after it.
   const second = requests[1] as RealRequest;
@@ -86,10 +87,14 @@ test("a response joins the request whose span its end falls in, and a retry's fi
       proxy[2] as ProxyRecord,
     ],
   );
-  expect(samples).toHaveLength(3);
+  // Four responses: the retried request's two both belong to it, and the request after it still gets its own.
+  expect(samples).toHaveLength(4);
   expect(samples[1]?.tokens).toBe(3000);
-  // The request after it still gets its own response.
   expect(samples[2]?.tokens).toBe(
+    (proxy[1] as ProxyRecord).promptTokens as number,
+  );
+  expect(samples[1]?.chars).toBe(samples[2]?.chars);
+  expect(samples[3]?.tokens).toBe(
     (proxy[2] as ProxyRecord).promptTokens as number,
   );
 });
@@ -133,7 +138,7 @@ test("an hour like the failed one: 9 of 214 responses report 2,050 for prompts o
   expect(samples.length).toBe(205);
   expect(found.cut).toBe(9);
   expect(found.byGod).toEqual({ athena: 8, hephaestus: 1 });
-  expect(found.unattributed).toBe(0);
+  expect(found.suspected).toBe(0);
   expect(found.calibrated).toBe(true);
   expect(found.matched).toBe(215);
 });
@@ -161,7 +166,7 @@ test("the length signal finds a cut that does not land on 2,050, as a model with
   expect(2400 / 12_000).toBeLessThan(CUT_RATIO * PER_CHAR);
 });
 
-test("the collapse signal still sees a cut when no response can be joined to a request, and cannot say whose", () => {
+test("a response at exactly 2,050 that no request can be matched to is a suspected cut, not a confirmed one: there is no prompt length to read it against", () => {
   const proxy = [
     response(100_000, 8000, 1500),
     response(200_000, 8000, 2050),
@@ -169,9 +174,38 @@ test("the collapse signal still sees a cut when no response can be joined to a r
   ];
   const found = findCutPrompts([], proxy, CONTEXT);
   expect(found.calibrated).toBe(false);
-  expect(found.cut).toBe(1);
-  expect(found.unattributed).toBe(1);
+  expect(found.cut).toBe(0);
+  expect(found.suspected).toBe(1);
   expect(found.byGod).toEqual({});
+  expect(found.suspectedByGod).toEqual({});
+  expect(namesSuspected(found)).toBe("god unknown 1");
+});
+
+test("a matched ordinary prompt that is exactly 2,050 tokens is not cut: the length decides, and its ratio is the run's", () => {
+  // Fro Bot's case: 6,212 characters and 2,050 tokens is 0.330 a character against a median near 0.33.
+  const { requests, proxy } = turns(60);
+  const finishAt = 2_000_000;
+  requests.push(request("zeus", finishAt, 6212));
+  proxy.push(response(finishAt, 8000, 2050));
+  const samples = joinResponses(requests, proxy);
+  const found = findCutPrompts(samples, proxy, CONTEXT);
+  const ratio = 2050 / 6212;
+  expect(ratio).toBeGreaterThan(CUT_RATIO * (found.medianTokensPerChar ?? 0));
+  expect(found.cut).toBe(0);
+  expect(found.byGod).toEqual({});
+  expect(found.suspected).toBe(0);
+  expect(found.matched).toBe(61);
+});
+
+test("a matched prompt of 12,000 characters at exactly 2,050 tokens is cut, by its length", () => {
+  const { requests, proxy } = turns(60);
+  const finishAt = 2_000_000;
+  requests.push(request("athena", finishAt, 12_000));
+  proxy.push(response(finishAt, 8000, 2050));
+  const found = findCutPrompts(joinResponses(requests, proxy), proxy, CONTEXT);
+  expect(found.cut).toBe(1);
+  expect(found.byGod).toEqual({ athena: 1 });
+  expect(found.suspected).toBe(0);
 });
 
 test("too few matched responses to calibrate leaves the length signal off: a short prompt with a low ratio is not called cut", () => {
@@ -189,6 +223,25 @@ test("too few matched responses to calibrate leaves the length signal off: a sho
   expect(found.cut).toBe(0);
 });
 
+test("a matched response at exactly 2,050 when too few were matched to calibrate is suspected, since its length cannot be read against a median", () => {
+  const few: PromptSample[] = Array.from({ length: 5 }, () => ({
+    god: "zeus",
+    tokens: 330,
+    chars: 1000,
+  }));
+  const collapsed: PromptSample = {
+    god: "athena",
+    tokens: 2050,
+    chars: 12_000,
+  };
+  const found = findCutPrompts([...few, collapsed], [], CONTEXT);
+  expect(found.calibrated).toBe(false);
+  expect(found.cut).toBe(0);
+  expect(found.suspected).toBe(1);
+  expect(found.suspectedByGod).toEqual({ athena: 1 });
+  expect(namesSuspected(found)).toBe("athena 1");
+});
+
 test("ordinary spread in tokens per character is not a cut: counts 10% under and over the median pass", () => {
   const samples: PromptSample[] = Array.from({ length: 40 }, (_, i) => ({
     god: "hera",
@@ -198,7 +251,7 @@ test("ordinary spread in tokens per character is not a cut: counts 10% under and
   expect(findCutPrompts(samples, [], CONTEXT).cut).toBe(0);
 });
 
-test("two cut responses to one request, a retry on the same cut prompt, are both counted", () => {
+test("two cut responses to one request, a retry on the same cut prompt, are both counted, and both are the god's", () => {
   const { requests, proxy } = turns(40);
   const finishAt = 2_000_000;
   const retried = request("athena", finishAt, 12_000, 16_000);
@@ -209,6 +262,6 @@ test("two cut responses to one request, a retry on the same cut prompt, are both
   );
   const found = findCutPrompts(joinResponses(requests, proxy), proxy, CONTEXT);
   expect(found.cut).toBe(2);
-  expect(found.byGod).toEqual({ athena: 1 });
-  expect(found.unattributed).toBe(1);
+  expect(found.byGod).toEqual({ athena: 2 });
+  expect(found.suspected).toBe(0);
 });

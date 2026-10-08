@@ -753,17 +753,51 @@ test("positive control: a response that reports far fewer tokens than its prompt
   expect(rowOf(rows, "prompt.tokens").measured).toContain("1 cut (zeus 1)");
 });
 
-test("positive control: a response at exactly 2,050 fails the row even when no request can be joined to it, saying the god is unknown, and the length check is reported as not run", () => {
-  const { rows } = analyzeUnattended(
-    runData({
-      proxy: proxyRecords([{ promptTokens: 2050, at: T0 + 400 * MINUTE }]),
-    }),
-  );
+test("a response at exactly 2,050 that no request can be matched to is a suspected cut: the row passes and names it, since only a prompt's length can confirm one", () => {
+  // The only response the proxy recorded is one no request answers, so nothing can be read against a prompt length.
+  const lone: ProxyRecord = {
+    at: T0 + 400 * MINUTE,
+    status: 200,
+    latencyMs: 8000,
+    outcome: "forwarded",
+    kind: "completion",
+    empty: false,
+    promptTokens: 2050,
+  };
+  const { rows, promptTokens } = analyzeUnattended(runData({ proxy: [lone] }));
   const row = rowOf(rows, "prompt.tokens");
-  expect(row.ok).toBe(false);
-  expect(row.measured).toContain("1 cut");
-  expect(row.measured).toContain("god unknown");
+  expect(promptTokens.cut.cut).toBe(0);
+  expect(promptTokens.cut.suspected).toBe(1);
+  expect(row.ok).toBe(true);
+  expect(row.measured).toContain("0 cut");
+  expect(row.measured).toContain("1 suspected (god unknown 1;");
+  expect(row.measured).toContain("not matched to a request");
   expect(row.measured).toContain("length check not run");
+});
+
+test("negative control: an ordinary matched prompt that is exactly 2,050 tokens is not cut, and the row passes", () => {
+  const scene = healthyScene();
+  // 6,212 characters at 2,050 tokens is 0.330 a character; the run's median is 0.33.
+  const index = scene.requests.findIndex((r) => r.role === "zeus");
+  const request = scene.requests[index] as RealRequest;
+  scene.requests[index] = {
+    ...request,
+    promptPayload: `${request.promptPayload}${"x".repeat(6212 - (request.promptPayload?.length ?? 0))}`,
+  };
+  const picked = { request: scene.requests[index] as RealRequest };
+  const proxy = responsesFor(scene);
+  const at = scene.requests
+    .filter((r) => r.outcome === "intent")
+    .findIndex((r) => r.proposalId === picked.request.proposalId);
+  Object.assign(proxy[at] as ProxyRecord, { promptTokens: 2050 });
+  const { rows, promptTokens } = analyzeUnattended(runData({ scene, proxy }));
+  expect(promptTokens.cut.cut).toBe(0);
+  expect(promptTokens.cut.suspected).toBe(0);
+  expect(promptTokens.cut.calibrated).toBe(true);
+  const row = rowOf(rows, "prompt.tokens");
+  expect(row.measured).toContain("0 cut");
+  expect(row.ok).toBe(true);
+  expect(failing(rows)).toEqual([]);
 });
 
 test("positive control: five empty responses in a row fail the empty-200 row; four with a normal one between do not", () => {

@@ -4,7 +4,7 @@
 //
 // It names no host, port, path, key reference or user: the endpoint is "a local OpenAI-compatible endpoint".
 
-import type { CutPrompts } from "./prompt-cut";
+import { type CutPrompts, namesSuspected } from "./prompt-cut";
 import { RUBRIC_SCALE, rubricTable } from "./transcript";
 import type { Boundary } from "./unattended";
 import type { UnattendedRunData } from "./unattended-analysis";
@@ -163,12 +163,16 @@ function cutSentence(cut: CutPrompts): string {
   const gods = Object.entries(cut.byGod)
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([god, n]) => `${god} ${n}`);
-  const how = `A response is taken as cut when it reports exactly ${cut.collapsedAt} tokens (what Ollama reports for a cut prompt at this context)${cut.calibrated ? ` or far fewer tokens than its prompt's length predicts from this run's median of ${cut.medianTokensPerChar?.toFixed(3)} a character` : ""}.`;
+  const how = `A response matched to its request is taken as cut when it reports far fewer tokens than its prompt's length predicts from this run's median${cut.medianTokensPerChar === undefined ? "" : ` of ${cut.medianTokensPerChar.toFixed(3)} a character`}. One with no prompt length to read it against is only suspected, when it reports exactly ${cut.collapsedAt} tokens (what Ollama reports for a cut prompt at this context); a suspected cut does not fail the row.`;
   const found =
     cut.cut === 0
       ? "None was cut."
-      : `${cut.cut} ${cut.cut === 1 ? "was" : "were"} cut${gods.length === 0 ? "" : ` (${gods.join(", ")})`}${cut.unattributed === 0 ? "" : `, ${cut.unattributed} with the god unknown`}.`;
-  return `${how} ${found}${cut.calibrated ? "" : ` The length check was not run: only ${cut.matched} responses matched a request.`}`;
+      : `${cut.cut} ${cut.cut === 1 ? "was" : "were"} cut${gods.length === 0 ? "" : ` (${gods.join(", ")})`}.`;
+  const suspected =
+    cut.suspected === 0
+      ? ""
+      : ` ${cut.suspected} ${cut.suspected === 1 ? "response was" : "responses were"} suspected (${namesSuspected(cut)}; exactly ${cut.collapsedAt} tokens, not read against a prompt length).`;
+  return `${how} ${found}${suspected}${cut.calibrated ? "" : ` The length check was not run: only ${cut.matched} responses matched a request.`}`;
 }
 
 export function renderUnattendedReport(

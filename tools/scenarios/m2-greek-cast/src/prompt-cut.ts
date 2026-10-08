@@ -1,16 +1,18 @@
 // Whether any prompt the model was sent was cut. Ollama cuts a prompt longer than its context without an error and
 // reports a prompt token count for what is left: on the 4,096-token baseline it reports exactly 2,050 (half the
 // context and two) whatever the prompt was, so the largest count in a run stays under the context while the model has
-// lost the start of its instructions. The count alone cannot show it, so two signals read it against the prompt:
+// lost the start of its instructions. The count alone cannot show it, so each response is read against the prompt that
+// made it:
 //
-// - Length: a response reports far fewer tokens than its own prompt's length predicts. The prediction is the run's own
-//   median tokens per character, so it needs no tokenizer and survives a change of model or of Ollama's cutting rule.
-//   It needs each response joined to the request that made it, which the proxy's records and the trace's rows allow by
-//   time.
-// - Collapse: a response reports exactly half the context plus two. It needs no join, so it still sees a cut when the
-//   run's responses cannot be matched to requests.
+// - A response matched to its request is cut when it reports far fewer tokens than its prompt's length predicts. The
+//   prediction is the run's own median tokens per character, so it needs no tokenizer and survives a change of model or
+//   of Ollama's cutting rule. Length decides, whatever the count: a prompt can genuinely be 2,050 tokens.
+// - A response with no prompt length to read it against, because no request was matched to it or too few were matched to
+//   calibrate a median, can only be suspected: if it reports exactly half the context plus two, which is what a cut
+//   reports, it is a suspected cut. A suspected cut is named but not counted as a cut.
 //
-// A response either signal marks is cut. Nothing here reads prompt text beyond its length.
+// Matching responses to requests is by time, from the proxy's records and the trace's rows. Nothing here reads prompt
+// text beyond its length.
 
 import type { ProxyRecord } from "./outage-proxy";
 import type { RealRequest } from "./real-analysis";
@@ -38,9 +40,10 @@ const isCounted = (record: ProxyRecord): boolean =>
   record.promptTokens !== undefined;
 
 /**
- * Each request joined to the first response the model gave it, by time: turns run one at a time, so a response whose
- * end falls within a request's span (its finish less its elapsed time, to its finish) is that request's. A request the
- * model did not answer, or one the trace kept no prompt for, has no sample.
+ * Each response joined to the request it answered, by time: turns run one at a time, so a response whose end falls within
+ * a request's span (its finish less its elapsed time, to its finish) is that request's, and so is each retry in it,
+ * which is a response to the same prompt or to that prompt with a repair added. A request the model did not answer, or
+ * one the trace kept no prompt for, has no sample.
  */
 export function joinResponses(
   requests: readonly RealRequest[],
@@ -63,11 +66,16 @@ export function joinResponses(
         end >= finish - request.elapsedMs - JOIN_TOLERANCE_MS &&
         end <= finish + JOIN_TOLERANCE_MS,
     );
-    for (const { record } of within) used.add(record);
-    const first = within[0]?.record;
     const chars = request.promptPayload?.length ?? 0;
-    if (first?.promptTokens === undefined || chars === 0) continue;
-    samples.push({ god: request.role, tokens: first.promptTokens, chars });
+    for (const { record } of within) {
+      used.add(record);
+      if (record.promptTokens === undefined || chars === 0) continue;
+      samples.push({
+        god: request.role,
+        tokens: record.promptTokens,
+        chars,
+      });
+    }
   }
   return samples;
 }
@@ -86,17 +94,19 @@ export interface CutPrompts {
   readonly responses: number;
   /** Of those, the ones joined to a request. */
   readonly matched: number;
-  /** Whether enough were matched to read the length signal; when not, only the collapse is read. */
+  /** Whether enough were matched to calibrate a median tokens per character; when not, no matched response can be called cut. */
   readonly calibrated: boolean;
   readonly medianTokensPerChar: number | undefined;
   /** The count Ollama reports for a cut prompt at this context. */
   readonly collapsedAt: number;
-  /** Responses either signal marks as cut. */
+  /** Matched responses whose tokens per character are far under the run's median: confirmed cuts. */
   readonly cut: number;
-  /** Cut responses by the god whose request they answered. */
+  /** Confirmed cuts by the god whose request they answered. */
   readonly byGod: Readonly<Record<string, number>>;
-  /** Cut responses that no request was matched to: the collapse saw them, the god is unknown. */
-  readonly unattributed: number;
+  /** Responses at exactly `collapsedAt` with no prompt length to read them against: possibly cut, not confirmed. */
+  readonly suspected: number;
+  /** Suspected responses whose request is known, by god: matched, but too few were matched to calibrate a median. */
+  readonly suspectedByGod: Readonly<Record<string, number>>;
 }
 
 /** The cut responses in a run: `samples` are the joined responses, `proxy` every response the proxy recorded. */
@@ -107,37 +117,58 @@ export function findCutPrompts(
 ): CutPrompts {
   const collapsedAt = collapsedTokens(contextTokens);
   const counted = proxy.filter(isCounted);
+  // A median is read from the responses at any count but the collapsed one, which a cut could have produced.
   const ordinary = samples.filter((s) => s.tokens !== collapsedAt);
   const calibrated = ordinary.length >= MIN_CALIBRATION;
   const medianRatio = calibrated
     ? median(ordinary.map((s) => s.tokens / s.chars))
     : undefined;
   const byGod: Record<string, number> = {};
-  let matchedCut = 0;
+  const suspectedByGod: Record<string, number> = {};
+  let cut = 0;
   let matchedCollapsed = 0;
   for (const sample of samples) {
     const collapsed = sample.tokens === collapsedAt;
-    const short =
-      medianRatio !== undefined &&
-      sample.tokens / sample.chars < CUT_RATIO * medianRatio;
     if (collapsed) matchedCollapsed += 1;
-    if (collapsed || short) {
-      matchedCut += 1;
+    if (medianRatio === undefined) {
+      // No median to read the length against: a collapsed count can only be suspected.
+      if (collapsed) {
+        suspectedByGod[sample.god] = (suspectedByGod[sample.god] ?? 0) + 1;
+      }
+    } else if (sample.tokens / sample.chars < CUT_RATIO * medianRatio) {
+      cut += 1;
       byGod[sample.god] = (byGod[sample.god] ?? 0) + 1;
     }
   }
   const collapsedRecords = counted.filter(
     (r) => r.promptTokens === collapsedAt,
   ).length;
-  const unattributed = Math.max(0, collapsedRecords - matchedCollapsed);
+  // Responses at the collapsed count that no request was matched to have no prompt length to read, and the god is unknown.
+  const unmatched = Math.max(0, collapsedRecords - matchedCollapsed);
+  const suspected =
+    unmatched + Object.values(suspectedByGod).reduce((a, b) => a + b, 0);
   return {
     responses: counted.length,
     matched: samples.length,
     calibrated,
     medianTokensPerChar: medianRatio,
     collapsedAt,
-    cut: matchedCut + unattributed,
+    cut,
     byGod,
-    unattributed,
+    suspected,
+    suspectedByGod,
   };
+}
+
+/** Who the suspected cuts are, by god and then those whose god is unknown: "athena 1, god unknown 2". */
+export function namesSuspected(cut: CutPrompts): string {
+  const known = Object.entries(cut.suspectedByGod)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([god, n]) => `${god} ${n}`);
+  const unknown =
+    cut.suspected -
+    Object.values(cut.suspectedByGod).reduce((a, b) => a + b, 0);
+  return [...known, ...(unknown === 0 ? [] : [`god unknown ${unknown}`])].join(
+    ", ",
+  );
 }

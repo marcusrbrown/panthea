@@ -19,7 +19,12 @@ import {
 import type { MemorySample, MemorySummary } from "./memory";
 import { summarizeMemory } from "./memory";
 import type { ProxyRecord } from "./outage-proxy";
-import { type CutPrompts, findCutPrompts, joinResponses } from "./prompt-cut";
+import {
+  type CutPrompts,
+  findCutPrompts,
+  joinResponses,
+  namesSuspected,
+} from "./prompt-cut";
 import {
   analyzeReal,
   committedInOrder,
@@ -718,9 +723,11 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
   const cutText = [
     `${cut.cut} cut`,
     ...(cutGods.length === 0 ? [] : [`(${cutGods.join(", ")})`]),
-    ...(cut.unattributed === 0
+    ...(cut.suspected === 0
       ? []
-      : [`${cut.unattributed} at ${cut.collapsedAt} with god unknown`]),
+      : [
+          `${cut.suspected} suspected (${namesSuspected(cut)}; exactly ${cut.collapsedAt} tokens, not matched to a request or too few matched to read it by length)`,
+        ]),
   ].join(" ");
   row(
     "prompt.tokens",
