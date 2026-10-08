@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { RUBRIC, RUBRIC_SCALE } from "./transcript";
 import { phasePlan } from "./unattended";
 import { analyzeUnattended } from "./unattended-analysis";
 import { CLAIMS, renderUnattendedReport } from "./unattended-report";
@@ -235,14 +236,61 @@ test("the memory section is present-or-absent honest: it shows the sample count,
   expect(text).toContain("Swap used: peak 1000 MiB");
 });
 
-test("the rating sheet lists director-caused and god-caused episodes under separate headings, each with the three questions, and leaves the decision blank", () => {
+test("the rating sheet uses the acceptance rubric the episode transcripts use: the same five dimensions, the same scale, scored separately for the director's episodes and the gods'", () => {
   const text = report();
   const sheet = text.slice(text.indexOf("## Rating sheet"));
   expect(sheet).toContain("**Episodes the director caused**");
   expect(sheet).toContain("**Episodes a god caused**");
-  expect(sheet).toContain("1. **Alive.**");
-  expect(sheet).toContain("2. **Consequential.**");
-  expect(sheet).toContain("3. **Coherent.**");
+
+  // The names are the acceptance document's (docs/product/acceptance.md), pinned here as well as shared with the transcript.
+  expect(RUBRIC).toEqual([
+    "Novelty",
+    "Causality",
+    "Recognizable identity",
+    "Pacing",
+    "Inspectability",
+  ]);
+  const rowsIn = (section: string): string[] =>
+    section
+      .split("\n")
+      .filter((line) =>
+        /^\| (Novelty|Causality|Recognizable identity|Pacing|Inspectability) \|/.test(
+          line,
+        ),
+      );
+  const director = sheet.slice(
+    sheet.indexOf("**Episodes the director caused**"),
+    sheet.indexOf("**Episodes a god caused**"),
+  );
+  const gods = sheet.slice(sheet.indexOf("**Episodes a god caused**"));
+  for (const part of [director, gods]) {
+    expect(part).toContain("| Dimension | Score (0/1/2) | Notes |");
+    expect(rowsIn(part).map((row) => row.split("|")[1]?.trim())).toEqual(
+      RUBRIC,
+    );
+    // The tool scores nothing: every score and note cell is empty.
+    for (const row of rowsIn(part)) {
+      const cells = row.split("|").map((c) => c.trim());
+      expect(cells[2]).toBe("");
+      expect(cells[3]).toBe("");
+    }
+  }
+  expect(sheet).toContain(RUBRIC_SCALE);
+  expect(sheet).toContain(
+    "0 = replan pressure, 1 = needs tuning, 2 = good enough to continue",
+  );
+
+  // None of the invented rubric is left.
+  for (const gone of [
+    "Alive",
+    "Consequential",
+    "Coherent",
+    "(1-5)",
+    "1 to 5",
+  ]) {
+    expect(sheet).not.toContain(gone);
+  }
+  expect(text).not.toContain("## Owner rubric");
   expect(sheet).toContain(
     "M2 exits only on a PASS verdict and your approval of these episodes. Decision: ______",
   );

@@ -4,6 +4,7 @@
 //
 // It names no host, port, path, key reference or user: the endpoint is "a local OpenAI-compatible endpoint".
 
+import { RUBRIC_SCALE, rubricTable } from "./transcript";
 import type { Boundary } from "./unattended";
 import type { UnattendedRunData } from "./unattended-analysis";
 import {
@@ -135,22 +136,16 @@ const ratingSheet = (analysis: UnattendedAnalysis): string[] => {
       ? ["No episode of this kind was found in the run."]
       : moments.map((m) => `- tick ${m.tick} (${m.phase}): ${m.text}`)),
     "",
+    ...rubricTable(),
+    "",
   ];
   return [
-    "Rate each episode below from 1 to 5 on each of the three questions, and score the two kinds separately. The verdict above says whether the run held its thresholds; this sheet is where you decide whether the world felt alive.",
+    "The verdict above says whether the run held its thresholds; this sheet is where you decide whether the world was worth watching. The rubric is the acceptance rubric (docs/product/acceptance.md), the same one the episode transcripts carry. Score the two kinds of episode separately, each on every dimension.",
     "",
-    "1. **Alive.** Did something happen that the town and its gods caused, rather than something that was simply scheduled?",
-    "2. **Consequential.** Did a god's choice change what a mortal believed, felt, or did next?",
-    "3. **Coherent.** Does it read as a world with a memory, where what came before shapes what follows?",
+    RUBRIC_SCALE,
     "",
     ...episodes("Episodes the director caused", analysis.moments.director),
     ...episodes("Episodes a god caused", analysis.moments.gods),
-    "| Episode | Alive (1-5) | Consequential (1-5) | Coherent (1-5) | Note |",
-    "| --- | --- | --- | --- | --- |",
-    ...[...analysis.moments.director, ...analysis.moments.gods].map(
-      (m) => `| ${m.id} | | | | |`,
-    ),
-    "",
     "M2 exits only on a PASS verdict and your approval of these episodes. Decision: ______ (approve / not yet), date ______.",
   ];
 };
