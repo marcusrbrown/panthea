@@ -345,8 +345,17 @@ describe("the outage", () => {
     const reached = new Promise<void>((resolve) => {
       arrived = resolve;
     });
-    const upstream = startUpstream(async (n) => {
+    // The upstream learns of the abort from its own socket closing, a step after the proxy has answered the caller.
+    // Wait for its abort event, not for the flag to be already set when the 503 arrives.
+    let abortSeen: () => void = () => {};
+    const upstreamAborted = new Promise<void>((resolve) => {
+      abortSeen = resolve;
+    });
+    const upstream = startUpstream(async (n, seen) => {
       if (n === 0) {
+        seen.signal.addEventListener("abort", () => abortSeen(), {
+          once: true,
+        });
         arrived();
         await held;
       }
@@ -360,6 +369,7 @@ describe("the outage", () => {
     const ended = await inFlight;
 
     expect(ended.status).toBe(503);
+    await upstreamAborted;
     expect(upstream.seen[0]?.signal.aborted).toBe(true);
     expect(proxy.records()[0]).toMatchObject({
       outcome: "aborted",
