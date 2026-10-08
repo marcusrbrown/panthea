@@ -24,6 +24,7 @@ import {
   fitToCap,
   MODEL_RATIOS,
   routeRatio,
+  shedToCap,
 } from "./prompt-cap";
 import { createRouter, MAX_FEEDBACK_CHARS, requestChars } from "./router";
 import { godProfile, WorldRun } from "./test-fixtures";
@@ -199,6 +200,14 @@ interface WorldOptions {
   readonly actions?: number;
   /** How many of the oldest prayers a live practice holds: 3 is two open offers and an accepted one (a boon owed), 1 is one open offer. */
   readonly live?: 1 | 3;
+  /** Every memory is of the same kind of loss, about the goal's target, with a line of the same length. */
+  readonly uniform?: boolean;
+  /** The characters of the legend each recent event carries; 0 for none. */
+  readonly eventText?: number;
+  /** The characters of the words each of the god's own reports tells. */
+  readonly actionText?: number;
+  /** Prayers after the live ones alternate between a help prayer and a (longer) punish prayer, the first of them a help prayer. */
+  readonly mixedPrayers?: boolean;
 }
 
 function busyZeus(options: WorldOptions = {}) {
@@ -209,6 +218,10 @@ function busyZeus(options: WorldOptions = {}) {
     events = 6,
     actions = 5,
     live = 3,
+    uniform = false,
+    eventText = 0,
+    actionText = 0,
+    mixedPrayers = false,
   } = options;
   const run = new WorldRun();
   const people = [...run.state.actors.values()]
@@ -232,7 +245,34 @@ function busyZeus(options: WorldOptions = {}) {
   });
   const prayerIds: EventId[] = [];
   for (let i = 0; i < prayers; i += 1) {
-    prayerIds.push(run.prays(payers[i % payers.length] as string));
+    const mortal = payers[i % payers.length] as string;
+    if (mixedPrayers && i >= live && (i - live) % 2 === 1) {
+      // A theft by the woodcutter, and a prayer to punish him and his woodshed.
+      run.state = { ...run.state, tick: run.state.tick + 1 };
+      const theft = run.apply({
+        kind: "theft",
+        entityId: "woodcutter",
+        victim: mortal,
+        resource: "currency",
+        amount: 1,
+        cause: "director",
+      });
+      prayerIds.push(
+        run.apply({
+          kind: "petition-opened",
+          entityId: mortal,
+          god: "zeus",
+          cause: theft.id,
+          request: {
+            kind: "punish",
+            offender: "woodcutter",
+            buildings: ["woodshed"],
+          },
+        }).id as EventId,
+      );
+    } else {
+      prayerIds.push(run.prays(mortal));
+    }
   }
   const protectedIds = prayerIds.slice(0, live);
   if (prayers >= live) {
@@ -269,7 +309,7 @@ function busyZeus(options: WorldOptions = {}) {
   }
   for (const salience of memories) {
     const subject =
-      salience === 2 || salience === 5 ? "farmer" : people[salience];
+      uniform || salience === 2 || salience === 5 ? "farmer" : people[salience];
     run.apply({
       id: `evt-m-${salience}`,
       sequence: 500 + salience,
@@ -308,7 +348,7 @@ function busyZeus(options: WorldOptions = {}) {
     kind: "report-told",
     entityId: "zeus",
     listenerId: listeners[i],
-    content: `Word ${i}.`,
+    content: `Word ${i}.`.padEnd(actionText, "."),
   })) as unknown as WorldEvent[];
   const seen = perceive(run.state, id("zeus"), run.events);
   if (!seen) throw new Error("no snapshot");
@@ -317,6 +357,7 @@ function busyZeus(options: WorldOptions = {}) {
     kind: "stock-spoiled",
     sequence: i + 1,
     subjects: [id(people[i] as string)],
+    ...(eventText === 0 ? {} : { assertion: "e".repeat(eventText) }),
   }));
   const snapshot: PerceptionSnapshot = { ...seen, events: recent };
   const remembered = rememberedBy(run.state, id("zeus"), ownEvents);
@@ -341,6 +382,17 @@ const ratioAt = (size: number) =>
 
 const capAt = (w: World, ratio: number) =>
   fitToCap({
+    profile: w.profile,
+    state: w.state,
+    actorId: id("zeus"),
+    snapshot: w.snapshot,
+    remembered: w.remembered,
+    ratio,
+  });
+
+/** The same world shed to the cap and no further: what `fitToCap` starts its refill from. */
+const shedAt = (w: World, ratio: number) =>
+  shedToCap({
     profile: w.profile,
     state: w.state,
     actorId: id("zeus"),
@@ -539,7 +591,7 @@ describe("fitToCap: the order of shedding", () => {
     const shownBefore = bare.remembered.petitions.length;
     const unprotectedShown = shownBefore - w.protectedIds.length;
     expect(unprotectedShown).toBeGreaterThan(1);
-    const capped = capAt(w, ratioAt(chars(bare) - 1));
+    const capped = shedAt(w, ratioAt(chars(bare) - 1));
     expect(capped.shed.events).toBe(6);
     expect(capped.shed.actions).toBe(5);
     expect(capped.shed.memories).toBe(11);
@@ -578,7 +630,7 @@ describe("fitToCap: the order of shedding", () => {
     for (const ratio of [
       2.85, 2.6, 2.4, 2.2, 2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.8, 0.5,
     ]) {
-      const { shed, fits } = capAt(w, ratio);
+      const { shed, fits } = shedAt(w, ratio);
       if (shed.actions > 0) expect(shed.events).toBe(events);
       if (shed.memories > 0) expect(shed.actions).toBe(actions);
       if (shed.prayers > 0) expect(shed.memories).toBe(memoriesAndFeelings);
@@ -663,5 +715,196 @@ describe("fitToCap: the boundary", () => {
     expect(over.snapshot.events.map((e) => e.id)).toEqual(
       w.snapshot.events.slice(1).map((e) => e.id),
     );
+  });
+});
+
+describe("fitToCap: the refill", () => {
+  /** The loosest ratio at which `shedToCap` has to shed at least one prayer: just below it, one prayer closes the gap. */
+  function loosestPrayerRatio(w: World): number {
+    let lo = 0.5;
+    let hi = 4;
+    for (let step = 0; step < 60; step += 1) {
+      const mid = (lo + hi) / 2;
+      if (shedAt(w, mid).shed.prayers >= 1) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /**
+   * Hera's tick-99 turn under granite3.3, in Zeus's world: two memories and a feeling, one recent event and one
+   * action of their own that are long, and prayers over the budget. Tier 3 runs out before one prayer closes the gap.
+   */
+  const heraShape = () =>
+    busyZeus({
+      events: 1,
+      actions: 1,
+      memories: [3, 4],
+      feelings: [2],
+      eventText: 380,
+      actionText: 380,
+    });
+
+  test("Hera's turn: the shed runs out of memories and feelings before one prayer closes the gap, and the refill brings the memories and the feeling back", () => {
+    const w = heraShape();
+    const ratio = loosestPrayerRatio(w);
+    const gross = shedAt(w, ratio);
+    // Everything of tiers 1 to 3 went (the two memories and the feeling are three units), and one prayer more.
+    expect(gross.shed).toEqual({
+      events: 1,
+      actions: 1,
+      memories: 3,
+      prayers: 1,
+    });
+    expect(gross.remembered.memories).toEqual([]);
+    expect(gross.remembered.relationships).toEqual([]);
+
+    const capped = capAt(w, ratio);
+    expect(capped.shed).toEqual({
+      events: 1,
+      actions: 1,
+      memories: 0,
+      prayers: 1,
+    });
+    // Exact survivors: both memories and the feeling are back, whole; the long event and action stay out.
+    expect(capped.remembered.memories).toEqual(w.remembered.memories);
+    expect(capped.remembered.relationships).toEqual(w.remembered.relationships);
+    expect(capped.remembered.ownActions).toEqual([]);
+    expect(capped.snapshot.events).toEqual([]);
+    // The prayer stays shed, with the 'and N more' line counting it.
+    expect(capped.remembered.petitions.map((p) => p.id)).toEqual(
+      gross.remembered.petitions.map((p) => p.id),
+    );
+    expect(capped.remembered.morePrayers).toBe(gross.remembered.morePrayers);
+    // What came back is cited and offered like what was never shed (W04).
+    const basis = capped.remembered.practice.causes.map((cause) => cause.id);
+    for (const memory of w.remembered.memories) {
+      expect(basis).toContain(memory.sourceEventId);
+    }
+    const schema = godIntentSchema(
+      w.profile,
+      capped.snapshot,
+      capped.remembered,
+    );
+    for (const memory of w.remembered.memories) {
+      expect(
+        schema.parse({
+          action: "report",
+          listener: "hera",
+          content: "x",
+          linkedEventId: memory.sourceEventId,
+        }).ok,
+      ).toBe(true);
+    }
+    expectAgreement(w, capped);
+    // It fits, and the unshed world is the positive control: it does not.
+    expect(capped.fits).toBe(true);
+    expect(capped.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
+    expect(fitsCap(capped.context, ratio)).toBe(true);
+    expect(
+      fitsCap(buildGodContext(w.profile, w.snapshot, w.remembered), ratio),
+    ).toBe(false);
+  });
+
+  test("with room for one re-add only, the most salient memory comes back and not a lower one, and the goal-history row comes with it", () => {
+    // Every memory is of one size and about the goal's target, and each has its row in the goal's history (the
+    // history shows four), so only salience says which comes back first.
+    const w = busyZeus({
+      events: 0,
+      actions: 0,
+      memories: [3, 4, 5, 6],
+      feelings: [],
+      uniform: true,
+    });
+    const start = loosestPrayerRatio(w);
+    let one = 0;
+    for (let step = 0; step < 600; step += 1) {
+      const ratio = start - step * 0.0005;
+      const gross = shedAt(w, ratio);
+      if (gross.shed.prayers !== 1) break;
+      const capped = capAt(w, ratio);
+      const back = capped.remembered.memories.map((m) => m.salience);
+      // Whatever comes back is the top of the shed memories, never a lower one while a higher one is out.
+      expect(back).toEqual([6, 5, 4, 3].slice(0, back.length).reverse());
+      if (back.length === 1) {
+        one += 1;
+        expect(back).toEqual([6]);
+        const rows = capped.remembered.goalHistory.flatMap((entry) =>
+          entry.kind === "memory" ? [entry.memory.salience] : [],
+        );
+        expect(rows).toEqual([6]);
+        expectAgreement(w, capped);
+      }
+      expect(capped.fits).toBe(true);
+    }
+    // The scan met ratios with room for exactly one.
+    expect(one).toBeGreaterThan(0);
+  });
+
+  test("a shed prayer is never re-added, however much room is left: the prayers are those the shed left, at every ratio", () => {
+    const w = busyZeus({
+      events: 0,
+      actions: 0,
+      memories: [],
+      feelings: [],
+      prayers: 12,
+      mixedPrayers: true,
+    });
+    const start = loosestPrayerRatio(w);
+    let fewest = Number.POSITIVE_INFINITY;
+    let sweeps = 0;
+    let most = 0;
+    for (let step = 0; step < 4000; step += 1) {
+      const ratio = start - step * 0.0005;
+      const gross = shedAt(w, ratio);
+      if (!gross.fits) break;
+      const capped = capAt(w, ratio);
+      expect(capped.remembered.petitions.map((p) => p.id)).toEqual(
+        gross.remembered.petitions.map((p) => p.id),
+      );
+      expect(capped.remembered.morePrayers).toBe(gross.remembered.morePrayers);
+      expect(capped.shed.prayers).toBe(gross.shed.prayers);
+      sweeps += 1;
+      most = Math.max(most, gross.shed.prayers);
+      fewest = Math.min(fewest, gross.shed.prayers);
+    }
+    expect(sweeps).toBeGreaterThan(100);
+    expect(fewest).toBe(1);
+    expect(most).toBeGreaterThan(2);
+  });
+
+  test("whatever the ratio, the refilled request fits and is no smaller than the shed one, brings back no more than was shed, and the unshed world is over the cap", () => {
+    for (const w of [
+      busyZeus(),
+      busyZeus({ live: 1 }),
+      heraShape(),
+      busyZeus({ uniform: true, mixedPrayers: true }),
+    ]) {
+      const unshed = buildGodContext(w.profile, w.snapshot, w.remembered);
+      for (let ratio = 3.6; ratio >= 0.5; ratio -= 0.05) {
+        const gross = shedAt(w, ratio);
+        const capped = capAt(w, ratio);
+        expect(capped.fits).toBe(gross.fits);
+        if (!capped.fits) continue;
+        expect(capped.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
+        expect(fitsCap(capped.context, ratio)).toBe(true);
+        expect(capped.estimatedTokens).toBeGreaterThanOrEqual(
+          gross.estimatedTokens,
+        );
+        for (const tier of ["events", "actions", "memories"] as const) {
+          expect(capped.shed[tier]).toBeLessThanOrEqual(gross.shed[tier]);
+        }
+        expect(capped.shed.prayers).toBe(gross.shed.prayers);
+        // The rebuilt prompt is the one the reduced pair makes.
+        expect(capped.context).toEqual(
+          buildGodContext(w.profile, capped.snapshot, capped.remembered),
+        );
+        expectAgreement(w, capped);
+        // Positive control: with no shedding, a world that was shed is over the cap.
+        if (Object.values(gross.shed).some((n) => n > 0)) {
+          expect(fitsCap(unshed, ratio)).toBe(false);
+        }
+      }
+    }
   });
 });

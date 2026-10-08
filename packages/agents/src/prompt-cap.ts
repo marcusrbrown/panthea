@@ -229,7 +229,7 @@ const TIERS: readonly (readonly [
  * the god's own obligations and every prayer a live practice names. The loop ends after at most one rebuild
  * per unit, and asks no model.
  */
-export function fitToCap(input: CapInput): Capped {
+export function shedToCap(input: CapInput): Capped {
   let pair: Pair = { snapshot: input.snapshot, remembered: input.remembered };
   let context = buildGodContext(input.profile, pair.snapshot, pair.remembered);
   const shed = { events: 0, actions: 0, memories: 0, prayers: 0 };
@@ -249,5 +249,171 @@ export function fitToCap(input: CapInput): Capped {
     ratio: input.ratio,
     shed,
     fits: fitsCap(context, input.ratio),
+  };
+}
+
+// --- Refilling -----------------------------------------------------------------------------------
+
+/** A shed unit that may come back, and how to put it back into a pair. */
+interface Candidate {
+  readonly tier: "memories" | "actions" | "events";
+  readonly add: (pair: Pair) => Pair;
+}
+
+/** `kept` of `all`, in the order of `all`. */
+const inOrder = <T>(all: readonly T[], kept: ReadonlySet<T>): T[] =>
+  all.filter((item) => kept.has(item));
+
+/**
+ * What a god's prompt loses to the cap and may get back, most valuable first: memories (the most salient,
+ * then the newest among equals), then feelings (the strongest), then its own actions (the newest), then recent
+ * events (the newest). Prayers are not among them. Each candidate adds one unit to a pair and derives everything
+ * from it again, the way shedding does, so that a unit brought back is cited, offered and parsed like one never shed.
+ */
+function refillCandidates(
+  original: Pair,
+  shedPair: Pair,
+  input: CapInput,
+): Candidate[] {
+  const was = original.remembered;
+  const now = shedPair.remembered;
+  const have = new Set(now.memories);
+  const haveFeelings = new Set(now.relationships);
+  const haveActions = new Set(now.ownActions);
+  const haveEvents = new Set(shedPair.snapshot.events);
+  const goalHistoryOf = (
+    memories: readonly { readonly id: string }[],
+    actions: readonly { readonly id: string }[],
+  ) =>
+    was.goalHistory.filter((entry) =>
+      entry.kind === "memory"
+        ? memories.some((memory) => memory.id === entry.memory.id)
+        : actions.some((action) => action.id === entry.event.id),
+    );
+
+  const memories = was.memories
+    .filter((memory) => !have.has(memory))
+    .sort((a, b) => b.salience - a.salience || b.recordedAt - a.recordedAt)
+    .map(
+      (memory): Candidate => ({
+        tier: "memories",
+        add: ({ snapshot, remembered }) => {
+          const kept = inOrder(
+            was.memories,
+            new Set([...remembered.memories, memory]),
+          );
+          return {
+            snapshot,
+            remembered: rederive(input, {
+              ...remembered,
+              memories: kept,
+              goalHistory: goalHistoryOf(kept, remembered.ownActions),
+            }),
+          };
+        },
+      }),
+    );
+  // `rememberedBy` keeps feelings strongest first, and shedding takes them from the end.
+  const feelings = was.relationships
+    .filter((feeling) => !haveFeelings.has(feeling))
+    .map(
+      (feeling): Candidate => ({
+        tier: "memories",
+        add: ({ snapshot, remembered }) => ({
+          snapshot,
+          remembered: {
+            ...remembered,
+            relationships: inOrder(
+              was.relationships,
+              new Set([...remembered.relationships, feeling]),
+            ),
+          },
+        }),
+      }),
+    );
+  const actions = was.ownActions
+    .filter((action) => !haveActions.has(action))
+    .reverse()
+    .map(
+      (action): Candidate => ({
+        tier: "actions",
+        add: ({ snapshot, remembered }) => {
+          const kept = inOrder(
+            was.ownActions,
+            new Set([...remembered.ownActions, action]),
+          );
+          return {
+            snapshot,
+            remembered: {
+              ...remembered,
+              ownActions: kept,
+              goalHistory: goalHistoryOf(remembered.memories, kept),
+            },
+          };
+        },
+      }),
+    );
+  const events = original.snapshot.events
+    .filter((event) => !haveEvents.has(event))
+    .reverse()
+    .map(
+      (event): Candidate => ({
+        tier: "events",
+        add: ({ snapshot, remembered }) => ({
+          snapshot: {
+            ...snapshot,
+            events: inOrder(
+              original.snapshot.events,
+              new Set([...snapshot.events, event]),
+            ),
+          },
+          remembered,
+        }),
+      }),
+    );
+  return [...memories, ...feelings, ...actions, ...events];
+}
+
+/**
+ * `shedToCap`, then a refill: the shed order says what goes first, so once the request fits, what went
+ * earlier than the last resort may come back where room is left. Each shed unit is tried once, most
+ * valuable first (`refillCandidates`); one is kept only if the rebuilt request, with the feedback reserve,
+ * still fits, and dropped again otherwise. A prayer is never brought back. The shed counts are the net:
+ * what stayed out.
+ */
+export function fitToCap(input: CapInput): Capped {
+  const shedOnly = shedToCap(input);
+  if (!shedOnly.fits || Object.values(shedOnly.shed).every((n) => n === 0)) {
+    return shedOnly;
+  }
+  const original: Pair = {
+    snapshot: input.snapshot,
+    remembered: input.remembered,
+  };
+  let pair: Pair = {
+    snapshot: shedOnly.snapshot,
+    remembered: shedOnly.remembered,
+  };
+  let context = shedOnly.context;
+  const shed = { ...shedOnly.shed };
+  for (const candidate of refillCandidates(original, pair, input)) {
+    const trial = candidate.add(pair);
+    const trialContext = buildGodContext(
+      input.profile,
+      trial.snapshot,
+      trial.remembered,
+    );
+    if (!fitsCap(trialContext, input.ratio)) continue;
+    pair = trial;
+    context = trialContext;
+    shed[candidate.tier] -= 1;
+  }
+  return {
+    ...pair,
+    context,
+    estimatedTokens: estimateTokens(context, input.ratio),
+    ratio: input.ratio,
+    shed,
+    fits: true,
   };
 }
