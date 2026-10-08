@@ -371,6 +371,8 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
 - If any is over, the unit stops and reports a feasibility conflict with the measured numbers. It does not raise the cap or adjust the ratio without the owner.
 - The `defaults.md` row cites the measurement.
 
+**Status (2026-10-08):** measured, pass. 21 capped requests on `granite3.3-8b-4k`, each cold, the largest 2,816 real tokens against the 3,000 cap; real over estimated 0.85-0.94. The cap, the ratio and the shed order were not changed. Results are in the `tools/probes/god-latency` README and the `defaults.md` Prompt cap row. The S13 Zeus turn was not reproduced; the synthetic Zeus requests have its shape.
+
 - [ ] **Unit 6: Rerun the unattended hour**
 
 **Goal:** the M2 gate run on granite3.3 with the cap and the corrected gate checks.
