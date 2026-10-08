@@ -147,7 +147,7 @@ function verifyRevision(
   assetId: AssetId,
   revision: Sha256,
   vocabulary: AssetVocabulary,
-): Checked<AssetManifest> {
+): Checked<{ manifest: AssetManifest; atlas: Uint8Array }> {
   const file = manifestFile(revision);
   const bytes = readIfPresent(join(root, file));
   if (bytes === undefined)
@@ -188,11 +188,25 @@ function verifyRevision(
     blob,
   );
   if (!checked.ok) return checked;
-  return { ok: true, value: parsed.value };
+  return { ok: true, value: { manifest: parsed.value, atlas: blobBytes } };
 }
 
 const toFailure = (located: Located) =>
   assetFail(located.code, `${located.file}: ${located.message}`);
+
+/** One verified published revision, current or older: its manifest and the exact atlas PNG bytes it names. */
+export function readRevision(
+  root: string,
+  assetId: AssetId,
+  revision: Sha256,
+  vocabulary: AssetVocabulary,
+): AssetResult<{
+  readonly manifest: AssetManifest;
+  readonly atlas: Uint8Array;
+}> {
+  const verified = verifyRevision(root, assetId, revision, vocabulary);
+  return verified.ok ? assetOk(verified.value) : toFailure(verified);
+}
 
 /**
  * Phase one of publishing: validates the manifest and its blobs, then writes
@@ -399,7 +413,7 @@ export function loadRegistry(
       entries.set(entry.assetId, {
         assetId: entry.assetId,
         revision: entry.revision,
-        manifest: verified.value,
+        manifest: verified.value.manifest,
       });
     } else {
       problems.push({ file: verified.file, message: verified.message });

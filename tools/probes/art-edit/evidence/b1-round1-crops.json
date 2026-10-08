@@ -1,0 +1,58 @@
+[
+  {
+    "kind": "single",
+    "seed": 20261006,
+    "bands": [[139, 52, 392, 596]],
+    "selected_bbox": [139, 52, 392, 596],
+    "method": "border-colour distance >30, lowest vertical content band, nearest-neighbour fit to 56px height, centered and bottom-aligned in 64x80"
+  },
+  {
+    "kind": "single",
+    "seed": 20261007,
+    "bands": [[192, 48, 316, 280], [204, 360, 317, 568]],
+    "selected_bbox": [204, 360, 317, 568],
+    "method": "border-colour distance >30, lowest vertical content band, nearest-neighbour fit to 56px height, centered and bottom-aligned in 64x80"
+  },
+  {
+    "kind": "single",
+    "seed": 20261008,
+    "bands": [[144, 124, 372, 560]],
+    "selected_bbox": [144, 124, 372, 560],
+    "method": "border-colour distance >30, lowest vertical content band, nearest-neighbour fit to 56px height, centered and bottom-aligned in 64x80"
+  },
+  {
+    "kind": "single",
+    "seed": 20261009,
+    "bands": [[194, 24, 312, 249], [184, 307, 352, 597]],
+    "selected_bbox": [184, 307, 352, 597],
+    "method": "border-colour distance >30, lowest vertical content band, nearest-neighbour fit to 56px height, centered and bottom-aligned in 64x80"
+  },
+  {
+    "kind": "native-sheet-first-cell",
+    "seed": 20261006,
+    "sheet_cell": [0, 0, 128, 128],
+    "content_bbox": [31, 16, 93, 120],
+    "method": "crop first 128x128 cell, detect content with threshold 30, nearest-neighbour fit to 56px height, center/bottom-align in 64x80"
+  },
+  {
+    "kind": "native-sheet-first-cell",
+    "seed": 20261007,
+    "sheet_cell": [0, 0, 128, 128],
+    "content_bbox": [36, 24, 89, 120],
+    "method": "crop first 128x128 cell, detect content with threshold 30, nearest-neighbour fit to 56px height, center/bottom-align in 64x80"
+  },
+  {
+    "kind": "native-sheet-first-cell",
+    "seed": 20261008,
+    "sheet_cell": [0, 0, 128, 128],
+    "content_bbox": [35, 24, 89, 120],
+    "method": "crop first 128x128 cell, detect content with threshold 30, nearest-neighbour fit to 56px height, center/bottom-align in 64x80"
+  },
+  {
+    "kind": "native-sheet-first-cell",
+    "seed": 20261009,
+    "sheet_cell": [0, 0, 128, 128],
+    "content_bbox": [33, 24, 92, 120],
+    "method": "crop first 128x128 cell, detect content with threshold 30, nearest-neighbour fit to 56px height, center/bottom-align in 64x80"
+  }
+]

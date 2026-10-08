@@ -37,13 +37,37 @@ const COMMITTED = join(import.meta.dir, "..", "..", "..", "content", "greek");
 const vocabulary = committedVocabulary();
 const dirs: string[] = [];
 
-/** A content root with the committed gods, vocabulary and subjects and an empty canon. */
+/**
+ * A content root with the committed gods, vocabulary, palette and subjects, an
+ * empty canon and no subject portrait mappings. The committed registry and the
+ * mappings that point into it are left out, so every scenario starts from the
+ * same state however much has been published to `content/greek`.
+ */
 function contentRoot(): string {
   const dir = mkdtempSync(join(tmpdir(), "assets-validator-"));
   dirs.push(dir);
+  const committedRegistry = join(COMMITTED, "assets", "registry");
   cpSync(join(COMMITTED, "gods"), join(dir, "gods"), { recursive: true });
-  cpSync(join(COMMITTED, "assets"), join(dir, "assets"), { recursive: true });
+  cpSync(join(COMMITTED, "assets"), join(dir, "assets"), {
+    recursive: true,
+    filter: (source) => source !== committedRegistry,
+  });
   cpSync(join(COMMITTED, "palette"), join(dir, "palette"), { recursive: true });
+  mkdirSync(registryOf(dir), { recursive: true });
+  writeFileSync(
+    join(registryOf(dir), "index.json"),
+    `${JSON.stringify({ schemaVersion: 1, entries: [] }, null, 2)}\n`,
+  );
+  const subjects = join(dir, "assets", "subjects");
+  for (const name of readdirSync(subjects)) {
+    const { portrait: _mapped, ...subject } = JSON.parse(
+      readFileSync(join(subjects, name), "utf8"),
+    );
+    writeFileSync(
+      join(subjects, name),
+      `${JSON.stringify(subject, null, 2)}\n`,
+    );
+  }
   return dir;
 }
 
@@ -108,8 +132,39 @@ const diagnosticsOf = (root: string) => validateAssets(root).diagnostics;
 const files = (root: string) => diagnosticsOf(root).map((d) => d.file);
 
 describe("committed content", () => {
-  it("is valid with an empty canon", () => {
+  it("is valid with the published canon", () => {
     expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("resolves each mapped subject portrait to a published portrait", () => {
+    const { snapshot } = loadRegistry(
+      join(COMMITTED, "assets", "registry"),
+      vocabulary,
+    );
+    const subjects = join(COMMITTED, "assets", "subjects");
+    for (const name of readdirSync(subjects)) {
+      const { portrait } = JSON.parse(
+        readFileSync(join(subjects, name), "utf8"),
+      );
+      if (portrait === undefined) continue;
+      expect(
+        resolveAsset(snapshot, { spriteId: portrait, expression: "neutral" }),
+      ).toMatchObject({ source: "canon", kind: "portrait" });
+    }
+  });
+
+  it("has an empty-canon fixture tree: no published asset and no portrait mapping", () => {
+    const root = contentRoot();
+    expect(
+      JSON.parse(readFileSync(join(registryOf(root), "index.json"), "utf8")),
+    ).toEqual({ schemaVersion: 1, entries: [] });
+    expect(readdirSync(registryOf(root))).toEqual(["index.json"]);
+    const zeus = JSON.parse(
+      readFileSync(join(root, "assets", "subjects", "zeus.json"), "utf8"),
+    );
+    expect(zeus).not.toHaveProperty("portrait");
+    expect(zeus).toMatchObject({ godId: "zeus", paletteFamily: "olympus" });
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
   });
 });
 
@@ -331,6 +386,80 @@ describe("broken registry", () => {
     expect(diagnosticsOf(root).map((d) => d.file)).toEqual([
       `assets/registry/manifests/${zeus}.json`,
     ]);
+  });
+});
+
+describe("source asset revisions", () => {
+  /** An older revision of zeus, then a portrait whose provenance names it as a source, with zeus republished since. */
+  function withSource() {
+    const root = contentRoot();
+    const older = publish(root, spriteFixture("placeholder-zeus", 1));
+    publish(root, spriteFixture("placeholder-zeus", 2));
+    const portrait = portraitFixture();
+    const sourced = {
+      blobs: portrait.blobs,
+      manifest: {
+        ...portrait.manifest,
+        provenance: {
+          ...portrait.manifest.provenance,
+          sourceAssets: [
+            { assetId: "placeholder-zeus" as AssetId, revision: older },
+          ],
+        },
+      },
+    } as FixtureAsset;
+    const revision = publish(root, sourced);
+    return { root, older, revision };
+  }
+
+  it("accepts a source revision that is older than the one the index selects, without any authoring ledger", () => {
+    const { root } = withSource();
+
+    expect(diagnosticsOf(root)).toEqual([]);
+  });
+
+  it("reports a source revision whose manifest is missing, against the manifest that names it", () => {
+    const { root, older, revision } = withSource();
+    rmSync(join(registryOf(root), "manifests", `${older}.json`));
+
+    expect(files(root)).toEqual([`assets/registry/manifests/${revision}.json`]);
+    expect(diagnosticsOf(root)[0]?.message).toMatch(/source revision/);
+  });
+
+  it("reports a source revision that is corrupt, and a source blob that is missing", () => {
+    const { root, older, revision } = withSource();
+    const manifestFile = join(registryOf(root), "manifests", `${older}.json`);
+    const good = readFileSync(manifestFile);
+    writeFileSync(manifestFile, "{}");
+    expect(files(root)).toEqual([`assets/registry/manifests/${revision}.json`]);
+    writeFileSync(manifestFile, good);
+    expect(diagnosticsOf(root)).toEqual([]);
+
+    const blob = spriteFixture("placeholder-zeus", 1).manifest.atlas.blob;
+    rmSync(join(registryOf(root), "blobs", `${blob}.png`));
+    expect(files(root)).toEqual([`assets/registry/manifests/${revision}.json`]);
+  });
+
+  it("reports a source revision of an asset the registry never had", () => {
+    const root = contentRoot();
+    const portrait = portraitFixture();
+    publish(root, {
+      blobs: portrait.blobs,
+      manifest: {
+        ...portrait.manifest,
+        provenance: {
+          ...portrait.manifest.provenance,
+          sourceAssets: [
+            {
+              assetId: "never-published" as AssetId,
+              revision: "b".repeat(64) as never,
+            },
+          ],
+        },
+      },
+    } as FixtureAsset);
+
+    expect(diagnosticsOf(root)).toHaveLength(1);
   });
 });
 

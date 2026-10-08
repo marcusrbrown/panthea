@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "round": 9,
+  "modelRuns": [],
+  "store": ".context/studio-pipeline/u7-creative/studio",
+  "config": ".context/studio-pipeline/u7-creative/config-u7-r2.json",
+  "portrait": {
+    "workingSetId": "zeus-portraits-u7-r8",
+    "editId": "zeus-portraits-scripted-head-composite-mouths-u7-r9",
+    "base": {
+      "kind": "frames",
+      "editId": "zeus-portraits-cleanup-u7-r8",
+      "sheetHash": "e80495603f4b5284f894db36347c896f3956f5e4ddc4e22546816b0d67c549c1"
+    },
+    "sourceSheetSha256": "bfddcce1b429ce8e5bf0203ec230f1033923982402c804c516a025df96e0605f",
+    "outputSheetSha256": "47f4e43f90ce27847d3d33fb51fb1772a18708c937e82bcf180734722572ee84",
+    "slots": {
+      "neutral": {
+        "sourceRgbaSha256": "47cf8bac14b582b55fcb016b1ed38ccd65f314f82241f920c7a195de8d5c6519",
+        "outputRgbaSha256": "47cf8bac14b582b55fcb016b1ed38ccd65f314f82241f920c7a195de8d5c6519",
+        "storedFrameHash": "61b3150b8cc1dd937a30ef73442ae827d4f3a34fd6e3abab6e163f9ef0c1b1b6"
+      },
+      "pleased": {
+        "sourceRgbaSha256": "821ecc733c83e8e54d292384ac89b7054a258559e827e981321268c33f74fb20",
+        "outputRgbaSha256": "834eb589a332a10ee5bc9b0a5b3cde8c18f86c6e232343096e7e75aa5d8b5aae",
+        "storedFrameHash": "2b51992cc5aaf59937f4cf6bb82afb9f9378f306eb132b468426d2442780cba7"
+      },
+      "angry": {
+        "sourceRgbaSha256": "ec967b8cbf271a94bdc48a15ebddd933656c52194319a3993328b972d968b122",
+        "outputRgbaSha256": "dbfcafc78c084ed090333d5a7bf73ce0c3f7c0ee4868e4255a48144ea08906e5",
+        "storedFrameHash": "c6e882946f26a3c2eba2a65b6648e6a88b13f31931e0ec2844e26af7f19f34cd"
+      },
+      "grieving": {
+        "sourceRgbaSha256": "9ea98f0e5e6e5a998735fcd5ce4284980b102d81d3e35f31dd896b980eda19f6",
+        "outputRgbaSha256": "fec250afbb3a4d3849a2e8fea1208737269fd5fb490c81fdc0f47180ea502953",
+        "storedFrameHash": "8834d57f10ffdce1bec0b828b5bbf4d78537a15b57522ab888c21ed3dd0439b5"
+      },
+      "scheming": {
+        "sourceRgbaSha256": "cdaa8e6f464e5949ac627b53ad735044ec0e1a32527108fa90687172cced0b5e",
+        "outputRgbaSha256": "1d1bb66ede728fba6577f7aa4a05201503a8826bcca395a7a908bd80c237d1f7",
+        "storedFrameHash": "ef01bf927d863347808e1d2e4f17544e0f78528ae54edf9d43d96f2750c177d2"
+      },
+      "awed": {
+        "sourceRgbaSha256": "74a1ed691c0904e10c70d526a18a9114bb643a05c8795b3bbba3dc0983dc1d99",
+        "outputRgbaSha256": "4a2013a82c65c066ebb8cddd2cf154946df0b14b58c18f611f1f8e8a0f3e477d",
+        "storedFrameHash": "55eacda9a01d9023e448a00d318b45ce889f2e72ae9d69970ecf64b2a7d1f7ea"
+      }
+    },
+    "browRectangles96HalfOpen": [
+      [46, 28, 59, 32],
+      [59, 27, 68, 32],
+      [48, 31, 52, 32],
+      [54, 31, 58, 32],
+      [61, 30, 66, 32]
+    ],
+    "mouthRestorePatchInclusive": {
+      "x": [46, 70],
+      "y": [42, 58]
+    },
+    "outsideEditRectangleDriftPixels": {
+      "neutral": 0,
+      "pleased": 0,
+      "angry": 0,
+      "grieving": 0,
+      "scheming": 0,
+      "awed": 0
+    },
+    "mouthWidthsPx": {
+      "pleased": 10,
+      "angry": 10,
+      "grieving": 10,
+      "scheming": 10,
+      "awed": 9
+    },
+    "eyesHandEdited": false,
+    "conformance": {
+      "mode": "report-only",
+      "slots": ["neutral", "pleased", "angry", "grieving", "scheming", "awed"],
+      "allOk": true,
+      "exitCodes": [0, 0, 0, 0, 0, 0]
+    },
+    "provenanceDescription": "hand edit zeus-portraits-scripted-head-composite-mouths-u7-r9"
+  },
+  "sprite": {
+    "workingSetId": "zeus-idle-south-u7-r9",
+    "editId": "zeus-idle-south-scripted-cleanup-outline-bob-u7-r9",
+    "sourceCandidateId": "zeus-idle-south-u7-r8-full-s075-20261023-0000",
+    "sourceImageHash": "b1c15745f27ec67e80382f5d1d6ee19f139d33fca525e2401851134877b5c918",
+    "outputSheetSha256": "52549f10b6e77d6bc0ab79347f9f7730dc0d6077cb34cc72e00c0243598db5d6",
+    "frames": [
+      {
+        "hash": "71d1ecca0f209b8103b18175202fb898750cf66fce8f9f0d228ad4eae9caea66",
+        "durationMs": 167
+      },
+      {
+        "hash": "b7b44f9ad1d7ec9117d6ed7ae555efed936f60d8e3c95733fb1b8ec03a4d28dc",
+        "durationMs": 166
+      },
+      {
+        "hash": "b7b44f9ad1d7ec9117d6ed7ae555efed936f60d8e3c95733fb1b8ec03a4d28dc",
+        "durationMs": 167
+      },
+      {
+        "hash": "71d1ecca0f209b8103b18175202fb898750cf66fce8f9f0d228ad4eae9caea66",
+        "durationMs": 166
+      }
+    ],
+    "frameRgbaSha256": [
+      "fa654e74dc14f0a3029548ce8752ffa0125c5629a3dc2de6b83ebfe8d702f4bc",
+      "921bdb637757c4cec7e3b393716d4027a752ffab49b2b4530c152c35525beb48",
+      "921bdb637757c4cec7e3b393716d4027a752ffab49b2b4530c152c35525beb48",
+      "fa654e74dc14f0a3029548ce8752ffa0125c5629a3dc2de6b83ebfe8d702f4bc"
+    ],
+    "pivot": [32, 80],
+    "metrics": {
+      "figureHeightPx": [55, 56],
+      "headHeightPx": 15,
+      "headRatioPercent": [27.27, 26.79],
+      "feetRow": 79,
+      "footCentersX": [27, 37],
+      "footMidpointX": 32,
+      "colors": 10,
+      "paletteOnly": true,
+      "binaryAlpha": true,
+      "pureBlackWhite": false,
+      "boltBboxHalfOpen": [9, 56, 19, 71],
+      "boltSizePx": [10, 15],
+      "handBlockPixels": 3,
+      "boltHandConnected": true,
+      "outline": {
+        "color": "#243f63",
+        "basePixels": 231,
+        "inhalePixels": 239,
+        "boundaryCoveragePercent": 100
+      },
+      "blueGreySparkPixelsRemoved": 14,
+      "oldBoltRegionOpaquePixelsCleared": 84,
+      "cloakDecision": "kept; the navy drape reads as a separate shoulder cloak, not an isolated blob"
+    },
+    "bobVerification": {
+      "upperBodyTranslationPx": -1,
+      "noScanlineDuplication": true,
+      "lowerLegAnchorPixelsFixed": true,
+      "durationsMs": [167, 166, 167, 166]
+    },
+    "candidateReport": {
+      "status": "pass",
+      "checks": [
+        "grid",
+        "canvas",
+        "binary-alpha",
+        "palette",
+        "colour-count",
+        "pure-black-white",
+        "pivot",
+        "silhouette"
+      ]
+    },
+    "finalReportOnly": {
+      "exitCode": 1,
+      "code": "proposal-would-replace",
+      "message": "conforming would change the stored pixels; nothing was changed",
+      "frames": [
+        {
+          "index": 0,
+          "report": "pass",
+          "failedChecks": [],
+          "pixelsChanged": 435
+        },
+        {
+          "index": 1,
+          "report": "pass",
+          "failedChecks": [],
+          "pixelsChanged": 442
+        },
+        {
+          "index": 2,
+          "report": "pass",
+          "failedChecks": [],
+          "pixelsChanged": 442
+        },
+        {
+          "index": 3,
+          "report": "pass",
+          "failedChecks": [],
+          "pixelsChanged": 435
+        }
+      ],
+      "proposalApplied": false,
+      "reason": "the configured key (40,65,99) ±32 matches the required #243f63 outline and the navy cloak; conform was performed before the outline, and this report-only proposal was not applied"
+    },
+    "provenanceBase": {
+      "kind": "keyframe",
+      "candidateId": "zeus-idle-south-u7-r8-full-s075-20261023-0000",
+      "imageHash": "b1c15745f27ec67e80382f5d1d6ee19f139d33fca525e2401851134877b5c918"
+    },
+    "provenanceDescription": "hand edit zeus-idle-south-scripted-cleanup-outline-bob-u7-r9"
+  },
+  "r8RecordCorrections": {
+    "file": "tools/probes/art-edit/r8-run-manifest.json",
+    "handAuthoredInitIncludedBolt": true,
+    "fourDeletedPixels": [[32, 76], [32, 77], [32, 78], [32, 79]],
+    "note": "The R8 manifest already contains both corrections and the exact foot-pixel coordinates."
+  },
+  "reviewFiles": [
+    "portraits-after-1x.png",
+    "portraits-after-4x.png",
+    "portraits-before-after-1x.png",
+    "portraits-before-after-4x.png",
+    "sprite-final-1x.png",
+    "sprite-final-4x.png",
+    "sprite-silhouette-threshold-1x.png",
+    "sprite-silhouette-threshold-4x.png",
+    "sprite-two-colour-test-1x.png",
+    "sprite-two-colour-test-4x.png"
+  ],
+  "tests": {
+    "command": "python3 -m unittest tools/probes/art-edit/test_round9_pixels.py",
+    "passed": 4
+  },
+  "modelUsage": "No model process, sd-cli, or sd-server was started in round 9."
+}

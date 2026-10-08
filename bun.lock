@@ -65,6 +65,7 @@
       "name": "@panthea/assets",
       "version": "0.1.0",
       "dependencies": {
+        "@panthea/content": "workspace:*",
         "@panthea/contracts": "workspace:*",
       },
     },
@@ -208,6 +209,16 @@
         "@panthea/telemetry": "workspace:*",
         "@panthea/tools-probes-shared": "workspace:*",
         "@panthea/world": "workspace:*",
+      },
+    },
+    "tools/studio": {
+      "name": "@panthea/tools-studio",
+      "version": "0.1.0",
+      "bin": {
+        "studio": "./src/index.ts",
+      },
+      "dependencies": {
+        "@panthea/assets": "workspace:*",
       },
     },
   },
@@ -401,6 +412,8 @@
     "@panthea/tools-probes-shared": ["@panthea/tools-probes-shared@workspace:tools/probes/shared"],
 
     "@panthea/tools-scenarios": ["@panthea/tools-scenarios@workspace:tools/scenarios"],
+
+    "@panthea/tools-studio": ["@panthea/tools-studio@workspace:tools/studio"],
 
     "@panthea/world": ["@panthea/world@workspace:packages/world"],
 

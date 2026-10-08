@@ -414,6 +414,31 @@ export interface GenerationSlot {
   readonly expression?: string;
 }
 
+/**
+ * What a masked edit starts from: an earlier job's output, named by the job and
+ * the output hash used; or a hand-authored image imported as a studio blob,
+ * which no job made and which provenance records as hand work.
+ */
+export type EditBase =
+  | { readonly kind: "job"; readonly jobId: string; readonly output: Sha256 }
+  | {
+      readonly kind: "hand";
+      readonly image: Sha256;
+      readonly description: string;
+    };
+
+/**
+ * A masked img2img edit of a base. The mask is a studio blob (white marks the
+ * pixels the model may change). `cue` is the wording of the change.
+ */
+export interface GenerationEdit {
+  readonly base: EditBase;
+  readonly mask: Sha256;
+  /** Denoising strength, greater than 0 and at most 1. */
+  readonly strength: number;
+  readonly cue: string;
+}
+
 export interface GenerationRequest {
   readonly schemaVersion: number;
   /** Subject id from the content pack, e.g. a god id. */
@@ -423,6 +448,8 @@ export interface GenerationRequest {
   readonly batch: number;
   readonly styleNote?: string;
   readonly seed?: number;
+  /** Present when the generation edits an earlier job's output instead of drawing from noise. */
+  readonly edit?: GenerationEdit;
 }
 
 export const LICENCE_ROLES = [
@@ -493,17 +520,24 @@ interface ProvenanceCommon {
   readonly ownerException?: OwnerException;
 }
 
-export interface GeneratedProvenance extends ProvenanceCommon {
-  readonly method: "generated";
-  /** The succeeded job whose outputs produced this asset. */
+/** One succeeded job that contributed to an asset, with the exact narrowed request and engine that ran it. */
+export interface GenerationRef {
   readonly jobId: string;
   readonly request: GenerationRequest;
   readonly runtime: RuntimeRef;
   readonly model: ModelRef;
   readonly loras: readonly ModelRef[];
+  readonly encoder: ModelRef | null;
+  readonly vae: ModelRef | null;
   readonly seed: number;
   readonly settings: Readonly<Record<string, SettingValue>>;
-  readonly resultHashes: readonly Sha256[];
+  /** The job outputs this asset actually uses; a non-empty subset of the job's outputs. */
+  readonly used: readonly Sha256[];
+}
+
+export interface GeneratedProvenance extends ProvenanceCommon {
+  readonly method: "generated";
+  readonly generations: readonly GenerationRef[];
 }
 
 export interface HandProvenance extends ProvenanceCommon {
@@ -651,6 +685,80 @@ function parseSlot(value: unknown, path: string): ParseResult<GenerationSlot> {
   );
 }
 
+function parseEditBase(value: unknown, path: string): ParseResult<EditBase> {
+  if (!isRecord(value)) return fail(path, "expected an object");
+  const kind = parseEnum(value.kind, `${path}.kind`, ["job", "hand"] as const);
+  if (!kind.ok) return kind;
+  if (kind.value === "job")
+    return parseStrictRecord<EditBase>(
+      value,
+      path,
+      ["kind", "jobId", "output"],
+      (record) => {
+        const jobId = parseSlug(record.jobId, `${path}.jobId`);
+        if (!jobId.ok) return jobId;
+        const output = parseSha256(record.output, `${path}.output`);
+        if (!output.ok) return output;
+        return ok({ kind: "job", jobId: jobId.value, output: output.value });
+      },
+    );
+  return parseStrictRecord<EditBase>(
+    value,
+    path,
+    ["kind", "image", "description"],
+    (record) => {
+      const image = parseSha256(record.image, `${path}.image`);
+      if (!image.ok) return image;
+      const description = parseString(
+        record.description,
+        `${path}.description`,
+      );
+      if (!description.ok) return description;
+      return ok({
+        kind: "hand",
+        image: image.value,
+        description: description.value,
+      });
+    },
+  );
+}
+
+function parseGenerationEdit(
+  value: unknown,
+  path: string,
+): ParseResult<GenerationEdit> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["base", "mask", "strength", "cue"],
+    (record) => {
+      const base = parseEditBase(record.base, `${path}.base`);
+      if (!base.ok) return base;
+      const mask = parseSha256(record.mask, `${path}.mask`);
+      if (!mask.ok) return mask;
+      const { strength } = record;
+      if (
+        typeof strength !== "number" ||
+        !Number.isFinite(strength) ||
+        strength <= 0 ||
+        strength > 1
+      )
+        return fail(
+          `${path}.strength`,
+          "expected a number above 0 and at most 1",
+        );
+      const cue = parseString(record.cue, `${path}.cue`);
+      if (!cue.ok) return cue;
+      return ok({
+        base: base.value,
+        mask: mask.value,
+        strength,
+        cue: cue.value,
+      });
+    },
+  );
+}
+
 export function parseGenerationRequest(
   input: unknown,
   path = "request",
@@ -658,7 +766,16 @@ export function parseGenerationRequest(
   return parseStrictRecord(
     input,
     path,
-    ["schemaVersion", "subject", "kind", "slots", "batch", "styleNote", "seed"],
+    [
+      "schemaVersion",
+      "subject",
+      "kind",
+      "slots",
+      "batch",
+      "styleNote",
+      "seed",
+      "edit",
+    ],
     (record) => {
       const schemaVersion = parseSchemaVersion(
         record.schemaVersion,
@@ -694,6 +811,12 @@ export function parseGenerationRequest(
         if (!parsed.ok) return parsed;
         seed = parsed.value;
       }
+      let edit: GenerationEdit | undefined;
+      if (record.edit !== undefined) {
+        const parsed = parseGenerationEdit(record.edit, `${path}.edit`);
+        if (!parsed.ok) return parsed;
+        edit = parsed.value;
+      }
       return ok({
         schemaVersion: schemaVersion.value,
         subject: subject.value,
@@ -702,6 +825,7 @@ export function parseGenerationRequest(
         batch: batch.value,
         ...(styleNote === undefined ? {} : { styleNote }),
         ...(seed === undefined ? {} : { seed }),
+        ...(edit === undefined ? {} : { edit }),
       });
     },
   );
@@ -709,7 +833,7 @@ export function parseGenerationRequest(
 
 // --- Provenance -------------------------------------------------------------------
 
-function parseLicence(
+export function parseLicence(
   value: unknown,
   path: string,
 ): ParseResult<LicenceRecord> {
@@ -813,7 +937,10 @@ function parseRevisionRef(
   });
 }
 
-function parseModelRef(value: unknown, path: string): ParseResult<ModelRef> {
+export function parseModelRef(
+  value: unknown,
+  path: string,
+): ParseResult<ModelRef> {
   return parseStrictRecord(value, path, ["id", "sha256"], (record) => {
     const id = parseString(record.id, `${path}.id`);
     if (!id.ok) return id;
@@ -823,7 +950,7 @@ function parseModelRef(value: unknown, path: string): ParseResult<ModelRef> {
   });
 }
 
-function parseRuntimeRef(
+export function parseRuntimeRef(
   value: unknown,
   path: string,
 ): ParseResult<RuntimeRef> {
@@ -841,7 +968,7 @@ const SECRET_KEY =
 const URL_VALUE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /** Generation settings are scalars; credential-like keys and endpoint-like values never enter a record. */
-function parseSettings(
+export function parseGenerationSettings(
   value: unknown,
   path: string,
 ): ParseResult<Readonly<Record<string, SettingValue>>> {
@@ -888,16 +1015,7 @@ export function parseProvenance(
   const method = parseEnum(input.method, `${path}.method`, PROVENANCE_METHODS);
   if (!method.ok) return { ...method, reason: "unknown-kind" };
   const extraKeys = {
-    generated: [
-      "jobId",
-      "request",
-      "runtime",
-      "model",
-      "loras",
-      "seed",
-      "settings",
-      "resultHashes",
-    ],
+    generated: ["generations"],
     hand: ["editor"],
     derived: ["operation", "runtime", "resultHashes"],
   }[method.value];
@@ -973,15 +1091,14 @@ export function parseProvenance(
     });
   }
 
-  const resultHashes = parseSha256List(
-    input.resultHashes,
-    `${path}.resultHashes`,
-  );
-  if (!resultHashes.ok) return resultHashes;
-  const runtime = parseRuntimeRef(input.runtime, `${path}.runtime`);
-  if (!runtime.ok) return runtime;
-
   if (method.value === "derived") {
+    const resultHashes = parseSha256List(
+      input.resultHashes,
+      `${path}.resultHashes`,
+    );
+    if (!resultHashes.ok) return resultHashes;
+    const runtime = parseRuntimeRef(input.runtime, `${path}.runtime`);
+    if (!runtime.ok) return runtime;
     if (sourceAssets.value.length === 0) {
       return fail(
         `${path}.sourceAssets`,
@@ -999,64 +1116,173 @@ export function parseProvenance(
     });
   }
 
-  const jobId = parseSlug(input.jobId, `${path}.jobId`);
-  if (!jobId.ok) return jobId;
-  const request = parseGenerationRequest(input.request, `${path}.request`);
-  if (!request.ok) return request;
-  const model = parseModelRef(input.model, `${path}.model`);
-  if (!model.ok) return model;
-  const loras = parseArray(input.loras, `${path}.loras`, parseModelRef);
-  if (!loras.ok) return loras;
-  const seed = parseIntegerAtLeast(input.seed, `${path}.seed`, 0);
-  if (!seed.ok) return seed;
-  const settings = parseSettings(input.settings, `${path}.settings`);
-  if (!settings.ok) return settings;
-
-  const source = relatedJobs.value.find((job) => job.jobId === jobId.value);
-  if (source === undefined) {
-    return fail(
-      `${path}.jobId`,
-      `source job "${jobId.value}" is not in relatedJobs`,
-    );
-  }
-  if (source.status !== "succeeded") {
-    return fail(
-      `${path}.jobId`,
-      `source job "${jobId.value}" is ${source.status}, not succeeded`,
-    );
-  }
-  const outputs = new Set<string>(source.outputs ?? []);
-  const results = new Set<string>(resultHashes.value);
-  if (
-    outputs.size !== results.size ||
-    [...results].some((hash) => !outputs.has(hash))
-  ) {
-    return fail(
-      `${path}.resultHashes`,
-      "result hashes differ from the source job's outputs",
-    );
-  }
-  const licensed = new Set(licences.value.map((licence) => licence.subject));
-  for (const component of [model.value, ...loras.value]) {
-    if (!licensed.has(component.id)) {
+  const generations = parseArray(
+    input.generations,
+    `${path}.generations`,
+    parseGenerationRef,
+  );
+  if (!generations.ok) return generations;
+  if (generations.value.length === 0)
+    return fail(`${path}.generations`, "expected at least one generation");
+  const duplicate = uniqueBy(
+    generations.value,
+    (generation) => generation.jobId,
+    `${path}.generations`,
+  );
+  if (duplicate) return duplicate;
+  for (const [index, generation] of generations.value.entries()) {
+    const at = `${path}.generations[${index}]`;
+    const job = relatedJobs.value.find((ref) => ref.jobId === generation.jobId);
+    if (job === undefined)
       return fail(
-        `${path}.licences`,
-        `no licence record for "${component.id}"`,
+        `${at}.jobId`,
+        `job "${generation.jobId}" is not in relatedJobs`,
       );
+    if (job.status !== "succeeded")
+      return fail(
+        `${at}.jobId`,
+        `job "${generation.jobId}" is ${job.status}, not succeeded`,
+      );
+    const outputs = new Set<string>(job.outputs ?? []);
+    const stray = generation.used.find((hash) => !outputs.has(hash));
+    if (stray !== undefined)
+      return fail(
+        `${at}.used`,
+        `used hash ${stray} is not an output of job "${generation.jobId}"`,
+      );
+    const { edit } = generation.request;
+    if (edit?.base.kind === "job") {
+      const { jobId, output } = edit.base;
+      const base = relatedJobs.value.find((ref) => ref.jobId === jobId);
+      if (base === undefined)
+        return fail(
+          `${at}.request.edit.base.jobId`,
+          `base job "${jobId}" is not in relatedJobs`,
+        );
+      if (base.status !== "succeeded")
+        return fail(
+          `${at}.request.edit.base.jobId`,
+          `base job "${jobId}" is ${base.status}, not succeeded`,
+        );
+      if (!(base.outputs ?? []).includes(output))
+        return fail(
+          `${at}.request.edit.base.output`,
+          `base output ${output} is not an output of job "${jobId}"`,
+        );
+    }
+    if (edit?.base.kind === "hand") {
+      const { image } = edit.base;
+      if (!handEdits.value.some((step) => step.hash === image))
+        return fail(
+          `${at}.request.edit.base.image`,
+          `the hand-authored base ${image} is not recorded in handEdits`,
+        );
+    }
+    const licensed = (subject: string, role: LicenceRole) =>
+      licences.value.some(
+        (licence) => licence.subject === subject && licence.role === role,
+      );
+    const needs: [string, LicenceRole][] = [
+      [generation.runtime.name, "runtime"],
+      [generation.model.id, "model"],
+      ...generation.loras.map((ref): [string, LicenceRole] => [ref.id, "lora"]),
+      ...(generation.encoder === null
+        ? []
+        : [[generation.encoder.id, "encoder"] as [string, LicenceRole]]),
+      ...(generation.vae === null
+        ? []
+        : [[generation.vae.id, "vae"] as [string, LicenceRole]]),
+    ];
+    for (const [subject, role] of needs) {
+      if (!licensed(subject, role))
+        return fail(
+          `${path}.licences`,
+          `no ${role} licence record for "${subject}"`,
+        );
     }
   }
   return ok({
     method: "generated",
-    jobId: jobId.value,
-    request: request.value,
-    runtime: runtime.value,
-    model: model.value,
-    loras: loras.value,
-    seed: seed.value,
-    settings: settings.value,
-    resultHashes: resultHashes.value,
+    generations: generations.value,
     ...common,
   });
+}
+
+function parseGenerationRef(
+  value: unknown,
+  path: string,
+): ParseResult<GenerationRef> {
+  return parseStrictRecord(
+    value,
+    path,
+    [
+      "jobId",
+      "request",
+      "runtime",
+      "model",
+      "loras",
+      "encoder",
+      "vae",
+      "seed",
+      "settings",
+      "used",
+    ],
+    (record) => {
+      const jobId = parseSlug(record.jobId, `${path}.jobId`);
+      if (!jobId.ok) return jobId;
+      const request = parseGenerationRequest(record.request, `${path}.request`);
+      if (!request.ok) return request;
+      if (request.value.slots.length !== 1 || request.value.batch !== 1)
+        return fail(
+          `${path}.request`,
+          "a generation records the narrowed request: one slot, batch 1",
+        );
+      if (request.value.seed === undefined)
+        return fail(`${path}.request`, "a generation records the seed it ran");
+      const runtime = parseRuntimeRef(record.runtime, `${path}.runtime`);
+      if (!runtime.ok) return runtime;
+      const model = parseModelRef(record.model, `${path}.model`);
+      if (!model.ok) return model;
+      const loras = parseArray(record.loras, `${path}.loras`, parseModelRef);
+      if (!loras.ok) return loras;
+      const encoder = parseOptionalModelRef(record.encoder, `${path}.encoder`);
+      if (!encoder.ok) return encoder;
+      const vae = parseOptionalModelRef(record.vae, `${path}.vae`);
+      if (!vae.ok) return vae;
+      const seed = parseIntegerAtLeast(record.seed, `${path}.seed`, 0);
+      if (!seed.ok) return seed;
+      if (seed.value !== request.value.seed)
+        return fail(`${path}.seed`, "the seed differs from the request's seed");
+      const settings = parseGenerationSettings(
+        record.settings,
+        `${path}.settings`,
+      );
+      if (!settings.ok) return settings;
+      const used = parseSha256List(record.used, `${path}.used`);
+      if (!used.ok) return used;
+      if (new Set(used.value).size !== used.value.length)
+        return fail(`${path}.used`, "expected unique hashes");
+      return ok({
+        jobId: jobId.value,
+        request: request.value,
+        runtime: runtime.value,
+        model: model.value,
+        loras: loras.value,
+        encoder: encoder.value,
+        vae: vae.value,
+        seed: seed.value,
+        settings: settings.value,
+        used: used.value,
+      });
+    },
+  );
+}
+
+function parseOptionalModelRef(
+  value: unknown,
+  path: string,
+): ParseResult<ModelRef | null> {
+  return value === null ? ok(null) : parseModelRef(value, path);
 }
 
 export function parseOwnerException(

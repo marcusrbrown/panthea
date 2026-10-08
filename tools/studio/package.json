@@ -1,0 +1,21 @@
+{
+  "name": "@panthea/tools-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "studio": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "studio": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@panthea/assets": "workspace:*"
+  },
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

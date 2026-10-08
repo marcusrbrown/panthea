@@ -1,0 +1,16 @@
+{
+  "brows": {
+    "pleased": 20261010,
+    "angry": 20261010,
+    "grieving": 20261012,
+    "scheming": 20261013,
+    "awed": 20261011
+  },
+  "combined": {
+    "pleased": 20261012,
+    "angry": 20261010,
+    "grieving": 20261011,
+    "scheming": 20261012,
+    "awed": 20261013
+  }
+}

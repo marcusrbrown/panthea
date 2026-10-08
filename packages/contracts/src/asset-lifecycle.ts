@@ -6,6 +6,7 @@ import {
   ASSET_SCHEMA_VERSIONS,
   type AssetKind,
   type AssetManifest,
+  type GenerationRef,
   type GenerationRequest,
   type OwnerException,
   type Provenance,
@@ -642,12 +643,22 @@ export function transitionAsset(
   }
 }
 
-/** Cross-checks a provenance record against the job records it names. */
+/**
+ * Cross-checks a provenance record against the job ledger: every related job
+ * is there with the same status and, when it succeeded, exactly the same
+ * outputs; every generation names a succeeded job, the request it ran for and
+ * only outputs that job produced. Source assets are revisions, not jobs, and
+ * are never looked up here.
+ */
 export function checkProvenanceAgainstJobs(
   provenance: Provenance,
   jobs: readonly GenerationJob[],
 ): AssetResult<true> {
   const byId = new Map(jobs.map((job) => [job.id, job]));
+  const generated =
+    provenance.method === "generated"
+      ? new Map(provenance.generations.map((g) => [g.jobId, g]))
+      : new Map<string, GenerationRef>();
   for (const ref of provenance.relatedJobs) {
     const job = byId.get(ref.jobId);
     if (job === undefined)
@@ -655,43 +666,40 @@ export function checkProvenanceAgainstJobs(
         "job-mismatch",
         `job "${ref.jobId}" is not in the ledger`,
       );
-    if (
-      provenance.method === "generated" &&
-      ref.jobId === provenance.jobId &&
-      job.status !== "succeeded"
-    ) {
+    const generation = generated.get(ref.jobId);
+    if (generation !== undefined && job.status !== "succeeded")
       return assetFail(
         "job-not-succeeded",
-        `source job "${ref.jobId}" is ${job.status} in the ledger`,
+        `generation job "${ref.jobId}" is ${job.status} in the ledger`,
       );
-    }
-    if (job.status !== ref.status) {
+    if (job.status !== ref.status)
       return assetFail(
         "job-mismatch",
         `job "${ref.jobId}" is ${job.status} in the ledger, ${ref.status} in the provenance`,
       );
-    }
-    if (job.status === "succeeded") {
-      const recorded = new Set<string>(ref.outputs ?? []);
-      const actual = new Set<string>(job.outputs.map((output) => output.hash));
-      if (
-        recorded.size !== actual.size ||
-        [...actual].some((hash) => !recorded.has(hash))
-      ) {
-        return assetFail(
-          "hash-mismatch",
-          `job "${ref.jobId}" outputs differ from the provenance`,
-        );
-      }
-    }
-    if (provenance.method === "generated" && ref.jobId === provenance.jobId) {
-      if (canonicalJson(job.request) !== canonicalJson(provenance.request)) {
-        return assetFail(
-          "job-mismatch",
-          `job "${ref.jobId}" was run for a different request`,
-        );
-      }
-    }
+    if (job.status !== "succeeded") continue;
+    const recorded = new Set<string>(ref.outputs ?? []);
+    const actual = new Set<string>(job.outputs.map((output) => output.hash));
+    if (
+      recorded.size !== actual.size ||
+      [...actual].some((hash) => !recorded.has(hash))
+    )
+      return assetFail(
+        "hash-mismatch",
+        `job "${ref.jobId}" outputs differ from the provenance`,
+      );
+    if (generation === undefined) continue;
+    if (canonicalJson(job.request) !== canonicalJson(generation.request))
+      return assetFail(
+        "job-mismatch",
+        `job "${ref.jobId}" was run for a different request`,
+      );
+    const stray = generation.used.find((hash) => !actual.has(hash));
+    if (stray !== undefined)
+      return assetFail(
+        "hash-mismatch",
+        `job "${ref.jobId}" never output the used hash ${stray}`,
+      );
   }
   return assetOk(true);
 }

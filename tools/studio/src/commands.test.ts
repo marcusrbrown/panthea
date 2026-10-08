@@ -1,0 +1,782 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { openStudioSession, readStudioStatus } from "@panthea/assets/studio";
+import { paletteFixture } from "../../../packages/assets/src/fixtures";
+import {
+  doneCandidate,
+  finishSheet,
+  keyframe,
+  loadContent,
+  olympusMovedPaletteFiles,
+  PROVISIONAL_TEST_PARAMS,
+  paintFigure,
+  queuedJob,
+  runSlots,
+  spriteSet,
+  workingSet,
+} from "../../../packages/assets/src/studio/_test-fixtures";
+import { readLog } from "../../../packages/assets/src/studio/_test-runtime";
+import {
+  alive,
+  assetRig,
+  capture,
+  contentRootWithPalette,
+  depsFor,
+  removeTempRoots,
+  run,
+  runtimeRig,
+  tempRoot,
+  waitFor,
+} from "./_testkit";
+import { execute, readArgs } from "./commands";
+import type { StudioConfig } from "./config";
+import { exitOf } from "./format";
+import { Studio } from "./host";
+
+afterEach(removeTempRoots);
+
+const codeOf = (outcome: Awaited<ReturnType<typeof run>>["outcome"]) =>
+  outcome.ok ? "ok" : outcome.error.code;
+
+describe("argument checking", () => {
+  test("an unknown argument, a wrong type and a missing required argument are refused as usage errors", async () => {
+    const config: StudioConfig = { studioRoot: tempRoot() };
+    const cases: [string, unknown][] = [
+      ["remove", {}],
+      ["remove", { jobId: "j", extra: 1 }],
+      ["remove", { jobId: 3 }],
+      ["remove", { jobId: "" }],
+      ["remove", []],
+      ["remove", null],
+      ["reroll", { requestId: "r", perSlot: "4" }],
+      ["reroll", { requestId: "r", perSlot: 1.5 }],
+      ["reroll", { requestId: "r", perSlot: -1 }],
+      ["generate", { id: "r", subject: "zeus", kind: "sprite" }],
+      ["pick", { workingSetId: "w" }],
+    ];
+    for (const [op, args] of cases) {
+      const { outcome } = await run(config, op, args);
+      expect(codeOf(outcome), `${op} ${JSON.stringify(args)}`).toBe(
+        "invalid-arguments",
+      );
+      expect(exitOf(outcome)).toBe(64);
+    }
+  });
+
+  test("an unknown command is a usage error that names the known ones", async () => {
+    const { outcome } = await run({ studioRoot: tempRoot() }, "levitate", {});
+
+    expect(codeOf(outcome)).toBe("unknown-op");
+    expect(!outcome.ok && Array.isArray(outcome.error.known)).toBe(true);
+    expect(exitOf(outcome)).toBe(64);
+  });
+
+  test("a name an object inherits is not a command: toString, constructor, __proto__ and hasOwnProperty are unknown ops", async () => {
+    for (const op of [
+      "toString",
+      "constructor",
+      "__proto__",
+      "hasOwnProperty",
+      "valueOf",
+    ]) {
+      const { outcome } = await run({ studioRoot: tempRoot() }, op, {});
+
+      expect(codeOf(outcome), op).toBe("unknown-op");
+      expect(!outcome.ok && Array.isArray(outcome.error.known), op).toBe(true);
+      expect(exitOf(outcome), op).toBe(64);
+    }
+  });
+
+  test("an inherited name is not an argument either, and a throw while reading arguments is an internal error, not a crash", async () => {
+    const spec = { a: { t: "string" as const } };
+    for (const key of ["toString", "constructor", "hasOwnProperty"])
+      expect(readArgs({ [key]: 1 }, spec), key).toMatchObject({
+        ok: false,
+        error: { code: "invalid-arguments" },
+      });
+    expect(
+      readArgs(JSON.parse('{"__proto__":1}'), spec),
+      "__proto__ as an own key",
+    ).toMatchObject({ ok: false, error: { code: "invalid-arguments" } });
+
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("boom");
+        },
+      },
+    );
+    const { outcome } = await run(
+      { studioRoot: tempRoot() },
+      "status",
+      hostile,
+    );
+    expect(codeOf(outcome)).toBe("internal");
+  });
+
+  test("readArgs accepts exactly what a spec names", () => {
+    expect(readArgs({ a: "x" }, { a: { t: "string", req: true } })).toEqual({
+      a: "x",
+    });
+    expect(
+      "ok" in (readArgs({ a: "x", b: 1 }, { a: { t: "string" } }) as object),
+    ).toBe(true);
+  });
+
+  test("a command that needs a config group the user did not set says which, with exit 64 and no side effects", async () => {
+    const root = tempRoot();
+    for (const [op, args, field] of [
+      [
+        "generate",
+        {
+          id: "r",
+          subject: "zeus",
+          kind: "sprite",
+          slots: [{ state: "idle", direction: "south" }],
+        },
+        "contentRoot",
+      ],
+      ["set-create", { id: "w", requestId: "r" }, "contentRoot"],
+      [
+        "pack",
+        { id: "p", workingSetId: "w", assetId: "a", styleTag: "t" },
+        "contentRoot",
+      ],
+    ] as const) {
+      const { outcome } = await run({ studioRoot: root }, op, args);
+      expect(codeOf(outcome), op).toBe("missing-config");
+      expect(!outcome.ok && outcome.error.field).toBe(field);
+      expect(exitOf(outcome)).toBe(64);
+    }
+    expect(readStudioStatus(root).requests).toEqual([]);
+    const none = await run({}, "status", {});
+    expect(none.outcome).toMatchObject({
+      ok: false,
+      error: { code: "missing-config", field: "studioRoot" },
+    });
+  });
+
+  test("content that does not load is a config error with its diagnostics and no session opened", async () => {
+    const root = tempRoot();
+    const { outcome } = await run(
+      { studioRoot: root, contentRoot: join(root, "no-content") },
+      "set-create",
+      { id: "w", requestId: "r" },
+    );
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: "invalid-content" },
+    });
+    expect(!outcome.ok && Array.isArray(outcome.error.diagnostics)).toBe(true);
+    expect(exitOf(outcome)).toBe(64);
+  });
+});
+
+describe("reading without the writer lock", () => {
+  test("status, list, sheet and report read a root another session owns, and leave that session open", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const config: StudioConfig = { studioRoot: rig.root };
+    const before = readFileSync(
+      join(rig.root, "working-sets", "w.json"),
+      "utf8",
+    );
+
+    const status = await run(config, "status", {});
+    const jobs = await run(config, "list", { kind: "jobs" });
+    const sets = await run(config, "list", { kind: "working-sets" });
+    const view = await run(config, "sheet", { workingSetId: "w" });
+
+    expect(status.outcome).toMatchObject({
+      ok: true,
+      result: { owner: { open: true }, counts: { jobs: 1, edits: 1 } },
+    });
+    expect(jobs.outcome).toMatchObject({
+      ok: true,
+      result: [{ id: "zeus-idle-0000", status: "succeeded" }],
+    });
+    expect(sets.outcome).toMatchObject({
+      ok: true,
+      result: [{ id: "w", authored: { "idle/south": { frames: 4 } } }],
+    });
+    expect(view.outcome.ok).toBe(true);
+    expect(openStudioSession(rig.root).kind).toBe("busy");
+    expect(readFileSync(join(rig.root, "working-sets", "w.json"), "utf8")).toBe(
+      before,
+    );
+    rig.session.close();
+  });
+
+  test("list refuses an unknown kind", async () => {
+    const { outcome } = await run({ studioRoot: tempRoot() }, "list", {
+      kind: "secrets",
+    });
+
+    expect(codeOf(outcome)).toBe("invalid-arguments");
+  });
+
+  test("derive is explicitly unsupported and writes nothing", async () => {
+    const root = tempRoot();
+    const { outcome } = await run({ studioRoot: root }, "derive", {});
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: "unsupported", verb: "derive" },
+    });
+    expect(exitOf(outcome)).toBe(1);
+    expect(readStudioStatus(root).requests).toEqual([]);
+    expect(openStudioSession(root).kind).toBe("opened");
+  });
+
+  test("a mutating command against a root another process owns is refused as busy, while reads still work", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const config: StudioConfig = { studioRoot: rig.root };
+
+    for (const [op, args] of [
+      ["remove", { jobId: "zeus-idle-0000" }],
+      ["abort", { jobId: "zeus-idle-0000" }],
+      ["pick", { workingSetId: "w", candidateId: "zeus-idle-0000" }],
+      ["discard", { id: "e1" }],
+      ["reject", { id: "none" }],
+    ] as const) {
+      const { outcome } = await run(config, op, args);
+      expect(codeOf(outcome), op).toBe("busy");
+      expect(exitOf(outcome)).toBe(1);
+    }
+    expect((await run(config, "status", {})).outcome.ok).toBe(true);
+    rig.session.close();
+  });
+});
+
+describe("hand edits are reported, never replaced", () => {
+  function offPaletteSet() {
+    const rig = assetRig();
+    const [id] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.openWorkingSet("w", "zeus-idle", rig.content);
+    rig.session.pick("w", id as string);
+    const frames = [0, 1, 2, 3].map((i) =>
+      paintFigure(rig.content, { w: 64, h: 80 }, i),
+    );
+    frames[1]?.rgba.set([255, 0, 255, 255], (20 * 64 + 20) * 4);
+    finishSheet(rig, "e1", "w", { w: 64, h: 80 }, [
+      { slot: "idle/south", frames },
+    ]);
+    return rig;
+  }
+
+  test("a hand-finished slot whose conform would change pixels exits 1 with the exact diff and leaves every stored byte alone", async () => {
+    const rig = offPaletteSet();
+    rig.session.close();
+    const bytes = (path: string) => readFileSync(path);
+    const set = readStudioStatus(rig.root).workingSets[0];
+    const hashes = set?.frames["idle/south"]?.frames.map((f) => f.hash) ?? [];
+    const before = hashes.map((h) =>
+      bytes(join(rig.root, "blobs", `${h}.png`)),
+    );
+    const setBytes = readFileSync(
+      join(rig.root, "working-sets", "w.json"),
+      "utf8",
+    );
+    const edit = readStudioStatus(rig.root).edits[0];
+    const expectedDiff =
+      edit?.preview?.slots["idle/south"]?.reports[1]?.diff ?? [];
+    expect(expectedDiff.length).toBeGreaterThan(0);
+
+    const { outcome } = await run(
+      { studioRoot: rig.root, contentRoot: "/content" },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+      { loadContent: () => ({ ok: true as const, content: rig.content }) },
+    );
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: "proposal-would-replace", source: "hand" },
+    });
+    expect(exitOf(outcome)).toBe(1);
+    const frames = (!outcome.ok ? outcome.error.frames : []) as unknown as {
+      index: number;
+      pixelsChanged: number;
+      diff: unknown[];
+    }[];
+    expect(frames).toHaveLength(4);
+    expect(frames[1]?.pixelsChanged).toBe(expectedDiff.length);
+    expect(frames[1]?.diff).toEqual(JSON.parse(JSON.stringify(expectedDiff)));
+    expect(frames[0]?.pixelsChanged).toBe(0);
+    expect(
+      hashes.map((h) => bytes(join(rig.root, "blobs", `${h}.png`))),
+    ).toEqual(before);
+    expect(readFileSync(join(rig.root, "working-sets", "w.json"), "utf8")).toBe(
+      setBytes,
+    );
+    expect(readStudioStatus(rig.root).assets).toEqual([]);
+  });
+
+  test("a clean hand slot passes, an unknown slot or set is not found, and no content root is a config error", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+    };
+    const over = {
+      loadContent: () => ({ ok: true as const, content: rig.content }),
+    };
+
+    const clean = await run(
+      config,
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+      over,
+    );
+    const unknown = await run(
+      config,
+      "report",
+      { workingSetId: "w", slot: "idle/west" },
+      over,
+    );
+    const noSet = await run(
+      config,
+      "report",
+      { workingSetId: "nope", slot: "idle/south" },
+      over,
+    );
+    const noContent = await run(
+      { studioRoot: rig.root },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+      over,
+    );
+
+    expect(clean.outcome).toMatchObject({
+      ok: true,
+      result: { source: "hand" },
+    });
+    expect(codeOf(unknown.outcome)).toBe("not-found");
+    expect(codeOf(noSet.outcome)).toBe("not-found");
+    expect(noContent.outcome).toMatchObject({
+      ok: false,
+      error: { code: "missing-config", field: "contentRoot" },
+    });
+  });
+
+  const rootBytes = (root: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (!name.startsWith("session.lock"))
+          out[relative(root, path)] = readFileSync(path).toString("base64");
+      }
+    };
+    walk(root);
+    return out;
+  };
+
+  test("a palette change under a new content root is reported fresh with the replacing diff, exits 1, and every stored byte stays identical", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    rig.session.close();
+    const same = contentRootWithPalette(paletteFixture().files);
+    const moved = contentRootWithPalette(olympusMovedPaletteFiles());
+    const before = rootBytes(rig.root);
+
+    const clean = await run(
+      { studioRoot: rig.root, contentRoot: same },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+    );
+    const changed = await run(
+      { studioRoot: rig.root, contentRoot: moved },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+    );
+
+    expect(clean.outcome).toMatchObject({
+      ok: true,
+      result: { source: "hand" },
+    });
+    expect(exitOf(clean.outcome)).toBe(0);
+    expect(changed.outcome).toMatchObject({
+      ok: false,
+      error: { code: "proposal-would-replace", source: "hand" },
+    });
+    expect(exitOf(changed.outcome)).toBe(1);
+    const frames = (!changed.outcome.ok
+      ? changed.outcome.error.frames
+      : []) as unknown as {
+      index: number;
+      report: string;
+      pixelsChanged: number;
+      diff: unknown[];
+    }[];
+    expect(frames).toHaveLength(4);
+    expect(
+      frames.every((f) => f.report === "fail" && f.pixelsChanged > 0),
+    ).toBe(true);
+    expect(frames.every((f) => f.diff.length === f.pixelsChanged)).toBe(true);
+    expect(rootBytes(rig.root)).toEqual(before);
+    expect(readStudioStatus(rig.root).assets).toEqual([]);
+    expect(readStudioStatus(rig.root).session?.endedAt).toBeString();
+  });
+
+  test("a picked-only slot is reported fresh against a changed palette too", async () => {
+    const rig = assetRig();
+    const [id] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.openWorkingSet("w", "zeus-idle", rig.content);
+    rig.session.pick("w", id as string);
+    rig.session.close();
+    const moved = contentRootWithPalette(olympusMovedPaletteFiles());
+
+    const clean = await run(
+      {
+        studioRoot: rig.root,
+        contentRoot: contentRootWithPalette(paletteFixture().files),
+      },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+    );
+    const changed = await run(
+      { studioRoot: rig.root, contentRoot: moved },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+    );
+
+    expect(clean.outcome).toMatchObject({
+      ok: true,
+      result: { source: "pick" },
+    });
+    expect(changed.outcome).toMatchObject({
+      ok: false,
+      error: { code: "proposal-would-replace", source: "pick" },
+    });
+  });
+
+  test("the report reads a root another process owns and takes no writer lock", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const moved = contentRootWithPalette(olympusMovedPaletteFiles());
+
+    const { outcome } = await run(
+      { studioRoot: rig.root, contentRoot: moved },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+    );
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: "proposal-would-replace" },
+    });
+    expect(openStudioSession(rig.root).kind).toBe("busy");
+    rig.session.close();
+  });
+
+  test("a stored frame that is gone or altered is a typed refusal that prints no pixels", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    rig.session.close();
+    const hash = readStudioStatus(rig.root).workingSets[0]?.frames["idle/south"]
+      ?.frames[1]?.hash as string;
+    writeFileSync(join(rig.root, "blobs", `${hash}.png`), "SECRET-PIXELS");
+
+    const { outcome } = await run(
+      { studioRoot: rig.root, contentRoot: "/content" },
+      "report",
+      { workingSetId: "w", slot: "idle/south" },
+      { loadContent: () => ({ ok: true as const, content: rig.content }) },
+    );
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: "corrupt-blob" },
+    });
+    expect(exitOf(outcome)).toBe(1);
+    expect(JSON.stringify(outcome)).not.toContain("SECRET-PIXELS");
+  });
+});
+
+describe("conform, sets, picks and rejection through the session", () => {
+  test("conform a generated job with a named config set, then open a set and pick its candidate", async () => {
+    const rig = assetRig();
+    const [jobId] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+      conform: { standard: PROVISIONAL_TEST_PARAMS },
+    };
+    const over = {
+      loadContent: () => ({ ok: true as const, content: rig.content }),
+    };
+
+    const conformed = await run(
+      config,
+      "conform",
+      { jobId, set: "standard" },
+      over,
+    );
+    const opened = await run(
+      config,
+      "set-create",
+      { id: "w", requestId: "zeus-idle" },
+      over,
+    );
+    const picked = await run(
+      config,
+      "pick",
+      { workingSetId: "w", candidateId: jobId },
+      over,
+    );
+
+    expect(conformed.outcome).toMatchObject({
+      ok: true,
+      result: { id: jobId, status: "done", report: "pass" },
+    });
+    expect(opened.outcome.ok && picked.outcome.ok).toBe(true);
+    expect(
+      readStudioStatus(rig.root).workingSets[0]?.picks["idle/south"]
+        ?.candidateId,
+    ).toBe(jobId);
+  });
+
+  test("conform needs exactly one of a named set and inline params, and every numeric threshold explicit", async () => {
+    const root = tempRoot();
+    const config: StudioConfig = {
+      studioRoot: root,
+      contentRoot: "/content",
+      conform: { standard: PROVISIONAL_TEST_PARAMS },
+    };
+
+    const both = await run(config, "conform", {
+      jobId: "j",
+      set: "standard",
+      params: PROVISIONAL_TEST_PARAMS,
+    });
+    const neither = await run(config, "conform", { jobId: "j" });
+    const unnamed = await run(config, "conform", { jobId: "j", set: "other" });
+    const incomplete = await run(config, "conform", {
+      jobId: "j",
+      params: { background: { type: "alpha" }, alphaCutoff: 128 },
+    });
+
+    expect(codeOf(both.outcome)).toBe("invalid-arguments");
+    expect(codeOf(neither.outcome)).toBe("invalid-arguments");
+    expect(codeOf(unnamed.outcome)).toBe("invalid-config");
+    expect(codeOf(incomplete.outcome)).toBe("invalid-arguments");
+    expect(
+      [both, neither, unnamed, incomplete].every(
+        (r) => exitOf(r.outcome) === 64,
+      ),
+    ).toBe(true);
+  });
+
+  test("a sheet is replaced by a later request and the picks stay", async () => {
+    const rig = assetRig();
+    const [first] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.openWorkingSet("w", "zeus-idle", rig.content);
+    rig.session.pick("w", first as string);
+    runSlots(
+      rig,
+      "zeus-again",
+      "sprite",
+      [{ state: "idle", direction: "south" }],
+      300,
+    );
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+    };
+
+    const replaced = await run(config, "set-replace-sheet", {
+      workingSetId: "w",
+      requestId: "zeus-again",
+    });
+
+    expect(replaced.outcome).toMatchObject({
+      ok: true,
+      result: { workingSetId: "w", sheetRequestId: "zeus-again" },
+    });
+    const set = readStudioStatus(rig.root).workingSets[0];
+    expect(set?.sheetRequestId).toBe("zeus-again");
+    expect(set?.picks["idle/south"]?.candidateId).toBe(first);
+  });
+
+  test("pick --slot puts one neutral candidate into every portrait slot and keeps its lineage; a sprite refuses another slot", async () => {
+    const rig = assetRig();
+    const expressions = [...rig.content.vocabulary.expressions];
+    runSlots(
+      rig,
+      "zeus-faces",
+      "portrait",
+      expressions.map((expression) => ({ expression })),
+    );
+    const [neutral] = runSlots(
+      rig,
+      "zeus-neutral",
+      "portrait",
+      [{ expression: "neutral" }],
+      300,
+    ) as [string];
+    const [south] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+      { state: "idle", direction: "north" },
+    ]) as [string];
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+    };
+    const over = {
+      loadContent: () => ({ ok: true as const, content: rig.content }),
+    };
+
+    const created = await run(
+      config,
+      "set-create",
+      { id: "faces", requestId: "zeus-faces" },
+      over,
+    );
+    const switched = await run(config, "set-replace-sheet", {
+      workingSetId: "faces",
+      requestId: "zeus-neutral",
+    });
+    const results = [];
+    for (const slot of expressions)
+      results.push(
+        await run(config, "pick", {
+          workingSetId: "faces",
+          candidateId: neutral,
+          slot,
+        }),
+      );
+    const sprite = await run(
+      config,
+      "set-create",
+      { id: "walk", requestId: "zeus-idle" },
+      over,
+    );
+    const refused = await run(config, "pick", {
+      workingSetId: "walk",
+      candidateId: south,
+      slot: "idle/north",
+    });
+    const own = await run(config, "pick", {
+      workingSetId: "walk",
+      candidateId: south,
+    });
+
+    expect(created.outcome.ok && switched.outcome.ok && sprite.outcome.ok).toBe(
+      true,
+    );
+    expect(results.every((r) => r.outcome.ok)).toBe(true);
+    expect(results[1]?.outcome).toMatchObject({
+      ok: true,
+      result: { workingSetId: "faces", candidateId: neutral, slot: "pleased" },
+    });
+    const status = readStudioStatus(rig.root);
+    const faces = status.workingSets.find((w) => w.id === "faces");
+    expect(faces?.status).toBe("complete");
+    for (const expression of expressions)
+      expect(faces?.picks[expression]).toMatchObject({
+        candidateId: neutral,
+        source: { slotKey: "neutral" },
+      });
+    expect(codeOf(refused.outcome)).toBe("wrong-state");
+    expect(own.outcome).toMatchObject({
+      ok: true,
+      result: { workingSetId: "walk", candidateId: south },
+    });
+    expect(
+      status.workingSets.find((w) => w.id === "walk")?.picks,
+    ).toHaveProperty("idle/south");
+  });
+
+  test("a packed draft is rejected once, with the reason, and then cannot be approved", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    rig.session.pack(
+      {
+        id: "p1",
+        workingSetId: "w",
+        assetId: "placeholder-zeus",
+        styleTag: "d",
+        footprint: { w: 1, h: 1 },
+        originalWork: { licence: "MIT" },
+      },
+      rig.content,
+      rig.palette,
+      rig.registryRoot,
+    );
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+      registryRoot: rig.registryRoot,
+    };
+    const over = {
+      loadContent: () => ({ ok: true as const, content: rig.content }),
+    };
+
+    const rejected = await run(
+      config,
+      "reject",
+      { id: "p1", reason: "wrong loop" },
+      over,
+    );
+    const again = await run(config, "reject", { id: "p1" }, over);
+    const approve = await run(config, "approve", { id: "p1" }, over);
+
+    expect(rejected.outcome).toMatchObject({
+      ok: true,
+      result: { id: "p1", state: "rejected" },
+    });
+    expect(codeOf(again.outcome)).toBe("wrong-state");
+    expect(codeOf(approve.outcome)).toBe("wrong-state");
+  });
+
+  test("a stored session cannot be removed or aborted from outside: queued jobs left behind are failed on reopen, so remove is wrong-state and abort is not-running", async () => {
+    const rig = assetRig();
+    rig.session.enqueue(
+      { requestId: "r", slotKey: "idle/south", ordinal: 0 },
+      queuedJob("left-behind"),
+    );
+    rig.session.close();
+    const config: StudioConfig = { studioRoot: rig.root };
+
+    const removed = await run(config, "remove", { jobId: "left-behind" });
+    const aborted = await run(config, "abort", { jobId: "left-behind" });
+
+    expect(codeOf(removed.outcome)).toBe("wrong-state");
+    expect(codeOf(aborted.outcome)).toBe("not-running");
+    expect(exitOf(aborted.outcome)).toBe(1);
+  });
+});
+
+void doneCandidate;
+void keyframe;
+void loadContent;
+void workingSet;
+void readLog;
+void alive;
+void capture;
+void depsFor;
+void execute;
+void runtimeRig;
+void waitFor;
+void writeFileSync;
+void Studio;
