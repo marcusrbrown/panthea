@@ -46,6 +46,78 @@ export interface RunSummary {
   readonly real: RealRecord | undefined;
 }
 
+/** The procedure for the unattended one-hour run, written from what the code does. */
+const UNATTENDED_PROCEDURE = `### Unattended one-hour run (M2 exit gate)
+
+One world, kept, run for 60 minutes of running time against local Ollama. A loopback
+proxy cuts the model off for a while and restores it; the sidecar is then stopped
+cleanly, the world is put 90 minutes behind, and the restart catches up the capped 60
+minutes. The run ends with an export, a rebuild from the event log in a separate
+process, and a report. It is the M2 exit gate and needs a real hour on a quiet machine.
+
+**Prepare the machine**
+
+- Close other agent sessions and heavy apps. Rancher Desktop and Docker count. Do not
+  use the machine during the hour.
+- \`uptime\`: the 1-minute load average under about 2 and settled. \`sysctl vm.swapusage\`:
+  swap used steady, not climbing, across two readings a minute apart.
+- Ollama running, with \`granite3.3-8b-4k\` created. To create it, use the
+  \`ollama create\` line in \`tools/probes/inference-baseline/README.md\`.
+
+**The command**
+
+\`\`\`sh
+bun run --cwd tools/scenarios scenario:m2 --unattended --reasoning-effort=none
+\`\`\`
+
+It builds the sidecar first; add \`--skip-build\` to reuse a sidecar you built from this
+tree. The model is \`granite3.3-8b-4k\` unless you pass \`--model=\`. The evidence goes to
+\`tools/scenarios/m2-greek-cast/unattended/<UTC timestamp>/\`, or to \`--out=DIR\`. Allow
+about 75 minutes: the 60 running minutes, plus the model's warm-up, the sidecar build
+(unless skipped), the catch-up (seconds), and the end capture (export and rebuild).
+
+**What the run keeps**
+
+All of it lands in the run folder:
+
+- \`report.md\`: the report. Start here.
+- \`run.json\`: the structured result: phase boundaries, checks, the threshold result,
+  the baseline, the memory summary.
+- \`baseline.json\`: store, WAL and archive sizes, the rebuild time, the event count,
+  whether the rebuild equals the live world, and the import proof.
+- \`frames.jsonl\`, \`proxy-records.jsonl\`, \`memory.jsonl\`: the tick series, the model
+  responses (status, latency, token count; no prompt or reply text), and the memory
+  samples (marked observation or post-run).
+- \`diagnostics/\`: only after a fault or a failure: Ollama's loaded-model table, the
+  tail of its server log (marked stale when the log predates the run), and memory.
+- \`app-data/\` (the store and its WAL) and \`archive.sqlite\`: **git-ignored**, kept
+  locally. They run to hundreds of megabytes. Everything else is small and committable.
+
+**Reading the result**
+
+- Exit \`0\` is PASS: every phase ran and every threshold held.
+- Exit \`1\` is a gate failure: a threshold row failed, the sidecar died, a catch-up
+  check failed, or the report could not be built. \`report.md\` or \`run.json\` says which.
+- Exit \`2\` is Ollama's empty-response fault (five empty replies in a row). It is the
+  infrastructure's, not a result. The run captures \`diagnostics/\` and stops; rerun it.
+- \`report.md\` has the verdict at the top, the "## Threshold table" with each row's
+  measured value and limit, and the "## Rating sheet" with the episodes to score. The
+  rubric is the acceptance rubric in \`docs/product/acceptance.md\`, scored 0, 1 or 2
+  by the owner.
+- M2 exits only on a PASS verdict and the owner's approval of the rated episodes.
+
+**Development runs**
+
+\`--unattended-minutes=N\` shortens the running phases in proportion (the 90-minute gap is
+not scaled). \`--scripted=answer\` replaces Ollama with the scripted provider, whose gods
+tell legends; \`--scripted=empty-200\` makes every reply Ollama's empty response, so the
+run ends as the fault in seconds. Use them with \`--skip-build\`; for example
+\`--unattended --unattended-minutes=6 --scripted=answer --skip-build\`. A run shorter
+than 60 minutes is "not a gate run": its report shows the table, its failed rows do not
+change its exit code, and it never gives a verdict. \`--unattended\` cannot be combined
+with \`--episodes\`, \`--real\`, \`--write-readme\`, \`--positive-control\`, \`--steps\`,
+\`--base-url\` or \`--key-ref\`.`;
+
 const HOW_TO_RUN = `\`\`\`sh
 bun run --cwd tools/scenarios scenario:m2                                    # build the sidecar, run the scripted story
 bun run --cwd tools/scenarios scenario:m2 --skip-build                       # reuse the built sidecar
@@ -54,6 +126,7 @@ bun run --cwd tools/scenarios scenario:m2 --positive-control=<name>          # a
 bun run --cwd tools/scenarios scenario:m2 --real [--seconds=180]             # both gods through local Ollama; asserts properties, writes real-run.json
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --reasoning-effort=none   # the experience gate on the local baseline, granite3.3-8b-4k (set up once: ollama create granite3.3-8b-4k -f tools/probes/inference-baseline/Modelfile.granite3.3-8b-4k)
 bun run --cwd tools/scenarios scenario:m2 --episodes=3 --model=<model> --base-url=https://<host>/v1 [--key-ref=<keyRef>]   # the gate against a hosted endpoint; the key is read once from the Keychain
+bun run --cwd tools/scenarios scenario:m2 --unattended --reasoning-effort=none   # the one-hour run on local Ollama, one world kept under unattended/<timestamp>/; see "Unattended one-hour run" below
 bun run --cwd tools/scenarios scenario:m2 --write-readme [--jobs=4]          # story (with the practice and world controls in-process), then each process control four at a time (--jobs=N), rewrites this file from a fresh run and real-run.json
 \`\`\`
 
@@ -238,7 +311,9 @@ Fault injections, one per negative claim:
   wall cursor back 1,800,000 ms; the restart's catch-up applies it.
 - **Stale proposal:** Hera's strike turn is held while a fixture moves her.
 - **Hostile archive:** the projection row of an export has Hera's memory and
-  feeling dropped and its content hash recomputed.`;
+  feeling dropped and its content hash recomputed.
+
+${UNATTENDED_PROCEDURE}`;
 
 const NOT_COVERED = `- **Reasoning quality.** The scripted run proves the causal plumbing; it says
   nothing about whether a model chooses well. The real run asserts properties
