@@ -13,6 +13,11 @@
 //                                                    the same gate against any OpenAI-compatible endpoint, local or hosted (no Ollama check or warm-up); --key-ref reads
 //                                                    that key from the macOS Keychain (service ai.panthe.desktop.endpoint-keys) once and sends it
 //                                                    only on the sidecar's launch line
+//   bun run scenario:m2 --unattended [--unattended-minutes=60] [--out=DIR] [--scripted=answer|empty-200]
+//                                                    one world on local Ollama behind an outage proxy, kept under DIR (default m2-greek-cast/unattended/<timestamp>/):
+//                                                    an outage, a clean stop with a 90-minute gap, a capped catch-up; --unattended-minutes scales the running phases
+//                                                    (not the gap) and below 60 is not a gate run; --scripted answers from the scripted provider instead of Ollama.
+//                                                    Exit 0 completed, 1 failed, 2 only for Ollama's empty-200 fault (rebuilds the sidecar first, unless --skip-build)
 //   bun run scenario:m2 --episodes=N [--episode-seconds=300] [--out=DIR]
 //                                                    experience gate: N fresh worlds, Zeus and Hera on local Ollama for the same time each;
 //                                                    writes episode-N.md and summary.md to DIR (default m2-greek-cast/episodes/<timestamp>/)
@@ -50,6 +55,7 @@ import {
   type ControlName,
   runStory,
 } from "./story";
+import { exitCodeOf, runUnattended } from "./unattended";
 
 const CONTROL_SABOTAGE: Readonly<Record<ControlName, string>> = {
   chain:
@@ -195,6 +201,24 @@ async function runEpisodeGate(args: Args): Promise<void> {
   }
 }
 
+async function runUnattendedMode(args: Args): Promise<void> {
+  const result = await runUnattended(args);
+  console.log(
+    `\nunattended run ${result.status}: ${(result.runningMs / 60_000).toFixed(1)} min running, ${(result.elapsedWallMs / 60_000).toFixed(1)} min elapsed`,
+  );
+  for (const check of result.checks) {
+    console.log(`${check.ok ? "PASS" : "FAIL"} ${check.name}: ${check.detail}`);
+  }
+  const code = exitCodeOf(result);
+  if (code === 2) {
+    // Not a FAIL line: an infrastructure fault is no gate result, and the run is rerun.
+    console.error(`\nINFRASTRUCTURE FAULT ${result.reason}`);
+  } else if (code === 1) {
+    console.error(`\nFAIL ${result.reason}`);
+  }
+  if (code !== 0) process.exit(code);
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(Bun.argv.slice(2));
   const startedAt = Date.now();
@@ -203,6 +227,10 @@ async function main(): Promise<void> {
     process.exit(130);
   });
   try {
+    if (args.unattended) {
+      await runUnattendedMode(args);
+      return;
+    }
     if (args.episodes > 0) {
       await runEpisodeGate(args);
       return;

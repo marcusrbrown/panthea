@@ -29,7 +29,28 @@ export interface SeenRequest {
   reply?: string;
 }
 
-export type Reply = string | ((seen: SeenRequest) => string | Promise<string>);
+/** A reply that is the HTTP response itself: its JSON body and status, with no chat completion wrapped around it. */
+export interface RawReply {
+  readonly raw: unknown;
+  readonly status: number;
+}
+
+/** Ollama's empty-200 fault: HTTP 200 with an empty model name, the zero `created` date, and no choices. */
+export const EMPTY_COMPLETION: RawReply = {
+  raw: {
+    id: "chatcmpl-empty",
+    object: "chat.completion",
+    created: -62135596800,
+    model: "",
+    system_fingerprint: "fp_ollama",
+  },
+  status: 200,
+};
+
+/** What a reply function or policy returns: reply text, which is wrapped as a completion, or a raw response. */
+export type Answer = string | RawReply;
+
+export type Reply = Answer | ((seen: SeenRequest) => Answer | Promise<Answer>);
 
 export interface Held {
   /** Resolves with the request once it has arrived and is being held. */
@@ -43,7 +64,7 @@ export interface ScriptedProvider {
   /** Queues replies for `god`; each request from it takes the next, and it waits once the queue is empty. */
   enqueue(god: God, ...replies: Reply[]): void;
   /** Answers `god` from the prompt whenever its queue is empty; `undefined` removes it. A god with neither waits. */
-  policy(god: God, fn: ((seen: SeenRequest) => string) | undefined): void;
+  policy(god: God, fn: ((seen: SeenRequest) => Answer) | undefined): void;
   /** Queues a reply that is held until released. */
   hold(god: God, reply: string): Held;
   /** Replies still queued for `god`. */
@@ -79,7 +100,7 @@ function promptOf(body: ChatBody): string {
 export function startProvider(): ScriptedProvider {
   const requests: SeenRequest[] = [];
   const queues = new Map<God, Reply[]>();
-  const policies = new Map<God, (seen: SeenRequest) => string>();
+  const policies = new Map<God, (seen: SeenRequest) => Answer>();
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -97,12 +118,17 @@ export function startProvider(): ScriptedProvider {
       requests.push(seen);
       const next = god === "unknown" ? undefined : queues.get(god)?.shift();
       const policy = god === "unknown" ? undefined : policies.get(god);
-      const reply =
+      const answer: Answer =
         next === undefined
           ? (policy?.(seen) ?? WAIT)
-          : typeof next === "string"
-            ? next
-            : await next(seen);
+          : typeof next === "function"
+            ? await next(seen)
+            : next;
+      if (typeof answer !== "string") {
+        seen.reply = JSON.stringify(answer.raw);
+        return Response.json(answer.raw, { status: answer.status });
+      }
+      const reply = answer;
       seen.reply = reply;
       return Response.json({
         id: "chatcmpl-scripted",

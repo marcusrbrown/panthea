@@ -21,6 +21,13 @@ export const DEFAULT_MODEL = "granite3.3-8b-4k";
 /** Positive controls `--write-readme` runs at once: each is a whole story with its own sidecar, so the cost is cores, not ports or files. */
 export const DEFAULT_JOBS = 4;
 
+/** Minutes of running time the unattended run lasts unless `--unattended-minutes` shortens it: the gate's hour. */
+export const FULL_UNATTENDED_MINUTES = 60;
+
+/** The scripted provider's modes for the unattended run: gods answering with legends, or every reply the empty-200 fault. */
+export const SCRIPTED_MODES = ["answer", "empty-200"] as const;
+export type ScriptedMode = (typeof SCRIPTED_MODES)[number];
+
 export interface Args extends StoryOptions {
   readonly real: boolean;
   readonly seconds: number;
@@ -39,6 +46,12 @@ export interface Args extends StoryOptions {
   readonly baseUrl: string | undefined;
   /** The Keychain entry (account) holding the endpoint's key; none when unset. */
   readonly keyRef: string | undefined;
+  /** One world through an outage, a stop and a catch-up, kept under the run folder. */
+  readonly unattended: boolean;
+  /** Minutes of running time; the running phases scale in proportion, the 90-minute gap does not. */
+  readonly unattendedMinutes: number;
+  /** Answer the unattended run from the scripted provider instead of Ollama; development only. */
+  readonly scripted: ScriptedMode | undefined;
 }
 
 function positiveInt(flag: string, text: string): number {
@@ -65,11 +78,25 @@ export function parseArgs(argv: readonly string[]): Args {
   let reasoningEffort: "none" | undefined;
   let baseUrl: string | undefined;
   let keyRef: string | undefined;
+  let unattended = false;
+  let unattendedMinutes: number | undefined;
+  let scripted: ScriptedMode | undefined;
   for (const arg of argv) {
     if (arg === "--skip-build") skipBuild = true;
     else if (arg === "--real") real = true;
     else if (arg === "--write-readme") writeReadme = true;
-    else if (arg.startsWith("--jobs=")) {
+    else if (arg === "--unattended") unattended = true;
+    else if (arg.startsWith("--unattended-minutes=")) {
+      unattendedMinutes = positiveInt("--unattended-minutes", arg.slice(21));
+    } else if (arg.startsWith("--scripted=")) {
+      const mode = arg.slice(11);
+      if (!(SCRIPTED_MODES as readonly string[]).includes(mode)) {
+        throw new Error(
+          `--scripted accepts ${SCRIPTED_MODES.join(" or ")}, got ${mode === "" ? "nothing" : mode}`,
+        );
+      }
+      scripted = mode as ScriptedMode;
+    } else if (arg.startsWith("--jobs=")) {
       jobs = positiveInt("--jobs", arg.slice(7));
       jobsGiven = true;
     } else if (arg.startsWith("--seconds=")) seconds = Number(arg.slice(10));
@@ -122,6 +149,30 @@ export function parseArgs(argv: readonly string[]): Args {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
+  if (unattendedMinutes !== undefined && !unattended) {
+    throw new Error("--unattended-minutes applies only with --unattended");
+  }
+  if (scripted !== undefined && !unattended) {
+    throw new Error("--scripted applies only with --unattended");
+  }
+  if (unattended) {
+    // One world on local Ollama: none of the other modes, and no hosted endpoint.
+    const conflicts: [string, boolean][] = [
+      ["--episodes", episodes > 0],
+      ["--real", real],
+      ["--write-readme", writeReadme],
+      ["--positive-control", control !== undefined],
+      ["--steps", steps !== undefined],
+      ["--base-url", baseUrl !== undefined],
+      ["--key-ref", keyRef !== undefined],
+    ];
+    const clash = conflicts.find(([, given]) => given);
+    if (clash !== undefined) {
+      throw new Error(
+        `--unattended cannot be combined with ${clash[0]}: it runs one world on local Ollama`,
+      );
+    }
+  }
   if (jobsGiven && !writeReadme) {
     throw new Error("--jobs applies only with --write-readme");
   }
@@ -163,5 +214,8 @@ export function parseArgs(argv: readonly string[]): Args {
     reasoningEffort,
     baseUrl,
     keyRef,
+    unattended,
+    unattendedMinutes: unattendedMinutes ?? FULL_UNATTENDED_MINUTES,
+    scripted,
   };
 }

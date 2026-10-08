@@ -1,0 +1,837 @@
+// The unattended run: one world, kept, driven through a scripted provider outage, a clean stop with a ninety-minute
+// gap, and a capped catch-up, on a clock that counts only the time the sidecar is up. The driver is a function of
+// its dependencies (a clock, a world, a proxy, a sampler, a folder), so its phase logic runs on a virtual clock in
+// the tests; `runUnattended` wires the real ones. The gate's report and thresholds are built on what this writes.
+//
+// Exits: 0 for a run that went through every phase and held its own integrity checks, 1 for a failure (a dead
+// sidecar, a catch-up that did not behave), 2 only for Ollama's empty-200 fault, which is the infrastructure's
+// and not a gate result.
+
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  killAllSidecars,
+  REPO_ROOT,
+  startSidecar,
+} from "../../m1-living-world/src/sidecar";
+import { readFrame } from "../../m1-living-world/src/steps/api";
+import { persistedClock } from "../../m1-living-world/src/steps/direct";
+import {
+  activeStorePath,
+  backdateCursor,
+} from "../../m1-living-world/src/world-db";
+import type { Args } from "./args";
+import { resolveSidecarBinary } from "./binary";
+import { readProposals } from "./db";
+import {
+  createMemorySampler,
+  findOllamaServePid,
+  type MemorySampler,
+  summarizeMemory,
+} from "./memory";
+import {
+  type OutageProxy,
+  type ProxyRecord,
+  startOutageProxy,
+} from "./outage-proxy";
+import {
+  EMPTY_COMPLETION,
+  GODS,
+  type God,
+  type ScriptedProvider,
+  startProvider,
+} from "./provider";
+import { launchConfigFor, prepareOllama } from "./real";
+import { captureOllamaState, type OllamaState } from "./unattended-diagnostics";
+
+// --- The plan ---------------------------------------------------------------------------------
+
+const MINUTE = 60_000;
+
+/** The gate's length in minutes of running time. */
+export const GATE_MINUTES = 60;
+/** The outage starts once this many of the gods have committed an action. */
+export const OUTAGE_GODS = 5;
+/** Wall time the world is behind after the stop. Not scaled: the catch-up cap is a world rule. */
+export const GAP_MS = 90 * MINUTE;
+/** What one catch-up applies at most; the rest of the gap is discarded. */
+export const CATCH_UP_CAP_MS = 60 * MINUTE;
+/** The world is polled this often. */
+export const POLL_MS = 2_000;
+/** Consecutive unreadable frames after which the run fails. */
+export const FRAME_FAILURES_MAX = 5;
+/** How long the restarted sidecar has to finish its catch-up. */
+export const CATCH_UP_TIMEOUT_MS = 180_000;
+/** A request this close before the finish line is the first tick after the catch-up, not part of it (S10's tolerance). */
+export const LINE_TOLERANCE_MS = 25;
+
+export interface PhasePlan {
+  readonly minutes: number;
+  /** Running time after which the outage starts even if fewer than five gods have acted. */
+  readonly outageBoundMs: number;
+  readonly outageMs: number;
+  /** Running time from proxyRestoredAt to the stop. */
+  readonly stopAfterRestoreMs: number;
+  /** Running time at which the run ends. */
+  readonly runMs: number;
+  readonly gapMs: number;
+  /** A gate verdict is rendered only for the full length. */
+  readonly gate: boolean;
+}
+
+/** The running phases scaled to `minutes` of the gate's sixty; the gap is not. */
+export function phasePlan(minutes: number): PhasePlan {
+  const scale = minutes / GATE_MINUTES;
+  return {
+    minutes,
+    outageBoundMs: 15 * MINUTE * scale,
+    outageMs: 12 * MINUTE * scale,
+    stopAfterRestoreMs: 10 * MINUTE * scale,
+    runMs: minutes * MINUTE,
+    gapMs: GAP_MS,
+    gate: minutes === GATE_MINUTES,
+  };
+}
+
+// --- What the driver sees ---------------------------------------------------------------------
+
+export type PhaseName =
+  | "started"
+  | "outage-started"
+  | "proxy-restored"
+  | "stopped"
+  | "restarted"
+  | "catch-up-finished"
+  | "ended";
+
+export interface Boundary {
+  readonly phase: PhaseName;
+  readonly wallMs: number;
+  readonly tick: number;
+  /** Time the sidecar had been up when the boundary was crossed. */
+  readonly runningMs: number;
+  readonly note?: string;
+}
+
+export interface FrameReading {
+  readonly tick: number;
+  readonly sequence: number;
+  readonly status: string;
+  readonly degradedReason?: string;
+  readonly catchUpSummary?: {
+    readonly id: string;
+    readonly appliedMs: number;
+    readonly skippedMs: number;
+  };
+}
+
+export interface RunningWorld {
+  readonly pid: number;
+  frame(): Promise<FrameReading>;
+  /** SIGTERM, and the exit code. */
+  stopClean(): Promise<number | null>;
+  readonly exited: Promise<number | null>;
+  lines(): readonly { readonly at: number; readonly text: string }[];
+}
+
+export interface UnattendedDeps {
+  readonly outDir: string;
+  readonly plan: PhasePlan;
+  now(): number;
+  sleep(ms: number): Promise<void>;
+  /** Starts the sidecar on the run's data directory: the first start, and the restart after the gap. */
+  startWorld(): Promise<RunningWorld>;
+  /** The gods with at least one committed proposal. */
+  godsCommitted(): readonly string[];
+  /** Moves the persisted wall cursor back by `ms`, on the stopped store. */
+  backdate(ms: number): void;
+  readonly proxy: Pick<OutageProxy, "fail" | "pass" | "records">;
+  /** True once the proxy has seen five empty responses in a row. */
+  empty200(): boolean;
+  readonly sampler: MemorySampler;
+  /** Ollama's state, for a run that ends on a fault or a failure. */
+  diagnose(): Promise<OllamaState>;
+  /** Runs at the end of a completed run, with the world still up; Unit 4's capture goes here. */
+  onEnd?(world: RunningWorld): Promise<void>;
+  /** Told each boundary as it is crossed. */
+  log?(line: string): void;
+}
+
+export interface Check {
+  readonly name: string;
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+export type UnattendedStatus = "completed" | "failed" | "fault";
+
+export interface UnattendedResult {
+  readonly status: UnattendedStatus;
+  /** Why the run did not complete; absent when it did. */
+  readonly reason?: string;
+  readonly plan: PhasePlan;
+  readonly startedWallMs: number;
+  readonly endedWallMs: number;
+  readonly elapsedWallMs: number;
+  /** Time the sidecar was up, summed over both its lives. */
+  readonly runningMs: number;
+  readonly boundaries: readonly Boundary[];
+  readonly checks: readonly Check[];
+  readonly outage?: {
+    readonly trigger: "gods" | "time-bound";
+    readonly godsActed: number;
+  };
+  readonly restore?: {
+    readonly runnerAtRestore: "present" | "absent" | "unsampled";
+    readonly firstRequestAfterRestore:
+      | {
+          readonly latencyMs: number;
+          readonly status: number;
+          readonly empty: boolean;
+          readonly afterRestoreMs: number;
+        }
+      | undefined;
+  };
+  readonly catchUp?: {
+    readonly summaryId: string;
+    readonly appliedMs: number;
+    readonly skippedMs: number;
+    readonly startedWallMs: number;
+    readonly finishedWallMs: number;
+  };
+}
+
+/** 0 for a completed run, 1 for a failure, 2 for the infrastructure fault only. */
+export function exitCodeOf(
+  result: Pick<UnattendedResult, "status">,
+): 0 | 1 | 2 {
+  return result.status === "completed" ? 0 : result.status === "fault" ? 2 : 1;
+}
+
+/** The requests that arrived after `startedAt` and before the finish line, less the tolerance. */
+export function requestsInside(
+  records: readonly ProxyRecord[],
+  startedAt: number,
+  finishedAt: number,
+): number {
+  return records.filter(
+    (record) =>
+      record.at >= startedAt && record.at <= finishedAt - LINE_TOLERANCE_MS,
+  ).length;
+}
+
+/** The run ends early: the phases after it do not happen. */
+class RunEnd extends Error {
+  constructor(
+    readonly status: "failed" | "fault",
+    reason: string,
+  ) {
+    super(reason);
+  }
+}
+
+const jsonl = (value: unknown): string => `${JSON.stringify(value)}\n`;
+
+// --- The driver -------------------------------------------------------------------------------
+
+export async function driveUnattended(
+  deps: UnattendedDeps,
+): Promise<UnattendedResult> {
+  const { plan, outDir } = deps;
+  mkdirSync(outDir, { recursive: true });
+  const file = (name: string) => join(outDir, name);
+  const startedWallMs = deps.now();
+  const boundaries: Boundary[] = [];
+  const checks: Check[] = [];
+  let outage: UnattendedResult["outage"];
+  let restore: UnattendedResult["restore"];
+  let catchUp: UnattendedResult["catchUp"];
+
+  let world: RunningWorld | undefined;
+  let exitSeen: { readonly code: number | null } | undefined;
+  let expectedStop = false;
+  let upBeforeMs = 0;
+  let upSince: number | undefined;
+  let lastFrame: FrameReading | undefined;
+  let frameFailures = 0;
+  let proxyRecordsWritten = 0;
+  let lastSampleAt: number | undefined;
+
+  const runningMs = (): number =>
+    upBeforeMs + (upSince === undefined ? 0 : deps.now() - upSince);
+
+  function attach(started: RunningWorld): void {
+    world = started;
+    exitSeen = undefined;
+    expectedStop = false;
+    frameFailures = 0;
+    upSince = deps.now();
+    void started.exited.then((code) => {
+      if (world === started) exitSeen = { code };
+    });
+  }
+
+  function down(): void {
+    if (upSince !== undefined) upBeforeMs += deps.now() - upSince;
+    upSince = undefined;
+  }
+
+  const guard = (): void => {
+    if (deps.empty200()) {
+      throw new RunEnd(
+        "fault",
+        "five empty responses in a row from the model endpoint (Ollama's empty-200 fault)",
+      );
+    }
+    if (exitSeen !== undefined && !expectedStop) {
+      throw new RunEnd(
+        "failed",
+        `the sidecar exited (${exitSeen.code}) before the run ended`,
+      );
+    }
+  };
+
+  function flush(): void {
+    const records = deps.proxy.records();
+    for (const record of records.slice(proxyRecordsWritten)) {
+      appendFileSync(file("proxy-records.jsonl"), jsonl(record));
+    }
+    proxyRecordsWritten = records.length;
+    const sample = deps.sampler.peek();
+    if (sample !== undefined && sample.atMs !== lastSampleAt) {
+      lastSampleAt = sample.atMs;
+      appendFileSync(file("memory.jsonl"), jsonl(sample));
+    }
+  }
+
+  async function readFrameNow(): Promise<FrameReading | undefined> {
+    if (world === undefined) return undefined;
+    try {
+      const frame = await world.frame();
+      frameFailures = 0;
+      lastFrame = frame;
+      appendFileSync(
+        file("frames.jsonl"),
+        jsonl({
+          atMs: deps.now(),
+          runningMs: runningMs(),
+          sequence: frame.sequence,
+          tick: frame.tick,
+          status: frame.status,
+          degradedReason: frame.degradedReason,
+          summaryId: frame.catchUpSummary?.id,
+        }),
+      );
+      return frame;
+    } catch {
+      frameFailures += 1;
+      guard();
+      if (frameFailures >= FRAME_FAILURES_MAX) {
+        throw new RunEnd(
+          "failed",
+          `the frame could not be read ${FRAME_FAILURES_MAX} times in a row`,
+        );
+      }
+      return undefined;
+    }
+  }
+
+  async function poll(): Promise<void> {
+    await deps.sleep(POLL_MS);
+    guard();
+    await readFrameNow();
+    flush();
+    guard();
+  }
+
+  async function record(phase: PhaseName, note?: string): Promise<void> {
+    await readFrameNow().catch(() => undefined);
+    const boundary: Boundary = {
+      phase,
+      wallMs: deps.now(),
+      tick: lastFrame?.tick ?? -1,
+      runningMs: runningMs(),
+      ...(note === undefined ? {} : { note }),
+    };
+    boundaries.push(boundary);
+    deps.log?.(
+      `${new Date(boundary.wallMs).toISOString()} ${phase} at tick ${boundary.tick}, ${minutes(boundary.runningMs)} min running${note === undefined ? "" : ` (${note})`}`,
+    );
+  }
+
+  function addCheck(name: string, ok: boolean, detail: string): void {
+    checks.push({ name, ok, detail });
+  }
+
+  async function stopWorld(): Promise<number | null> {
+    const stopping = world;
+    if (stopping === undefined) return null;
+    expectedStop = true;
+    const code = await stopping.stopClean();
+    down();
+    return code;
+  }
+
+  let end: RunEnd | undefined;
+  try {
+    deps.sampler.start();
+    attach(await deps.startWorld());
+    for (let tries = 0; tries < FRAME_FAILURES_MAX; tries += 1) {
+      if (await readFrameNow()) break;
+      await deps.sleep(POLL_MS);
+    }
+    if (lastFrame === undefined) {
+      throw new RunEnd(
+        "failed",
+        "the sidecar served no frame after it started",
+      );
+    }
+    await record("started");
+
+    // Steady, until five gods have acted or the time bound.
+    let trigger: "gods" | "time-bound";
+    for (;;) {
+      await poll();
+      if (deps.godsCommitted().length >= OUTAGE_GODS) {
+        trigger = "gods";
+        break;
+      }
+      if (runningMs() >= plan.outageBoundMs) {
+        trigger = "time-bound";
+        break;
+      }
+    }
+    const godsActed = deps.godsCommitted().length;
+    outage = { trigger, godsActed };
+    deps.proxy.fail();
+    await record(
+      "outage-started",
+      trigger === "gods"
+        ? `${godsActed} of ${GODS.length} gods had acted`
+        : `the time bound: only ${godsActed} of ${GODS.length} gods had acted`,
+    );
+
+    const outageEndsAt = runningMs() + plan.outageMs;
+    while (runningMs() < outageEndsAt) await poll();
+
+    deps.proxy.pass();
+    const restoredWallMs = deps.now();
+    const runnerReading = deps.sampler.peek()?.runner.state;
+    await record("proxy-restored");
+    const stopAt = runningMs() + plan.stopAfterRestoreMs;
+    while (runningMs() < stopAt) await poll();
+    const first = deps.proxy
+      .records()
+      .find(
+        (entry) => entry.at >= restoredWallMs && entry.kind === "completion",
+      );
+    restore = {
+      runnerAtRestore: runnerReading ?? "unsampled",
+      firstRequestAfterRestore:
+        first === undefined
+          ? undefined
+          : {
+              latencyMs: first.latencyMs,
+              status: first.status,
+              empty: first.empty,
+              afterRestoreMs: first.at - restoredWallMs,
+            },
+    };
+
+    // Stop, fall 90 minutes behind, restart.
+    const code = await stopWorld();
+    addCheck("the sidecar stops cleanly", code === 0, `exit code ${code}`);
+    await record("stopped");
+    deps.backdate(plan.gapMs);
+    attach(await deps.startWorld());
+    await record("restarted");
+
+    const restartedAt = deps.now();
+    const catchUpLines = (): {
+      started: number | undefined;
+      finished: number | undefined;
+    } => {
+      const lines = world?.lines() ?? [];
+      return {
+        started: lines.find((l) => l.text.endsWith("catch-up started"))?.at,
+        finished: lines.find((l) => l.text.endsWith("catch-up finished"))?.at,
+      };
+    };
+    while (catchUpLines().finished === undefined) {
+      if (deps.now() - restartedAt >= CATCH_UP_TIMEOUT_MS) {
+        throw new RunEnd(
+          "failed",
+          `the catch-up did not finish within ${CATCH_UP_TIMEOUT_MS / 1000} s of the restart`,
+        );
+      }
+      await poll();
+    }
+    const lines = catchUpLines();
+    const summaryFrame = await readFrameNow();
+    const summary = summaryFrame?.catchUpSummary;
+    await record("catch-up-finished");
+    addCheck(
+      "the catch-up is bracketed by its own log lines",
+      lines.started !== undefined &&
+        lines.finished !== undefined &&
+        lines.finished >= lines.started,
+      `${lines.started === undefined ? "no start line" : new Date(lines.started).toISOString()} .. ${lines.finished === undefined ? "no finish line" : new Date(lines.finished).toISOString()}`,
+    );
+    const appliedOk = summary?.appliedMs === CATCH_UP_CAP_MS;
+    const discardedOk =
+      summary !== undefined &&
+      summary.skippedMs >= plan.gapMs - CATCH_UP_CAP_MS &&
+      summary.skippedMs <= plan.gapMs - CATCH_UP_CAP_MS + 10 * MINUTE;
+    addCheck(
+      "the catch-up applies the cap and discards the rest",
+      appliedOk && discardedOk,
+      summary === undefined
+        ? "the frame carries no catch-up summary"
+        : `${summary.appliedMs / MINUTE} min applied, ${(summary.skippedMs / MINUTE).toFixed(1)} min discarded`,
+    );
+    const inside = requestsInside(
+      deps.proxy.records(),
+      lines.started ?? restartedAt,
+      lines.finished ?? deps.now(),
+    );
+    addCheck(
+      "no provider request is made during the catch-up",
+      inside === 0,
+      `${inside} requests inside it`,
+    );
+    if (summary !== undefined) {
+      catchUp = {
+        summaryId: summary.id,
+        appliedMs: summary.appliedMs,
+        skippedMs: summary.skippedMs,
+        startedWallMs: lines.started ?? restartedAt,
+        finishedWallMs: lines.finished ?? deps.now(),
+      };
+    }
+
+    while (runningMs() < plan.runMs) await poll();
+    const finalFrame = (await readFrameNow()) ?? lastFrame;
+    await record("ended");
+    addCheck(
+      "the catch-up summary is still the summary at the end",
+      summary !== undefined && finalFrame?.catchUpSummary?.id === summary.id,
+      `${summary?.id} .. ${finalFrame?.catchUpSummary?.id}`,
+    );
+    if (world !== undefined) {
+      try {
+        await deps.onEnd?.(world);
+      } catch (error) {
+        throw new RunEnd(
+          "failed",
+          `the end capture failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    await stopWorld();
+  } catch (error) {
+    end =
+      error instanceof RunEnd
+        ? error
+        : new RunEnd(
+            "failed",
+            `unexpected error: ${error instanceof Error ? error.message : String(error)}`,
+          );
+  }
+
+  if (end !== undefined) {
+    // A run that ends early still stops what it started and keeps what it has.
+    if (world !== undefined && exitSeen === undefined) {
+      try {
+        await stopWorld();
+      } catch {
+        // Best effort.
+      }
+    }
+    down();
+  }
+  const samples = deps.sampler.stop();
+  flush();
+  writeFileSync(
+    file("memory.jsonl"),
+    samples.map((sample) => jsonl(sample)).join(""),
+  );
+  const summary = summarizeMemory(samples);
+
+  const failedChecks = checks.filter((entry) => !entry.ok);
+  const status: UnattendedStatus =
+    end !== undefined
+      ? end.status
+      : failedChecks.length > 0
+        ? "failed"
+        : "completed";
+  const reason =
+    end !== undefined
+      ? end.message
+      : failedChecks.length > 0
+        ? `checks failed: ${failedChecks.map((entry) => entry.name).join("; ")}`
+        : undefined;
+
+  if (status !== "completed") {
+    const state = await deps.diagnose();
+    const dir = join(outDir, "diagnostics");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "ollama-ps.json"),
+      `${JSON.stringify(state.ps, null, 2)}\n`,
+    );
+    writeFileSync(
+      join(dir, "ollama-log-tail.txt"),
+      state.logTail.ok
+        ? `${state.logTail.lines.join("\n")}\n`
+        : `${state.logTail.reason}\n`,
+    );
+    writeFileSync(
+      join(dir, "memory.json"),
+      `${JSON.stringify({ last: samples.at(-1), summary }, null, 2)}\n`,
+    );
+  }
+
+  const endedWallMs = deps.now();
+  const result: UnattendedResult = {
+    status,
+    ...(reason === undefined ? {} : { reason }),
+    plan,
+    startedWallMs,
+    endedWallMs,
+    elapsedWallMs: endedWallMs - startedWallMs,
+    runningMs: runningMs(),
+    boundaries,
+    checks,
+    ...(outage === undefined ? {} : { outage }),
+    ...(restore === undefined ? {} : { restore }),
+    ...(catchUp === undefined ? {} : { catchUp }),
+  };
+  writeFileSync(
+    file("run.json"),
+    `${JSON.stringify({ ...result, memory: summary }, null, 2)}\n`,
+  );
+  writeFileSync(file("report.md"), renderRunSummary(result));
+  return result;
+}
+
+// --- The summary ------------------------------------------------------------------------------
+
+const minutes = (ms: number): string => (ms / MINUTE).toFixed(1);
+
+/** The plain account of the run that Unit 5's report builds on: its status, its phase boundaries and its checks. */
+export function renderRunSummary(result: UnattendedResult): string {
+  const heading =
+    result.status === "completed"
+      ? "COMPLETED"
+      : result.status === "fault"
+        ? "INFRASTRUCTURE FAULT (exit 2)"
+        : "FAILED (exit 1)";
+  const lines = [
+    `# Unattended run: ${heading}`,
+    "",
+    result.reason === undefined ? "" : `Reason: ${result.reason}`,
+    "",
+    result.plan.gate
+      ? "A full-length run: the gate verdict is the threshold table's, not this summary's."
+      : `A ${result.plan.minutes}-minute run is not a gate run: it has no gate verdict.`,
+    "",
+    `Running time ${minutes(result.runningMs)} min of ${result.plan.minutes}; elapsed wall time ${minutes(result.elapsedWallMs)} min.`,
+    "",
+    "| Phase | Wall time | Tick | Running (min) | Note |",
+    "| --- | --- | --- | --- | --- |",
+    ...result.boundaries.map(
+      (b) =>
+        `| ${b.phase} | ${new Date(b.wallMs).toISOString()} | ${b.tick} | ${minutes(b.runningMs)} | ${b.note ?? ""} |`,
+    ),
+    "",
+  ];
+  if (result.outage !== undefined) {
+    lines.push(
+      result.outage.trigger === "gods"
+        ? `The outage started when ${result.outage.godsActed} of ${GODS.length} gods had acted.`
+        : `The outage started at the time bound: ${result.outage.godsActed} of ${GODS.length} gods had acted.`,
+      "",
+    );
+  }
+  if (result.restore !== undefined) {
+    const first = result.restore.firstRequestAfterRestore;
+    lines.push(
+      `At proxyRestoredAt the Ollama runner was ${result.restore.runnerAtRestore}; ${
+        first === undefined
+          ? "no model request followed before the stop."
+          : `the first request after it arrived ${(first.afterRestoreMs / 1000).toFixed(1)} s later and took ${(first.latencyMs / 1000).toFixed(1)} s (status ${first.status}${first.empty ? ", empty shape" : ""}).`
+      }`,
+      "",
+    );
+  }
+  lines.push(
+    "| Check | Result | Detail |",
+    "| --- | --- | --- |",
+    ...result.checks.map(
+      (c) => `| ${c.name} | ${c.ok ? "pass" : "FAIL"} | ${c.detail} |`,
+    ),
+    "",
+  );
+  return lines
+    .filter((line, i, all) => !(line === "" && all[i - 1] === ""))
+    .join("\n");
+}
+
+// --- The real wiring --------------------------------------------------------------------------
+
+/** `tools/scenarios/m2-greek-cast/unattended/<timestamp>/`, the timestamp safe as a file name. */
+export function defaultUnattendedDir(now: Date = new Date()): string {
+  const stamp = now
+    .toISOString()
+    .replace(/\.\d+Z$/, "")
+    .replaceAll(":", "-");
+  return join(REPO_ROOT, "tools/scenarios/m2-greek-cast/unattended", stamp);
+}
+
+const OLLAMA = "http://127.0.0.1:11434";
+
+/** Every god answers each turn with a legend of its own, so the run has gods acting without a model. */
+function scriptedAnswers(provider: ScriptedProvider): void {
+  let n = 0;
+  for (const god of GODS) {
+    provider.policy(god as God, () => {
+      n += 1;
+      return JSON.stringify({
+        action: "legend",
+        assertion: `A tale told by ${god}, number ${n}.`,
+      });
+    });
+  }
+}
+
+/**
+ * One unattended run against the compiled sidecar. The model endpoint is local Ollama behind the outage proxy, or,
+ * with `--scripted`, the scripted provider behind it. Returns the result; the caller exits with its code.
+ */
+export async function runUnattended(
+  args: Args,
+  onEnd?: UnattendedDeps["onEnd"],
+): Promise<UnattendedResult> {
+  const outDir = args.out ?? defaultUnattendedDir();
+  mkdirSync(outDir, { recursive: true });
+  const dataDir = join(outDir, "app-data");
+  const binary = resolveSidecarBinary(args.skipBuild);
+  const options = {
+    binary,
+    durationMs: args.unattendedMinutes * MINUTE,
+    ollama: OLLAMA,
+    model: args.model,
+    ...(args.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: args.reasoningEffort }),
+  };
+
+  let provider: ScriptedProvider | undefined;
+  let upstream = OLLAMA;
+  if (args.scripted === undefined) {
+    await prepareOllama(options);
+  } else {
+    provider = startProvider();
+    if (args.scripted === "answer") scriptedAnswers(provider);
+    else {
+      for (const god of GODS)
+        provider.policy(god as God, () => EMPTY_COMPLETION);
+    }
+    upstream = new URL(provider.baseUrl).origin;
+  }
+
+  let faulted = false;
+  const proxy = startOutageProxy({
+    upstream,
+    onEmptyRun: () => {
+      faulted = true;
+    },
+  });
+  const launchConfig = launchConfigFor({
+    ...options,
+    baseUrl: `${proxy.url}/v1`,
+  });
+
+  let current: { readonly pid: number } | undefined;
+  const sampler = createMemorySampler({
+    ollamaPid: () => findOllamaServePid(),
+    sidecarPid: () => current?.pid,
+  });
+
+  const gods = new Set<string>(GODS);
+  const deps: UnattendedDeps = {
+    outDir,
+    plan: phasePlan(args.unattendedMinutes),
+    now: Date.now,
+    sleep: (ms) => Bun.sleep(ms),
+    async startWorld() {
+      const sidecar = await startSidecar(binary, dataDir, { launchConfig });
+      current = sidecar;
+      return {
+        pid: sidecar.pid,
+        async frame() {
+          const { frame, state } = await readFrame(sidecar);
+          return {
+            tick: state.tick,
+            sequence: frame.sequence,
+            status: frame.status,
+            ...(frame.degradedReason === undefined
+              ? {}
+              : { degradedReason: frame.degradedReason }),
+            ...(frame.catchUpSummary === undefined
+              ? {}
+              : {
+                  catchUpSummary: {
+                    id: frame.catchUpSummary.id,
+                    appliedMs: frame.catchUpSummary.appliedMs,
+                    skippedMs: frame.catchUpSummary.skippedMs,
+                  },
+                }),
+          };
+        },
+        async stopClean() {
+          const code = await sidecar.stop("SIGTERM");
+          current = undefined;
+          return code;
+        },
+        exited: sidecar.exited.then((code) => {
+          if (current === sidecar) current = undefined;
+          return code;
+        }),
+        lines: () => sidecar.lines(),
+      };
+    },
+    godsCommitted() {
+      try {
+        const acted = new Set<string>();
+        for (const entry of readProposals(activeStorePath(dataDir))) {
+          if (entry.outcome === "committed" && gods.has(entry.actor)) {
+            acted.add(entry.actor);
+          }
+        }
+        return [...acted];
+      } catch {
+        return [];
+      }
+    },
+    backdate(ms) {
+      const path = activeStorePath(dataDir);
+      backdateCursor(path, persistedClock({ dataDir }).cursorWallMs - ms);
+    },
+    proxy,
+    empty200: () => faulted,
+    sampler,
+    diagnose: () => captureOllamaState({ ollama: OLLAMA, home: homedir() }),
+    log: (line) => console.log(line),
+    ...(onEnd === undefined ? {} : { onEnd }),
+  };
+
+  try {
+    return await driveUnattended(deps);
+  } finally {
+    killAllSidecars();
+    proxy.stop();
+    provider?.stop();
+  }
+}
