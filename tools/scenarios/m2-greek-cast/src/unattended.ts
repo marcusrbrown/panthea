@@ -28,7 +28,12 @@ import {
   exportForBaseline,
 } from "./baseline";
 import { resolveSidecarBinary } from "./binary";
-import { readProposals, readRealRequests, readStoredEvents } from "./db";
+import {
+  readCatchUpDiscardedMs,
+  readProposals,
+  readRealRequests,
+  readStoredEvents,
+} from "./db";
 import { loadGodIdentities } from "./episodes";
 import {
   createMemorySampler,
@@ -79,8 +84,16 @@ export const CATCH_UP_CAP_MS = 60 * MINUTE;
 export const POLL_MS = 2_000;
 /** Consecutive unreadable frames after which the run fails. */
 export const FRAME_FAILURES_MAX = 5;
-/** How long the restarted sidecar has to finish its catch-up. */
+/** How long the restarted sidecar has to finish its catch-up, every pass of it. */
 export const CATCH_UP_TIMEOUT_MS = 180_000;
+/**
+ * How long after the last catch-up pass finished the driver waits before it judges the catch-up. The live tick loop
+ * starts another pass whenever the cursor trails the wall clock by more than 5 s (a catch-up that took that long leaves
+ * exactly that trail), and it does so on its next one-second tick; the wait covers that tick and a poll.
+ */
+export const SETTLE_MS = 3_000;
+/** Applied time past the cap that is still the catch-up: the passes that follow the first, and the ticks that run live while the driver waits. */
+export const APPLIED_SLACK_MS = 2 * MINUTE;
 /** A request this close before the finish line is the first tick after the catch-up, not part of it (S10's tolerance). */
 export const LINE_TOLERANCE_MS = 25;
 
@@ -194,6 +207,8 @@ export interface UnattendedDeps {
   }): Promise<BaselineRecord>;
   /** Told each boundary as it is crossed. */
   log?(line: string): void;
+  /** The milliseconds of wall time the journal records the world discarded as over the catch-up cap, summed. */
+  discardedMs(): number;
   /** Renders the report from the finished run and the samples, or `undefined` to keep the driver's own summary. */
   renderReport?(
     result: UnattendedResult,
@@ -240,11 +255,20 @@ export interface UnattendedResult {
       | undefined;
   };
   readonly catchUp?: {
+    /** The persisted summary a frame carried once the catch-up settled: the last pass's, when there was more than one. */
     readonly summaryId: string;
     readonly appliedMs: number;
     readonly skippedMs: number;
     readonly startedWallMs: number;
     readonly finishedWallMs: number;
+    /** Catch-up passes the sidecar logged. */
+    readonly passes: number;
+    /** What the journal and the tick hold, which later passes do not overwrite. */
+    readonly journal: {
+      /** Ticks from the stop to the settled tick, as milliseconds. */
+      readonly appliedMs: number;
+      readonly discardedMs: number;
+    };
   };
 }
 
@@ -499,20 +523,44 @@ export async function driveUnattended(
     const catchUpLines = (): {
       started: number | undefined;
       finished: number | undefined;
+      passes: number;
+      open: boolean;
     } => {
       const lines = world?.lines() ?? [];
+      const starts = lines.filter((l) => l.text.endsWith("catch-up started"));
+      const finishes = lines.filter((l) =>
+        l.text.endsWith("catch-up finished"),
+      );
       return {
-        started: lines.find((l) => l.text.endsWith("catch-up started"))?.at,
-        finished: lines.find((l) => l.text.endsWith("catch-up finished"))?.at,
+        started: starts[0]?.at,
+        finished: finishes.at(-1)?.at,
+        passes: finishes.length,
+        open: starts.length > finishes.length,
       };
     };
-    while (catchUpLines().finished === undefined) {
+    const overdue = (): void => {
       if (deps.now() - restartedAt >= CATCH_UP_TIMEOUT_MS) {
         throw new RunEnd(
           "failed",
           `the catch-up did not finish within ${CATCH_UP_TIMEOUT_MS / 1000} s of the restart`,
         );
       }
+    };
+    while (catchUpLines().finished === undefined) {
+      overdue();
+      await poll();
+    }
+    // The catch-up is over when no pass is open and the last one ended a settle ago.
+    for (;;) {
+      const now = catchUpLines();
+      if (
+        !now.open &&
+        now.finished !== undefined &&
+        deps.now() - now.finished >= SETTLE_MS
+      ) {
+        break;
+      }
+      overdue();
       await poll();
     }
     const lines = catchUpLines();
@@ -526,17 +574,25 @@ export async function driveUnattended(
         lines.finished >= lines.started,
       `${lines.started === undefined ? "no start line" : new Date(lines.started).toISOString()} .. ${lines.finished === undefined ? "no finish line" : new Date(lines.finished).toISOString()}`,
     );
-    const appliedOk = summary?.appliedMs === CATCH_UP_CAP_MS;
+    // The persisted summary describes the last pass, so what the checks read is what later passes cannot overwrite: the
+    // ticks the world advanced since the stop, and the discard the journal holds.
+    const stoppedTick = boundaries.find((b) => b.phase === "stopped")?.tick;
+    const settledTick = boundaries.at(-1)?.tick;
+    const journalApplied =
+      stoppedTick === undefined || settledTick === undefined
+        ? 0
+        : (settledTick - stoppedTick) * 1000;
+    const journalDiscarded = deps.discardedMs();
+    const appliedOk =
+      journalApplied >= CATCH_UP_CAP_MS &&
+      journalApplied <= CATCH_UP_CAP_MS + APPLIED_SLACK_MS;
     const discardedOk =
-      summary !== undefined &&
-      summary.skippedMs >= plan.gapMs - CATCH_UP_CAP_MS &&
-      summary.skippedMs <= plan.gapMs - CATCH_UP_CAP_MS + 10 * MINUTE;
+      journalDiscarded >= plan.gapMs - CATCH_UP_CAP_MS &&
+      journalDiscarded <= plan.gapMs - CATCH_UP_CAP_MS + 10 * MINUTE;
     addCheck(
       "the catch-up applies the cap and discards the rest",
       appliedOk && discardedOk,
-      summary === undefined
-        ? "the frame carries no catch-up summary"
-        : `${summary.appliedMs / MINUTE} min applied, ${(summary.skippedMs / MINUTE).toFixed(1)} min discarded`,
+      `${lines.passes} ${lines.passes === 1 ? "pass" : "passes"}; the journal: ${(journalApplied / MINUTE).toFixed(1)} min applied by tick, ${(journalDiscarded / MINUTE).toFixed(1)} min discarded`,
     );
     const inside = requestsInside(
       deps.proxy.records(),
@@ -555,6 +611,8 @@ export async function driveUnattended(
         skippedMs: summary.skippedMs,
         startedWallMs: lines.started ?? restartedAt,
         finishedWallMs: lines.finished ?? deps.now(),
+        passes: lines.passes,
+        journal: { appliedMs: journalApplied, discardedMs: journalDiscarded },
       };
     }
 
@@ -739,6 +797,12 @@ export function renderRunSummary(
       "",
     );
   }
+  if (result.catchUp !== undefined && result.catchUp.passes > 1) {
+    lines.push(
+      `The sidecar ran ${result.catchUp.passes} catch-up passes. The persisted summary was replaced by the last pass (${(result.catchUp.appliedMs / 1000).toFixed(0)} s applied, ${(result.catchUp.skippedMs / MINUTE).toFixed(1)} min discarded); the journal holds ${(result.catchUp.journal.appliedMs / MINUTE).toFixed(1)} min applied and ${(result.catchUp.journal.discardedMs / MINUTE).toFixed(1)} min discarded.`,
+      "",
+    );
+  }
   if (result.restore !== undefined) {
     const first = result.restore.firstRequestAfterRestore;
     lines.push(
@@ -867,6 +931,10 @@ export function unattendedSettings(
 ): RunSettings {
   const options = unattendedOptions(args, binary, proxyUrl);
   const endpoint = endpointKind(options);
+  // The scripted provider answers whatever model name it is sent: the record says what answered.
+  if (args.scripted !== undefined) {
+    return { model: "scripted", endpoint: endpoint ?? "local" };
+  }
   return {
     model: options.model,
     ...(options.reasoningEffort === undefined
@@ -979,6 +1047,7 @@ export async function runUnattended(
         return [];
       }
     },
+    discardedMs: () => readCatchUpDiscardedMs(activeStorePath(dataDir)),
     backdate(ms) {
       const path = activeStorePath(dataDir);
       backdateCursor(path, persistedClock({ dataDir }).cursorWallMs - ms);

@@ -28,6 +28,7 @@ import {
   phasePlan,
   type RunningWorld,
   requestsInside,
+  SETTLE_MS,
   type UnattendedDeps,
   type UnattendedResult,
   unattendedLaunchConfig,
@@ -107,6 +108,8 @@ interface Script {
   /** How long the stop and restart take on the wall clock, which running time does not count. */
   readonly stopWallMs?: number;
   readonly catchUp?: { readonly appliedMs: number; readonly skippedMs: number };
+  /** The sidecar runs a second, tiny catch-up pass just after the first, whose summary replaces the first's. */
+  readonly trailingPass?: boolean;
   /** How long the catch-up runs, on the virtual clock; `undefined` never finishes. */
   readonly catchUpMs?: number | null;
   /** Provider requests the proxy saw, as wall offsets from the restart. */
@@ -152,6 +155,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
   const endHook: { world: RunningWorld | undefined } = { world: undefined };
   let starts = 0;
   let live: ReturnType<typeof makeWorld> | undefined;
+  let lastTick = 0;
   const records: ProxyRecord[] = [];
   let restoredAt: number | undefined;
   let proxyMode: "pass" | "fail" = "pass";
@@ -166,7 +170,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
     const exited = new Promise<number | null>((resolve) => {
       resolveExit = resolve;
     });
-    const baseTick = index === 0 ? 0 : 7_000;
+    const baseTick = index === 0 ? 0 : lastTick;
     if (index > 0)
       lines.push({ at: clock, text: "panthea-simulation: catch-up started" });
     const catchUpMs = script.catchUpMs === undefined ? 4_000 : script.catchUpMs;
@@ -195,6 +199,19 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
             text: "panthea-simulation: catch-up finished",
           });
         }
+        if (
+          script.trailingPass === true &&
+          index > 0 &&
+          catchUpMs !== null &&
+          clock >= startedAt + catchUpMs + TRAILING_AT_MS &&
+          lines.filter((l) => l.text.endsWith("catch-up started")).length < 2
+        ) {
+          const at = startedAt + catchUpMs + TRAILING_AT_MS;
+          lines.push(
+            { at, text: "panthea-simulation: catch-up started" },
+            { at: at + 100, text: "panthea-simulation: catch-up finished" },
+          );
+        }
         return lines;
       },
       async frame() {
@@ -212,22 +229,31 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
         const skipped =
           script.catchUp?.skippedMs ?? GAP_MS - CATCH_UP_CAP_MS + 4_000;
         const afterRestart = index > 0 && world.finished();
+        const trailed =
+          afterRestart &&
+          script.trailingPass === true &&
+          clock >= startedAt + (catchUpMs ?? 0) + TRAILING_AT_MS;
+        const tick =
+          baseTick +
+          Math.floor((clock - startedAt) / 1000) +
+          (afterRestart ? applied / 1000 : 0);
+        lastTick = tick;
         return {
-          tick:
-            baseTick +
-            Math.floor((clock - startedAt) / 1000) +
-            (afterRestart ? 3_600 : 0),
+          tick,
           sequence: frames,
           status: "ok",
           catchUpSummary: afterRestart
-            ? {
-                id:
-                  script.finalSummaryId && running() >= plan.runMs - 5 * POLL_MS
-                    ? script.finalSummaryId
-                    : "summary-1",
-                appliedMs: applied,
-                skippedMs: skipped,
-              }
+            ? trailed
+              ? { id: "summary-trailing", appliedMs: 5_000, skippedMs: 0 }
+              : {
+                  id:
+                    script.finalSummaryId &&
+                    running() >= plan.runMs - 5 * POLL_MS
+                      ? script.finalSummaryId
+                      : "summary-1",
+                  appliedMs: applied,
+                  skippedMs: skipped,
+                }
             : undefined,
         };
       },
@@ -338,6 +364,8 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
     onEnd: async (world) => {
       endHook.world = world;
     },
+    discardedMs: () =>
+      script.catchUp?.skippedMs ?? GAP_MS - CATCH_UP_CAP_MS + 4_000,
     async afterStop(info) {
       captures.push({
         status: info.status,
@@ -378,6 +406,9 @@ const FAKE_BASELINE: BaselineRecord = {
   },
   importProof: { state: "captured", ok: true, events: 42, slotCreated: true },
 };
+
+/** How long after the first catch-up finishes a trailing pass starts, in the harness. */
+const TRAILING_AT_MS = 1_000;
 
 const names = (result: UnattendedResult): PhaseName[] =>
   result.boundaries.map((b) => b.phase);
@@ -894,6 +925,31 @@ test("the unattended run's routing names the local Ollama as the endpoint, throu
   }
 });
 
+test("a run answered by the scripted provider records the model as scripted, never the Ollama model it did not use", () => {
+  const scripted = parseArgs(["--unattended", "--scripted=answer"]);
+  const settings = unattendedSettings(
+    scripted,
+    "/bin/sidecar",
+    "http://127.0.0.1:53211",
+  );
+  expect(settings.model).toBe("scripted");
+  expect(settings.reasoningEffort).toBeUndefined();
+  expect(settings.endpoint).toBe("local");
+  const real = unattendedSettings(
+    parseArgs([
+      "--unattended",
+      "--model=granite3.3-8b-4k",
+      "--reasoning-effort=none",
+    ]),
+    "/bin/sidecar",
+    "http://127.0.0.1:53211",
+  );
+  expect(real).toMatchObject({
+    model: "granite3.3-8b-4k",
+    reasoningEffort: "none",
+  });
+});
+
 test("a run's settings are written into run.json beside the result", async () => {
   const h = harness();
   h.deps.settings = { model: "m", endpoint: "local" };
@@ -963,4 +1019,119 @@ test("a capture that throws does not hide how the run ended: the run keeps its s
   expect(read(h.outDir, "report.md")).toContain(
     "The baseline could not be captured: disk full",
   );
+});
+
+// --- A catch-up that takes more than one pass -------------------------------------------------
+
+test("when the catch-up takes longer than the sleep-gap threshold the sidecar runs a second small pass, which replaces the persisted summary: the checks read the journal and the tick, the summary is reported as the last pass's, and the run completes", async () => {
+  const h = harness(phasePlan(6), { trailingPass: true });
+  const result = await driveUnattended(h.deps);
+
+  expect(result.status).toBe("completed");
+  expect(result.checks.every((c) => c.ok)).toBe(true);
+  expect(result.catchUp).toMatchObject({
+    passes: 2,
+    summaryId: "summary-trailing",
+    appliedMs: 5_000,
+    skippedMs: 0,
+    journal: { discardedMs: GAP_MS - CATCH_UP_CAP_MS + 4_000 },
+  });
+  expect(result.catchUp?.journal.appliedMs).toBeGreaterThanOrEqual(
+    CATCH_UP_CAP_MS,
+  );
+  expect(result.catchUp?.journal.appliedMs).toBeLessThan(
+    CATCH_UP_CAP_MS + 2 * MINUTE,
+  );
+  const detail = result.checks.find(
+    (c) => c.name === "the catch-up applies the cap and discards the rest",
+  )?.detail;
+  expect(detail).toContain("2 passes");
+  expect(detail).toContain("journal");
+  expect(read(h.outDir, "report.md")).toContain("replaced by the last pass");
+});
+
+test("the run waits for the catch-up to settle before it judges it: the boundary comes after the last pass finished and a quiet period, never between two passes", async () => {
+  const h = harness(phasePlan(6), { trailingPass: true });
+  const result = await driveUnattended(h.deps);
+  const restarted = result.boundaries.find((b) => b.phase === "restarted");
+  const finished = result.boundaries.find(
+    (b) => b.phase === "catch-up-finished",
+  );
+  // The first pass ends 4 s after the restart, the trailing one 1.1 s after that; the boundary waits the settle time after it.
+  expect(
+    (finished?.wallMs ?? 0) - (restarted?.wallMs ?? 0),
+  ).toBeGreaterThanOrEqual(4_000 + 1_100 + SETTLE_MS);
+  expect(SETTLE_MS).toBeGreaterThanOrEqual(3_000);
+  // With one pass the same wait applies from its end.
+  const single = await driveUnattended(harness(phasePlan(6)).deps);
+  const r1 = single.boundaries.find((b) => b.phase === "restarted");
+  const f1 = single.boundaries.find((b) => b.phase === "catch-up-finished");
+  expect((f1?.wallMs ?? 0) - (r1?.wallMs ?? 0)).toBeGreaterThanOrEqual(
+    4_000 + SETTLE_MS,
+  );
+  expect(single.catchUp?.passes).toBe(1);
+});
+
+test("a second pass does not hide a catch-up that did not do its job: a discard the journal does not hold, or too few ticks applied, still fails the run", async () => {
+  const noDiscard = await driveUnattended(
+    harness(phasePlan(6), {
+      trailingPass: true,
+      catchUp: { appliedMs: CATCH_UP_CAP_MS, skippedMs: 0 },
+    }).deps,
+  );
+  expect(noDiscard.status).toBe("failed");
+  expect(noDiscard.reason).toContain(
+    "the catch-up applies the cap and discards the rest",
+  );
+
+  const tooLittle = await driveUnattended(
+    harness(phasePlan(6), {
+      trailingPass: true,
+      catchUp: { appliedMs: 10 * MINUTE, skippedMs: GAP_MS - CATCH_UP_CAP_MS },
+    }).deps,
+  );
+  expect(tooLittle.status).toBe("failed");
+});
+
+test("the applied time is the cap and little more: ticks well past the cap fail it, and the cap exactly passes", async () => {
+  const exact = await driveUnattended(
+    harness(phasePlan(6), {
+      catchUp: {
+        appliedMs: CATCH_UP_CAP_MS,
+        skippedMs: GAP_MS - CATCH_UP_CAP_MS,
+      },
+    }).deps,
+  );
+  expect(exact.status).toBe("completed");
+  const over = await driveUnattended(
+    harness(phasePlan(6), {
+      catchUp: {
+        appliedMs: CATCH_UP_CAP_MS + 5 * MINUTE,
+        skippedMs: GAP_MS - CATCH_UP_CAP_MS,
+      },
+    }).deps,
+  );
+  expect(over.status).toBe("failed");
+});
+
+test("a catch-up pass that starts and never finishes fails the run at the timeout, and a finished first pass does not excuse it", async () => {
+  const h = harness(phasePlan(6), { trailingPass: true });
+  const real = h.deps.startWorld;
+  h.deps.startWorld = async () => {
+    const world = await real();
+    const lines = world.lines;
+    let hung = false;
+    return {
+      ...world,
+      lines: () => {
+        const all = lines();
+        if (all.filter((l) => l.text.endsWith("catch-up finished")).length >= 2)
+          hung = true;
+        return hung ? all.slice(0, -1) : all;
+      },
+    };
+  };
+  const result = await driveUnattended(h.deps);
+  expect(result.status).toBe("failed");
+  expect(result.reason).toContain("catch-up");
 });
