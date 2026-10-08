@@ -208,6 +208,9 @@ interface BackendRecord {
     backingHeight: number;
   }[];
   renders: number;
+  /** "prepare" and "render" in the order the backend saw them. */
+  readonly calls: string[];
+  prepareGate: Deferred | undefined;
   disposed: boolean;
   lose(): void;
   gate: Deferred | undefined;
@@ -258,11 +261,14 @@ class Harness {
       scene,
       views: [],
       renders: 0,
+      calls: [],
+      prepareGate: undefined,
       disposed: false,
       gate,
       lose: () => onLost?.(),
       backend: {
         layer,
+        name: "fake",
         async start(handler) {
           onLost = handler;
           if (gate !== undefined) await gate.promise;
@@ -275,8 +281,14 @@ class Harness {
             backingHeight: view.metrics.backingHeight,
           });
         },
+        async prepare() {
+          record.calls.push("prepare");
+          if (record.prepareGate !== undefined)
+            await record.prepareGate.promise;
+        },
         render: () => {
           record.renders += 1;
+          record.calls.push("render");
         },
         readRenderTarget: () =>
           Promise.resolve({
@@ -912,6 +924,128 @@ describe("animation clock", () => {
     preview.tick(170);
     expect(sprite(h.live, "subject").frame?.x).toBe(0.25);
     expect(h.live.renders).toBe(renders + 1);
+    preview.dispose();
+  });
+});
+
+describe("flat panels, declared footprints and drawn instances", () => {
+  it("draws a flat item at its screen position in front of iso items and exposes the drawn instances", async () => {
+    const h = new Harness();
+    h.source.publish(CANON, published());
+    const preview = h.preview();
+    await preview.setItems([
+      subject,
+      { kind: "flat", id: "panel", at: { x: 140, y: -20 }, request: CANON },
+    ]);
+    const panel = preview.drawn.find((instance) => instance.id === "panel");
+    expect([panel?.x, panel?.y]).toEqual([140, -20]);
+    expect(preview.drawn.map((instance) => instance.id).sort()).toEqual([
+      "panel",
+      "subject",
+    ]);
+    expect(sprite(h.live, "panel").position.z).toBeGreaterThan(
+      sprite(h.live, "subject").position.z,
+    );
+    expect(h.live.backend.layer.stats).toEqual({ sprites: 2, textures: 1 });
+    preview.dispose();
+  });
+
+  it("passes a declared footprint to a placeholder item", async () => {
+    const h = new Harness();
+    const missing: Selection = { source: "canon", id: "no-such-sprite" };
+    h.source.publish(
+      missing,
+      published({ width: 16, height: 16, placeholder: true, pixelKey: "ph" }),
+    );
+    const preview = h.preview();
+    await preview.setItems([
+      {
+        kind: "sprite",
+        id: "hall",
+        layer: "structure",
+        cell: { x: 3, y: 3, z: 0 },
+        footprint: { w: 2, h: 2 },
+        request: missing,
+      },
+    ]);
+    expect(preview.drawn[0]?.footprint).toEqual({ w: 2, h: 2 });
+    expect(preview.drawn[0]?.depth).toBe(8);
+    preview.dispose();
+  });
+
+  it("drops instances from `drawn` when their atlas is unavailable", async () => {
+    const h = new Harness();
+    h.source.publish(CANON, published());
+    h.source.failNextFetches = 2;
+    const preview = h.preview();
+    await preview.setItems([subject]);
+    expect(preview.drawn).toEqual([]);
+    preview.dispose();
+  });
+
+  it("reports the backend's name when it offers one", async () => {
+    const h = new Harness();
+    const preview = h.preview();
+    await preview.idle();
+    expect(preview.backendName()).toBe("fake");
+    preview.dispose();
+  });
+});
+
+describe("preparing the backend before a scene is drawn", () => {
+  it("prepares, then renders, after the scene changes, so new materials are ready for the frame", async () => {
+    const h = new Harness();
+    h.source.publish(CANON, published());
+    const preview = h.preview();
+    await preview.setItems([subject]);
+    const calls = h.live.calls;
+    const lastPrepare = calls.lastIndexOf("prepare");
+    expect(lastPrepare).toBeGreaterThanOrEqual(0);
+    expect(calls.slice(lastPrepare)).toEqual(["prepare", "render"]);
+    preview.dispose();
+  });
+
+  it("renders a tick or a zoom change without preparing again", async () => {
+    const h = new Harness();
+    h.source.publish(CANON, published());
+    const preview = h.preview();
+    await preview.setItems([subject]);
+    const prepares = h.live.calls.filter((call) => call === "prepare").length;
+    preview.tick(170);
+    preview.setZoom(3);
+    await preview.idle();
+    expect(h.live.calls.filter((call) => call === "prepare")).toHaveLength(
+      prepares,
+    );
+    expect(h.live.calls.at(-1)).toBe("render");
+    preview.dispose();
+  });
+
+  it("does not render a scene whose preparation finished after dispose", async () => {
+    const h = new Harness();
+    h.source.publish(CANON, published());
+    const preview = h.preview();
+    await preview.idle();
+    h.live.prepareGate = deferred();
+    const pending = preview.setItems([subject]);
+    await Promise.resolve();
+    await Promise.resolve();
+    const renders = h.live.renders;
+    preview.dispose();
+    h.live.prepareGate.resolve();
+    await pending;
+    expect(h.live.renders).toBe(renders);
+  });
+
+  it("prepares the rebuilt backend before its first frame after device loss", async () => {
+    const h = new Harness();
+    h.source.publish(CANON, published());
+    const preview = h.preview();
+    await preview.setItems([subject]);
+    h.live.lose();
+    await preview.idle();
+    expect(h.live.calls).toEqual(["prepare", "render"]);
+    expect(h.backends).toHaveLength(2);
     preview.dispose();
   });
 });

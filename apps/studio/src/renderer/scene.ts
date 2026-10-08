@@ -10,6 +10,7 @@ import {
   depthZ,
   diamondOrigin,
   ENTITY_SLOTS,
+  FLAT_DEPTH,
   type Footprint,
   type Layer,
   type Point,
@@ -50,6 +51,15 @@ export type SceneEntity =
       readonly layer: Layer;
       /** The footprint's origin cell: its smallest x and y. */
       readonly cell: Cell;
+      /** Declared footprint for a placeholder, which has none; canon art uses its manifest's. */
+      readonly footprint?: Footprint;
+      readonly resolution: SceneResolution;
+    }
+  | {
+      /** A portrait or other flat panel at a screen position, outside the iso scene. */
+      readonly kind: "flat";
+      readonly id: string;
+      readonly at: Point;
       readonly resolution: SceneResolution;
     };
 
@@ -153,23 +163,46 @@ function place(entity: SceneEntity): Attempt {
   }
 
   const { resolution } = entity;
+  const w =
+    resolution.source === "placeholder"
+      ? resolution.placeholder.width
+      : resolution.cell.w;
+  const h =
+    resolution.source === "placeholder"
+      ? resolution.placeholder.height
+      : resolution.cell.h;
+  const art = artOf(resolution);
+
+  if (entity.kind === "flat") {
+    for (const [name, value] of [
+      ["x", entity.at.x],
+      ["y", entity.at.y],
+    ] as const) {
+      if (!Number.isInteger(value)) {
+        return refuse("non-integer", `${name}=${value} is not an integer`);
+      }
+    }
+    return {
+      ok: true,
+      placed: {
+        id: entity.id,
+        layer: "speech",
+        cell: { x: 0, y: 0, z: 0 },
+        footprint: SINGLE_TILE,
+        origin: entity.at,
+        w,
+        h,
+        depth: FLAT_DEPTH,
+        art,
+      },
+    };
+  }
+
   let footprint: Footprint;
   let pivot: Point;
-  let w: number;
-  let h: number;
-  let art: InstanceArt;
   if (resolution.source === "placeholder") {
-    const { placeholder } = resolution;
-    footprint = SINGLE_TILE;
-    w = placeholder.width;
-    h = placeholder.height;
+    footprint = entity.footprint ?? SINGLE_TILE;
     pivot = { x: Math.floor(w / 2), y: h };
-    art = {
-      source: "placeholder",
-      reason: resolution.reason,
-      uri: resolution.uri,
-      placeholder,
-    };
   } else {
     if (
       resolution.kind !== "sprite" ||
@@ -183,19 +216,6 @@ function place(entity: SceneEntity): Attempt {
     }
     footprint = resolution.footprint;
     pivot = resolution.pivot;
-    w = resolution.cell.w;
-    h = resolution.cell.h;
-    art = {
-      source: "canon",
-      assetId: resolution.assetId,
-      revision: resolution.revision,
-      uri: resolution.uri,
-      atlas: resolution.atlas,
-      frames: resolution.frames,
-      ...(resolution.loopStart === undefined
-        ? {}
-        : { loopStart: resolution.loopStart }),
-    };
   }
 
   const origin = spriteOrigin(entity.cell, footprint, pivot);
@@ -215,6 +235,28 @@ function place(entity: SceneEntity): Attempt {
       depth: depth.value,
       art,
     },
+  };
+}
+
+function artOf(resolution: SceneResolution): InstanceArt {
+  if (resolution.source === "placeholder") {
+    return {
+      source: "placeholder",
+      reason: resolution.reason,
+      uri: resolution.uri,
+      placeholder: resolution.placeholder,
+    };
+  }
+  return {
+    source: "canon",
+    assetId: resolution.assetId,
+    revision: resolution.revision,
+    uri: resolution.uri,
+    atlas: resolution.atlas,
+    frames: resolution.frames,
+    ...(resolution.loopStart === undefined
+      ? {}
+      : { loopStart: resolution.loopStart }),
   };
 }
 

@@ -16,7 +16,7 @@ import {
   RenderTarget,
   Scene,
 } from "three";
-import { texture, uv } from "three/tsl";
+import { texture, uv, vec2 } from "three/tsl";
 import { MeshBasicNodeMaterial, WebGPURenderer } from "three/webgpu";
 import { DEPTH_CAMERA_Z, DEPTH_FAR, DEPTH_NEAR } from "./iso";
 import { createSceneLayer } from "./layer";
@@ -29,14 +29,14 @@ import {
   type RenderBackend,
 } from "./preview";
 
+export const DEFAULT_BACKGROUND = [38, 42, 52] as const;
+
 export interface GpuBackendOptions {
   /** Use the WebGL2 backend even where WebGPU exists. */
   readonly forceWebGL?: boolean;
   /** Clear colour as sRGB bytes, written to the target unchanged. */
   readonly background?: readonly [number, number, number];
 }
-
-const DEFAULT_BACKGROUND = [38, 42, 52] as const;
 
 function flipRows(buffer: PixelBuffer): PixelBuffer {
   const stride = buffer.width * 4;
@@ -91,7 +91,10 @@ export function createGpuBackend(
   target.texture.colorSpace = NoColorSpace;
 
   const blitMaterial = new MeshBasicNodeMaterial();
-  blitMaterial.colorNode = texture(target.texture, uv());
+  blitMaterial.colorNode = texture(
+    target.texture,
+    vec2(uv().x, uv().y.oneMinus()),
+  );
   blitMaterial.depthTest = false;
   blitMaterial.depthWrite = false;
   blitMaterial.toneMapped = false;
@@ -121,6 +124,9 @@ export function createGpuBackend(
 
   return {
     layer,
+    get name() {
+      return isWebGL() ? "webgl2" : "webgpu";
+    },
     async start(onDeviceLost) {
       lost = onDeviceLost;
       await renderer.init();
@@ -137,6 +143,14 @@ export function createGpuBackend(
       camera.top = bounds.top;
       camera.bottom = bounds.bottom;
       camera.updateProjectionMatrix();
+    },
+    async prepare() {
+      if (disposed) return;
+      scene.updateMatrixWorld(true);
+      renderer.setRenderTarget(target);
+      await renderer.compileAsync(scene, camera);
+      renderer.setRenderTarget(null);
+      await renderer.compileAsync(blitScene, blitCamera);
     },
     render() {
       if (!disposed) draw();

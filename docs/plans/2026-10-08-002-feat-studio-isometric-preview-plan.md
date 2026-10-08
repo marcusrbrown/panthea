@@ -178,7 +178,7 @@ flowchart LR
 
 ## Implementation Units
 
-- [ ] **U1: Studio workspace scaffold**
+- [x] **U1: Studio workspace scaffold**
 
 **Goal:** A buildable `apps/studio` Vite and React workspace that the root checks include.
 
@@ -201,7 +201,7 @@ flowchart LR
 
 **Verification:** `bun install --frozen-lockfile` passes after the lock update, and `bun run check` includes and passes the workspace.
 
-- [ ] **U2: Isometric math and scene model**
+- [x] **U2: Isometric math and scene model**
 
 **Goal:** Pure placement, depth and composition logic, from resolved assets to drawable instances.
 
@@ -237,7 +237,7 @@ flowchart LR
 
 **Verification:** placement, depth and fallback hold against real parsed manifests.
 
-- [ ] **U3: Asset-source port and dev bridge**
+- [x] **U3: Asset-source port and dev bridge**
 
 **Goal:** Validated canon, draft, approved and placeholder bytes, with change events, behind one interface.
 
@@ -280,7 +280,7 @@ flowchart LR
 
 **Verification:** the browser can receive only validated bytes, and every listed failure becomes a placeholder plus a reported problem.
 
-- [ ] **U4: Preview renderer and texture lifecycle**
+- [x] **U4: Preview renderer and texture lifecycle**
 
 **Goal:** A pixel-exact, live-reloading renderer that survives device loss.
 
@@ -316,7 +316,7 @@ flowchart LR
 
 **Verification:** lifecycle tests prove no leaks and correct recovery. Pixel exactness is proven in U5 on a real backend.
 
-- [ ] **U5: Preview harness, pixel checks and evidence**
+- [x] **U5: Preview harness, pixel checks and evidence**
 
 **Goal:** A usable preview page and recorded evidence on the WebGL2 backend.
 

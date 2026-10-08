@@ -47,6 +47,8 @@ export const DEPTH_Z_MIN = 0;
 export const DEPTH_Z_MAX =
   DEPTH_Z_MIN + DEPTH_COUNT * LAYERS.length * ENTITY_SLOTS - 1;
 export const DEPTH_NEAR = 0.5;
+/** Depth given to flat panels, so they draw over every iso instance. */
+export const FLAT_DEPTH = DEPTH_MAX;
 export const DEPTH_CAMERA_Z = DEPTH_Z_MAX + 1;
 export const DEPTH_FAR = DEPTH_CAMERA_Z - DEPTH_Z_MIN + 0.5;
 

@@ -325,3 +325,108 @@ describe("composeScene: refusals", () => {
     expect(composeScene([])).toEqual({ instances: [], refused: [] });
   });
 });
+
+describe("composeScene: placeholder footprint", () => {
+  const placeholder = resolveAsset(registry, { spriteId: "no-such-sprite" });
+
+  it("anchors a placeholder on the bottom vertex of a declared 2x2 footprint", () => {
+    const scene = composeScene([
+      {
+        kind: "sprite",
+        id: "hall",
+        layer: "structure",
+        cell: cell(3, 3),
+        footprint: TWO_BY_TWO,
+        resolution: placeholder,
+      },
+    ]);
+    const hall = find(scene.instances, "hall");
+    expect(hall.footprint).toEqual(TWO_BY_TWO);
+    expect(hall.depth).toBe(8);
+    // Bottom cell (4,4): vertex x = 0, y = 8*16 + 31 = 159.
+    expect([hall.x + hall.w / 2, hall.y + hall.h]).toEqual([0, 159]);
+  });
+
+  it("ignores the override for canon art, whose manifest declares its own footprint", () => {
+    const resolution = resolveAsset(registry, { spriteId: "placeholder-zeus" });
+    const scene = composeScene([
+      {
+        kind: "sprite",
+        id: "zeus",
+        layer: "actor",
+        cell: cell(3, 3),
+        footprint: TWO_BY_TWO,
+        resolution,
+      },
+    ]);
+    expect(find(scene.instances, "zeus").footprint).toEqual({ w: 1, h: 1 });
+  });
+
+  it("refuses an out-of-range override footprint", () => {
+    const scene = composeScene([
+      {
+        kind: "sprite",
+        id: "wide",
+        layer: "structure",
+        cell: cell(0, 0),
+        footprint: { w: 9, h: 1 },
+        resolution: placeholder,
+      },
+    ]);
+    expect(scene.refused[0]).toMatchObject({
+      id: "wide",
+      reason: "bad-footprint",
+    });
+  });
+});
+
+describe("composeScene: flat panels", () => {
+  const portrait = portraitFixture();
+  const portraitResolution = resolveAsset(snapshot(portrait), {
+    spriteId: "zeus-portrait",
+    expression: "neutral",
+  });
+
+  it("places a portrait at a screen position, at its cell size, in front of every iso instance", () => {
+    const scene = composeScene([
+      {
+        kind: "flat",
+        id: "panel",
+        at: { x: 140, y: -20 },
+        resolution: portraitResolution,
+      },
+      sprite("far-front", "speech", cell(63, 63, -8), "placeholder-zeus"),
+    ]);
+    expect(scene.refused).toEqual([]);
+    const panel = find(scene.instances, "panel");
+    expect([panel.x, panel.y, panel.w, panel.h]).toEqual([140, -20, 96, 96]);
+    expect(panel.layer).toBe("speech");
+    expect(panel.art.source).toBe("canon");
+    expect(panel.z).toBeGreaterThan(find(scene.instances, "far-front").z);
+  });
+
+  it("places a flat placeholder at its own size", () => {
+    const resolution = resolveAsset(registry, { spriteId: "missing" });
+    const scene = composeScene([
+      { kind: "flat", id: "ph", at: { x: 8, y: 9 }, resolution },
+    ]);
+    const ph = find(scene.instances, "ph");
+    expect([ph.x, ph.y, ph.w, ph.h]).toEqual([8, 9, 16, 16]);
+  });
+
+  it("refuses a fractional screen position", () => {
+    const scene = composeScene([
+      {
+        kind: "flat",
+        id: "panel",
+        at: { x: 0.5, y: 0 },
+        resolution: portraitResolution,
+      },
+    ]);
+    expect(scene.instances).toEqual([]);
+    expect(scene.refused[0]).toMatchObject({
+      id: "panel",
+      reason: "non-integer",
+    });
+  });
+});

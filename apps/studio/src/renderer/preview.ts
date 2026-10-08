@@ -13,9 +13,14 @@ import type {
   Selection,
   SourceResolution,
 } from "../source/port";
-import type { Cell, Layer, Point } from "./iso";
+import type { Cell, Footprint, Layer, Point } from "./iso";
 import type { SceneLayer } from "./layer";
-import { composeScene, type SceneEntity, type SceneResolution } from "./scene";
+import {
+  composeScene,
+  type Instance,
+  type SceneEntity,
+  type SceneResolution,
+} from "./scene";
 import { type AtlasSpec, type DecodedImage, diamondImage } from "./textures";
 
 export const LOGICAL_WIDTH = 480;
@@ -87,9 +92,16 @@ export interface PreviewView {
 /** What the controller needs from a renderer; the GPU implementation is gpu.ts. */
 export interface RenderBackend {
   readonly layer: SceneLayer;
+  /** Which graphics API is in use, for logs and evidence. */
+  readonly name?: string;
   /** Resolves when the renderer is ready; `onDeviceLost` may be called any time after. */
   start(onDeviceLost: () => void): Promise<void>;
   view(view: PreviewView): void;
+  /**
+   * Resolves when everything the scene now holds can be drawn in one frame
+   * (new materials compiled). Called after the scene changes, not on ticks.
+   */
+  prepare?(): Promise<void>;
   render(): void;
   readRenderTarget(): Promise<PixelBuffer>;
   readCanvas(): Promise<PixelBuffer>;
@@ -125,6 +137,15 @@ export type PreviewItem =
       readonly id: string;
       readonly layer: Layer;
       readonly cell: Cell;
+      /** Declared footprint for a placeholder, which has none. */
+      readonly footprint?: Footprint;
+      readonly request: ResolveRequest;
+    }
+  | {
+      /** A panel at a screen position, outside the iso scene. */
+      readonly kind: "flat";
+      readonly id: string;
+      readonly at: Point;
       readonly request: ResolveRequest;
     };
 
@@ -148,6 +169,9 @@ export interface PreviewOptions {
 
 export interface Preview {
   readonly state: PreviewState;
+  /** The instances currently on show, back to front. */
+  readonly drawn: readonly Instance[];
+  backendName(): string | undefined;
   /** Resolves when the scene shows these items, or the preview failed. */
   setItems(items: readonly PreviewItem[]): Promise<void>;
   setZoom(zoom: Zoom): void;
@@ -272,6 +296,18 @@ export function createPreview(options: PreviewOptions): Preview {
     handlers.onRender?.();
   }
 
+  async function present(): Promise<void> {
+    const backend = live?.backend;
+    if (backend?.prepare === undefined) {
+      render();
+      return;
+    }
+    if (!usable() || !ready || recovering) return;
+    await backend.prepare();
+    if (!usable() || live?.backend !== backend) return;
+    render();
+  }
+
   function applyView(): void {
     if (live === undefined) return;
     const metrics = canvasMetrics(zoom, devicePixelRatio());
@@ -331,7 +367,7 @@ export function createPreview(options: PreviewOptions): Preview {
     recovering = false;
     applyView();
     place(opened.backend.layer);
-    render();
+    await present();
   }
 
   function place(layer: SceneLayer): void {
@@ -344,7 +380,7 @@ export function createPreview(options: PreviewOptions): Preview {
   }
 
   const matches = (item: PreviewItem, selections: readonly Selection[]) =>
-    item.kind === "sprite" &&
+    item.kind !== "diamond" &&
     selections.some(
       (selection) =>
         selection.source === item.request.source &&
@@ -352,7 +388,7 @@ export function createPreview(options: PreviewOptions): Preview {
     );
 
   async function resolveItem(item: PreviewItem): Promise<void> {
-    if (item.kind !== "sprite") return;
+    if (item.kind === "diamond") return;
     try {
       const resolved = await source.resolve(item.request);
       if (usable()) resolutions.set(item.id, resolved);
@@ -403,13 +439,25 @@ export function createPreview(options: PreviewOptions): Preview {
       } else {
         const resolution = resolutions.get(item.id);
         if (resolution === undefined) continue;
-        entities.push({
-          kind: "sprite",
-          id: item.id,
-          layer: item.layer,
-          cell: item.cell,
-          resolution: sceneResolution(resolution),
-        });
+        entities.push(
+          item.kind === "flat"
+            ? {
+                kind: "flat",
+                id: item.id,
+                at: item.at,
+                resolution: sceneResolution(resolution),
+              }
+            : {
+                kind: "sprite",
+                id: item.id,
+                layer: item.layer,
+                cell: item.cell,
+                ...(item.footprint === undefined
+                  ? {}
+                  : { footprint: item.footprint }),
+                resolution: sceneResolution(resolution),
+              },
+        );
         key = atlasKeyOf(resolution);
         specOfKey.set(key, specOf(resolution));
       }
@@ -460,13 +508,13 @@ export function createPreview(options: PreviewOptions): Preview {
       keys: keyOfItem,
     };
     place(backend.layer);
-    render();
+    await present();
   }
 
   async function refresh(changed?: readonly Selection[]): Promise<void> {
     const targets = items.filter(
       (item) =>
-        item.kind === "sprite" &&
+        item.kind !== "diamond" &&
         (changed === undefined || matches(item, changed)),
     );
     if (changed !== undefined && targets.length === 0) return;
@@ -498,6 +546,10 @@ export function createPreview(options: PreviewOptions): Preview {
     get state() {
       return { items, zoom, camera };
     },
+    get drawn() {
+      return drawn.instances;
+    },
+    backendName: () => live?.backend.name,
     setItems(next) {
       items = [...next];
       const ids = new Set(items.map((item) => item.id));

@@ -240,7 +240,7 @@ flowchart TB
 - **Verification:** Real local F1/F2/F4 on Zeus idle-south and six-expression portrait set, including installed Aseprite fidelity, real selected-runtime readiness/cancellation/late-output evidence, deterministic pack bytes, complete provenance and explicit owner approval for any canon publication. T1 also needs seated and strike sets before its checkpoint. Owner approvals are explicit; CLI invocation never invents them.
 
 ### Unit 6. Isometric preview layer
-- [ ] Establish representative pixel-exact preview.
+- [x] Establish representative pixel-exact preview. The child plan `docs/plans/2026-10-08-002-feat-studio-isometric-preview-plan.md` is authoritative. Installed TileMap2D places isometric maps orthogonally, so placement is studio-owned. Browser evidence on the WebGL2 backend is in `docs/evidence/asset-studio/unit6/`; packaged proof stays with Unit 7.
 - **Requirements:** R16, R17; U08, X02.
 - **Dependencies:** Unit 2; fixture assets may precede canon.
 - **Files:** Create `apps/studio/src/renderer/scene.ts`, `scene.test.ts`, `tiles.ts`, `tiles.test.ts`, preview fixtures and window evidence; update traceability.
