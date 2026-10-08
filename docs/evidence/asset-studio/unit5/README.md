@@ -97,7 +97,7 @@ An earlier cleanup edit (`…-u7-r10`, 388 pixels) is superseded by r10c; the tw
 - An independent visual review of the scripted cleanup found no mouth added and no expression changed, kept the three grey-speck removals and the cream masses, and asked for the four pixels above to be restored and two exterior pixels set to the background. That produced r10c.
 - The owner accepted the r10c "after" frames and approved the draft for canon (2026-10-08).
 
-`zeus-portrait/portraits-before-{1x,4x}.png` are the six generated candidates; `portraits-after-{1x,4x}.png` are the r10c frames. The 4× images are whole-number enlargements of the 1× images. The after 1× PNG has the same sha256 as the r10c edit's sheet. `zeus-portrait/zeus-portrait-atlas.png` is the published atlas.
+`zeus-portrait/portraits-before-{1x,4x}.png` are the six generated candidates; `portraits-after-{1x,4x}.png` are the r10c frames. The 4× images are whole-number enlargements of the 1× images. The after 1× PNG has the same sha256 as the r10c edit's sheet. The published atlas is the registry blob `content/greek/assets/registry/blobs/171d42aa567ba3e06a36b66a5ea9b16b2525a921d85cfa08cc341417e8a7eeea.png`; it is not copied here.
 
 ### Records
 

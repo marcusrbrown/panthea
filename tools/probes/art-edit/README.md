@@ -2,15 +2,17 @@
 
 Status: round 1 and round 2 complete. This is research evidence only; none of these images are canon.
 
+Evidence conventions. The 4× sheets are whole-number nearest-neighbour enlargements of the 1× sheets and are not committed; only the `-1x.png` sheets are. `build_sheets.py` and `build_sprite_init.py` write a `-4x.png` beside each `-1x.png` they build, and any other 4× view is `nearest_resize(sheet, 4 * width, 4 * height, integer_factor=True)` from `pipeline.py`. The review passages below name 4× files by name, because those are what the reviewer opened; the files are no longer in the repo. Recorded paths use `<repo>` for this checkout and `<main-checkout>` for the Panthea checkout that holds the pinned art-local-2 binaries and models (`tools/probes/art-local-2`); one misspelled home directory in a mistyped command is shown as `<mistyped-home>`. `run.ts` takes the runtime directory from `PANTHEA_ART_LOCAL_2` and defaults to this repo's `tools/probes/art-local-2`.
+
 ## Scope and method
 
 The probe compares local edit and generation workflows using only the already-staged `art-local-2` runtime/models. See that checkout's `tools/probes/art-local-2/README.md` and `components.json` for provenance. Runs are serial; `tools/probes/art-edit/run.ts` records the exact argv, seed, strength, wall time, exit status and output hash to `.context/studio-pipeline/art-edit/runs.jsonl`, with full stdout/stderr in the same scratch directory. Raw images and masks stay outside the repository.
 
-Host/runtime: Apple M1 Pro, macOS 15.6; `stable-diffusion.cpp` `master-929-3f8527a` (same pinned `sd-cli` binary recorded in art-local-2). Runtime path: `/Users/mrbrown/src/github.com/marcusrbrown/panthea/tools/probes/art-local-2/bin/release/sd-cli`.
+Host/runtime: Apple M1 Pro, macOS 15.6; `stable-diffusion.cpp` `master-929-3f8527a` (same pinned `sd-cli` binary recorded in art-local-2). Runtime path: `<main-checkout>/tools/probes/art-local-2/bin/release/sd-cli`.
 
 The specified neutral portrait exists at `.context/studio-pipeline/u7-creative/studio/blobs/c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba.png`; its bytes hash to **`c3097cd1e2a1c2fcb11545603856a4e5ec6ea811baa5f218c392135c1e8a47ba`**. It is a usable 768×768 pixel-art bust with a stable head outline, identifiable hairline, eyes, moustache and beard. A copy was made under scratch as `inputs/base.png`.
 
-Model hashes below are the pinned values from `/Users/mrbrown/src/github.com/marcusrbrown/panthea/tools/probes/art-local-2/components.json` (verified against the on-disk model files). Round 1 and 2 A1 use Z-Image Turbo Q3_K (`4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980`), Qwen3-4B-Instruct-2507 (`3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597`) and AE (`afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38`). Round 1 A2/B1 use FLUX.2 Klein base 4B (`c3a2854510677b7aa37dd7547d908c54889a76c6d6aa3ffe902fcaa092d1328b`), Qwen3-4B (`f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a`), flux2 VAE (`868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3`) and svntax pixel-walk LoRA (`a968c042c2443bf6bfed41ce833a0e06bf5bbb7961ac40b88fb7257a940ae54e`). Round 1/2 B2 use SDXL base (`31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`), SDXL VAE (`235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1`) and pixel-art-xl LoRA (`4234637cb80c998f41e348e6a6cb6bc20d8d038b2b0f256b6129b3b5e353eef7`).
+Model hashes below are the pinned values from `<main-checkout>/tools/probes/art-local-2/components.json` (verified against the on-disk model files). Round 1 and 2 A1 use Z-Image Turbo Q3_K (`4b44bdaa7814f20d7cf144e3939bd93aa32f50660204dd0c2aea5c5376232980`), Qwen3-4B-Instruct-2507 (`3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597`) and AE (`afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38`). Round 1 A2/B1 use FLUX.2 Klein base 4B (`c3a2854510677b7aa37dd7547d908c54889a76c6d6aa3ffe902fcaa092d1328b`), Qwen3-4B (`f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a`), flux2 VAE (`868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3`) and svntax pixel-walk LoRA (`a968c042c2443bf6bfed41ce833a0e06bf5bbb7961ac40b88fb7257a940ae54e`). Round 1/2 B2 use SDXL base (`31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b`), SDXL VAE (`235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1`) and pixel-art-xl LoRA (`4234637cb80c998f41e348e6a6cb6bc20d8d038b2b0f256b6129b3b5e353eef7`).
 
 For round 1 A1, a binary white-on-black mask selects two interior face zones while leaving hairline and head outline unmasked: eyes/brows rectangle `(x=363,y=222,w=196,h=83)` and mouth rectangle `(x=385,y=329,w=176,h=88)` on the 768×768 base, with all other pixels black. Each expression starts from the same base and uses seed `20261006`, Z-Image Turbo Q3_K, euler/8 steps/guidance 1, 768×768. Strengths are 0.45, 0.60 and 0.75. Source outputs are reduced to 96×96 with nearest-neighbour for 1× and enlarged 4× with nearest-neighbour for the 4× review sheet. No palette snap was applied.
 
@@ -21,11 +23,11 @@ sd-cli -M img_gen --diffusion-model models/z_image_turbo-Q3_K.gguf \
   --llm models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --vae models/ae.safetensors \
   --offload-to-cpu --diffusion-fa -W 768 -H 768 --sampling-method euler \
   --steps 8 --guidance 1 -s 20261006 --strength <0.45|0.60|0.75> \
-  -i /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/inputs/base.png \
-  --mask /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/inputs/face-mask.png \
+  -i <repo>/.context/studio-pipeline/art-edit/inputs/base.png \
+  --mask <repo>/.context/studio-pipeline/art-edit/inputs/face-mask.png \
   -p 'pixel art portrait of the same Greek god Zeus, preserve the same hairline, face shape, eye placement, skin, beard and composition; change only the facial expression to <expression prompt>' \
   -n 'different person, altered hairstyle, changed face shape, duplicated or asymmetrical eyes, exaggerated cartoon expression, round O mouth, photorealistic, blurry, antialiasing' \
-  -o /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/<run>.png
+  -o <repo>/.context/studio-pipeline/art-edit/outputs/<run>.png
 ```
 
 The run tables below give exact prompt text, output names, and all settings that vary per run. The command blocks define the invariant argv. Full resolved argv and raw logs are also preserved in the scratch run records, rather than duplicating long identical commands in every row. Any failed attempt is listed separately from its successful retry.
@@ -50,14 +52,14 @@ The run tables below give exact prompt text, output names, and all settings that
 | scheming: one brow subtly raised, eyes calmly narrowed but human, a small knowing asymmetrical closed-mouth smile | 0.75 | 20261006 | 263.71 | `a1-scheming-075.png` | `ca6e9e0d2f2037727368273fb0dd9afdd36daee7bb746e126819deea233e0578` | no |
 | awed: brows raised, eyes naturally widened with human pupils, lips gently parted in a small relaxed expression, not a round O | 0.75 | 20261006 | 260.43 | `a1-awed-075.png` | `e5d5e0387283088acf3174c6bbd9933eddea14e6a1d50c5538a70f9e2f9a2758` | no |
 
-Contact sheets (order: base, pleased, angry / grieving, scheming, awed): [0.45 at 1×](evidence/a1-045-1x.png), [0.45 at 4×](evidence/a1-045-4x.png), [0.60 at 1×](evidence/a1-060-1x.png), [0.60 at 4×](evidence/a1-060-4x.png), [0.75 at 1×](evidence/a1-075-1x.png), [0.75 at 4×](evidence/a1-075-4x.png).
+Contact sheets (order: base, pleased, angry / grieving, scheming, awed): [0.45 at 1×](evidence/a1-045-1x.png), [0.60 at 1×](evidence/a1-060-1x.png), [0.75 at 1×](evidence/a1-075-1x.png).
 
 Assessment (corrected after independent visual review): identity, head outline and hairline are preserved exactly outside the mask. Eyes are stable and human at 0.45 and 0.60; the 0.75 eyes distort and awed is comical. At 1× and 0.60, angry and grieving read; pleased looks like a frown, while scheming and awed are not distinct from neutral. Mouths are structurally constrained by the moustache/beard and are not five reliable cues at 96×96. A1 at 0.60 remains a partial base, not a complete six-expression set.
 
 Two failed attempts (not included in the 15 successful matrix runs):
 
 - Pleased 0.45, seed 20261006, command used `-m models/z_image_turbo-Q3_K.gguf` instead of `--diffusion-model models/z_image_turbo-Q3_K.gguf`; exit 1 after 0.742 s. Output: `new_sd_ctx_t failed` and `[ERROR] diffusion_engine.cpp:992 - get sd version from file failed: 'models/z_image_turbo-Q3_K.gguf'`. Corrected command ran as `a1-pleased-045-retry`, 167.917 s, output hash above.
-- Angry 0.45, seed 20261006, same settings/prompt as the successful angry row but output was mistyped as `/Users/mrbown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/a1-angry-045.png`. Runner recorded exit 1 after 163.272 s and no output hash. The retry used the correct `/Users/mrbrown/...` path and succeeded (160.930 s). The first run reused the eventual retry's log filename, so its detailed stderr was overwritten; the exact argv and exit record remain in `runs.jsonl`.
+- Angry 0.45, seed 20261006, same settings/prompt as the successful angry row but output was mistyped as `<mistyped-home>/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/a1-angry-045.png` (a misspelled home directory, `mrbown`). Runner recorded exit 1 after 163.272 s and no output hash. The retry used the correct `<repo>/...` path and succeeded (160.930 s). The first run reused the eventual retry's log filename, so its detailed stderr was overwritten; the exact argv and exit record remain in `runs.jsonl`.
 
 ### A2 — FLUX.2 Klein 4B reference edit
 
@@ -71,7 +73,7 @@ Smoke test succeeded: `-r` loaded and preprocessed the 768×768 base (`preproces
 | scheming | one subtly raised brow, calmly narrowed human eyes, a small knowing asymmetrical closed-mouth smile | 20261006 | n/a | 698.71 | `a2-scheming.png` | `de4896c0df69867b77703a358b7c9d9c99bc13b497c5a4e2b797013ead056096` | no |
 | awed | raised brows, naturally widened human eyes, gently parted lips, not a round O | 20261006 | n/a | 694.37 | `a2-awed.png` | `4bdf36a446e36011434a817460effbe92fcc645e17d1afea16e1f72134766f82` | no |
 
-All runs used FLUX.2 Klein base 4B Q4_0, Qwen3-4B Q4_K_M, flux2 VAE, `--offload-to-cpu --diffusion-fa`, 768×768, euler, 20 steps, `--cfg-scale 4 --img-cfg-scale 4`, and `-r /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/inputs/base.png`. Prompt prefix: `same character, same pixel art style, same face shape and eyes, change only the facial expression to`; negative prompt for the smoke/angry/grieving/scheming runs: `different person, altered hairline, changed face shape, distorted eyes, exaggerated cartoon expression, blurry, antialiasing`; awed additionally forbids `round O mouth`.
+All runs used FLUX.2 Klein base 4B Q4_0, Qwen3-4B Q4_K_M, flux2 VAE, `--offload-to-cpu --diffusion-fa`, 768×768, euler, 20 steps, `--cfg-scale 4 --img-cfg-scale 4`, and `-r <repo>/.context/studio-pipeline/art-edit/inputs/base.png`. Prompt prefix: `same character, same pixel art style, same face shape and eyes, change only the facial expression to`; negative prompt for the smoke/angry/grieving/scheming runs: `different person, altered hairline, changed face shape, distorted eyes, exaggerated cartoon expression, blurry, antialiasing`; awed additionally forbids `round O mouth`.
 
 Exact common CLI argv (substitute the prompt suffix, optional extra negative phrase, and output name from the table; the smoke command additionally had `--lora-model-dir models/loras`):
 
@@ -80,15 +82,15 @@ sd-cli -M img_gen --diffusion-model models/flux-2-klein-base-4b-Q4_0.gguf \
   --llm models/Qwen3-4B-Q4_K_M.gguf --vae models/flux2-vae.safetensors \
   --offload-to-cpu --diffusion-fa -W 768 -H 768 --sampling-method euler \
   --steps 20 --cfg-scale 4 --img-cfg-scale 4 -s 20261006 \
-  -r /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/inputs/base.png \
+  -r <repo>/.context/studio-pipeline/art-edit/inputs/base.png \
   -p 'same character, same pixel art style, same face shape and eyes, change only the facial expression to <expression>' \
   -n 'different person, altered hairline, changed face shape, distorted eyes, exaggerated cartoon expression, blurry, antialiasing, <optional round O mouth>' \
-  -o /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/<run>.png
+  -o <repo>/.context/studio-pipeline/art-edit/outputs/<run>.png
 ```
 
 The smoke-test command also included `--lora-model-dir models/loras` but no LoRA activation token; it did not log or apply a LoRA. The four expression follow-ups omitted that directory flag.
 
-Contact sheets (order: base, pleased, angry / grieving, scheming, awed): [1×](evidence/a2-1x.png), [4×](evidence/a2-4x.png).
+Contact sheets (order: base, pleased, angry / grieving, scheming, awed): [1×](evidence/a2-1x.png).
 
 Assessment (corrected after independent visual review): the five outputs look essentially the same as one another and the reference; none reads as the requested expression. Background shifts to saturated blue, with hair/beard and robe colours also drifting. Eye consistency reflects copying the reference, not demonstrated expression control. A2 is not viable as run.
 
@@ -105,7 +107,7 @@ sd-cli -M img_gen --diffusion-model models/flux-2-klein-base-4b-Q4_0.gguf \
   -W 512 -H 640 --sampling-method euler --steps 20 --cfg-scale 4 -s <seed> \
   -p 'pixel art, <lora:pixel_4walk_small_flux2_klein_base_4b_v1:1>, a full-body character sprite of Zeus, front-facing straight-on view, relaxed idle stance, both arms down, one small golden lightning bolt held low at his right side, white Greek chiton, short neat white beard, simple golden laurel crown, clean connected silhouette, limited palette, plain flat background, one centered figure, no animation sheet' \
   -n 'sword, dagger, spear, shield, cloak, cape, torn fabric, blurry, antialiasing, smooth gradient, photorealistic, 3d render, multiple figures, text, watermark, cropped feet, cropped head, background objects' \
-  -o /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/b1-single-lora-<seed>.png
+  -o <repo>/.context/studio-pipeline/art-edit/outputs/b1-single-lora-<seed>.png
 ```
 
 Native-sheet command uses the same model/LoRA flags, euler/20 steps/cfg 4, and 512×512, changing the prompt to the LoRA's documented layout:
@@ -117,7 +119,7 @@ sd-cli -M img_gen --diffusion-model models/flux-2-klein-base-4b-Q4_0.gguf \
   -W 512 -H 512 --sampling-method euler --steps 20 --cfg-scale 4 -s <seed> \
   -p 'A pixel art spritesheet of Zeus, front-facing small Greek god with a white beard, simple golden laurel crown, white chiton, holding one small golden thunderbolt low at his side, same simple character in every cell. The spritesheet is a 4 by 4 grid of four rows of frames: first row is 3 walking frames facing down and 1 frame both arms raised; second row is 3 walking frames facing left and 1 frame jumping left; third row is 3 walking frames facing right and 1 frame jumping right; fourth row is 3 walking frames back view facing up and 1 frame lying on floor. Clean pixel-art clusters, plain consistent background. <lora:pixel_4walk_small_flux2_klein_base_4b_v1:1>' \
   -n 'sword, dagger, spear, shield, cloak, cape, torn fabric, extra characters, text, watermark, blurry, antialiasing, smooth gradient, photorealistic, 3d render' \
-  -o /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/b1-sheet-lora-<seed>.png
+  -o <repo>/.context/studio-pipeline/art-edit/outputs/b1-sheet-lora-<seed>.png
 ```
 
 Common settings for both B1 matrices: FLUX.2 Klein base 4B Q4_0, Qwen3-4B Q4_K_M, flux2 VAE, `--offload-to-cpu --diffusion-fa`, LoRA directory `models/loras`, activation `<lora:pixel_4walk_small_flux2_klein_base_4b_v1:1>` (all logs confirm `apply lora at runtime`), euler, 20 steps, cfg 4. Single figures are 512×640; native sheets 512×512. LoRA runs do not use a denoising strength.
@@ -136,9 +138,9 @@ Common settings for both B1 matrices: FLUX.2 Klein base 4B Q4_0, Qwen3-4B Q4_K_M
 | 20261008 | n/a | 366.32 | `b1-sheet-lora-20261008.png` | `d646288feff8b30b0762b4ad1e2681820d107a48da803fd0ad00c30f19c6ccbb` | no |
 | 20261009 | n/a | 366.29 | `b1-sheet-lora-20261009.png` | `9ff8f071db625afd79d6a8873f5547ec84e268124850d556cc98f1a52489a7c7` | no |
 
-The seed-20261006 untagged preflight was a valid no-LoRA image generation but not part of the required four-seed LoRA set (291.49 s, no strength, SHA `a15e900aa84760d84c2d59ec3db07160c5308f17631302f16e9bab869b732646`, exit 0). Its command used the B1 single-figure command above with `-o /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/b1-single-seed-20261006.png`, but omitted `<lora:pixel_4walk_small_flux2_klein_base_4b_v1:1>` from the prompt. It produced a detached bolt; it is intentionally not included in the contact sheet.
+The seed-20261006 untagged preflight was a valid no-LoRA image generation but not part of the required four-seed LoRA set (291.49 s, no strength, SHA `a15e900aa84760d84c2d59ec3db07160c5308f17631302f16e9bab869b732646`, exit 0). Its command used the B1 single-figure command above with `-o <repo>/.context/studio-pipeline/art-edit/outputs/b1-single-seed-20261006.png`, but omitted `<lora:pixel_4walk_small_flux2_klein_base_4b_v1:1>` from the prompt. It produced a detached bolt; it is intentionally not included in the contact sheet.
 
-The reproducible B1 contact sheet is a four-column, two-row grid (64×80 cells; singles seeds 20261006–09 left-to-right on row 1, native-sheet first cells in the same order on row 2): [1×, 256×160](evidence/b1-round1-rebuilt-1x.png), [4×, 1024×640](evidence/b1-round1-rebuilt-4x.png). The [uncropped full-frame single-figure sources at 1×](evidence/b1-round1-raw-1x.png) and [4×](evidence/b1-round1-raw-4x.png) show the duplicated figures. The original sheet-crop method was not logged; these rebuilt sheets supersede the earlier soft-resampled versions. `python3 tools/probes/art-edit/build_sheets.py b1` detects contiguous content bands using RGB distance >30 from the four-corner background, selects the lower band for the two stacked outputs (20261007, 20261009), fits each content bbox to 56px high with nearest-neighbour resampling, centers it in 64×80 and aligns its feet to row79. Native sheets are cropped at `(0,0,128,128)`, content-bounded by the same threshold, then nearest-fitted to 56px high and bottom-aligned. A 4× sheet is assembled by 4× nearest-neighbour replication. Exact source crop rectangles and method are in [`b1-round1-crops.json`](evidence/b1-round1-crops.json); runnable code is in `build_sheets.py` and `pipeline.py`. Run the focused tests with `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/probes/art-edit -p 'test_*.py'`.
+The reproducible B1 contact sheet is a four-column, two-row grid (64×80 cells; singles seeds 20261006–09 left-to-right on row 1, native-sheet first cells in the same order on row 2): [1×, 256×160](evidence/b1-round1-rebuilt-1x.png). The [uncropped full-frame single-figure sources at 1×](evidence/b1-round1-raw-1x.png) show the duplicated figures. The original sheet-crop method was not logged; these rebuilt sheets supersede the earlier soft-resampled versions. `python3 tools/probes/art-edit/build_sheets.py b1` detects contiguous content bands using RGB distance >30 from the four-corner background, selects the lower band for the two stacked outputs (20261007, 20261009), fits each content bbox to 56px high with nearest-neighbour resampling, centers it in 64×80 and aligns its feet to row79. Native sheets are cropped at `(0,0,128,128)`, content-bounded by the same threshold, then nearest-fitted to 56px high and bottom-aligned. A 4× sheet is assembled by 4× nearest-neighbour replication. Exact source crop rectangles and method are in [`b1-round1-crops.json`](evidence/b1-round1-crops.json); runnable code is in `build_sheets.py` and `pipeline.py`. Run the focused tests with `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/probes/art-edit -p 'test_*.py'`.
 
 Assessment (corrected after independent visual review): single-figure subjects are chibi-like, with heads about 35–45% of figure height, soft in the original evidence, and costume/hair vary; the two stacked outputs are 20261007 and 20261009. Native first cells have heads about 40% high, leafy wreaths rather than a clear Zeus crown, blank faces and no bolt; they are walking poses. Neither B1 route is viable for the requested idle. The rebuilt evidence uses nearest-neighbour crops so its edge quality is no longer the original reviewer concern.
 
@@ -152,7 +154,7 @@ sd-cli -M img_gen -m models/sd_xl_base_1.0.safetensors --vae models/sdxl_vae.saf
   -W 1024 -H 1280 --sampling-method euler_a --steps 20 --cfg-scale 7 -s <seed> \
   -p 'pixel art, <lora:pixel-art-xl:1.2>, original full-body Zeus game sprite, adult Greek god with white beard, simple gold laurel crown, white chiton with gold trim, front-facing straight-on, relaxed idle standing pose, both arms down, a single small golden lightning bolt held low in his right hand, no movement, clean compact clusters, limited palette, plain flat white background, one character centered occupying roughly two thirds of image height' \
   -n 'sword, dagger, spear, shield, cloak, cape, torn clothes, blurry, antialiasing, smooth gradient, photorealistic, 3d render, multiple characters, spritesheet, text, watermark, cropped feet, cropped head, background objects' \
-  -o /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/b2-sdxl-<seed>.png
+  -o <repo>/.context/studio-pipeline/art-edit/outputs/b2-sdxl-<seed>.png
 ```
 
 | Seed | Wall time (s) | Strength | Output | Output SHA-256 | Error? |
@@ -162,7 +164,7 @@ sd-cli -M img_gen -m models/sd_xl_base_1.0.safetensors --vae models/sdxl_vae.saf
 | 20261008 | 487.43 | n/a | `b2-sdxl-20261008.png` | `746cbd66b2d44c8a77e079d4e9a8df82d898f5b3b9f2a7d8b87088248a10af22` | no |
 | 20261009 | 529.02 | n/a | `b2-sdxl-20261009.png` | `ea17e622883b69c87be4ac24d5470f142e0fa84804467324afb7ce9100c97e2c` | no |
 
-Nearest-neighbour reduction to 52×65 followed by white padding (6 px left, 6 px right, 15 px top) produced the full 64×80 cell; figure height is about 56 px. Contact sheets, order by seed: [1×](evidence/b2-1x.png), [4×](evidence/b2-4x.png).
+Nearest-neighbour reduction to 52×65 followed by white padding (6 px left, 6 px right, 15 px top) produced the full 64×80 cell; figure height is about 56 px. Contact sheets, order by seed: [1×](evidence/b2-1x.png).
 
 Assessment (corrected after independent visual review): B2 seed 20261007 is the best static base: clean silhouette, white chiton, gold crown and beard, with a head about 22–25% of figure height. Seeds 20261006 and 20261008 have bare torsos; 20261009 is blobby/wide. None has a clear bolt. At 1× the output is not over-detailed; the previous non-integer resize creates uneven clusters, and the off-white background tiles would leave a halo if keyed naively. Round 2 regenerates 20261007 at a source size for exact 8× reduction.
 
@@ -317,16 +319,16 @@ bun tools/probes/art-edit/run.ts a1-r2-<config>-<expression>-<seed> -- \
   --llm models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --vae models/ae.safetensors \
   --offload-to-cpu --diffusion-fa -W 768 -H 768 --sampling-method euler \
   --steps 8 --guidance 1 -s <seed> --strength 0.60 \
-  -i /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/inputs/base.png \
-  --mask /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/inputs/a1-r2-<config>-mask.png \
+  -i <repo>/.context/studio-pipeline/art-edit/inputs/base.png \
+  --mask <repo>/.context/studio-pipeline/art-edit/inputs/a1-r2-<config>-mask.png \
   -p 'same Greek god Zeus, preserve the same head, hairline, face shape, eyes, beard, skin and composition; <expression cue>' \
   -n 'different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth' \
-  -o /Users/mrbrown/src/github.com/marcusrbrown/panthea-studio/.context/studio-pipeline/art-edit/outputs/a1-r2-<config>-<expression>-<seed>.png
+  -o <repo>/.context/studio-pipeline/art-edit/outputs/a1-r2-<config>-<expression>-<seed>.png
 ```
 
 Only `<config>=brows` and `combined` are generated; `mouth` is recorded as an unrun prepared mask. The owner's fallback (brows-only plus combined) was used instead of adding a third 20-run matrix after a brows-only scheming seed-20261012 run took 1,332.012 s. A 30-minute outer timeout ended the four-run brows-only scheming shell batch before seed 20261013 completed; that seed was retried alone and succeeded. A separate combined grieving seed-20261010 run was interrupted at sampling step 3/5 and then retried successfully. The missing-output attempt and the interrupted model run are in `interrupted-attempts.jsonl`; every runner-started attempt is in `runs.jsonl`. Later calls use one CLI invocation per shell command.
 
-The five-row/five-column sheets link here: brows [1×](evidence/a1-r2-brows-1x.png) and [4×](evidence/a1-r2-brows-4x.png); combined [1×](evidence/a1-r2-combined-1x.png) and [4×](evidence/a1-r2-combined-4x.png). Picks are provisional and marked with a pale-gold cell border in [`a1-r2-picks.json`](evidence/a1-r2-picks.json); all seeds remain visible for independent selection.
+The five-row/five-column sheets link here: brows [1×](evidence/a1-r2-brows-1x.png); combined [1×](evidence/a1-r2-combined-1x.png). Picks are provisional and marked with a pale-gold cell border in [`a1-r2-picks.json`](evidence/a1-r2-picks.json); all seeds remain visible for independent selection.
 
 ### B2 — SDXL inpaint, then Z-Image masked img2img
 
@@ -338,7 +340,7 @@ The final bolt mask is one white half-open rectangle `(112,336,120,136)` in the 
 
 The follow-up Z-Image masked-img2img command uses the same base and widened mask, Z-Image Turbo Q3_K + Qwen3-4B-Instruct-2507 + AE, offload/FA, 512×640, euler/8/guidance1, `--init-img <same base> --mask <same mask> --strength 0.60 -s <seed>`, positive `same Zeus pixel sprite, add one clear small golden thunderbolt, a sharp zigzag lightning symbol with three alternating points, held in his right fist on the viewer-left side; preserve the face, beard, crown, pose and background`, negative `floating bolt, lightning in sky, round bolt, sword, dagger, spear, shield, extra objects, changed face, changed clothes, text, blurry, antialiasing`, and seeds `20261018`–`20261021`. None has a clear bolt; the edits mostly change the hand or leave isolated color marks. The final processing command is `python3 tools/probes/art-edit/build_sheets.py b2`.
 
-Review sheets: [all eight 1× cells](evidence/b2-r2-1x.png), [all eight at 4×](evidence/b2-r2-4x.png), and the two-colour silhouette threshold sheet at [1×](evidence/b2-r2-silhouette-1x.png) and [4×](evidence/b2-r2-silhouette-4x.png). The [candidate cells](evidence/b2-r2-candidates/) are 64×80; measured opaque bbox is `(23,27)–(42,80)`, 53 px tall, centered on x32.5. Head-to-height is about 26%. All eight snapped cells use exactly 16 Olympus ramp colors and have no opaque pure-black or pure-white pixels. Both arms remain lowered, but no output contains a clear bolt; SDXL leaves a gold smear or robe/hand changes, while Z-Image leaves dark or pale marks. The source is bare-chested and still reads more as a crowned king than Zeus. Pixel silhouette is clean at 1× but too narrow at 19 px wide; the absent bolt is the decisive failure.
+Review sheets: [all eight 1× cells](evidence/b2-r2-1x.png), and the two-colour silhouette threshold sheet at [1×](evidence/b2-r2-silhouette-1x.png). The [candidate cells](evidence/b2-r2-candidates/) are 64×80; measured opaque bbox is `(23,27)–(42,80)`, 53 px tall, centered on x32.5. Head-to-height is about 26%. All eight snapped cells use exactly 16 Olympus ramp colors and have no opaque pure-black or pure-white pixels. Both arms remain lowered, but no output contains a clear bolt; SDXL leaves a gold smear or robe/hand changes, while Z-Image leaves dark or pale marks. The source is bare-chested and still reads more as a crowned king than Zeus. Pixel silhouette is clean at 1× but too narrow at 19 px wide; the absent bolt is the decisive failure.
 
 The `runs.jsonl` and `interrupted-attempts.jsonl` files beside this README contain the copied per-invocation argv, seed, strength, elapsed time, exit status and output hash. Round 2 logged 53 runner-started invocations, 51 successful and 2 failed; one additional invocation was cut by an outer timeout before it produced a runner record (54 total attempts, 3 failures). Runner-measured elapsed time sums to **11,590.827 s (3 h 13 min 10.827 s)** for the 53 logged attempts: A1 10,078.475 s and B2 1,512.352 s. This is not a complete wall-time total: the unlogged brows-only scheming retry has no per-run duration, and the combined grieving attempt's runner timer says 240.495 s while the Bash request reached its 1,800 s timeout. Exact elapsed time for those interruptions is not recoverable. No external images or models were downloaded.
 
@@ -414,7 +416,7 @@ Checked against `runs.jsonl` and `interrupted-attempts.jsonl`:
   3. "Horizontal pivot at x32.5" is the bbox centre (23–42). The foot midpoint, which is the guide's pivot, is x 32.0.
   4. The README does not say that the sprite has no outline.
   5. The README does not say that A1 outputs are not byte-identical to the base outside the mask.
-  6. `b2-r2-order.json` has absolute `/Users/mrbrown/...` output paths. It is named "order" but holds the sprite records.
+  6. `b2-r2-order.json` had absolute home-directory output paths (now repo-relative). It is named "order" but holds the sprite records.
   7. The run summary table in the round 1 section still totals round 1 only; the round 2 totals are in prose.
 - **Reproducibility:** the code reproduces the sheets, masks and sprite cells from scratch outputs. The scratch outputs themselves are not in the repo, so the sheets are auditable only locally.
 
@@ -437,7 +439,7 @@ I edited only this Round 2 review section of `tools/probes/art-edit/README.md`, 
 
 ## Round 3 prep
 
-Prepared a model-independent, flat-block Zeus idle from scratch; no pixels were copied from the B2 figure. `build_sprite_init.py` draws at 64×80 from the Olympus ramps, then nearest-neighbour upscales by exactly 8×. The planned generation route is Z-Image Turbo masked img2img with Apache-licensed weights only; SDXL and pixel-art-xl are excluded. The init and both binary mask variants are under `.context/studio-pipeline/art-edit/sprite-init/`; `measurements.json`, `mask-coordinates.json`, and `generation-plan.md` record geometry and sweep settings. The full-figure mask adds a 2px 1× margin around the figure; the optional protected-bolt mask leaves the bolt and grip unmasked. 1× and 4× previews of the init and each mask are in `evidence/sprite-init-*.png`.
+Prepared a model-independent, flat-block Zeus idle from scratch; no pixels were copied from the B2 figure. `build_sprite_init.py` draws at 64×80 from the Olympus ramps, then nearest-neighbour upscales by exactly 8×. The planned generation route is Z-Image Turbo masked img2img with Apache-licensed weights only; SDXL and pixel-art-xl are excluded. The init and both binary mask variants are under `.context/studio-pipeline/art-edit/sprite-init/`; `measurements.json`, `mask-coordinates.json`, and `generation-plan.md` record geometry and sweep settings. The full-figure mask adds a 2px 1× margin around the figure; the optional protected-bolt mask leaves the bolt and grip unmasked. 1× previews of the init and each mask are in `evidence/sprite-init-*-1x.png`; `build_sprite_init.py` writes the 4× enlargements beside them.
 
 Measured 1× init: **54px figure height**, **14/54px head (25.9%)**, feet on **row 79**, foot midpoint **x=32**, and **9 colors** including the flat background. The 512×640 init contains exact 8× blocks. The planned prompt suffix is: “front view, standing at rest, full-body pixel-art sprite of Zeus; white chiton covering the torso with a gold sash; grey-white hair and beard; warm skin; both arms hanging naturally down; one large, clear gold zigzag thunderbolt held low in his right hand on the viewer-left; feet flat on the ground; clean connected silhouette, limited Olympus palette, plain flat background; no other weapons or props, no motion sheet, no text.” Planned strengths are **0.45, 0.60, 0.75**, each with seeds **20261022–20261025** (12 runs, serial). This is prep only: no model, `sd-cli`, or `sd-server` was run.
 

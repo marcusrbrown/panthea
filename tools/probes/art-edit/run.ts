@@ -3,8 +3,11 @@ import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const repo = resolve(import.meta.dir, "../../..");
-const runtime =
-  "/Users/mrbrown/src/github.com/marcusrbrown/panthea/tools/probes/art-local-2";
+// The pinned binaries and models live in the main Panthea checkout, not here:
+// set PANTHEA_ART_LOCAL_2 to its tools/probes/art-local-2 directory.
+const runtime = resolve(
+  process.env.PANTHEA_ART_LOCAL_2 ?? resolve(repo, "tools/probes/art-local-2"),
+);
 const scratch = resolve(repo, ".context/studio-pipeline/art-edit");
 const [label, ...args] = Bun.argv.slice(2);
 

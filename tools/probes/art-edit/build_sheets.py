@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from pipeline import (
@@ -161,7 +162,7 @@ def build_b2(raw_dir: Path, evidence: Path, palette_path: Path) -> None:
             cells.append(result)
             records.append({"name": name, "cell": [64, 80], "opaque_bbox": opaque_bbox(result),
                             "figure_height": opaque_bbox(result)[3] - opaque_bbox(result)[1],
-                            "output": str(filename)})
+                            "output": os.path.relpath(filename, REPO)})
     grid = compose_grid([white_background(cell) for cell in cells], columns=4)
     save_1x_4x(grid, evidence / "b2-r2")
     silhouette_grid = compose_grid([silhouette(cell) for cell in cells], columns=4)
