@@ -276,6 +276,23 @@ const inWall = (
 ): boolean =>
   span !== undefined && at !== undefined && at >= span.from && at <= span.to;
 
+/**
+ * Whether the outage proxy refused this request: it failed on a transport error (a 5xx or a dropped connection, the
+ * proxy's two ways of failing) and finished inside the outage. No model answered it, so it is not a turn the god waited
+ * for: it is left out of queue wait and the quiet stretch. A request that failed on a real model response, or on a
+ * transport error with no outage to explain it, is not refused and still counts.
+ */
+export function refusedByOutage(
+  request: RealRequest,
+  outageWallMs: { readonly from: number; readonly to: number } | undefined,
+): boolean {
+  if (request.outcome !== "exhausted") return false;
+  if (!inWall(request.recordedAt, outageWallMs)) return false;
+  return request.steps.some(
+    (step) => step.reason === "http-5xx" || step.reason === "network",
+  );
+}
+
 // --- The analysis -------------------------------------------------------------------------------
 
 const DIRECTOR_KINDS = new Set(["theft", "stock-spoiled", "building-ignited"]);
@@ -501,7 +518,12 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     proposals: input.proposals.filter((p) => !committedInOutage(p)),
   };
   const episode = analyzeEpisode(keptInput, identities, gods);
-  const allTimings = requestTimings(input);
+  // Queue wait and the quiet stretch are measured on the requests the model answered: the ones the outage proxy
+  // refused, hundreds of them a second apart, would otherwise make a god look as if it were asked far more often.
+  const allTimings = requestTimings({
+    ...input,
+    requests: input.requests.filter((r) => !refusedByOutage(r, outageWall)),
+  });
   const service = serviceTimings(allTimings, {
     windows,
     startTick: started?.tick ?? 0,

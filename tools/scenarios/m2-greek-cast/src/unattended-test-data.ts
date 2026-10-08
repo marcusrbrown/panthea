@@ -241,6 +241,26 @@ export function turn(
   }
 }
 
+/** A request the outage proxy refused: it began at `tick`, was answered 503 and exhausted 300 ms later, with no model response. */
+export function refusal(scene: Scene, god: string, tick: number): void {
+  scene.requests.push({
+    proposalId: undefined,
+    role: god,
+    outcome: "exhausted",
+    elapsedMs: 300,
+    promptPayload: promptAt(tick, `refused-${nextId()}`),
+    steps: [
+      {
+        mode: "native",
+        reason: "http-5xx",
+        detail: "503 Service Unavailable: provider unavailable",
+        attempts: 2,
+      },
+    ],
+    recordedAt: T0 + tick * 1000 + 300,
+  });
+}
+
 /** The events the world makes on its own across the run: routines, and the director every 120 ticks. */
 export function worldLife(scene: Scene, from: number, to: number): void {
   for (let tick = from; tick <= to; tick += 60) {

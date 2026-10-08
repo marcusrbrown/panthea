@@ -31,6 +31,7 @@ import {
   healthyScene,
   MINUTE,
   proxyRecords,
+  refusal,
   runData,
   T0,
   TICKS,
@@ -480,6 +481,89 @@ test("positive control: a god whose queue wait exceeds 90 service ticks fails th
   expect(queue.ok).toBe(false);
   expect(queue.measured).toContain("zeus");
   expect(queue.measured).toContain("including the windows");
+});
+
+test("requests the outage proxy refused are not requests the model answered: a run with the outage window crowded with refusals has the same queue wait and quiet stretch as the same run without them", () => {
+  const clean = analyzeUnattended(runData({ scene: healthyScene() }));
+  const crowded = healthyScene();
+  // Every god is refused every second of the outage: 700 refusals a god, 0 to 1 service ticks apart.
+  for (const god of GODS) {
+    for (let tick = TICKS.outage + 2; tick < TICKS.restored - 2; tick += 1) {
+      refusal(crowded, god, tick);
+    }
+  }
+  const withRefusals = analyzeUnattended(runData({ scene: crowded }));
+  for (const god of GODS) {
+    const before = clean.gods.find((g) => g.god === god)?.service;
+    const after = withRefusals.gods.find((g) => g.god === god)?.service;
+    expect(after?.p95ServiceGapTicks).toBe(before?.p95ServiceGapTicks);
+    expect(after?.p95InclusiveGapTicks).toBe(before?.p95InclusiveGapTicks);
+    expect(after?.longestQuiet).toEqual(before?.longestQuiet);
+    expect(after?.turns).toBe(before?.turns);
+    expect(after?.longGaps).toBe(before?.longGaps);
+  }
+  expect(rowOf(withRefusals.rows, "queue.wait").measured).toBe(
+    rowOf(clean.rows, "queue.wait").measured,
+  );
+  // The refusals are still counted as what they were, in the god's own request counts.
+  expect(
+    withRefusals.gods.find((g) => g.god === "zeus")?.exhausted.outage,
+  ).toBeGreaterThan(600);
+});
+
+test("mutation check: counting the refusals as request starts pulls a god's p95 queue wait to zero, which is what hid the real figure", () => {
+  const crowded = healthyScene();
+  // Three refusals a second to each god: 97% of its request starts are zero service ticks from the last.
+  for (const god of GODS) {
+    for (let tick = TICKS.outage + 2; tick < TICKS.restored - 2; tick += 1) {
+      for (let n = 0; n < 3; n += 1) refusal(crowded, god, tick);
+    }
+  }
+  const data = runData({ scene: crowded });
+  const counted = requestTimings(data.input);
+  const windows = serviceWindows(data.result, TICKS.ended);
+  const naive = serviceTimings(counted, {
+    windows,
+    startTick: 0,
+    endTick: TICKS.ended,
+    gods: GODS,
+    longGapTicks: QUEUE_WAIT_TARGET_TICKS,
+  });
+  const gate = analyzeUnattended(data).gods;
+  for (const god of GODS) {
+    expect(naive.find((s) => s.god === god)?.p95ServiceGapTicks).toBeLessThan(
+      gate.find((g) => g.god === god)?.service.p95ServiceGapTicks as number,
+    );
+  }
+});
+
+test("a request that failed on a real model response inside the outage window, or a transport failure outside it, still counts as a request start", () => {
+  const scene = healthyScene();
+  // Inside the window but not a refusal: the model answered, and the answer was invalid.
+  scene.requests.push({
+    proposalId: undefined,
+    role: "zeus",
+    outcome: "exhausted",
+    elapsedMs: 9000,
+    promptPayload: `x in the mortal realm, tick ${TICKS.outage + 30}.`,
+    steps: [{ reason: "invalid-output", detail: "assertion" }],
+    recordedAt: T0 + (TICKS.outage + 39) * 1000,
+  });
+  // Outside the window: a transport failure with no outage to explain it is a fault the gate keeps counting.
+  scene.requests.push({
+    proposalId: undefined,
+    role: "zeus",
+    outcome: "exhausted",
+    elapsedMs: 300,
+    promptPayload: `x in the mortal realm, tick 5.`,
+    steps: [{ reason: "http-5xx", detail: "503" }],
+    recordedAt: T0 + 5300,
+  });
+  const base = analyzeUnattended(runData({ scene: healthyScene() }));
+  const withBoth = analyzeUnattended(runData({ scene }));
+  expect(withBoth.gods.find((g) => g.god === "zeus")?.service.turns).toBe(
+    (base.gods.find((g) => g.god === "zeus")?.service.turns as number) + 2,
+  );
 });
 
 test("positive control: a provider request between catch-up start and finish fails the catch-up row", () => {
