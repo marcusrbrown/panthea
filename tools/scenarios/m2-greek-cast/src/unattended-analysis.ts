@@ -20,6 +20,12 @@ import type { MemorySample, MemorySummary } from "./memory";
 import { summarizeMemory } from "./memory";
 import type { ProxyRecord } from "./outage-proxy";
 import {
+  type CutPrompts,
+  findCutPrompts,
+  joinResponses,
+  namesSuspected,
+} from "./prompt-cut";
+import {
   analyzeReal,
   committedInOrder,
   type RealInput,
@@ -154,6 +160,8 @@ export interface UnattendedAnalysis {
   readonly promptTokens: {
     readonly busiest: number | undefined;
     readonly recorded: number;
+    /** The responses that show a prompt was cut, by either signal. */
+    readonly cut: CutPrompts;
   };
   readonly empty: { readonly total: number; readonly longestRun: number };
   readonly director: Readonly<
@@ -275,6 +283,23 @@ const inWall = (
   span: { readonly from: number; readonly to: number } | undefined,
 ): boolean =>
   span !== undefined && at !== undefined && at >= span.from && at <= span.to;
+
+/**
+ * Whether the outage proxy refused this request: it failed on a transport error (a 5xx or a dropped connection, the
+ * proxy's two ways of failing) and finished inside the outage. No model answered it, so it is not a turn the god waited
+ * for: it is left out of queue wait and the quiet stretch. A request that failed on a real model response, or on a
+ * transport error with no outage to explain it, is not refused and still counts.
+ */
+export function refusedByOutage(
+  request: RealRequest,
+  outageWallMs: { readonly from: number; readonly to: number } | undefined,
+): boolean {
+  if (request.outcome !== "exhausted") return false;
+  if (!inWall(request.recordedAt, outageWallMs)) return false;
+  return request.steps.some(
+    (step) => step.reason === "http-5xx" || step.reason === "network",
+  );
+}
 
 // --- The analysis -------------------------------------------------------------------------------
 
@@ -474,8 +499,8 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     "the catch-up is bracketed by its own log lines": "catch-up.bracketed",
     "the catch-up applies the cap and discards the rest": "catch-up.cap",
     "no provider request is made during the catch-up": "catch-up.no-requests",
-    "the catch-up summary is still the summary at the end":
-      "catch-up.summary-survives",
+    "the catch-up summary persists to the end, or a later catch-up pass replaced it":
+      "catch-up.summary-persists",
   };
   for (const [name, id] of Object.entries(catchUpChecks)) {
     const found = result.checks.find((c) => c.name === name);
@@ -501,7 +526,12 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     proposals: input.proposals.filter((p) => !committedInOutage(p)),
   };
   const episode = analyzeEpisode(keptInput, identities, gods);
-  const allTimings = requestTimings(input);
+  // Queue wait and the quiet stretch are measured on the requests the model answered: the ones the outage proxy
+  // refused, hundreds of them a second apart, would otherwise make a god look as if it were asked far more often.
+  const allTimings = requestTimings({
+    ...input,
+    requests: input.requests.filter((r) => !refusedByOutage(r, outageWall)),
+  });
   const service = serviceTimings(allTimings, {
     windows,
     startTick: started?.tick ?? 0,
@@ -680,15 +710,34 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
       : [],
   );
   const busiest = tokens.length === 0 ? undefined : Math.max(...tokens);
+  // The largest count stays under the context even when Ollama cut the prompt, because it reports what was left; so
+  // the row also reads each count against the prompt that produced it.
+  const cut = findCutPrompts(
+    joinResponses(input.requests, data.proxy),
+    data.proxy,
+    CONTEXT_TOKENS,
+  );
+  const cutGods = Object.entries(cut.byGod)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([god, n]) => `${god} ${n}`);
+  const cutText = [
+    `${cut.cut} cut`,
+    ...(cutGods.length === 0 ? [] : [`(${cutGods.join(", ")})`]),
+    ...(cut.suspected === 0
+      ? []
+      : [
+          `${cut.suspected} suspected (${namesSuspected(cut)}; exactly ${cut.collapsedAt} tokens, not matched to a request or too few matched to read it by length)`,
+        ]),
+  ].join(" ");
   row(
     "prompt.tokens",
     "resources",
-    "the busiest prompt fits the model's context",
-    busiest !== undefined && busiest < CONTEXT_TOKENS,
+    "the busiest prompt fits the model's context, and no prompt was cut",
+    busiest !== undefined && busiest < CONTEXT_TOKENS && cut.cut === 0,
     busiest === undefined
       ? "no response carried a prompt token count"
-      : `${busiest} tokens of ${CONTEXT_TOKENS} (${tokens.length} responses counted)`,
-    `under ${CONTEXT_TOKENS}`,
+      : `${busiest} tokens of ${CONTEXT_TOKENS} (${tokens.length} responses counted); ${cutText}${cut.calibrated ? "" : `; length check not run (${cut.matched} responses matched a request)`}`,
+    `under ${CONTEXT_TOKENS}, and no response cut`,
   );
   let longestEmpty = 0;
   let run = 0;
@@ -711,14 +760,17 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     "fewer than 5 in a row",
   );
   const memory = summarizeMemory(data.memory);
+  const rssTrend = memory.sidecarTrend.judgeable
+    ? `${memory.sidecarTrend.percentPer10Min.toFixed(2)}% per 10 min`
+    : "not judgeable";
   row(
     "memory.sidecar-levels-off",
     "resources",
-    "the sidecar's memory levels off over the last 20 minutes",
-    memory.sidecarTrend.judgeable && memory.sidecarTrend.levellingOff,
-    memory.sidecarTrend.judgeable
-      ? `${memory.sidecarTrend.percentPer10Min.toFixed(2)}% per 10 min over ${memory.sidecarTrend.windowSamples} samples`
-      : `not judgeable: ${memory.sidecarTrend.reason}`,
+    "the sidecar's physical footprint levels off over the last 20 minutes",
+    memory.footprintTrend.judgeable && memory.footprintTrend.levellingOff,
+    memory.footprintTrend.judgeable
+      ? `${memory.footprintTrend.percentPer10Min.toFixed(2)}% per 10 min over ${memory.footprintTrend.windowSamples} samples (RSS ${rssTrend}, for context)`
+      : `not judgeable: ${memory.footprintTrend.reason}`,
     "under 1% of the mean per 10 min",
   );
 
@@ -847,7 +899,7 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
       firstAfterRecoveryMs: result.restore?.firstRequestAfterRestore?.latencyMs,
       runnerAtRestore: result.restore?.runnerAtRestore ?? "unsampled",
     },
-    promptTokens: { busiest, recorded: tokens.length },
+    promptTokens: { busiest, recorded: tokens.length, cut },
     empty: { total: emptyTotal, longestRun: longestEmpty },
     director,
     memory,

@@ -6,6 +6,8 @@ import { CLAIMS, renderUnattendedReport } from "./unattended-report";
 import {
   baseResult,
   healthyScene,
+  MINUTE,
+  responsesFor,
   runData,
   T0,
   TICKS,
@@ -75,6 +77,35 @@ test("a failing row shows FAIL in the table and a FAIL verdict, and an infrastru
     "The run did not complete: five empty responses in a row.",
   );
   expect(fault).not.toContain("**Verdict: FAIL**");
+});
+
+test("the prompt section says how many prompts were cut and by which gods, how a cut is told, and names a suspected one", () => {
+  const scene = healthyScene();
+  // The first answered request was shown 12,000 characters and counted 2,050 tokens: a cut.
+  const first = scene.requests[0];
+  if (first === undefined) throw new Error("expected a request");
+  scene.requests[0] = {
+    ...first,
+    promptPayload: `${first.promptPayload}${"x".repeat(12_000)}`,
+  };
+  const proxy = responsesFor(scene);
+  Object.assign(proxy[0] ?? {}, { promptTokens: 2050 });
+  const text = report({ scene, proxy });
+  expect(text).toContain("exactly 2050 tokens");
+  expect(text).toMatch(/1 was cut \(\w+ 1\)/);
+  const ordinary = responsesFor(scene);
+  expect(report({ scene, proxy: ordinary })).toContain("None was cut");
+
+  // A response at 2,050 that no request is matched to is only suspected, and the report says so.
+  const unmatched = responsesFor(healthyScene());
+  unmatched.push({
+    ...(unmatched[0] as (typeof unmatched)[number]),
+    at: T0 + 400 * MINUTE,
+    promptTokens: 2050,
+  });
+  const suspected = report({ scene: healthyScene(), proxy: unmatched });
+  expect(suspected).toContain("None was cut");
+  expect(suspected).toContain("1 response was suspected (god unknown 1;");
 });
 
 test("the claims are exactly what the run proves: A14 is export and rebuild only, P07 a local outage only, no A15, one hour", () => {
@@ -234,6 +265,9 @@ test("the memory section is present-or-absent honest: it shows the sample count,
     /\d+ samples over [\d.]+ min\. Ollama runner: start \d+ MiB, peak \d+ MiB/,
   );
   expect(text).toContain("Swap used: peak 1000 MiB");
+  // The footprint the verdict is read on, and the RSS beside it.
+  expect(text).toContain("Sidecar footprint: start 76 MiB, peak 76 MiB");
+  expect(text).toContain("Sidecar RSS trend");
 });
 
 test("the rating sheet uses the acceptance rubric the episode transcripts use: the same five dimensions, the same scale, scored separately for the director's episodes and the gods'", () => {

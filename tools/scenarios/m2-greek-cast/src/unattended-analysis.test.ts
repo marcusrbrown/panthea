@@ -31,6 +31,8 @@ import {
   healthyScene,
   MINUTE,
   proxyRecords,
+  refusal,
+  responsesFor,
   runData,
   T0,
   TICKS,
@@ -188,7 +190,7 @@ test("a healthy run inside every threshold renders PASS with every row filled", 
     "catch-up.bracketed",
     "catch-up.cap",
     "catch-up.no-requests",
-    "catch-up.summary-survives",
+    "catch-up.summary-persists",
     "gods.profile-trace",
     "gods.minimum-activity",
     "gods.repetition",
@@ -482,6 +484,89 @@ test("positive control: a god whose queue wait exceeds 90 service ticks fails th
   expect(queue.measured).toContain("including the windows");
 });
 
+test("requests the outage proxy refused are not requests the model answered: a run with the outage window crowded with refusals has the same queue wait and quiet stretch as the same run without them", () => {
+  const clean = analyzeUnattended(runData({ scene: healthyScene() }));
+  const crowded = healthyScene();
+  // Every god is refused every second of the outage: 700 refusals a god, 0 to 1 service ticks apart.
+  for (const god of GODS) {
+    for (let tick = TICKS.outage + 2; tick < TICKS.restored - 2; tick += 1) {
+      refusal(crowded, god, tick);
+    }
+  }
+  const withRefusals = analyzeUnattended(runData({ scene: crowded }));
+  for (const god of GODS) {
+    const before = clean.gods.find((g) => g.god === god)?.service;
+    const after = withRefusals.gods.find((g) => g.god === god)?.service;
+    expect(after?.p95ServiceGapTicks).toBe(before?.p95ServiceGapTicks);
+    expect(after?.p95InclusiveGapTicks).toBe(before?.p95InclusiveGapTicks);
+    expect(after?.longestQuiet).toEqual(before?.longestQuiet);
+    expect(after?.turns).toBe(before?.turns);
+    expect(after?.longGaps).toBe(before?.longGaps);
+  }
+  expect(rowOf(withRefusals.rows, "queue.wait").measured).toBe(
+    rowOf(clean.rows, "queue.wait").measured,
+  );
+  // The refusals are still counted as what they were, in the god's own request counts.
+  expect(
+    withRefusals.gods.find((g) => g.god === "zeus")?.exhausted.outage,
+  ).toBeGreaterThan(600);
+});
+
+test("mutation check: counting the refusals as request starts pulls a god's p95 queue wait to zero, which is what hid the real figure", () => {
+  const crowded = healthyScene();
+  // Three refusals a second to each god: 97% of its request starts are zero service ticks from the last.
+  for (const god of GODS) {
+    for (let tick = TICKS.outage + 2; tick < TICKS.restored - 2; tick += 1) {
+      for (let n = 0; n < 3; n += 1) refusal(crowded, god, tick);
+    }
+  }
+  const data = runData({ scene: crowded });
+  const counted = requestTimings(data.input);
+  const windows = serviceWindows(data.result, TICKS.ended);
+  const naive = serviceTimings(counted, {
+    windows,
+    startTick: 0,
+    endTick: TICKS.ended,
+    gods: GODS,
+    longGapTicks: QUEUE_WAIT_TARGET_TICKS,
+  });
+  const gate = analyzeUnattended(data).gods;
+  for (const god of GODS) {
+    expect(naive.find((s) => s.god === god)?.p95ServiceGapTicks).toBeLessThan(
+      gate.find((g) => g.god === god)?.service.p95ServiceGapTicks as number,
+    );
+  }
+});
+
+test("a request that failed on a real model response inside the outage window, or a transport failure outside it, still counts as a request start", () => {
+  const scene = healthyScene();
+  // Inside the window but not a refusal: the model answered, and the answer was invalid.
+  scene.requests.push({
+    proposalId: undefined,
+    role: "zeus",
+    outcome: "exhausted",
+    elapsedMs: 9000,
+    promptPayload: `x in the mortal realm, tick ${TICKS.outage + 30}.`,
+    steps: [{ reason: "invalid-output", detail: "assertion" }],
+    recordedAt: T0 + (TICKS.outage + 39) * 1000,
+  });
+  // Outside the window: a transport failure with no outage to explain it is a fault the gate keeps counting.
+  scene.requests.push({
+    proposalId: undefined,
+    role: "zeus",
+    outcome: "exhausted",
+    elapsedMs: 300,
+    promptPayload: `x in the mortal realm, tick 5.`,
+    steps: [{ reason: "http-5xx", detail: "503" }],
+    recordedAt: T0 + 5300,
+  });
+  const base = analyzeUnattended(runData({ scene: healthyScene() }));
+  const withBoth = analyzeUnattended(runData({ scene }));
+  expect(withBoth.gods.find((g) => g.god === "zeus")?.service.turns).toBe(
+    (base.gods.find((g) => g.god === "zeus")?.service.turns as number) + 2,
+  );
+});
+
 test("positive control: a provider request between catch-up start and finish fails the catch-up row", () => {
   const result = baseResult();
   const broken: Partial<UnattendedResult> = {
@@ -586,6 +671,135 @@ test("positive control: a prompt at the context size fails the prompt-tokens row
   );
 });
 
+/** A healthy scene whose first `count` answered requests of `gods` were shown a 12,000-character prompt. */
+function longPrompts(
+  scene: Scene,
+  gods: readonly string[],
+): { index: number; request: RealRequest }[] {
+  const picked: { index: number; request: RealRequest }[] = [];
+  scene.requests.forEach((request, index) => {
+    if (gods.length > picked.length && request.role === gods[picked.length]) {
+      scene.requests[index] = {
+        ...request,
+        promptPayload: `${request.promptPayload}${"x".repeat(12_000)}`,
+      };
+      picked.push({ index, request: scene.requests[index] as RealRequest });
+    }
+  });
+  return picked;
+}
+
+test("positive control: the failed hour's shape, nine responses reporting exactly 2,050 for prompts of about 12,000 characters and 4,094 the largest ordinary count, fails the prompt row naming 9 cut and the gods", () => {
+  const scene = healthyScene();
+  const picked = longPrompts(scene, [
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "athena",
+    "hephaestus",
+  ]);
+  // One ordinary response just under the context, and every other response at the run's usual 0.33 a character.
+  const proxy = responsesFor(scene);
+  const cutIndexes = new Set(picked.map((p) => p.request.proposalId));
+  const records = scene.requests
+    .filter((r) => r.outcome === "intent")
+    .map((r, i) => ({ r, record: proxy[i] as ProxyRecord }));
+  for (const { r, record } of records) {
+    if (cutIndexes.has(r.proposalId)) {
+      Object.assign(record, { promptTokens: 2050 });
+    }
+  }
+  const largest = records.find(({ r }) => !cutIndexes.has(r.proposalId));
+  Object.assign(largest?.record as ProxyRecord, { promptTokens: 4094 });
+
+  const { rows, promptTokens } = analyzeUnattended(runData({ scene, proxy }));
+  const row = rowOf(rows, "prompt.tokens");
+  expect(promptTokens.busiest).toBe(4094);
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("4094 tokens of 4096");
+  expect(row.measured).toContain("9 cut");
+  expect(row.measured).toContain("athena 8");
+  expect(row.measured).toContain("hephaestus 1");
+  expect(promptTokens.cut.cut).toBe(9);
+  expect(failing(rows)).toEqual(["prompt.tokens"]);
+});
+
+test("a run whose largest prompt is 4,094 tokens, with no response cut, passes the prompt row", () => {
+  const scene = healthyScene();
+  const proxy = responsesFor(scene);
+  Object.assign(proxy[3] as ProxyRecord, { promptTokens: 4094 });
+  const { rows } = analyzeUnattended(runData({ scene, proxy }));
+  const row = rowOf(rows, "prompt.tokens");
+  expect(row.measured).toContain("4094 tokens of 4096");
+  expect(row.measured).toContain("0 cut");
+  expect(row.ok).toBe(true);
+});
+
+test("positive control: a response that reports far fewer tokens than its prompt's length predicts fails the row though it is not 2,050 and the largest count is small", () => {
+  const scene = healthyScene();
+  const [picked] = longPrompts(scene, ["zeus"]);
+  const proxy = responsesFor(scene);
+  const at = scene.requests
+    .filter((r) => r.outcome === "intent")
+    .findIndex((r) => r.proposalId === picked?.request.proposalId);
+  Object.assign(proxy[at] as ProxyRecord, { promptTokens: 2400 });
+  const { rows, promptTokens } = analyzeUnattended(runData({ scene, proxy }));
+  expect(promptTokens.busiest).toBeLessThan(4096);
+  expect(rowOf(rows, "prompt.tokens").ok).toBe(false);
+  expect(rowOf(rows, "prompt.tokens").measured).toContain("1 cut (zeus 1)");
+});
+
+test("a response at exactly 2,050 that no request can be matched to is a suspected cut: the row passes and names it, since only a prompt's length can confirm one", () => {
+  // The only response the proxy recorded is one no request answers, so nothing can be read against a prompt length.
+  const lone: ProxyRecord = {
+    at: T0 + 400 * MINUTE,
+    status: 200,
+    latencyMs: 8000,
+    outcome: "forwarded",
+    kind: "completion",
+    empty: false,
+    promptTokens: 2050,
+  };
+  const { rows, promptTokens } = analyzeUnattended(runData({ proxy: [lone] }));
+  const row = rowOf(rows, "prompt.tokens");
+  expect(promptTokens.cut.cut).toBe(0);
+  expect(promptTokens.cut.suspected).toBe(1);
+  expect(row.ok).toBe(true);
+  expect(row.measured).toContain("0 cut");
+  expect(row.measured).toContain("1 suspected (god unknown 1;");
+  expect(row.measured).toContain("not matched to a request");
+  expect(row.measured).toContain("length check not run");
+});
+
+test("negative control: an ordinary matched prompt that is exactly 2,050 tokens is not cut, and the row passes", () => {
+  const scene = healthyScene();
+  // 6,212 characters at 2,050 tokens is 0.330 a character; the run's median is 0.33.
+  const index = scene.requests.findIndex((r) => r.role === "zeus");
+  const request = scene.requests[index] as RealRequest;
+  scene.requests[index] = {
+    ...request,
+    promptPayload: `${request.promptPayload}${"x".repeat(6212 - (request.promptPayload?.length ?? 0))}`,
+  };
+  const picked = { request: scene.requests[index] as RealRequest };
+  const proxy = responsesFor(scene);
+  const at = scene.requests
+    .filter((r) => r.outcome === "intent")
+    .findIndex((r) => r.proposalId === picked.request.proposalId);
+  Object.assign(proxy[at] as ProxyRecord, { promptTokens: 2050 });
+  const { rows, promptTokens } = analyzeUnattended(runData({ scene, proxy }));
+  expect(promptTokens.cut.cut).toBe(0);
+  expect(promptTokens.cut.suspected).toBe(0);
+  expect(promptTokens.cut.calibrated).toBe(true);
+  const row = rowOf(rows, "prompt.tokens");
+  expect(row.measured).toContain("0 cut");
+  expect(row.ok).toBe(true);
+  expect(failing(rows)).toEqual([]);
+});
+
 test("positive control: five empty responses in a row fail the empty-200 row; four with a normal one between do not", () => {
   const empties = (n: number): Partial<ProxyRecord>[] =>
     Array.from({ length: n }, () => ({ empty: true }));
@@ -602,26 +816,87 @@ test("positive control: five empty responses in a row fail the empty-200 row; fo
   );
 });
 
-test("positive control: a sidecar whose memory keeps rising through the last 20 minutes fails the memory row, and a series too short to judge fails it too, saying so", () => {
-  const rising: MemorySample[] = [];
+/** 160 minutes of samples, the sidecar's RSS and footprint given by functions of the milliseconds since the start. */
+function sidecarMemory(
+  rssAt: (at: number) => number,
+  footprintAt: (at: number) => number | undefined,
+): MemorySample[] {
+  const samples: MemorySample[] = [];
   for (let at = 0; at <= 160 * MINUTE; at += 10_000) {
-    rising.push({
+    const footprintBytes = footprintAt(at);
+    samples.push({
       atMs: T0 + at,
       runner: { state: "present", pids: [9], rssBytes: 1 },
-      sidecar: { state: "present", pid: 100, rssBytes: 500_000_000 + at * 200 },
+      sidecar: {
+        state: "present",
+        pid: 100,
+        rssBytes: rssAt(at),
+        footprintBytes,
+      },
       swap: undefined,
     });
   }
+  return samples;
+}
+
+test("positive control: a sidecar whose physical footprint keeps rising through the last 20 minutes fails the memory row, and a series too short to judge fails it too, saying so", () => {
+  const rising = sidecarMemory(
+    () => 500_000_000,
+    (at) => 80_000_000 + at * 40,
+  );
   const bad = analyzeUnattended(runData({ memory: rising }));
   expect(rowOf(bad.rows, "memory.sidecar-levels-off").ok).toBe(false);
   expect(rowOf(bad.rows, "memory.sidecar-levels-off").measured).toContain(
     "% per 10 min",
+  );
+  expect(rowOf(bad.rows, "memory.sidecar-levels-off").name).toContain(
+    "physical footprint",
   );
   const short = analyzeUnattended(runData({ memory: rising.slice(0, 20) }));
   expect(rowOf(short.rows, "memory.sidecar-levels-off").ok).toBe(false);
   expect(rowOf(short.rows, "memory.sidecar-levels-off").measured).toContain(
     "not judgeable",
   );
+});
+
+test("a flat physical footprint with a steadily rising RSS passes the memory row, and the row shows the RSS trend beside it", () => {
+  const churn = sidecarMemory(
+    (at) => 120_000_000 + at * 400,
+    () => 80_000_000,
+  );
+  const { rows, memory } = analyzeUnattended(runData({ memory: churn }));
+  const row = rowOf(rows, "memory.sidecar-levels-off");
+  expect(row.ok).toBe(true);
+  expect(row.measured).toContain("RSS");
+  // The RSS alone would have failed the row, as it did in the first hour.
+  expect(memory.sidecarTrend).toMatchObject({
+    judgeable: true,
+    levellingOff: false,
+  });
+});
+
+test("positive control: a footprint that could not be read inside the last 20 minutes makes the memory row not judgeable and fails it, and so do samples that never recorded one", () => {
+  const unread = sidecarMemory(
+    () => 500_000_000,
+    (at) => (at > 150 * MINUTE && at < 151 * MINUTE ? undefined : 80_000_000),
+  );
+  const gap = analyzeUnattended(runData({ memory: unread }));
+  expect(rowOf(gap.rows, "memory.sidecar-levels-off").ok).toBe(false);
+  expect(rowOf(gap.rows, "memory.sidecar-levels-off").measured).toContain(
+    "not judgeable",
+  );
+  expect(rowOf(gap.rows, "memory.sidecar-levels-off").measured).toContain(
+    "footprint was not read",
+  );
+  const legacy = analyzeUnattended(
+    runData({
+      memory: sidecarMemory(
+        () => 500_000_000,
+        () => undefined,
+      ),
+    }),
+  );
+  expect(rowOf(legacy.rows, "memory.sidecar-levels-off").ok).toBe(false);
 });
 
 test("positive control: an unequal rebuild fails 'rebuild equals live' and an import refused for the event log fails 'import', each naming why; a missing baseline fails both and says so", () => {

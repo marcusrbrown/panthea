@@ -100,7 +100,7 @@ export function baseResult(
         detail: "0 requests inside it",
       },
       {
-        name: "the catch-up summary is still the summary at the end",
+        name: "the catch-up summary persists to the end, or a later catch-up pass replaced it",
         ok: true,
         detail: "same",
       },
@@ -241,6 +241,26 @@ export function turn(
   }
 }
 
+/** A request the outage proxy refused: it began at `tick`, was answered 503 and exhausted 300 ms later, with no model response. */
+export function refusal(scene: Scene, god: string, tick: number): void {
+  scene.requests.push({
+    proposalId: undefined,
+    role: god,
+    outcome: "exhausted",
+    elapsedMs: 300,
+    promptPayload: promptAt(tick, `refused-${nextId()}`),
+    steps: [
+      {
+        mode: "native",
+        reason: "http-5xx",
+        detail: "503 Service Unavailable: provider unavailable",
+        attempts: 2,
+      },
+    ],
+    recordedAt: T0 + tick * 1000 + 300,
+  });
+}
+
 /** The events the world makes on its own across the run: routines, and the director every 120 ticks. */
 export function worldLife(scene: Scene, from: number, to: number): void {
   for (let tick = from; tick <= to; tick += 60) {
@@ -316,6 +336,7 @@ export function memorySeries(): MemorySample[] {
               state: "present",
               pid: at < 100 * MINUTE ? 100 : 200,
               rssBytes: 500_000_000,
+              footprintBytes: 80_000_000,
             },
       swap: { usedMiB: 1000, totalMiB: 4096 },
     });
@@ -350,6 +371,28 @@ export function proxyRecords(over: Partial<ProxyRecord>[] = []): ProxyRecord[] {
       ...o,
     })),
   ];
+}
+
+/**
+ * The responses the proxy would have recorded for every answered request in `scene`: each ends 6 ms before its trace
+ * row was written, took the request's elapsed time, and counts 0.33 tokens a character of the prompt it was shown.
+ */
+export function responsesFor(scene: Scene): ProxyRecord[] {
+  return scene.requests.flatMap((r) =>
+    r.outcome === "intent" && r.recordedAt !== undefined
+      ? [
+          {
+            at: r.recordedAt - 6 - r.elapsedMs,
+            status: 200,
+            latencyMs: r.elapsedMs,
+            outcome: "forwarded" as const,
+            kind: "completion" as const,
+            empty: false,
+            promptTokens: Math.round((r.promptPayload?.length ?? 0) * 0.33),
+          },
+        ]
+      : [],
+  );
 }
 
 export function runData(

@@ -17,6 +17,8 @@ interface FakeProcess {
   readonly parent: number;
   readonly command: string;
   readonly rssKb: number;
+  /** What `footprint` reports for it, in bytes; absent when the tool cannot read the process. */
+  readonly footprintBytes?: number;
 }
 
 /** A process table and swap line the sampler reads through `runCommand`, as `ps`, `pgrep` and `sysctl` would answer. */
@@ -44,6 +46,20 @@ function fakeMachine(
         )
         .map(([pid]) => pid);
       return serving.length > 0 ? `${serving.join("\n")}\n` : undefined;
+    }
+    if (executable === "footprint") {
+      const process = processes.get(Number(args[args.indexOf("-p") + 1]));
+      if (process?.footprintBytes === undefined) return undefined;
+      return [
+        "======================================================================",
+        `${process.command.split(" ")[0]} [${args[args.indexOf("-p") + 1]}]: 64-bit    Footprint: ${process.footprintBytes} B (16384 bytes per page)`,
+        "======================================================================",
+        "",
+        "Auxiliary data:",
+        `    phys_footprint: ${process.footprintBytes + 16384} B`,
+        "    phys_footprint_peak: 999999999999 B",
+        "",
+      ].join("\n");
     }
     if (executable === "ps") {
       const process = processes.get(Number(args[args.length - 1]));
@@ -78,7 +94,13 @@ function sample(
   runnerMiB: number | undefined,
   sidecarMiB: number | undefined,
   atMs: number,
-  options: { sidecarPid?: number; swapUsedMiB?: number } = {},
+  options: {
+    sidecarPid?: number;
+    swapUsedMiB?: number;
+    /** The sidecar's physical footprint in MiB; unread when omitted. */
+    footprintMiB?: number;
+    runnerFootprintMiB?: number;
+  } = {},
 ): MemorySample {
   return {
     atMs,
@@ -89,6 +111,10 @@ function sample(
             state: "present",
             pids: [300],
             rssBytes: runnerMiB * MIB,
+            footprintBytes:
+              options.runnerFootprintMiB === undefined
+                ? undefined
+                : options.runnerFootprintMiB * MIB,
           },
     sidecar:
       sidecarMiB === undefined
@@ -97,6 +123,10 @@ function sample(
             state: "present",
             pid: options.sidecarPid ?? SIDECAR,
             rssBytes: sidecarMiB * MIB,
+            footprintBytes:
+              options.footprintMiB === undefined
+                ? undefined
+                : options.footprintMiB * MIB,
           },
     swap:
       options.swapUsedMiB === undefined
@@ -109,11 +139,22 @@ function sample(
 function sidecarSeries(
   minutes: number,
   rssAt: (minute: number) => number,
-  options: { sidecarPid?: number } = {},
+  options: {
+    sidecarPid?: number;
+    footprintAt?: (minute: number) => number | undefined;
+  } = {},
 ): MemorySample[] {
   const samples: MemorySample[] = [];
   for (let at = 0; at <= minutes * 60_000; at += 10_000) {
-    samples.push(sample(5000, rssAt(at / 60_000), at, options));
+    const footprintMiB = options.footprintAt?.(at / 60_000);
+    samples.push(
+      sample(5000, rssAt(at / 60_000), at, {
+        ...(options.sidecarPid === undefined
+          ? {}
+          : { sidecarPid: options.sidecarPid }),
+        ...(footprintMiB === undefined ? {} : { footprintMiB }),
+      }),
+    );
   }
   return samples;
 }
@@ -417,4 +458,193 @@ test("the sampler takes one sample as it starts, then one each interval, re-reso
   const count = samples.length;
   await Bun.sleep(20);
   expect(sampler.stop().length).toBe(count);
+});
+
+// --- Physical footprint ---------------------------------------------------------------------------
+//
+// RSS counts pages the allocator has freed but the kernel has not taken back, so it climbs under allocation churn while
+// the memory the process really holds stays flat. The footprint (`footprint -p`, the figure Activity Monitor shows) does
+// not count them, so the levelling-off verdict is read on it, with RSS kept beside it.
+
+test("a sample records the sidecar's and the runner's physical footprint by pid, read as phys_footprint through footprint -p", () => {
+  const processes = new Map<number, FakeProcess>([
+    [SUPERVISOR, supervisor()],
+    [300, { ...runner(5400), footprintBytes: 4_900 * MIB }],
+    [SIDECAR, { ...sidecar(412), footprintBytes: 78 * MIB }],
+  ]);
+  const { runCommand, commands } = fakeMachine(processes);
+  const taken = takeMemorySample({
+    ollamaPid: () => SUPERVISOR,
+    sidecarPid: () => SIDECAR,
+    runCommand,
+    now: () => 1_000,
+  });
+  // The fake adds 16,384 bytes to phys_footprint, so reading another line of the output would be caught.
+  expect(taken.sidecar).toMatchObject({
+    state: "present",
+    rssBytes: 412 * MIB,
+    footprintBytes: 78 * MIB + 16_384,
+  });
+  expect(taken.runner).toMatchObject({
+    state: "present",
+    rssBytes: 5400 * MIB,
+    footprintBytes: 4_900 * MIB + 16_384,
+  });
+  expect(commands).toContainEqual([
+    "footprint",
+    "-p",
+    String(SIDECAR),
+    "-f",
+    "bytes",
+    "--noCategories",
+  ]);
+});
+
+test("a footprint the tool cannot read is unread, not 0: the process is still present with its RSS", () => {
+  const { runCommand } = fakeMachine(
+    new Map([
+      [SUPERVISOR, supervisor()],
+      [300, runner(5400)],
+      [SIDECAR, sidecar(412)],
+    ]),
+  );
+  const taken = takeMemorySample({
+    ollamaPid: () => SUPERVISOR,
+    sidecarPid: () => SIDECAR,
+    runCommand,
+    now: () => 1_000,
+  });
+  expect(taken.sidecar).toMatchObject({
+    state: "present",
+    rssBytes: 412 * MIB,
+  });
+  expect(
+    (taken.sidecar as { footprintBytes?: number }).footprintBytes,
+  ).toBeUndefined();
+  expect(
+    (taken.runner as { footprintBytes?: number }).footprintBytes,
+  ).toBeUndefined();
+});
+
+test("a runner with several children has a footprint only when every child's could be read", () => {
+  const { runCommand } = fakeMachine(
+    new Map([
+      [SUPERVISOR, supervisor()],
+      [300, { ...runner(1000), footprintBytes: 900 * MIB }],
+      [301, runner(500)],
+    ]),
+  );
+  const taken = takeMemorySample({
+    ollamaPid: () => SUPERVISOR,
+    sidecarPid: () => undefined,
+    runCommand,
+    now: () => 1_000,
+  });
+  expect(taken.runner).toMatchObject({
+    state: "present",
+    rssBytes: 1500 * MIB,
+  });
+  expect(
+    (taken.runner as { footprintBytes?: number }).footprintBytes,
+  ).toBeUndefined();
+});
+
+test("a flat footprint with a rising RSS is levelling off, and the RSS trend is still reported beside it", () => {
+  const summary = summarizeMemory(
+    sidecarSeries(40, (minute) => 100 + 4 * minute, {
+      footprintAt: () => 78,
+    }),
+  );
+  expect(summary.footprintTrend).toMatchObject({
+    judgeable: true,
+    levellingOff: true,
+  });
+  if (!summary.footprintTrend.judgeable)
+    throw new Error("expected a judgement");
+  expect(Math.abs(summary.footprintTrend.percentPer10Min)).toBeLessThan(
+    LEVELLING_OFF_PERCENT_PER_10_MIN,
+  );
+  // RSS rises 4 MiB a minute on about 160 MiB: 40 MiB per 10 minutes, a quarter of the mean.
+  expect(summary.sidecarTrend).toMatchObject({
+    judgeable: true,
+    levellingOff: false,
+  });
+});
+
+test("a steadily rising footprint is not levelling off, whatever RSS does", () => {
+  const summary = summarizeMemory(
+    sidecarSeries(40, () => 400, {
+      footprintAt: (minute) => 80 + 1.5 * minute,
+    }),
+  );
+  expect(summary.footprintTrend).toMatchObject({
+    judgeable: true,
+    levellingOff: false,
+  });
+  expect(summary.sidecarTrend).toMatchObject({ levellingOff: true });
+});
+
+test("a footprint missing inside the 20-minute window is not judgeable, and so is a series with none at all", () => {
+  const gap = summarizeMemory(
+    sidecarSeries(40, () => 400, {
+      footprintAt: (minute) => (minute > 30 && minute < 31 ? undefined : 80),
+    }),
+  );
+  expect(gap.footprintTrend.judgeable).toBe(false);
+  if (gap.footprintTrend.judgeable) throw new Error("expected not judgeable");
+  expect(gap.footprintTrend.reason).toContain("footprint");
+  expect(gap.footprintTrend.reason).toContain("not read");
+
+  // Samples taken before footprints were recorded, or on a machine without the tool.
+  const none = summarizeMemory(sidecarSeries(40, () => 400));
+  expect(none.footprintTrend.judgeable).toBe(false);
+  // A gap before the window does not matter.
+  const early = summarizeMemory(
+    sidecarSeries(40, () => 400, {
+      footprintAt: (minute) => (minute < 5 ? undefined : 80),
+    }),
+  );
+  expect(early.footprintTrend.judgeable).toBe(true);
+});
+
+test("a footprint series too short for the window is not judgeable, and one across a sidecar restart is not either", () => {
+  expect(
+    summarizeMemory(sidecarSeries(19, () => 400, { footprintAt: () => 80 }))
+      .footprintTrend.judgeable,
+  ).toBe(false);
+  const before = sidecarSeries(25, () => 400, {
+    sidecarPid: 200,
+    footprintAt: () => 80,
+  });
+  const after = sidecarSeries(10, () => 400, {
+    sidecarPid: 201,
+    footprintAt: () => 80,
+  }).map((taken) => ({ ...taken, atMs: taken.atMs + 25 * 60_000 + 10_000 }));
+  const restarted = summarizeMemory([...before, ...after]).footprintTrend;
+  expect(restarted.judgeable).toBe(false);
+  if (restarted.judgeable) throw new Error("expected not judgeable");
+  expect(restarted.reason).toContain("restart");
+});
+
+test("the summary gives start, peak and end for the sidecar's and the runner's footprint, and counts the samples where it was unread", () => {
+  const summary = summarizeMemory([
+    sample(5000, 300, 0, { footprintMiB: 70, runnerFootprintMiB: 4800 }),
+    sample(5000, 350, 10_000, { footprintMiB: 90, runnerFootprintMiB: 4900 }),
+    sample(5000, 400, 20_000),
+    sample(5000, 380, 30_000, { footprintMiB: 80, runnerFootprintMiB: 4850 }),
+  ]);
+  expect(summary.sidecarFootprint).toEqual({
+    start: 70 * MIB,
+    peak: 90 * MIB,
+    end: 80 * MIB,
+    present: 3,
+    absent: 1,
+  });
+  expect(summary.runnerFootprint).toMatchObject({
+    start: 4800 * MIB,
+    peak: 4900 * MIB,
+    end: 4850 * MIB,
+    present: 3,
+    absent: 1,
+  });
 });
