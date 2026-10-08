@@ -89,3 +89,54 @@ The default is now **45 s for an attempt (cold p95 and half again) and 60 s for 
 | degraded polls | 57% | 4% |
 
 Most of the gain is not the timeout: only 4 of the 40 answered requests took more than 15 s, so the old limit alone would have lost 4 of 42. The rest is requests that finished faster (a shorter prefill from the shared start, and shorter replies from the more varied actions), and the machine's load differed between the two runs, which this does not control. The attribution of the two changes is therefore not separated; the probe's `rotation` rows are the controlled comparison.
+
+## Capped requests on granite3.3-8b-4k (2026-10-08)
+
+### Question
+
+The runtime prompt cap (`PROMPT_TOKEN_CAP` 3,000 tokens, counted at 2.85 characters a token for granite3.3-8b-4k) sheds a god's prompt until its estimate fits. Does a capped request's real `prompt_eval_count` stay at or under 3,000 on a real model, how far is the estimate from it, and what does a capped request cost warm?
+
+The pass line was fixed before measuring: every measured capped request's **cold** `prompt_eval_count` is at or under 3,000.
+
+### Method
+
+- **Requests.** `src/capture-capped.ts` runs the authored Greek world forward on its own routines to tick 450 (fixed seed) and builds the seven gods' requests the way a turn builds them: `rememberedBy`, `fitToCap` at the granite ratio, `buildGodContext`, and the intent schema from the reduced pair. Three worlds: `aged` (as it stands), `crowded` (every god also holds a dozen prayers, help and punish, six memories including an accusation by another god, five feelings and five reports it told) and `heavy` (twice that load). 21 requests, each capped; the uncapped requests of the crowded and heavy worlds were 8,642–10,788 characters (estimates 3,033–3,786 tokens). The story's own S13 Zeus turn was not reproduced (it needs the compiled service's journal); the crowded and heavy Zeus requests have the same shape (memories, own actions and a prayer shed).
+- **Cold.** `src/measure-capped.ts`: the model is unloaded (`keep_alive: 0`, waiting until `/api/ps` is empty) before every request, so each is the first after a load (median load 3.1 s) with an empty cache. All 21 requests once, and each god's busiest by estimate a second time.
+- **Cache proof.** In Ollama 0.34.4 `prompt_eval_count` is the whole request whether or not a cache serves it: the same request resent with the model loaded reports the same count (2,722 for Athena) with a prefill of 65–80 ms against 19–22 s cold. So the count does not depend on the cache state, and the cold run shows a full read by its prefill time. The router's own route, `/v1/chat/completions`, reports the same `usage.prompt_tokens` as the native count (2,722 = 2,722). (The older tables in this README say a cached start is not counted; that does not hold for this build.)
+- **Warm.** Sequential requests across the seven gods in the service's order, after a one-token wipe. Two protocols: `live`, where the tick line moves on by one every round so a god's request differs from its last the way a service's does (round 0 follows the wipe, later rounds are the steady state; 4 rounds in each of the three worlds, 84 requests), and `rotation`, where each god's request is resent unchanged (63 requests), which is an upper bound on what a cache saves.
+- **Environment.** Ollama 0.34.4, `granite3.3-8b-4k` (`num_ctx` 4096), thinking off, one request at a time. The machine was shared with other work: 1-minute load average 2.6–15.5 over the warm runs (median 7.5), against 3.5–4 in the unattended hour. Latency is therefore pessimistic.
+
+### Results
+
+**Pass: all 21 cold requests were at or under 3,000 tokens; the largest was 2,816.**
+
+| God | Busiest (world) | Chars | Estimated | Real (cold) | Real / estimated | Real, repeated cold |
+| --- | --- | --- | --- | --- | --- | --- |
+| athena | crowded | 8,548 | 3,000 | 2,722 | 0.91 | 2,722 |
+| hades | heavy | 8,548 | 3,000 | 2,808 | 0.94 | 2,808 |
+| hephaestus | crowded | 8,547 | 2,999 | 2,693 | 0.90 | 2,693 |
+| hera | crowded | 8,525 | 2,992 | 2,728 | 0.91 | 2,728 |
+| hermes | crowded | 8,525 | 2,992 | 2,760 | 0.92 | 2,760 |
+| poseidon | heavy | 8,550 | 3,000 | 2,816 | 0.94 | 2,816 |
+| zeus | heavy | 8,533 | 2,995 | 2,646 | 0.88 | 2,646 |
+
+- **Estimate error** (real tokens ÷ estimated, 21 cold requests): worst 0.94, median 0.91, best 0.85. The estimate never undercounted. These requests ran 3.04–3.35 characters a token against the 2.85 the cap assumes, so the estimate runs about 6–15% over the real count here. The 2.85 comes from the unattended hour's densest prompts; a prompt that dense would land at the estimate, not over it.
+- **Headroom.** The largest real count, 2,816, is 184 tokens under the cap and 1,274 under the 4,090 tokens past which Ollama silently drops the start of a prompt.
+- **Warm latency, live rotation** (tick moving, 1-minute load median 7.5):
+
+  | Requests | n | Wall p50 / p95 | Prefill p50 / p95 |
+  | --- | --- | --- | --- |
+  | round 0, after a wipe | 21 | 15.2 s / 18.9 s | 11.9 s / 13.4 s |
+  | steady, rounds 1 on | 63 | 11.0 s / 14.8 s | 6.9 s / 9.6 s |
+
+  The requests are 2,087–2,816 tokens, the top of the band the hour's 8.5 s figure (under 3,000 tokens) covered, and the machine was busier. The steady median of 11.0 s sits between the hour's 8.5 s and its 16.4 s above 3,500 tokens. With each request resent unchanged the wall median was 5.1 s and the p95 20.4 s (the server held several gods' requests, prefill median 0.1 s), which is the cache's ceiling and not a service's pattern.
+- Tables: `results/capped.md`.
+
+### How to run
+
+```sh
+cd tools/probes/god-latency
+bun run src/capture-capped.ts --out=results/contexts-capped.json
+bun run src/measure-capped.ts --contexts=results/contexts-capped.json --only=cold,resend,v1,rotation --out=results/capped-cold.json
+bun run src/measure-capped.ts --contexts=results/contexts-capped.json --rounds=3 --only=live --out=results/capped-live.json
+```
