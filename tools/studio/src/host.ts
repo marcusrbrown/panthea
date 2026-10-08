@@ -103,6 +103,8 @@ export class Studio {
   private unfinished = 0;
   private tearingDown: Promise<void> | undefined;
   private readonly watches = new Map<string, Watch>();
+  /** Jobs this process is running or has queued, by the status last reported. */
+  private readonly watched = new Map<string, string>();
 
   constructor(
     readonly config: StudioConfig,
@@ -210,21 +212,46 @@ export class Studio {
     return this.editor;
   }
 
+  /** Reports each watched job's status change and stops watching a job once it has settled. Reads only those jobs' records. */
+  private reportProgress(session: StudioSession): void {
+    for (const [id, reported] of this.watched) {
+      const read = session.store.readJob(id);
+      if (read.kind !== "found") {
+        this.watched.delete(id);
+        continue;
+      }
+      const { status } = read.value.job;
+      if (status !== reported) {
+        this.watched.set(id, status);
+        this.deps.log(`job ${id} ${status}`);
+      }
+      if (status !== "queued" && status !== "running") this.watched.delete(id);
+    }
+  }
+
   /** Starts draining the durable queue unless a drain is already running; one drain at a time. */
   kick(): void {
     const session = this.session;
     const runtime = this.runtime;
-    if (this.drain !== undefined || this.stopping || !session || !runtime)
-      return;
+    if (this.stopping || !session || !runtime) return;
+    // The one full store read per kick: which jobs are waiting to be reported.
+    const waiting = session.queued();
+    if (waiting.ok)
+      for (const { job } of waiting.jobs)
+        if (!this.watched.has(job.id)) this.watched.set(job.id, "");
+    if (this.drain !== undefined) return;
+    // A tick reads only the watched jobs, and the next one is armed only once
+    // this one has finished, so the poll can neither grow with the store nor
+    // keep the event loop from the drain, whatever the period.
     const pollMs = this.config.runtime?.pollMs ?? 100;
-    const seen = new Map<string, string>();
-    const progress = setInterval(() => {
-      for (const record of session.store.status().jobs) {
-        if (seen.get(record.job.id) === record.job.status) continue;
-        seen.set(record.job.id, record.job.status);
-        this.deps.log(`job ${record.job.id} ${record.job.status}`);
-      }
-    }, pollMs);
+    let polling = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      this.reportProgress(session);
+      if (polling) timer = setTimeout(tick, pollMs);
+    };
+    this.reportProgress(session);
+    timer = setTimeout(tick, pollMs);
     const queuedLeft = () => {
       const queued = session.queued();
       return queued.ok && queued.jobs.length > 0;
@@ -247,7 +274,9 @@ export class Studio {
         return;
       }
     })().finally(() => {
-      clearInterval(progress);
+      polling = false;
+      clearTimeout(timer);
+      this.reportProgress(session);
       this.drain = undefined;
       if (!this.stopping && this.refusal === undefined && queuedLeft())
         this.kick();
