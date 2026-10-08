@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "body": {
+    "models": [
+      {
+        "name": "granite3.3-8b-4k:latest",
+        "model": "granite3.3-8b-4k:latest",
+        "size": 5711845129,
+        "digest": "9728a3ffdc97461d7b08a2eb3d5aa519c7f3fcfdfa69816d89f776eaa4e97c5e",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "granite",
+          "families": [
+            "granite"
+          ],
+          "parameter_size": "8.2B",
+          "quantization_level": "Q4_K_M"
+        },
+        "expires_at": "2026-10-08T04:36:01.433618-07:00",
+        "size_vram": 5711845129,
+        "context_length": 4096
+      }
+    ]
+  }
+}
