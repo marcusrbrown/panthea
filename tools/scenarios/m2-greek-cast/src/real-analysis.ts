@@ -31,6 +31,8 @@ export interface RealRequest {
   readonly steps: readonly RealStep[];
   /** The wall-clock time (ms) the trace row was written, which is when the request finished. */
   readonly recordedAt?: number;
+  /** Why the turn ended with no request made: `prompt-over-cap`, when the prompt was over the cap at the protected floor and nothing was sent. */
+  readonly exhaustedReason?: string;
 }
 
 export interface RealProposal {

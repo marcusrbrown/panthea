@@ -16,13 +16,14 @@ import type {
   WorldEvent,
 } from "@panthea/contracts";
 import { perceive, type WorldState } from "@panthea/world";
-import {
-  buildGodContext,
-  godIntentSchema,
-  type ParsedGodIntent,
-  rememberedBy,
-} from "./context";
+import { godIntentSchema, type ParsedGodIntent, rememberedBy } from "./context";
 import { buildModelProposal } from "./observation";
+import {
+  fitToCap,
+  maxCharsFor,
+  routeRatio,
+  type ShedCounts,
+} from "./prompt-cap";
 import type { RouteResult, Router } from "./router";
 
 type IntentRoute = Extract<RouteResult<ParsedGodIntent>, { kind: "intent" }>;
@@ -30,6 +31,13 @@ type ExhaustedRoute = Extract<
   RouteResult<ParsedGodIntent>,
   { kind: "exhausted" }
 >;
+
+/** What the cap did to a turn's request: the tokens it was counted as, at which ratio, and what each tier shed. */
+export interface CapFigures {
+  readonly estimatedTokens: number;
+  readonly ratio: number;
+  readonly shed: ShedCounts;
+}
 
 /** The model request a turn made, in the shape the causal trace records (`recordModelRequest`). */
 export interface AnsweredRequest {
@@ -39,12 +47,16 @@ export interface AnsweredRequest {
   readonly prompt: string;
   /** The parsed intent, as JSON. */
   readonly output: string;
+  readonly cap: CapFigures;
 }
 
 export interface ExhaustedRequest {
   readonly role: string;
   readonly route: ExhaustedRoute;
   readonly prompt: string;
+  /** Present when the turn ended before any request: the prompt was over the cap with everything sheddable shed, `route` was never called, and `route` holds no steps. Absent when the router tried and failed. */
+  readonly exhaustedReason?: "prompt-over-cap";
+  readonly cap: CapFigures;
 }
 
 /** How a turn ended. A `proposal` is the only outcome that changes anything. */
@@ -57,7 +69,7 @@ export type GodTurnResult =
     }
   /** The god chose to do nothing. */
   | { readonly kind: "wait"; readonly request: AnsweredRequest }
-  /** No endpoint gave a valid intent. */
+  /** No endpoint gave a valid intent, or the prompt was over the cap and nothing was sent. */
   | { readonly kind: "exhausted"; readonly request: ExhaustedRequest };
 
 export interface GodTurnDeps {
@@ -100,18 +112,54 @@ export async function runGodTurn(
     turn.practiceRefusal,
     turn.journeyEnding,
   );
-  const context = buildGodContext(profile, snapshot, remembered);
-  const prompt = `${context.instructions}\n\n${context.prompt}`;
   const role = turn.actorId as string;
+  const plan = deps.router.plan(role);
+  // Shed from the pair, so the prompt, the schema and the proposal builder below agree on what the god can still name.
+  const capped = fitToCap({
+    profile,
+    state: turn.state,
+    actorId: turn.actorId,
+    snapshot,
+    remembered,
+    ratio: routeRatio(plan),
+  });
+  const { context } = capped;
+  const prompt = `${context.instructions}\n\n${context.prompt}`;
+  const cap: CapFigures = {
+    estimatedTokens: capped.estimatedTokens,
+    ratio: capped.ratio,
+    shed: capped.shed,
+  };
+
+  if (!capped.fits) {
+    return {
+      kind: "exhausted",
+      request: {
+        role,
+        route: {
+          kind: "exhausted",
+          steps: [],
+          offlineSkipped: plan.offlineSkipped,
+          elapsedMs: 0,
+        },
+        prompt,
+        exhaustedReason: "prompt-over-cap",
+        cap,
+      },
+    };
+  }
 
   const route = await deps.router.route(
     role,
     context,
-    godIntentSchema(profile, snapshot, remembered),
-    turn.signal === undefined ? undefined : { signal: turn.signal },
+    godIntentSchema(profile, capped.snapshot, capped.remembered),
+    {
+      maxChars: maxCharsFor(capped.ratio),
+      ...(turn.signal === undefined ? {} : { signal: turn.signal }),
+    },
   );
   if (route.kind === "exhausted") {
-    return { kind: "exhausted", request: { role, route, prompt } };
+    return { kind: "exhausted", request: { role, route, prompt, cap } };
   }
 
   const request: AnsweredRequest = {
@@ -119,12 +167,13 @@ export async function runGodTurn(
     route,
     prompt,
     output: JSON.stringify(route.intent),
+    cap,
   };
   const built = buildModelProposal(
     turn.actorId,
-    snapshot,
+    capped.snapshot,
     route.intent,
-    remembered,
+    capped.remembered,
   );
   // The intent was parsed against this very snapshot, so its targets are in it
   // and the builder has nothing to refuse.

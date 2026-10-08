@@ -25,7 +25,9 @@ import {
   rememberedBy,
 } from "./context";
 import { buildModelProposal } from "./observation";
-import { PRAYERS_BUDGET_CHARS } from "./practices";
+import { PRAYERS_BUDGET_CHARS, PROMPT_TOKEN_CAP } from "./practices";
+import { type Capped, fitsCap, fitToCap } from "./prompt-cap";
+import type { RouteContext } from "./router";
 import {
   allGodProfiles,
   godProfile,
@@ -34,6 +36,9 @@ import {
 } from "./test-fixtures";
 
 const id = toEntityId;
+
+/** Characters a token takes on granite3.3-8b-4k, the model the cap is sized for. */
+const GRANITE_RATIO = 2.85;
 
 /** The prayers section of a prompt: the heading and the dashed or indented lines under it. */
 function prayersSection(prompt: string): string {
@@ -312,7 +317,7 @@ test("a god with few prayers sees them all, in the order it always did, with no 
   expect(prayersSection(context.prompt)).not.toContain("more prayers");
 });
 
-test("a busy world cannot build a prompt past the budget for any of the seven gods: prayers stay within their share and the whole prompt stays well inside 4K tokens", () => {
+test("a busy world cannot build a prompt past the budget for any of the seven gods: prayers stay within their share, and the cap brings the whole prompt to 3,000 tokens at the granite3.3 ratio", () => {
   let state = greekState();
   let prng = createPrng(1);
   const log: WorldEvent[] = [];
@@ -340,6 +345,8 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
   state = crowd.state;
   log.push(...crowd.events);
   const worst = { chars: 0, god: "" };
+  let worstBuilt: RouteContext | undefined;
+  let worstCapped: Capped | undefined;
   let crowded = 0;
   for (const profile of allGodProfiles) {
     const snapshot = perceive(
@@ -365,16 +372,27 @@ test("a busy world cannot build a prompt past the budget for any of the seven go
     if (chars > worst.chars) {
       worst.chars = chars;
       worst.god = profile.id;
+      worstBuilt = context;
     }
+    // The whole prompt is bounded by the runtime cap, not by a character guard: the busiest god's
+    // is over it as built, and shed to it.
+    const capped = fitToCap({
+      profile,
+      state,
+      actorId: id(profile.id),
+      snapshot,
+      remembered,
+      ratio: GRANITE_RATIO,
+    });
+    expect(capped.fits).toBe(true);
+    expect(capped.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
+    if (profile.id === worst.god) worstCapped = capped;
   }
   // The world kept prayers the prompt could not hold, so the cap was exercised.
   expect(crowded).toBeGreaterThan(0);
-  // Measured on qwen3-8b-4k (Ollama's `prompt_eval_count`; see defaults.md): 2026-10-05, the busiest routine-town prompt,
-  // 8,845 characters, was 2,554 tokens (3.46 a token); 2026-10-07, after answers from where the god stands, the busiest
-  // crowded one (Hera's) 10,354 characters was 2,962 tokens (3.50) and thirty punish prayers to Zeus 9,828 and 2,640. At
-  // 3.3 a token 10,500 characters is under 3,200 tokens, some 900 under the 4,090 past which Ollama silently drops the
-  // start of a prompt.
-  expect(worst.chars).toBeLessThanOrEqual(10500);
+  // Positive control: the busiest prompt, built without the cap, is over it at the granite3.3 ratio.
+  expect(worstBuilt && fitsCap(worstBuilt, GRANITE_RATIO)).toBe(false);
+  expect(worstCapped?.shed.prayers).toBeGreaterThan(0);
 });
 
 // --- Answers from where the god stands: no instruction sends a god to walk first --------------------------------

@@ -59,12 +59,14 @@ const withoutLegend = (god: string) => {
 const hasLegend = (god: string) =>
   godProfile(god).abilities.some((a) => a.action === "legend");
 
-test("a god that can tell a legend is shown its exact shape, on the line after travel's, and a god that cannot is not", () => {
+test("a god that can tell a legend is shown its exact shape, on the line after the one that tells it to decide, and a god that cannot is not", () => {
   const { context } = viewOf("athena");
   const lines = context.instructions?.split("\n") ?? [];
   expect(lines).toContain(LEGEND_LINE);
-  // Next to travel's copyable form, as the plan asks: the line after it.
-  expect(lines[lines.indexOf(TRAVEL_LINE) + 1]).toBe(LEGEND_LINE);
+  // The start every god shares: travel's line is no longer in it, so the legend's shape follows the first line.
+  expect(
+    lines[lines.findIndex((l) => l.startsWith("Decide what you do")) + 1],
+  ).toBe(LEGEND_LINE);
   // Shown once, and not as a command: it states a shape, as travel's line does.
   expect(context.instructions?.split(LEGEND_LINE).length).toBe(2);
 

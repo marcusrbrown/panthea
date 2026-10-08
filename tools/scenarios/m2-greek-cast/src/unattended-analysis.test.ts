@@ -567,6 +567,78 @@ test("a request that failed on a real model response inside the outage window, o
   );
 });
 
+/** A turn the prompt cap stopped for `god` at `tick`: no request was made, so there are no steps and no elapsed time. */
+function overCap(scene: Scene, god: string, tick: number): void {
+  scene.requests.push({
+    proposalId: undefined,
+    role: god,
+    outcome: "exhausted",
+    elapsedMs: 0,
+    promptPayload: `x in the mortal realm, tick ${tick}.`,
+    steps: [],
+    exhaustedReason: "prompt-over-cap",
+    recordedAt: T0 + tick * 1000,
+  });
+}
+
+test("a turn the prompt cap stopped is labelled prompt-over-cap, whatever the outage window says about when it finished", () => {
+  const stopped: RealRequest = {
+    proposalId: undefined,
+    role: "zeus",
+    outcome: "exhausted",
+    elapsedMs: 0,
+    promptPayload: undefined,
+    steps: [],
+    exhaustedReason: "prompt-over-cap",
+    recordedAt: T0,
+  };
+  expect(exhaustionReason(stopped, undefined)).toBe("prompt-over-cap");
+  expect(exhaustionReason({ ...stopped, steps: [] }, undefined)).not.toBe(
+    "other",
+  );
+});
+
+test("a god's prompt-over-cap turns are counted for it, and are neither requests nor answers nor request starts", () => {
+  const base = analyzeUnattended(runData({ scene: healthyScene() }));
+  const scene = healthyScene();
+  for (const tick of [10, 25, 40, 55]) overCap(scene, "zeus", tick);
+  const after = analyzeUnattended(runData({ scene }));
+
+  const before = base.gods.find((g) => g.god === "zeus");
+  const zeus = after.gods.find((g) => g.god === "zeus");
+  expect(zeus?.overCap).toBe(4);
+  expect(before?.overCap).toBe(0);
+  expect(zeus?.requests).toBe(before?.requests);
+  expect(zeus?.answered).toBe(before?.answered);
+  expect(zeus?.exhausted).toEqual(before?.exhausted);
+  expect(zeus?.service).toEqual(before?.service);
+  for (const g of after.gods.filter((x) => x.god !== "zeus")) {
+    expect(g.overCap).toBe(0);
+  }
+  expect(failing(after.rows)).toEqual(failing(base.rows));
+});
+
+test("positive control: a god held back by prompt-over-cap turns for its last 400 service ticks fails the longest-quiet row, though every one of those turns is on record", () => {
+  const scene = healthyScene();
+  scene.requests = scene.requests.filter(
+    (r) =>
+      !(
+        r.role === "zeus" &&
+        Number(/tick (\d+)/.exec(r.promptPayload ?? "")?.[1]) >
+          TICKS.ended - 400
+      ),
+  );
+  const keptIds = new Set(scene.requests.map((r) => r.proposalId));
+  scene.proposals = scene.proposals.filter((p) => keptIds.has(p.proposalId));
+  for (let tick = TICKS.ended - 390; tick < TICKS.ended; tick += 30) {
+    overCap(scene, "zeus", tick);
+  }
+  const { rows, gods } = analyzeUnattended(runData({ scene }));
+  expect(rowOf(rows, "queue.longest-quiet").ok).toBe(false);
+  expect(rowOf(rows, "queue.longest-quiet").measured).toContain("zeus");
+  expect(gods.find((g) => g.god === "zeus")?.overCap).toBe(13);
+});
+
 test("positive control: a provider request between catch-up start and finish fails the catch-up row", () => {
   const result = baseResult();
   const broken: Partial<UnattendedResult> = {

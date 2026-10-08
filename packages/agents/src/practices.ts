@@ -76,6 +76,15 @@ export const CONTESTS_HEADING = "Contests for a place's people:";
  */
 export const CONTESTS_BUDGET_CHARS = 600;
 
+/**
+ * Tokens a god's whole request (instructions and prompt, with room for a retry's feedback) may take. Chosen
+ * for latency (owner, 2026-10-08): on granite3.3-8b-4k a request took about 8.5 s under 3,000 tokens and 16.4 s
+ * above 3,500. Ollama silently drops the start of a prompt past about 4,090 tokens at a 4K context, so the cap
+ * leaves some 1,090 under that point. Counted with the smallest characters-per-token ratio on the role's route
+ * (`prompt-cap.ts`), measured on local Ollama. The sections above keep their own budgets; this bounds the sum.
+ */
+export const PROMPT_TOKEN_CAP = 3000;
+
 /** The answers a thread can take from the god. A demand opens one and is not an answer. */
 export type AnswerMove = "accept" | "counter" | "refuse" | "withdraw";
 

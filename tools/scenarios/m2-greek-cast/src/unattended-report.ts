@@ -50,8 +50,8 @@ function timeline(boundaries: readonly Boundary[]): string[] {
 
 function godsTable(analysis: UnattendedAnalysis): string[] {
   return [
-    "| God | Actions | Legends | Longest run | Requests | Answered | Exhausted | Rejected | Goal-only | Influence |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| God | Actions | Legends | Longest run | Requests | Answered | Exhausted | Over cap | Rejected | Goal-only | Influence |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ...analysis.gods.map((g) => {
       const list = (counts: Readonly<Record<string, number>>): string => {
         const text = Object.entries(counts)
@@ -59,7 +59,7 @@ function godsTable(analysis: UnattendedAnalysis): string[] {
           .join(", ");
         return text === "" ? "0" : text;
       };
-      return `| ${g.god} | ${g.actions} | ${g.legends} | ${g.longestRun === undefined ? "—" : `${g.longestRun.length}`} | ${g.requests} | ${g.answered} | ${list(g.exhausted)} | ${list(g.rejected)} | ${g.goalOnly} | ${g.influence} |`;
+      return `| ${g.god} | ${g.actions} | ${g.legends} | ${g.longestRun === undefined ? "—" : `${g.longestRun.length}`} | ${g.requests} | ${g.answered} | ${list(g.exhausted)} | ${g.overCap} | ${list(g.rejected)} | ${g.goalOnly} | ${g.influence} |`;
     }),
   ];
 }

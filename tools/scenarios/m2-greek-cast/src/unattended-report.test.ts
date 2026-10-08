@@ -52,6 +52,35 @@ test("a healthy full-length run reads end to end: every section, a PASS verdict 
   expect(text).not.toContain("NaN");
 });
 
+test("the gods table counts prompt-over-cap turns per god in their own column, apart from the answered and exhausted requests", () => {
+  const scene = healthyScene();
+  for (const tick of [10, 20, 30]) {
+    scene.requests.push({
+      proposalId: undefined,
+      role: "zeus",
+      outcome: "exhausted",
+      elapsedMs: 0,
+      promptPayload: `x in the mortal realm, tick ${tick}.`,
+      steps: [],
+      exhaustedReason: "prompt-over-cap",
+      recordedAt: T0 + tick * 1000,
+    });
+  }
+  const text = report({ scene });
+  expect(text).toContain("| Exhausted | Over cap | Rejected |");
+  const zeus = text.split("\n").find((line) => line.startsWith("| zeus |"));
+  const hera = text.split("\n").find((line) => line.startsWith("| hera |"));
+  // Requests, answered, exhausted, over cap: the three are in the column and none is in the others.
+  expect(zeus?.split(" | ").slice(4, 8)).toEqual([
+    expect.any(String),
+    expect.any(String),
+    "0",
+    "3",
+  ]);
+  expect(hera?.split(" | ")[7]).toBe("0");
+  expect(text).not.toContain("prompt-over-cap 3");
+});
+
 test("a development-length run says 'not a gate run' as its verdict, in the header and above the rating sheet", () => {
   const text = report({ result: { plan: phasePlan(6) } });
   expect(text).toContain("**Verdict: not a gate run**");

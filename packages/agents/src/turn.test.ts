@@ -14,11 +14,14 @@ import {
   type WorldState,
 } from "@panthea/world";
 import { parseRoutingConfig } from "./config";
-import { createRouter } from "./router";
+import { rememberedBy } from "./context";
+import { PROMPT_TOKEN_CAP } from "./practices";
+import { createRouter, type Router } from "./router";
 import {
   actorAt,
   godProfile,
   greekState,
+  WorldRun,
   withoutFireSpread,
 } from "./test-fixtures";
 import { runGodTurn } from "./turn";
@@ -429,4 +432,218 @@ test("a scripted answer on a thread that is not the god's is not a valid intent:
   );
   const turn = await runGodTurn(deps(stub), { state, actorId: id("zeus") });
   expect(turn?.kind).toBe("exhausted");
+});
+
+// --- The cap on the whole prompt ------------------------------------------------------------------
+
+/** A router on granite3.3-8b-4k (2.85 characters a token) that records what the turn asks of it. */
+function capped(stub: Stub) {
+  const config = parseRoutingConfig({
+    endpoints: [
+      { id: "ollama", baseUrl: stub.baseUrl, model: "granite3.3-8b-4k" },
+    ],
+    roles: { zeus: { endpoint: "ollama" } },
+  });
+  if (!config.ok) throw new Error(`${config.path}: ${config.message}`);
+  const router = createRouter({
+    config: config.value,
+    offline: false,
+    limits: {
+      attemptTimeoutMs: 2_000,
+      totalTimeoutMs: 10_000,
+      maxAttempts: 2,
+      backoffBaseMs: 1,
+      backoffMaxMs: 4,
+    },
+  });
+  const calls = { plan: 0, route: [] as { maxChars?: number }[] };
+  const spy: Router = {
+    plan: (role) => {
+      calls.plan += 1;
+      return router.plan(role);
+    },
+    route(role, context, schema, options) {
+      calls.route.push({
+        ...(options?.maxChars === undefined
+          ? {}
+          : { maxChars: options.maxChars }),
+      });
+      return router.route(role, context, schema, options);
+    },
+  };
+  return { deps: { router: spy, profiles }, calls };
+}
+
+/** What a stub was sent, joined as the turn counts a request. */
+const sent = (stub: Stub, n: number): string =>
+  (stub.seen[n] as { messages: { content: string }[] }).messages
+    .map((message) => message.content)
+    .join("\n\n");
+
+/** Zeus with `count` open help prayers; with `live`, the oldest three are held by a live practice (two open offers and an accepted one, so a boon is owed). */
+function crowded(count: number, live: boolean) {
+  const run = new WorldRun();
+  const payers = [...run.state.actors.values()]
+    .filter(
+      (actor) =>
+        actor.alive &&
+        actor.isDeity !== true &&
+        (actor.inventory.get("currency") ?? 0) >= 1,
+    )
+    .map((actor) => String(actor.id));
+  const ids = Array.from({ length: count }, (_, i) =>
+    run.prays(payers[i % payers.length] as string),
+  );
+  if (live) {
+    const partyOf = (petition: EventId) =>
+      String(run.state.petitions.get(petition)?.petitioner);
+    for (const petition of ids.slice(0, 3)) {
+      run.tick({
+        actor: "zeus",
+        kind: "practice",
+        move: "offer",
+        petition,
+        term: {
+          kind: "make-offering",
+          party: partyOf(petition),
+          to: "zeus",
+          resource: "currency",
+          amount: 1,
+          deadlineTicks: 80,
+        },
+      });
+    }
+    const accepted = [...run.state.threads.values()].find(
+      (thread) => thread.petition === ids[2],
+    );
+    if (!accepted) throw new Error("no thread on the third prayer");
+    run.tick({
+      actor: partyOf(ids[2] as EventId),
+      kind: "practice",
+      move: "accept",
+      thread: accepted.id,
+    });
+  }
+  return { state: run.state, ids };
+}
+
+test("a turn under the cap sends the whole request unreduced, with the router's limit, and records the estimate, the ratio and no sheds", async () => {
+  const stub = startStub('{"action":"wait"}');
+  const { deps: capDeps, calls } = capped(stub);
+
+  const turn = await runGodTurn(capDeps, {
+    state: zeusAtTavern(),
+    actorId: id("zeus"),
+  });
+
+  expect(turn?.kind).toBe("wait");
+  if (turn?.kind !== "wait") return;
+  expect(turn.request.cap).toEqual({
+    estimatedTokens: expect.any(Number),
+    ratio: 2.85,
+    shed: { events: 0, actions: 0, memories: 0, prayers: 0 },
+  });
+  expect(turn.request.cap.estimatedTokens).toBeLessThanOrEqual(
+    PROMPT_TOKEN_CAP,
+  );
+  expect(calls.route).toEqual([{ maxChars: 8550 }]);
+  expect(sent(stub, 0)).toBe(turn.request.prompt);
+});
+
+test("a crowded turn sends the reduced prompt, records what it shed, and refuses an id that was shed", async () => {
+  const { state, ids } = crowded(14, false);
+  const stub = startStub('{"action":"wait"}');
+  const first = await runGodTurn(capped(stub).deps, {
+    state,
+    actorId: id("zeus"),
+  });
+  expect(first?.kind).toBe("wait");
+  if (first?.kind !== "wait") return;
+  const { cap, prompt } = first.request;
+  expect(cap.shed.prayers).toBeGreaterThan(0);
+  expect(cap.shed).toMatchObject({ events: 0, actions: 0, memories: 0 });
+  expect(cap.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
+  expect(sent(stub, 0)).toBe(prompt);
+
+  // A prayer the budget alone showed and the cap then shed.
+  const budgeted = rememberedBy(state, id("zeus")).petitions.map((p) => p.id);
+  expect(budgeted.length).toBeGreaterThan(0);
+  const shedId = budgeted.find((petition) => !prompt.includes(petition));
+  const keptId = ids.find((petition) => prompt.includes(petition));
+  if (shedId === undefined || keptId === undefined) throw new Error("no split");
+  // The reduced pair builds the schema and the proposal: a bless of a shed prayer is not an intent.
+  const refused = await runGodTurn(
+    capped(startStub(JSON.stringify({ action: "bless", petition: shedId })))
+      .deps,
+    { state, actorId: id("zeus") },
+  );
+  expect(refused?.kind).toBe("exhausted");
+  if (refused?.kind === "exhausted") {
+    expect(refused.request.route.steps[0]?.reason).toBe("invalid-output");
+  }
+  const blessed = await runGodTurn(
+    capped(startStub(JSON.stringify({ action: "bless", petition: keptId })))
+      .deps,
+    { state, actorId: id("zeus") },
+  );
+  expect(blessed?.kind).toBe("proposal");
+});
+
+test("when the protected floor alone is over the cap, the turn reads the plan, never calls route, sends nothing, and is exhausted for prompt-over-cap", async () => {
+  const { state } = crowded(9, true);
+  const stub = startStub('{"action":"wait"}');
+  const { deps: base, calls } = capped(stub);
+  // Zeus's persona is part of the floor: with a long line of lore, nothing the cap may shed is enough.
+  const zeus = godProfile("zeus");
+  const capDeps = {
+    ...base,
+    profiles: new Map([
+      [
+        id("zeus"),
+        {
+          ...zeus,
+          lore: [
+            ...zeus.lore,
+            { id: "heavy", statement: "x".repeat(4_000), cites: [] },
+          ],
+        },
+      ],
+    ]),
+  };
+
+  const turn = await runGodTurn(capDeps, { state, actorId: id("zeus") });
+
+  expect(turn?.kind).toBe("exhausted");
+  if (turn?.kind !== "exhausted") return;
+  expect(turn.request.exhaustedReason).toBe("prompt-over-cap");
+  expect(turn.request.route).toMatchObject({ kind: "exhausted", steps: [] });
+  expect(turn.request.cap.estimatedTokens).toBeGreaterThan(PROMPT_TOKEN_CAP);
+  expect(turn.request.cap.ratio).toBe(2.85);
+  // Everything sheddable was shed first.
+  expect(turn.request.cap.shed.prayers).toBeGreaterThan(0);
+  expect(calls.plan).toBe(1);
+  expect(calls.route).toEqual([]);
+  expect(stub.seen).toEqual([]);
+});
+
+test("a retry after an invalid reply never passes the limit: the whole prompt, and the note only as far as the room left allows", async () => {
+  const { state } = crowded(14, false);
+  const stub = startStub('{"action":"dance"}', '{"action":"wait"}');
+  const { deps: capDeps, calls } = capped(stub);
+
+  const turn = await runGodTurn(capDeps, { state, actorId: id("zeus") });
+
+  expect(turn?.kind).toBe("wait");
+  expect(stub.seen).toHaveLength(2);
+  const limit = calls.route[0]?.maxChars as number;
+  expect(limit).toBe(8550);
+  expect(sent(stub, 1).length).toBeLessThanOrEqual(limit);
+  // The first send is the bare request; the retry is that, whole, and a note only if the wording fits after it.
+  expect(sent(stub, 1).startsWith(sent(stub, 0))).toBe(true);
+  const room = limit - sent(stub, 0).length - 2;
+  const wording =
+    "Your last reply was refused: . Reply with one corrected JSON object.";
+  expect(sent(stub, 1).includes("Your last reply was refused")).toBe(
+    room >= wording.length,
+  );
 });

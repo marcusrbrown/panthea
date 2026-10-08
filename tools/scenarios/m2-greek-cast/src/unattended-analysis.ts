@@ -114,8 +114,11 @@ export interface GodReport {
     | undefined;
   readonly influence: number;
   readonly influenceByPhase: Readonly<Record<PhaseId, number>>;
+  /** Requests that reached the router, the outage's included. A turn the prompt cap stopped made none. */
   readonly requests: number;
   readonly answered: number;
+  /** Turns the prompt cap stopped for `prompt-over-cap`: counted here and nowhere in the request counts. */
+  readonly overCap: number;
   readonly exhausted: Readonly<Record<string, number>>;
   readonly rejected: Readonly<Record<string, number>>;
   readonly goalOnly: number;
@@ -249,11 +252,16 @@ const emptyByPhase = (): Record<PhaseId, number> => ({
 
 // --- Reading requests ---------------------------------------------------------------------------
 
+/** Whether the prompt cap stopped this turn before any request: nothing was sent, so it is not a request the model could answer or the god waited on. */
+export const stoppedByCap = (request: RealRequest): boolean =>
+  request.exhaustedReason === "prompt-over-cap";
+
 /** How an exhausted request failed, from what its steps kept and when it finished. */
 export function exhaustionReason(
   request: RealRequest,
   outageWallMs: { readonly from: number; readonly to: number } | undefined,
 ): string {
+  if (stoppedByCap(request)) return "prompt-over-cap";
   const step = request.steps.find((s) => s.reason !== undefined);
   const reason = step?.reason ?? "";
   const detail = step?.detail ?? "";
@@ -519,6 +527,8 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
   const keptRequests = input.requests.filter(
     (r) => !inWall(r.recordedAt, outageWall),
   );
+  // A turn the prompt cap stopped made no request: a god held back by them shows as quiet in the timings below.
+  const sent = (r: RealRequest): boolean => !stoppedByCap(r);
   // Requests are left out by when they finished, actions by when they commit: the same window the outage row judges.
   const keptInput: RealInput = {
     ...input,
@@ -530,7 +540,9 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
   // refused, hundreds of them a second apart, would otherwise make a god look as if it were asked far more often.
   const allTimings = requestTimings({
     ...input,
-    requests: input.requests.filter((r) => !refusedByOutage(r, outageWall)),
+    requests: input.requests.filter(
+      (r) => sent(r) && !refusedByOutage(r, outageWall),
+    ),
   });
   const service = serviceTimings(allTimings, {
     windows,
@@ -549,7 +561,10 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
         influenceByPhase[phaseOfTick(result, Number(credited.tick))] += 1;
       }
     }
-    const requests = keptRequests.filter((r) => r.role === god);
+    const requests = keptRequests.filter((r) => r.role === god && sent(r));
+    const overCap = input.requests.filter(
+      (r) => r.role === god && stoppedByCap(r),
+    ).length;
     const exhausted: Record<string, number> = {};
     for (const r of requests.filter((x) => x.outcome === "exhausted")) {
       const why = exhaustionReason(r, outageWall);
@@ -558,6 +573,7 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     const outageExhausted = input.requests.filter(
       (r) =>
         r.role === god &&
+        sent(r) &&
         r.outcome === "exhausted" &&
         inWall(r.recordedAt, outageWall),
     ).length;
@@ -582,6 +598,7 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
       influenceByPhase,
       requests: requests.length + outageExhausted,
       answered: requests.filter((r) => r.outcome === "intent").length,
+      overCap,
       exhausted,
       rejected,
       goalOnly: keptInput.proposals.filter(

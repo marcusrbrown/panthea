@@ -18,6 +18,7 @@ import {
 import {
   type ParseResult,
   planRoute,
+  type RoutePlan,
   type RouteStep,
   type RoutingConfig,
 } from "./config";
@@ -106,6 +107,8 @@ export type FailureReason =
   | "invalid-output"
   /** The endpoint needs a key and none is set: nothing was sent. */
   | "key-missing"
+  /** The request to send was longer than the caller's character limit: nothing was sent. */
+  | "prompt-over-cap"
   | "unknown";
 
 export interface StepMetadata {
@@ -150,11 +153,17 @@ export type RouteResult<T> =
     };
 
 export interface Router {
+  /** The steps `route` would try for `role` under this router's config and offline mode. Reads only; builds nothing. */
+  plan(role: string): RoutePlan;
   route<T>(
     role: string,
     context: RouteContext,
     schema: IntentSchema<T>,
-    options?: { readonly signal?: AbortSignal },
+    options?: {
+      readonly signal?: AbortSignal;
+      /** The most characters any one send may carry (instructions, a blank line, the prompt, and what an attempt adds: a retry's feedback, the plain-text fallback's schema). A send over it is not made. */
+      readonly maxChars?: number;
+    },
   ): Promise<RouteResult<T>>;
 }
 
@@ -186,9 +195,28 @@ const SCHEMA_LIMIT = 8_000;
 /** How much of a refusal's reason a retry is told. */
 const FEEDBACK_LIMIT = 400;
 
-/** What a retry after an invalid reply adds to the prompt: why it was refused, and what to do about it. */
-function feedbackFor(detail: string): string {
-  return `Your last reply was refused: ${detail.slice(0, FEEDBACK_LIMIT)}. Reply with one corrected JSON object.`;
+const NOTE_START = "Your last reply was refused: ";
+const NOTE_END = ". Reply with one corrected JSON object.";
+
+/**
+ * What a retry after an invalid reply adds to the prompt: why it was refused, and what to do about it. With a
+ * `room` (the characters left for the note after its blank line), the reason is cut to fit it; when not even the
+ * fixed wording fits there is no note.
+ */
+function feedbackFor(detail: string, room?: number): string | undefined {
+  const full = `${NOTE_START}${detail.slice(0, FEEDBACK_LIMIT)}${NOTE_END}`;
+  if (room === undefined || full.length <= room) return full;
+  const reason = room - NOTE_START.length - NOTE_END.length;
+  if (reason < 0) return undefined;
+  return `${NOTE_START}${detail.slice(0, Math.min(FEEDBACK_LIMIT, reason))}${NOTE_END}`;
+}
+
+/** A request's characters as a turn counts them: the instructions, a blank line, then the prompt. */
+export function requestChars(context: RouteContext): number {
+  return (
+    (context.instructions === undefined ? 0 : context.instructions.length + 2) +
+    context.prompt.length
+  );
 }
 
 /** An endpoint with a `keyRef` has no key to send. Names the `keyRef`, never a key. */
@@ -309,7 +337,9 @@ export function createRouter(options: RouterOptions): Router {
     chain: AbortSignal,
     caller: AbortSignal | undefined,
     reasoningEffort: "none" | undefined,
+    /** Why the last reply was refused, redacted and bounded: the retry's note is made from it. */
     feedback?: string,
+    maxChars?: number,
   ): Promise<Attempt<T>> {
     const startedAt = performance.now();
     const request = (timeoutMs: number) => ({
@@ -334,11 +364,40 @@ export function createRouter(options: RouterOptions): Router {
       detail: message,
       ...(output === undefined ? {} : { output }),
     });
-    const asked =
+    // A retry's note is cut to the room the limit leaves, and dropped when even its wording does not fit: a retry is
+    // never refused for its note.
+    const note =
       feedback === undefined
-        ? context.prompt
-        : `${context.prompt}\n\n${feedback}`;
+        ? undefined
+        : feedbackFor(
+            feedback,
+            maxChars === undefined
+              ? undefined
+              : maxChars - requestChars(context) - 2,
+          );
+    const asked =
+      note === undefined ? context.prompt : `${context.prompt}\n\n${note}`;
 
+    /** A send over the limit is refused before anything leaves. */
+    const overCap = (extra: string): Attempt<T> | undefined => {
+      if (maxChars === undefined) return undefined;
+      const size = requestChars({
+        ...(context.instructions === undefined
+          ? {}
+          : { instructions: context.instructions }),
+        prompt: `${asked}${extra}`,
+      });
+      return size > maxChars
+        ? {
+            ok: false,
+            reason: "prompt-over-cap",
+            detail: `the request is ${size} characters, over the ${maxChars} limit`,
+          }
+        : undefined;
+    };
+
+    const first = overCap("");
+    if (first !== undefined) return first;
     let text: string | undefined;
     try {
       const result = await generateText({
@@ -367,6 +426,8 @@ export function createRouter(options: RouterOptions): Router {
     }
 
     if (text === undefined) {
+      const fallback = overCap(`\n\n${schemaInstruction(schema)}`);
+      if (fallback !== undefined) return fallback;
       try {
         const remaining = Math.max(
           1,
@@ -395,6 +456,7 @@ export function createRouter(options: RouterOptions): Router {
     chain: AbortSignal,
     chainDeadline: number,
     caller: AbortSignal | undefined,
+    maxChars: number | undefined,
   ): Promise<
     | { readonly ok: true; readonly intent: T; readonly step: StepMetadata }
     | {
@@ -471,6 +533,7 @@ export function createRouter(options: RouterOptions): Router {
         caller,
         step.endpoint.reasoningEffort,
         feedback,
+        maxChars,
       );
       if (outcome.ok) {
         return {
@@ -489,7 +552,7 @@ export function createRouter(options: RouterOptions): Router {
       // Redacted before it is built, so a key a parser's reason echoes (raw or as JSON writes it) never reaches the retried prompt.
       feedback =
         outcome.reason === "invalid-output"
-          ? feedbackFor(redact(outcome.detail, adapter.apiKey, FEEDBACK_LIMIT))
+          ? redact(outcome.detail, adapter.apiKey, FEEDBACK_LIMIT)
           : undefined;
       if (!RETRYABLE.has(outcome.reason) || attempts >= limits.maxAttempts) {
         break;
@@ -538,6 +601,8 @@ export function createRouter(options: RouterOptions): Router {
   }
 
   return {
+    plan: (role) =>
+      planRoute(options.config, role, { offline: options.offline }),
     async route(role, context, schema, routeOptions) {
       const startedAt = performance.now();
       const plan = planRoute(options.config, role, {
@@ -560,6 +625,7 @@ export function createRouter(options: RouterOptions): Router {
           chain,
           chainDeadline,
           caller,
+          routeOptions?.maxChars,
         );
         if (outcome.ok) {
           return {
