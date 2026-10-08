@@ -62,8 +62,16 @@ export {
   describeTerm,
   PRACTICES_HEADING,
   PRAYERS_BUDGET_CHARS,
+  PROMPT_TOKEN_CAP,
   schedulingSignals,
 } from "./practices";
+export {
+  DEFAULT_RATIO,
+  estimateTokens,
+  fitsCap,
+  MODEL_RATIOS,
+  routeRatio,
+} from "./prompt-cap";
 export type { EndpointModelArgs } from "./providers";
 export { createEndpointModel, RedirectRefusedError } from "./providers";
 export { extractJsonObjects, repairIntent } from "./repair";
@@ -78,7 +86,12 @@ export type {
   StepFailure,
   StepMetadata,
 } from "./router";
-export { createRouter, DEFAULT_ROUTE_LIMITS } from "./router";
+export {
+  createRouter,
+  DEFAULT_ROUTE_LIMITS,
+  MAX_FEEDBACK_CHARS,
+  requestChars,
+} from "./router";
 export type { GodSignals, Pick, Rotation } from "./scheduler";
 export { pickGod, SKIP_CAP, START_OF_ROTATION } from "./scheduler";
 export type { EndpointStatus, RouteOutcome } from "./status";

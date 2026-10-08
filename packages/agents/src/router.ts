@@ -18,6 +18,7 @@ import {
 import {
   type ParseResult,
   planRoute,
+  type RoutePlan,
   type RouteStep,
   type RoutingConfig,
 } from "./config";
@@ -150,6 +151,8 @@ export type RouteResult<T> =
     };
 
 export interface Router {
+  /** The steps `route` would try for `role` under this router's config and offline mode. Reads only; builds nothing. */
+  plan(role: string): RoutePlan;
   route<T>(
     role: string,
     context: RouteContext,
@@ -189,6 +192,18 @@ const FEEDBACK_LIMIT = 400;
 /** What a retry after an invalid reply adds to the prompt: why it was refused, and what to do about it. */
 function feedbackFor(detail: string): string {
   return `Your last reply was refused: ${detail.slice(0, FEEDBACK_LIMIT)}. Reply with one corrected JSON object.`;
+}
+
+/** Most characters a retry's feedback adds to a request, its blank-line separator included. */
+export const MAX_FEEDBACK_CHARS =
+  2 + feedbackFor("x".repeat(FEEDBACK_LIMIT)).length;
+
+/** A request's characters as a turn counts them: the instructions, a blank line, then the prompt. */
+export function requestChars(context: RouteContext): number {
+  return (
+    (context.instructions === undefined ? 0 : context.instructions.length + 2) +
+    context.prompt.length
+  );
 }
 
 /** An endpoint with a `keyRef` has no key to send. Names the `keyRef`, never a key. */
@@ -538,6 +553,8 @@ export function createRouter(options: RouterOptions): Router {
   }
 
   return {
+    plan: (role) =>
+      planRoute(options.config, role, { offline: options.offline }),
     async route(role, context, schema, routeOptions) {
       const startedAt = performance.now();
       const plan = planRoute(options.config, role, {
