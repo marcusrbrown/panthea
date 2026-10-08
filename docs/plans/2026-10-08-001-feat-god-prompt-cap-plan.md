@@ -30,7 +30,7 @@ A runtime cap near 3,000 tokens stops the cuts and brings latency down (owner, 2
 
 ## Requirements Trace
 
-- R1. No god's request exceeds the cap as estimated with the most conservative ratio on its route. That includes a retry carrying the router's refusal feedback. No request reaches Ollama's truncation point (O08).
+- R1. No request the router sends for a god exceeds the cap as estimated with the most conservative ratio on its route. That includes a retry carrying refusal feedback and the plain-text fallback carrying the schema. No request reaches Ollama's truncation point (O08).
 - R2. Shedding never leaves the prompt, schema or proposal builder naming something the god can no longer see, such as an event, memory, prayer, contest act or thread (W04).
 - R3. These are never shed: the standing instructions, persona, goal and journey state, the god's own obligations, and protected prayers. A protected prayer is one named by a live practice or by an owed boon.
 - R4. The cap uses the smallest ratio across every model the role's planned route can reach, offline-filtered when offline (P07).
@@ -171,6 +171,11 @@ A runtime cap near 3,000 tokens stops the cuts and brings latency down (owner, 2
 - **The router exposes its plan.** `Router` gains a read-only `plan(role)`. `createRouter` implements it with the same routing config and offline flag it routes with, so there is one planner. `runGodTurn` calls it before applying the cap.
 - **The cap is a code constant beside the section budgets.** `PROMPT_TOKEN_CAP` is 3,000 tokens, chosen for latency (owner, 2026-10-08). That leaves about 1,090 tokens under Ollama's cut point for the reply. The schema costs no prompt tokens on Ollama.
 - **The estimate reserves room for a retry's feedback.** After an invalid reply, the router appends a refusal note to the prompt, of at most `FEEDBACK_LIMIT` plus its fixed wording (`router.ts`, `feedbackFor`). The capped request's estimate includes that maximum, so a retry fits too.
+- **The router enforces the cap on every request it sends.**
+  - The turn passes the router a character limit: the cap times the ratio it used.
+  - Before each send, the router compares the request's real text with that limit. That covers the first attempt, a retry with feedback, and the plain-text fallback after a structured-output 400 or 422, which appends the whole serialized schema (`router.ts`).
+  - A request over the limit is not sent. That step fails with the reason `prompt-over-cap`, and the route moves on or exhausts as it does for any failed step.
+  - The schema fallback is not reserved in the cap, because the schema is large and the fallback is rare on Ollama. A god whose fallback would not fit gets an exhausted step, not a cut prompt.
 - **Move rules only when offered.** The travel line moves out of the shared instruction start and appears only when destinations exist. This costs the cross-god prompt-cache hit on that line, which is accepted.
 - **Observability goes on the request record and the trace row.** The request record and `trace_model_requests` gain the estimated tokens, the ratio, and the per-tier shed counts. The columns are added to the table definition directly; per project rule there is no migration for unshipped stores.
 
@@ -203,6 +208,7 @@ for tier in [recentEvents, ownActions, memoriesAndFeelings, unprotectedPrayers]:
         (s, r) = drop(oldest-or-least unit of tier)  # memory/prayer drop reruns practiceBy; linked goal-history rows go too
         estimate = (chars(buildGodContext(s, r)) + MAX_RETRY_FEEDBACK) / ratio
 if estimate > PROMPT_TOKEN_CAP: exhausted("prompt-over-cap"), route() never called
+route(context, schema, maxChars = PROMPT_TOKEN_CAP * ratio)   # router refuses any send over maxChars
 context, schema, proposal-builder all use (s, r); record estimate, ratio, shed counts
 ```
 
@@ -281,12 +287,13 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
 **Dependencies:** Unit 2
 
 **Files:**
-- Modify: `packages/agents/src/turn.ts`, `packages/agents/src/router.ts` (`plan(role)`), `apps/simulation/src/agents.ts`, `packages/telemetry/src/trace.ts`, `tools/scenarios/m2-greek-cast/src/unattended-analysis.ts` (count `prompt-over-cap` per god, outside answered requests)
+- Modify: `packages/agents/src/turn.ts`, `packages/agents/src/router.ts` (`plan(role)`, the per-send character limit, `prompt-over-cap` as a step failure reason), `apps/simulation/src/agents.ts`, `packages/telemetry/src/trace.ts`, `tools/scenarios/m2-greek-cast/src/unattended-analysis.ts` (count `prompt-over-cap` per god, outside answered requests)
 - Test: `packages/agents/src/turn.test.ts`, `packages/agents/src/router.test.ts`, `apps/simulation/src/agents.test.ts`, `packages/telemetry/src/trace.test.ts`, `tools/scenarios/m2-greek-cast/src/unattended-analysis.test.ts`
 
 **Approach:**
 - The cap runs between `rememberedBy` and `buildGodContext`.
 - An over-cap result reads the route plan and then returns an exhausted turn with the reason `prompt-over-cap`. It never calls `route`.
+- An under-cap turn calls `route` with the character limit. The router refuses any send over it.
 - The request record and trace row carry the estimated tokens, the ratio and the per-tier shed counts.
 
 **Execution note:** test-first.
@@ -298,11 +305,13 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
   - the exhausted reason is `prompt-over-cap`, recorded in the trace;
   - model-degraded is not set;
   - no endpoint's status changes.
+- Error path: a near-cap context gets a structured-output 400, then a 422. The plain-text fallback with the schema would exceed the limit, so it is not sent, and the step fails `prompt-over-cap`. The same context with a small schema sends its fallback.
+- Error path: a near-cap context gets an invalid reply. The retry with feedback is sent and stays within the limit.
 - Integration: a shedding turn records its shed counts, and the proposal builder rejects an id that was shed.
 - Integration: the simulation records the new fields through its existing request path, and the store reopens. Archives don't copy trace tables, so export is not tested here.
 - Integration: the unattended report counts `prompt-over-cap` turns per god and leaves them out of answered requests.
 
-**Verification:** the trace shows the cap figures for every god turn, and no over-cap prompt reaches the router.
+**Verification:** the trace shows the cap figures for every god turn, and no request over the limit leaves the router.
 
 - [ ] **Unit 4: Move rules only when offered, and replace the synthetic guards**
 
