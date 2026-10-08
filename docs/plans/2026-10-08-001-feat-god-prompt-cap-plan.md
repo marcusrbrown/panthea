@@ -278,6 +278,8 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
 
 **Verification:** every shed kind keeps the prompt, schema and parser in agreement, and the over-cap world lands under the cap with the survivors the policy predicts.
 
+**Status (2026-10-08):** built, with a refill pass the owner added after the story run: once the request fits, each shed unit is tried once, most valuable first (memories by salience, feelings by strength, own actions newest first, events newest first), through the same re-derive path and kept only if the rebuilt request with the feedback reserve still fits. A shed prayer is never re-added. The shed counts are the net.
+
 - [ ] **Unit 3: Wire the cap into the turn, and record it**
 
 **Goal:** `runGodTurn` applies the cap before building the context, schema and proposal; refuses to send an over-cap prompt; and records the cap figures.
