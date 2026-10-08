@@ -35,7 +35,9 @@ export type {
   EditRecord,
   PreviewSlot,
 } from "./export-import";
+export { canonicalFrameHash } from "./export-import";
 export type { PackInput } from "./packing";
+export { decodePng, type PngDecode } from "./png/decode";
 export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
 export type {
   ApproveOptions,
@@ -103,6 +105,7 @@ export {
   type JobSource,
   type Read,
   type RequestRecord,
+  readStudioBlob,
   readStudioStatus,
   type SessionRecord,
   type Store,

@@ -40,6 +40,8 @@ import { type Palette, paletteDigest } from "./palette";
 import { filtersValid, inflatedLength, parsePng } from "./png";
 import type { RegistrySnapshot, SnapshotEntry } from "./resolve";
 
+export { parseAssetManifest };
+
 export interface RegistryProblem {
   /** Path relative to the registry root. */
   readonly file: string;
@@ -98,7 +100,7 @@ function writeAtomic(path: string, bytes: string | Uint8Array): void {
  * chunks, and image data that inflates to exactly the scanlines the header
  * implies with legal filter bytes. Pixels and palette indices are not decoded.
  */
-function checkBlob(
+export function checkBlob(
   bytes: Uint8Array,
   hash: Sha256,
   atlas: { readonly width: number; readonly height: number },
