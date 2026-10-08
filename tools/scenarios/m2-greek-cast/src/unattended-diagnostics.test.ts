@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   captureOllamaState,
   LOG_TAIL_LINES,
+  renderLogTail,
   sanitizeLogLines,
   tailLines,
   WITHHELD,
@@ -89,9 +90,10 @@ test("the capture asks the real Ollama URL for /api/ps, never anything else, and
 
   expect(asked).toEqual(["http://127.0.0.1:11434/api/ps"]);
   expect(state.ps).toEqual({ ok: true, body: ps });
-  expect(state.logTail).toEqual({
+  expect(state.logTail).toMatchObject({
     ok: true,
     lines: ["one", WITHHELD, "three"],
+    stale: false,
   });
 });
 
@@ -130,4 +132,97 @@ test("the capture holds no host but the one it was asked, and no user name", asy
   const text = JSON.stringify(state);
   expect(text).not.toContain("registry.ollama.ai");
   expect(text).not.toContain("someone");
+});
+
+// --- A log that stopped before the run began -------------------------------------------------
+
+const RUN_START = Date.parse("2026-10-08T02:00:00Z");
+
+test("a log last written before the run began is marked stale, with when it was written, so old lines are never presented as the fault's", async () => {
+  const state = await captureOllamaState({
+    ollama: "http://127.0.0.1:11434",
+    home: HOME,
+    since: RUN_START,
+    fetch: async () => Response.json({ models: [] }),
+    readLog: () => "old one\nold two\n",
+    logModifiedAt: () => Date.parse("2026-05-14T09:30:00Z"),
+  });
+  expect(state.logTail).toMatchObject({
+    ok: true,
+    stale: true,
+    modifiedAt: "2026-05-14T09:30:00Z",
+  });
+  expect(state.logTail.ok && state.logTail.note).toContain(
+    "before this run began",
+  );
+  expect(state.logTail.ok && state.logTail.note).toContain(
+    "2026-05-14T09:30:00Z",
+  );
+  // The lines are still given, under that note.
+  expect(state.logTail.ok && state.logTail.lines).toEqual([
+    "old one",
+    "old two",
+  ]);
+});
+
+test("a log written during the run is not stale, and one written at the instant it began is not either", async () => {
+  for (const modified of [RUN_START, RUN_START + 60_000]) {
+    const state = await captureOllamaState({
+      ollama: "http://127.0.0.1:11434",
+      home: HOME,
+      since: RUN_START,
+      fetch: async () => Response.json({ models: [] }),
+      readLog: () => "a\n",
+      logModifiedAt: () => modified,
+    });
+    expect(state.logTail).toMatchObject({ ok: true, stale: false });
+    expect(state.logTail.ok && state.logTail.note).toBeUndefined();
+  }
+  const justBefore = await captureOllamaState({
+    ollama: "http://127.0.0.1:11434",
+    home: HOME,
+    since: RUN_START,
+    fetch: async () => Response.json({ models: [] }),
+    readLog: () => "a\n",
+    logModifiedAt: () => RUN_START - 1,
+  });
+  expect(justBefore.logTail).toMatchObject({ stale: true });
+});
+
+test("with no start time or no way to read when the log was written, nothing is claimed about it", async () => {
+  const state = await captureOllamaState({
+    ollama: "http://127.0.0.1:11434",
+    home: HOME,
+    fetch: async () => Response.json({ models: [] }),
+    readLog: () => "a\n",
+    logModifiedAt: () => undefined,
+  });
+  expect(state.logTail).toMatchObject({ ok: true, stale: false });
+  expect(state.logTail.ok && state.logTail.modifiedAt).toBeUndefined();
+  // A start time with no way to read the file's age claims nothing either.
+  const unknown = await captureOllamaState({
+    ollama: "http://127.0.0.1:11434",
+    home: HOME,
+    since: RUN_START,
+    fetch: async () => Response.json({ models: [] }),
+    readLog: () => "a\n",
+    logModifiedAt: () => undefined,
+  });
+  expect(unknown.logTail).toMatchObject({ ok: true, stale: false });
+});
+
+test("the written tail file starts with the stale note, so a reader of the file alone cannot take old lines for the fault's", () => {
+  const stale = renderLogTail({
+    ok: true,
+    lines: ["x"],
+    stale: true,
+    modifiedAt: "2026-05-14T09:30:00Z",
+    note: "The server log was last written 2026-05-14T09:30:00Z, before this run began; these lines are not from it.",
+  });
+  expect(stale.split("\n")[0]).toContain("before this run began");
+  expect(stale).toContain("\nx\n");
+  expect(renderLogTail({ ok: true, lines: ["x"], stale: false })).toBe("x\n");
+  expect(renderLogTail({ ok: false, reason: "no server log to read" })).toBe(
+    "no server log to read\n",
+  );
 });

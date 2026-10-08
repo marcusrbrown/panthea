@@ -194,3 +194,120 @@ export function renderRequestTimings(timings: RequestTimings): string[] {
     ),
   ];
 }
+
+// --- Service time: the gaps with the windows that had no service left out ------------------------
+
+/** A span of ticks in which the model could not be reached or the sidecar was stopped. */
+export interface TickWindow {
+  readonly fromTick: number;
+  readonly toTick: number;
+  readonly label: string;
+}
+
+/**
+ * The ticks between `from` and `to` that are not inside any window: a gap's service time. A window that lies wholly
+ * or partly inside the gap takes its overlap off; windows never overlap one another.
+ */
+export function serviceGap(
+  from: number,
+  to: number,
+  windows: readonly TickWindow[],
+): number {
+  let gap = Math.max(0, to - from);
+  for (const window of windows) {
+    const overlap =
+      Math.min(to, window.toTick) - Math.max(from, window.fromTick);
+    if (overlap > 0) gap -= overlap;
+  }
+  return Math.max(0, gap);
+}
+
+export interface QuietStretch {
+  readonly fromTick: number;
+  readonly toTick: number;
+  readonly serviceTicks: number;
+  /** The stretch from the god's last request to the end of the run. */
+  readonly toEnd: boolean;
+}
+
+export interface GodServiceTiming {
+  readonly god: string;
+  /** Requests that finished, answered or exhausted, and had a start tick. */
+  readonly turns: number;
+  /** p95 of the service ticks between consecutive request starts: the gate's queue wait. */
+  readonly p95ServiceGapTicks: number | undefined;
+  /** p95 of the raw ticks between them, windows included. */
+  readonly p95InclusiveGapTicks: number | undefined;
+  /** The longest stretch of service time with no request from the god, run start and run end included. */
+  readonly longestQuiet: QuietStretch;
+  /** Service gaps longer than `longGapTicks`: stretches in which the scheduler gave the god no turn (inferred; skips are not journaled). */
+  readonly longGaps: number;
+}
+
+/**
+ * Each god's queue wait and longest quiet stretch in service time, from the request starts `timings` read. `windows`
+ * are left out of both; the inclusive p95 is given beside the service one. A request still in flight at the end is not
+ * a start. Nothing here changes what `requestTimings` returns.
+ */
+export function serviceTimings(
+  timings: RequestTimings,
+  options: {
+    readonly windows: readonly TickWindow[];
+    readonly startTick: number;
+    readonly endTick: number;
+    readonly gods: readonly string[];
+    readonly longGapTicks: number;
+  },
+): GodServiceTiming[] {
+  return options.gods.map((god): GodServiceTiming => {
+    const starts = timings.requests
+      .filter(
+        (r) =>
+          r.god === god &&
+          r.outcome !== "in-flight" &&
+          r.startTick !== undefined,
+      )
+      .map((r) => r.startTick as number)
+      .sort((a, b) => a - b);
+    const points = [options.startTick, ...starts, options.endTick];
+    let longest: QuietStretch = {
+      fromTick: options.startTick,
+      toTick: options.endTick,
+      serviceTicks: 0,
+      toEnd: true,
+    };
+    let first = true;
+    for (let i = 1; i < points.length; i += 1) {
+      const from = points[i - 1] as number;
+      const to = points[i] as number;
+      const serviceTicks = serviceGap(from, to, options.windows);
+      if (first || serviceTicks > longest.serviceTicks) {
+        longest = {
+          fromTick: from,
+          toTick: to,
+          serviceTicks,
+          toEnd: i === points.length - 1,
+        };
+        first = false;
+      }
+    }
+    const gaps = starts.slice(1).map((tick, i) => ({
+      service: serviceGap(starts[i] as number, tick, options.windows),
+      raw: tick - (starts[i] as number),
+    }));
+    return {
+      god,
+      turns: starts.length,
+      p95ServiceGapTicks: percentile(
+        gaps.map((g) => g.service),
+        0.95,
+      ),
+      p95InclusiveGapTicks: percentile(
+        gaps.map((g) => g.raw),
+        0.95,
+      ),
+      longestQuiet: longest,
+      longGaps: gaps.filter((g) => g.service > options.longGapTicks).length,
+    };
+  });
+}

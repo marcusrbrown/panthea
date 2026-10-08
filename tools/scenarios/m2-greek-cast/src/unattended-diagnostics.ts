@@ -3,7 +3,7 @@
 // into the evidence folder, which is committed, so nothing that names a key, a host other than the local machine, or
 // a user is kept.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -86,10 +86,27 @@ export type Captured<T> =
   | ({ readonly ok: true } & T)
   | { readonly ok: false; readonly reason: string };
 
+export interface LogTail {
+  readonly lines: readonly string[];
+  /** The log was last written before the run began, so its lines are not the run's. */
+  readonly stale: boolean;
+  /** When the log was last written (ISO, to the second), when that could be read. */
+  readonly modifiedAt?: string;
+  /** Says why the lines should not be read as the run's; present only for a stale log. */
+  readonly note?: string;
+}
+
 export interface OllamaState {
   /** Ollama's own account of what it has loaded: `/api/ps` on the real URL. */
   readonly ps: Captured<{ readonly body: unknown }>;
-  readonly logTail: Captured<{ readonly lines: readonly string[] }>;
+  readonly logTail: Captured<LogTail>;
+}
+
+/** The text of the tail file: a stale log's note first, so the file read alone cannot pass old lines off as the fault's. */
+export function renderLogTail(tail: OllamaState["logTail"]): string {
+  if (!tail.ok) return `${tail.reason}\n`;
+  const head = tail.note === undefined ? [] : [`# ${tail.note}`];
+  return `${[...head, ...tail.lines].join("\n")}\n`;
 }
 
 export interface CaptureOptions {
@@ -99,6 +116,10 @@ export interface CaptureOptions {
   readonly fetch?: (url: string) => Promise<Response>;
   /** The server log's text, or `undefined` when there is none. */
   readonly readLog?: () => string | undefined;
+  /** Epoch ms at which the run began: a log last written before it is marked stale. */
+  readonly since?: number;
+  /** When the log was last written, in epoch ms, or `undefined` when that cannot be read. */
+  readonly logModifiedAt?: () => number | undefined;
 }
 
 const PS_TIMEOUT_MS = 5_000;
@@ -121,6 +142,15 @@ export async function captureOllamaState(
       }
     });
   const home = options.home ?? homedir();
+  const modifiedAt =
+    options.logModifiedAt ??
+    (() => {
+      try {
+        return statSync(OLLAMA_LOG_PATH).mtimeMs;
+      } catch {
+        return undefined;
+      }
+    });
 
   let ps: OllamaState["ps"];
   try {
@@ -138,13 +168,30 @@ export async function captureOllamaState(
   let logTail: OllamaState["logTail"];
   try {
     const text = readLog();
-    logTail =
-      text === undefined
-        ? { ok: false, reason: "no server log to read" }
-        : {
-            ok: true,
-            lines: sanitizeLogLines(tailLines(text, LOG_TAIL_LINES), home),
-          };
+    if (text === undefined) {
+      logTail = { ok: false, reason: "no server log to read" };
+    } else {
+      const written = modifiedAt();
+      const iso =
+        written === undefined
+          ? undefined
+          : `${new Date(written).toISOString().replace(/\.\d+Z$/, "Z")}`;
+      const stale =
+        options.since !== undefined &&
+        written !== undefined &&
+        written < options.since;
+      logTail = {
+        ok: true,
+        lines: sanitizeLogLines(tailLines(text, LOG_TAIL_LINES), home),
+        stale,
+        ...(iso === undefined ? {} : { modifiedAt: iso }),
+        ...(stale
+          ? {
+              note: `The server log was last written ${iso}, before this run began; these lines are not from it.`,
+            }
+          : {}),
+      };
+    }
   } catch {
     logTail = { ok: false, reason: "the server log could not be read" };
   }

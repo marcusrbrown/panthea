@@ -28,10 +28,12 @@ import {
   exportForBaseline,
 } from "./baseline";
 import { resolveSidecarBinary } from "./binary";
-import { readProposals } from "./db";
+import { readProposals, readRealRequests, readStoredEvents } from "./db";
+import { loadGodIdentities } from "./episodes";
 import {
   createMemorySampler,
   findOllamaServePid,
+  type MemorySample,
   type MemorySampler,
   summarizeMemory,
 } from "./memory";
@@ -53,7 +55,13 @@ import {
   prepareOllama,
   type RealOptions,
 } from "./real";
-import { captureOllamaState, type OllamaState } from "./unattended-diagnostics";
+import type { RealInput } from "./real-analysis";
+import {
+  captureOllamaState,
+  type OllamaState,
+  renderLogTail,
+} from "./unattended-diagnostics";
+import { renderUnattendedReport } from "./unattended-report";
 
 // --- The plan ---------------------------------------------------------------------------------
 
@@ -186,6 +194,11 @@ export interface UnattendedDeps {
   }): Promise<BaselineRecord>;
   /** Told each boundary as it is crossed. */
   log?(line: string): void;
+  /** Renders the report from the finished run and the samples, or `undefined` to keep the driver's own summary. */
+  renderReport?(
+    result: UnattendedResult,
+    samples: readonly MemorySample[],
+  ): string | undefined;
 }
 
 export interface Check {
@@ -638,9 +651,7 @@ export async function driveUnattended(
     );
     writeFileSync(
       join(dir, "ollama-log-tail.txt"),
-      state.logTail.ok
-        ? `${state.logTail.lines.join("\n")}\n`
-        : `${state.logTail.reason}\n`,
+      renderLogTail(state.logTail),
     );
     writeFileSync(
       join(dir, "memory.json"),
@@ -669,7 +680,16 @@ export async function driveUnattended(
     file("run.json"),
     `${JSON.stringify({ ...result, memory: summary }, null, 2)}\n`,
   );
-  writeFileSync(file("report.md"), renderRunSummary(result, baselineFailure));
+  let report: string | undefined;
+  try {
+    report = deps.renderReport?.(result, samples);
+  } catch (error) {
+    baselineFailure ??= `the report could not be rendered: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  writeFileSync(
+    file("report.md"),
+    report ?? renderRunSummary(result, baselineFailure),
+  );
   return result;
 }
 
@@ -901,6 +921,7 @@ export async function runUnattended(
   });
 
   const gods = new Set<string>(GODS);
+  const startedAt = Date.now();
   const deps: UnattendedDeps = {
     outDir,
     plan: phasePlan(args.unattendedMinutes),
@@ -965,8 +986,52 @@ export async function runUnattended(
     proxy,
     empty200: () => faulted,
     sampler,
-    diagnose: () => captureOllamaState({ ollama: OLLAMA, home: homedir() }),
+    diagnose: () =>
+      captureOllamaState({
+        ollama: OLLAMA,
+        home: homedir(),
+        since: startedAt,
+      }),
     log: (line) => console.log(line),
+    renderReport: (finished, samples) => {
+      const path = activeStorePath(dataDir);
+      const proposals = readProposals(path)
+        .filter((entry) => entry.source === "model")
+        .map((entry) => ({
+          proposalId: entry.proposalId,
+          actor: entry.actor,
+          kind: entry.kind,
+          observationId: String(entry.proposal.observationId),
+          proposal: entry.proposal,
+          outcome: entry.outcome as "committed" | "rejected" | undefined,
+          ...(entry.reason === undefined ? {} : { reason: entry.reason }),
+          ...(entry.consumedTick === undefined
+            ? {}
+            : { consumedTick: entry.consumedTick }),
+        }));
+      const last = finished.boundaries.at(-1);
+      const input: RealInput = {
+        requests: readRealRequests(path),
+        proposals,
+        events: readStoredEvents(path),
+        polls: { total: 0, degraded: 0 },
+        timing: {
+          gods: [...GODS],
+          endedAtMs: finished.endedWallMs,
+          endTick: last?.tick ?? 0,
+        },
+      };
+      return renderUnattendedReport({
+        result: finished,
+        input,
+        proxy: proxy.records(),
+        memory: samples,
+        identities: loadGodIdentities(join(REPO_ROOT, "content/greek/gods"), [
+          ...GODS,
+        ]),
+        gods: [...GODS],
+      });
+    },
     onEnd: async (world) => {
       await exportForBaseline(world, archivePath);
       await onEnd?.(world);

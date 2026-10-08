@@ -332,7 +332,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
       diagnoses.count += 1;
       return {
         ps: { ok: true, body: { models: [] } },
-        logTail: { ok: true, lines: ["a", "b"] },
+        logTail: { ok: true, lines: ["a", "b"], stale: false },
       };
     },
     onEnd: async (world) => {
