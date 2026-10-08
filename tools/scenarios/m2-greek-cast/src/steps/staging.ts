@@ -40,10 +40,14 @@ export const STRIKERS: readonly string[] = [
 /** Gods that can answer a loss with a blessing. */
 export const BLESSERS: readonly string[] = ["athena", "hephaestus", "hermes"];
 
-/** The model config every staged world and the story's own launch with: every god on one scripted endpoint. */
+/**
+ * The model config every staged world and the story's own launch with: every god on one scripted endpoint. The
+ * scripted replies cite what a prompt held before the prompt cap, so the endpoint presents qwen3-8b-4k (3.34
+ * characters a token), whose limit leaves them in view; at the 2.8 default S6 fails, and at granite3.3's 2.85, S7.
+ */
 export const launchConfigFor = (baseUrl: string): LaunchConfigLine => ({
   models: {
-    endpoints: [{ id: "scripted", baseUrl, model: "scripted" }],
+    endpoints: [{ id: "scripted", baseUrl, model: "qwen3-8b-4k" }],
     roles: Object.fromEntries(
       GODS.map((god) => [god, { endpoint: "scripted" }]),
     ),
