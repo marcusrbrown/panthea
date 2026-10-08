@@ -23,10 +23,11 @@ import {
   fitsCap,
   fitToCap,
   MODEL_RATIOS,
+  maxCharsFor,
   routeRatio,
   shedToCap,
 } from "./prompt-cap";
-import { createRouter, MAX_FEEDBACK_CHARS, requestChars } from "./router";
+import { createRouter, requestChars } from "./router";
 import { godProfile, WorldRun } from "./test-fixtures";
 
 const id = toEntityId;
@@ -159,26 +160,19 @@ describe("the estimate", () => {
     expect(requestChars({ prompt: "abc" })).toBe(3);
   });
 
-  test("the retry's feedback is reserved in the estimate", () => {
+  test("the estimate is the bare request: no room is reserved for a retry's note", () => {
     const base = sized(1000);
-    const withFeedback = estimateTokens(base, RATIO);
-    expect(withFeedback).toBe(Math.ceil((1000 + MAX_FEEDBACK_CHARS) / RATIO));
-    expect(withFeedback).toBeGreaterThan(Math.ceil(1000 / RATIO));
+    expect(estimateTokens(base, RATIO)).toBe(Math.ceil(1000 / RATIO));
   });
 
-  test("lands exactly at the cap fits, and one character over does not", () => {
-    const atCap = sized(LIMIT - MAX_FEEDBACK_CHARS);
+  test("a bare request exactly at the cap fits, and one character over does not", () => {
+    const atCap = sized(LIMIT);
     expect(estimateTokens(atCap, RATIO)).toBe(PROMPT_TOKEN_CAP);
     expect(fitsCap(atCap, RATIO)).toBe(true);
-    const over = sized(LIMIT - MAX_FEEDBACK_CHARS + 1);
+    expect(maxCharsFor(RATIO)).toBe(LIMIT);
+    const over = sized(LIMIT + 1);
     expect(estimateTokens(over, RATIO)).toBe(PROMPT_TOKEN_CAP + 1);
     expect(fitsCap(over, RATIO)).toBe(false);
-  });
-
-  test("a request that fits only without the feedback counts as over", () => {
-    const tight = sized(LIMIT - MAX_FEEDBACK_CHARS + 1);
-    expect(requestChars(tight)).toBeLessThanOrEqual(LIMIT);
-    expect(fitsCap(tight, RATIO)).toBe(false);
   });
 });
 
@@ -376,9 +370,8 @@ type World = ReturnType<typeof busyZeus>;
 const chars = (w: Pick<World, "profile" | "snapshot" | "remembered">) =>
   requestChars(buildGodContext(w.profile, w.snapshot, w.remembered));
 
-/** The ratio at which a request of `size` characters, with the feedback reserve, is exactly at the cap. */
-const ratioAt = (size: number) =>
-  (size + MAX_FEEDBACK_CHARS) / PROMPT_TOKEN_CAP;
+/** The ratio at which a bare request of `size` characters is exactly at the cap. */
+const ratioAt = (size: number) => size / PROMPT_TOKEN_CAP;
 
 const capAt = (w: World, ratio: number) =>
   fitToCap({
@@ -688,6 +681,49 @@ describe("fitToCap: the floor", () => {
     expect(capped.shed.prayers).toBe(0);
     expect(shownText(capped)).not.toContain(PRAYERS_HEADING);
     expect(shownText(capped)).not.toContain("more prayers");
+  });
+});
+
+describe("fitToCap: no room is kept for a retry's note", () => {
+  // The room a retry's note once took (some 470 characters, 165 tokens) is not taken from the prompt. The router
+  // trims the note to the room left instead, so a world that fits as built keeps everything it holds. S13's
+  // blame memory and S21's punish prayer were what the reserve cost; the story run holds those worlds, this holds
+  // the shape: a world exactly at the cap keeps its memory a demand rests on and its punish prayer.
+  const RESERVE = 470;
+
+  test("a world whose bare request is at the cap sheds nothing, and keeps the memory a demand rests on and the punish prayer", () => {
+    const w = busyZeus({ events: 0, actions: 0, mixedPrayers: true });
+    const punish = w.remembered.petitions.filter(
+      (petition) => petition.request.kind === "punish",
+    );
+    expect(punish.length).toBeGreaterThan(0);
+    expect(w.remembered.practice.causes.length).toBeGreaterThan(0);
+
+    const capped = capAt(w, ratioAt(chars(w)));
+    expect(capped.shed).toEqual({
+      events: 0,
+      actions: 0,
+      memories: 0,
+      prayers: 0,
+    });
+    expect(capped.remembered).toBe(w.remembered);
+    expect(capped.estimatedTokens).toBe(PROMPT_TOKEN_CAP);
+    for (const petition of punish) {
+      expect(shownText(capped)).toContain(petition.id);
+    }
+    for (const cause of w.remembered.practice.causes) {
+      expect(shownText(capped)).toContain(cause.id);
+    }
+  });
+
+  test("the same world 470 characters over the cap does shed: the reserve was what cost it units", () => {
+    const w = busyZeus({ events: 0, actions: 0, mixedPrayers: true });
+    const capped = capAt(w, ratioAt(chars(w) - RESERVE));
+    expect(Object.values(capped.shed).some((n) => n > 0)).toBe(true);
+    expect(capped.fits).toBe(true);
+    expect(requestChars(capped.context)).toBeLessThanOrEqual(
+      chars(w) - RESERVE,
+    );
   });
 });
 

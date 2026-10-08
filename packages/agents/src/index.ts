@@ -91,7 +91,6 @@ export type {
 export {
   createRouter,
   DEFAULT_ROUTE_LIMITS,
-  MAX_FEEDBACK_CHARS,
   requestChars,
 } from "./router";
 export type { GodSignals, Pick, Rotation } from "./scheduler";

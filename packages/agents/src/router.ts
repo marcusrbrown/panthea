@@ -195,14 +195,21 @@ const SCHEMA_LIMIT = 8_000;
 /** How much of a refusal's reason a retry is told. */
 const FEEDBACK_LIMIT = 400;
 
-/** What a retry after an invalid reply adds to the prompt: why it was refused, and what to do about it. */
-function feedbackFor(detail: string): string {
-  return `Your last reply was refused: ${detail.slice(0, FEEDBACK_LIMIT)}. Reply with one corrected JSON object.`;
-}
+const NOTE_START = "Your last reply was refused: ";
+const NOTE_END = ". Reply with one corrected JSON object.";
 
-/** Most characters a retry's feedback adds to a request, its blank-line separator included. */
-export const MAX_FEEDBACK_CHARS =
-  2 + feedbackFor("x".repeat(FEEDBACK_LIMIT)).length;
+/**
+ * What a retry after an invalid reply adds to the prompt: why it was refused, and what to do about it. With a
+ * `room` (the characters left for the note after its blank line), the reason is cut to fit it; when not even the
+ * fixed wording fits there is no note.
+ */
+function feedbackFor(detail: string, room?: number): string | undefined {
+  const full = `${NOTE_START}${detail.slice(0, FEEDBACK_LIMIT)}${NOTE_END}`;
+  if (room === undefined || full.length <= room) return full;
+  const reason = room - NOTE_START.length - NOTE_END.length;
+  if (reason < 0) return undefined;
+  return `${NOTE_START}${detail.slice(0, Math.min(FEEDBACK_LIMIT, reason))}${NOTE_END}`;
+}
 
 /** A request's characters as a turn counts them: the instructions, a blank line, then the prompt. */
 export function requestChars(context: RouteContext): number {
@@ -330,6 +337,7 @@ export function createRouter(options: RouterOptions): Router {
     chain: AbortSignal,
     caller: AbortSignal | undefined,
     reasoningEffort: "none" | undefined,
+    /** Why the last reply was refused, redacted and bounded: the retry's note is made from it. */
     feedback?: string,
     maxChars?: number,
   ): Promise<Attempt<T>> {
@@ -356,10 +364,19 @@ export function createRouter(options: RouterOptions): Router {
       detail: message,
       ...(output === undefined ? {} : { output }),
     });
-    const asked =
+    // A retry's note is cut to the room the limit leaves, and dropped when even its wording does not fit: a retry is
+    // never refused for its note.
+    const note =
       feedback === undefined
-        ? context.prompt
-        : `${context.prompt}\n\n${feedback}`;
+        ? undefined
+        : feedbackFor(
+            feedback,
+            maxChars === undefined
+              ? undefined
+              : maxChars - requestChars(context) - 2,
+          );
+    const asked =
+      note === undefined ? context.prompt : `${context.prompt}\n\n${note}`;
 
     /** A send over the limit is refused before anything leaves. */
     const overCap = (extra: string): Attempt<T> | undefined => {
@@ -535,7 +552,7 @@ export function createRouter(options: RouterOptions): Router {
       // Redacted before it is built, so a key a parser's reason echoes (raw or as JSON writes it) never reaches the retried prompt.
       feedback =
         outcome.reason === "invalid-output"
-          ? feedbackFor(redact(outcome.detail, adapter.apiKey, FEEDBACK_LIMIT))
+          ? redact(outcome.detail, adapter.apiKey, FEEDBACK_LIMIT)
           : undefined;
       if (!RETRYABLE.has(outcome.reason) || attempts >= limits.maxAttempts) {
         break;

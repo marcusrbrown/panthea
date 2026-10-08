@@ -19,7 +19,7 @@ import {
   type PracticeOptions,
   practiceBy,
 } from "./practices";
-import { MAX_FEEDBACK_CHARS, type RouteContext, requestChars } from "./router";
+import { type RouteContext, requestChars } from "./router";
 
 /** Characters a token takes, by the router's model id. Measured on local Ollama, 2026-10-08. */
 export const MODEL_RATIOS: Readonly<Record<string, number>> = {
@@ -44,12 +44,12 @@ export function maxCharsFor(ratio: number): number {
 }
 
 /**
- * Tokens `context` is counted as at `ratio`: its request plus the most a retry's
- * feedback can add. The epsilon keeps a request exactly at the cap from rounding up
- * over it.
+ * Tokens `context` is counted as at `ratio`: the bare request, instructions and prompt. No room is kept for a
+ * retry's note; the router cuts the note to the room left. The epsilon keeps a request exactly at the cap from
+ * rounding up over it.
  */
 export function estimateTokens(context: RouteContext, ratio: number): number {
-  return Math.ceil((requestChars(context) + MAX_FEEDBACK_CHARS) / ratio - 1e-9);
+  return Math.ceil(requestChars(context) / ratio - 1e-9);
 }
 
 export function fitsCap(context: RouteContext, ratio: number): boolean {
@@ -377,8 +377,7 @@ function refillCandidates(
 /**
  * `shedToCap`, then a refill: the shed order says what goes first, so once the request fits, what went
  * earlier than the last resort may come back where room is left. Each shed unit is tried once, most
- * valuable first (`refillCandidates`); one is kept only if the rebuilt request, with the feedback reserve,
- * still fits, and dropped again otherwise. A prayer is never brought back. The shed counts are the net:
+ * valuable first (`refillCandidates`); one is kept only if the rebuilt request still fits, and dropped again otherwise. A prayer is never brought back. The shed counts are the net:
  * what stayed out.
  */
 export function fitToCap(input: CapInput): Capped {

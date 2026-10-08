@@ -592,7 +592,24 @@ test("a crowded turn sends the reduced prompt, records what it shed, and refuses
 test("when the protected floor alone is over the cap, the turn reads the plan, never calls route, sends nothing, and is exhausted for prompt-over-cap", async () => {
   const { state } = crowded(9, true);
   const stub = startStub('{"action":"wait"}');
-  const { deps: capDeps, calls } = capped(stub);
+  const { deps: base, calls } = capped(stub);
+  // Zeus's persona is part of the floor: with a long line of lore, nothing the cap may shed is enough.
+  const zeus = godProfile("zeus");
+  const capDeps = {
+    ...base,
+    profiles: new Map([
+      [
+        id("zeus"),
+        {
+          ...zeus,
+          lore: [
+            ...zeus.lore,
+            { id: "heavy", statement: "x".repeat(4_000), cites: [] },
+          ],
+        },
+      ],
+    ]),
+  };
 
   const turn = await runGodTurn(capDeps, { state, actorId: id("zeus") });
 
@@ -609,7 +626,7 @@ test("when the protected floor alone is over the cap, the turn reads the plan, n
   expect(stub.seen).toEqual([]);
 });
 
-test("a retry after an invalid reply carries refusal feedback and still stays within the limit", async () => {
+test("a retry after an invalid reply never passes the limit: the whole prompt, and the note only as far as the room left allows", async () => {
   const { state } = crowded(14, false);
   const stub = startStub('{"action":"dance"}', '{"action":"wait"}');
   const { deps: capDeps, calls } = capped(stub);
@@ -620,6 +637,13 @@ test("a retry after an invalid reply carries refusal feedback and still stays wi
   expect(stub.seen).toHaveLength(2);
   const limit = calls.route[0]?.maxChars as number;
   expect(limit).toBe(8550);
-  expect(sent(stub, 1).length).toBeGreaterThan(sent(stub, 0).length);
   expect(sent(stub, 1).length).toBeLessThanOrEqual(limit);
+  // The first send is the bare request; the retry is that, whole, and a note only if the wording fits after it.
+  expect(sent(stub, 1).startsWith(sent(stub, 0))).toBe(true);
+  const room = limit - sent(stub, 0).length - 2;
+  const wording =
+    "Your last reply was refused: . Reply with one corrected JSON object.";
+  expect(sent(stub, 1).includes("Your last reply was refused")).toBe(
+    room >= wording.length,
+  );
 });

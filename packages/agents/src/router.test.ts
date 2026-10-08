@@ -9,7 +9,6 @@ import {
   createRouter,
   DEFAULT_ROUTE_LIMITS,
   type IntentSchema,
-  MAX_FEEDBACK_CHARS,
   type RouteLimits,
   type RouterOptions,
 } from "./router";
@@ -1300,44 +1299,88 @@ describe("route: maxChars", () => {
     expect(result.kind === "exhausted" && result.steps.length).toBe(2);
   });
 
-  test("a retry carrying refusal feedback is sent when it stays within the limit", async () => {
-    const stub = startStub(
-      sequence({ content: '{"kind":"nope"}' }, { content: SAY }),
-    );
+  /** A schema whose refusal reason is long, so a retry's note has a detail to trim. */
+  const wordy: IntentSchema<Say> = {
+    ...sayIntent,
+    parse: () => ({ ok: false, path: "", message: "m".repeat(300) }),
+  };
+  const NOTE_START = "Your last reply was refused: ";
+  const NOTE_END = ". Reply with one corrected JSON object.";
+  const WORDING = NOTE_START.length + NOTE_END.length;
+  /** The user text of what a stub was sent. */
+  const userText = (seen: Seen): string =>
+    (seen.body.messages as { role: string; content: string }[]).filter(
+      (message) => message.role === "user",
+    )[0]?.content ?? "";
+
+  test("a retry whose note fits is sent with the whole note, as before", async () => {
+    const stub = startStub(always({ content: SAY }));
     const router = routerFor(configOn(stub));
-    const limit = 1000;
+    const ask = sized(500);
 
-    const result = await router.route(
-      "zeus",
-      sized(limit - MAX_FEEDBACK_CHARS),
-      sayIntent,
-      { maxChars: limit },
-    );
-
-    expect(result.kind).toBe("intent");
+    await router.route("zeus", ask, wordy, { maxChars: 5_000 });
     expect(stub.seen).toHaveLength(2);
-    expect(sentChars(stub.seen[1] as Seen)).toBeGreaterThan(
-      sentChars(stub.seen[0] as Seen),
+
+    expect(userText(stub.seen[1] as Seen)).toBe(
+      `${ask.prompt}\n\n${NOTE_START}${"m".repeat(300)}${NOTE_END}`,
     );
-    expect(sentChars(stub.seen[1] as Seen)).toBeLessThanOrEqual(limit);
+    // With no limit at all the note is the same.
+    const free = startStub(always({ content: SAY }));
+    await routerFor(configOn(free)).route("zeus", ask, wordy);
+    expect(userText(free.seen[1] as Seen)).toBe(userText(stub.seen[1] as Seen));
   });
 
-  test("a retry whose feedback would pass the limit is not sent", async () => {
-    const stub = startStub(always({ content: '{"kind":"nope"}' }));
+  test("a retry near the limit is sent with its note trimmed to the room left: the whole prompt, the start of the note, and nothing over the limit", async () => {
+    const stub = startStub(always({ content: SAY }));
     const router = routerFor(configOn(stub));
-    const limit = 1000;
+    const ask = sized(1000);
+    // Room for the note's wording, its blank line, and 20 characters of the reason.
+    const limit = 1000 + 2 + WORDING + 20;
 
-    const result = await router.route("zeus", sized(limit - 5), sayIntent, {
+    await router.route("zeus", ask, wordy, { maxChars: limit });
+
+    expect(stub.seen).toHaveLength(2);
+    const retry = userText(stub.seen[1] as Seen);
+    // The prompt is whole, and the note is cut, not the prompt.
+    expect(retry.startsWith(`${ask.prompt}\n\n${NOTE_START}`)).toBe(true);
+    expect(retry.endsWith(`${"m".repeat(20)}${NOTE_END}`)).toBe(true);
+    expect(retry).not.toContain("m".repeat(21));
+    expect(sentChars(stub.seen[1] as Seen)).toBe(limit);
+  });
+
+  test("a retry with no room even for the note's wording is sent as the bare prompt, never refused for its note", async () => {
+    const stub = startStub(sequence({ content: "{}" }, { content: SAY }));
+    const router = routerFor(configOn(stub));
+    const ask = sized(1000);
+    const limit = 1000 + 2 + WORDING - 1;
+
+    const result = await router.route("zeus", ask, sayIntent, {
       maxChars: limit,
     });
 
-    expect(stub.seen).toHaveLength(1);
-    expect(result.kind).toBe("exhausted");
-    if (result.kind === "exhausted") {
-      expect(result.steps[0]).toMatchObject({
-        reason: "prompt-over-cap",
-        attempts: 2,
+    expect(result.kind).toBe("intent");
+    expect(stub.seen).toHaveLength(2);
+    expect(userText(stub.seen[1] as Seen)).toBe(ask.prompt);
+    expect(sentChars(stub.seen[1] as Seen)).toBeLessThanOrEqual(limit);
+    if (result.kind === "intent") expect(result.step.attempts).toBe(2);
+  });
+
+  test("a retry at the limit exactly is sent bare, and no send of a route is ever over the limit", async () => {
+    for (const room of [0, 1, 2, WORDING, WORDING + 2, 400]) {
+      const stub = startStub(always({ content: '{"kind":"nope"}' }));
+      const router = routerFor(configOn(stub));
+      const limit = 1000 + room;
+      const result = await router.route("zeus", sized(1000), wordy, {
+        maxChars: limit,
       });
+      expect(stub.seen).toHaveLength(2);
+      for (const seen of stub.seen) {
+        expect(sentChars(seen)).toBeLessThanOrEqual(limit);
+      }
+      expect(result.kind).toBe("exhausted");
+      if (result.kind === "exhausted") {
+        expect(result.steps[0]?.reason).toBe("invalid-output");
+      }
     }
   });
 
