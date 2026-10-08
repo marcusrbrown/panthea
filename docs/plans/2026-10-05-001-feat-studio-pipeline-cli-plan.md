@@ -498,10 +498,17 @@ flowchart TB
   - Modify: `content/greek/assets/registry/blobs/`
 - **Approach:** Run the actual local generation, conformance, optional external edit, pack, approval and publish path for Zeus idle-south and all six portrait expressions. Portrait expressions may publish from picked auto-conformed 96×96 native keyframes when the owner accepts them, without a mandatory editor trip; multi-frame sprite animation still needs a complete edited imported frame set. Use fake adapters for unit coverage and real runtime/editor evidence for acceptance. Record timing/readiness, cancellation, conformance reports, diffs, approval reason where applicable, final manifest hashes and licence records. The planning estimate for 24 default portrait-expression runs at 768×768 is roughly 60 minutes of generation alone, using measured Z-Image no-LoRA p50 148,968 ms and p95 149,065 ms with n=3, before warmup, edit and overhead. Batch remains configurable for the acceptance run; lowering it is a run parameter, not a new default. Window-cropped evidence and independent non-Designer visual review happen before presenting generated evidence.
 - **Iconography (owner, 2026-10-06):** Zeus iconography is now only `thunderbolt`. "storm sky" and "cloud seat" contradicted the flat-background portrait and the idle sprite prompts, and every r1/r2 draft was rejected. Portraits are true pixel edits from a regenerated neutral base.
+- **Sprite deferral (owner, 2026-10-08):** This is a feasibility conflict with R20. No local technique on the 16 GiB M1 Pro produced a usable 64×80 Zeus idle-south. Every attempt failed owner review:
+  - Z-Image text-to-image, rounds r1–r4c. Figures were 35 px or 62–70 px tall instead of 48–56 px, and full of clutter.
+  - Agent pixel edits, rounds r5–r7.
+  - FLUX.2 Klein with the pixel-walk LoRA, and SDXL with pixel-art-xl. OpenRAIL-M also keeps SDXL out of canon.
+  - Z-Image masked img2img from a hand-blocked silhouette, round r8, 16 jobs.
+
+  The evidence is in `tools/probes/art-edit/README.md` and the `r8`/`r9` run manifests. U7 publishes the six portraits, and Zeus keeps the M0 `placeholder-zeus` sprite. The idle-south sprite moves to a later unit: human-drawn, or generated once a stronger local model fits this hardware.
 - **Execution note:** Do not claim repeated external model output is byte-identical from seed unless measured. Deterministic packing/conformance byte equality is separate from nondeterministic generation behavior.
 - **Patterns to follow:** `docs/evidence/asset-studio/palette/README.md` evidence scope language and saved-pixel verification caveats.
 - **Test scenarios:**
-  - Happy path: Zeus idle-south final atlas/manifest publishes with complete provenance and passes content validation.
+  - Deferred (owner, 2026-10-08): Zeus idle-south final atlas/manifest publishes with complete provenance and passes content validation.
   - Happy path: all six portrait expressions publish or remain as explicit draft artifacts with owner disposition recorded.
   - Edge case: edited hand pixels can be deliberately imported and stored despite a failing report; automatic replacement/requantization remains forbidden.
   - Failure path: three-job queue supports remove, abort/restart and third-job continuation while discarding cancelled late result. Responsiveness check (AE6): a timer heartbeat on the session's event loop runs through abort and replacement with no synchronous `ps` or similar blocking call added by the measuring harness in between; the runtime's own calls are measured, and its worst gap is recorded against R8's stay-responsive requirement.

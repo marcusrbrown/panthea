@@ -2,5 +2,6 @@
   "schemaVersion": 1,
   "godId": "zeus",
   "paletteFamily": "olympus",
-  "iconography": ["thunderbolt"]
+  "iconography": ["thunderbolt"],
+  "portrait": "zeus-portrait"
 }
