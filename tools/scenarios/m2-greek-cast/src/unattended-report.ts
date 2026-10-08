@@ -22,6 +22,12 @@ const sec = (ms: number | undefined): string =>
   ms === undefined ? "—" : `${(ms / 1000).toFixed(1)} s`;
 const mib = (bytes: number | undefined): string =>
   bytes === undefined ? "—" : `${(bytes / 1048576).toFixed(0)} MiB`;
+const trendText = (
+  trend: UnattendedAnalysis["memory"]["footprintTrend"],
+): string =>
+  trend.judgeable
+    ? `${trend.percentPer10Min.toFixed(2)}% per 10 min over the last ${trend.windowSamples} samples`
+    : `not judgeable: ${trend.reason}`;
 const cell = (text: string): string => text.replaceAll("|", "/");
 
 /** What the run proves, and what it does not. */
@@ -243,7 +249,9 @@ export function renderUnattendedReport(
     "",
     "## Memory",
     "",
-    `${memory.samples} samples over ${min(memory.spanMs)} min. Ollama runner: start ${mib(memory.runner.start)}, peak ${mib(memory.runner.peak)}, end ${mib(memory.runner.end)} (${memory.runner.present} present, ${memory.runner.absent} absent). Sidecar: start ${mib(memory.sidecar.start)}, peak ${mib(memory.sidecar.peak)}, end ${mib(memory.sidecar.end)}. Swap used: peak ${memory.swapUsedMiB.peak === undefined ? "—" : `${memory.swapUsedMiB.peak.toFixed(0)} MiB`}.`,
+    `${memory.samples} samples over ${min(memory.spanMs)} min. Ollama runner: start ${mib(memory.runner.start)}, peak ${mib(memory.runner.peak)}, end ${mib(memory.runner.end)} (${memory.runner.present} present, ${memory.runner.absent} absent); footprint start ${mib(memory.runnerFootprint.start)}, peak ${mib(memory.runnerFootprint.peak)}, end ${mib(memory.runnerFootprint.end)}. Sidecar: RSS start ${mib(memory.sidecar.start)}, peak ${mib(memory.sidecar.peak)}, end ${mib(memory.sidecar.end)}. Sidecar footprint: start ${mib(memory.sidecarFootprint.start)}, peak ${mib(memory.sidecarFootprint.peak)}, end ${mib(memory.sidecarFootprint.end)}. Swap used: peak ${memory.swapUsedMiB.peak === undefined ? "—" : `${memory.swapUsedMiB.peak.toFixed(0)} MiB`}.`,
+    "",
+    `The levelling-off row is judged on the sidecar's physical footprint (${trendText(memory.footprintTrend)}), not on RSS, which counts pages the allocator has freed and the kernel has not taken back and rises under allocation churn. Sidecar RSS trend, for context: ${trendText(memory.sidecarTrend)}.`,
     "",
     "## Export and rebuild",
     "",

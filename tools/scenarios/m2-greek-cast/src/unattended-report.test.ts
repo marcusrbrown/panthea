@@ -248,6 +248,9 @@ test("the memory section is present-or-absent honest: it shows the sample count,
     /\d+ samples over [\d.]+ min\. Ollama runner: start \d+ MiB, peak \d+ MiB/,
   );
   expect(text).toContain("Swap used: peak 1000 MiB");
+  // The footprint the verdict is read on, and the RSS beside it.
+  expect(text).toContain("Sidecar footprint: start 76 MiB, peak 76 MiB");
+  expect(text).toContain("Sidecar RSS trend");
 });
 
 test("the rating sheet uses the acceptance rubric the episode transcripts use: the same five dimensions, the same scale, scored separately for the director's episodes and the gods'", () => {

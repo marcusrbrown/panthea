@@ -753,14 +753,17 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     "fewer than 5 in a row",
   );
   const memory = summarizeMemory(data.memory);
+  const rssTrend = memory.sidecarTrend.judgeable
+    ? `${memory.sidecarTrend.percentPer10Min.toFixed(2)}% per 10 min`
+    : "not judgeable";
   row(
     "memory.sidecar-levels-off",
     "resources",
-    "the sidecar's memory levels off over the last 20 minutes",
-    memory.sidecarTrend.judgeable && memory.sidecarTrend.levellingOff,
-    memory.sidecarTrend.judgeable
-      ? `${memory.sidecarTrend.percentPer10Min.toFixed(2)}% per 10 min over ${memory.sidecarTrend.windowSamples} samples`
-      : `not judgeable: ${memory.sidecarTrend.reason}`,
+    "the sidecar's physical footprint levels off over the last 20 minutes",
+    memory.footprintTrend.judgeable && memory.footprintTrend.levellingOff,
+    memory.footprintTrend.judgeable
+      ? `${memory.footprintTrend.percentPer10Min.toFixed(2)}% per 10 min over ${memory.footprintTrend.windowSamples} samples (RSS ${rssTrend}, for context)`
+      : `not judgeable: ${memory.footprintTrend.reason}`,
     "under 1% of the mean per 10 min",
   );
 

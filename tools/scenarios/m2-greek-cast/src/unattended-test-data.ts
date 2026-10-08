@@ -336,6 +336,7 @@ export function memorySeries(): MemorySample[] {
               state: "present",
               pid: at < 100 * MINUTE ? 100 : 200,
               rssBytes: 500_000_000,
+              footprintBytes: 80_000_000,
             },
       swap: { usedMiB: 1000, totalMiB: 4096 },
     });
