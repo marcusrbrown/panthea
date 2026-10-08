@@ -12,6 +12,7 @@ import {
 import { parseRoutingConfig, planRoute, type RoutePlan } from "./config";
 import {
   buildGodContext,
+  type GoalHistoryEntry,
   godIntentSchema,
   PRAYERS_HEADING,
   rememberedBy,
@@ -991,6 +992,153 @@ function loosestPrayerRatio(w: World): number {
   }
   return lo;
 }
+
+describe("fitToCap: goal-history rows the shown memories and actions do not back", () => {
+  /**
+   * `rememberedBy` keeps goal history from a wider ledger than the memories and actions it shows (at most 6 and 5):
+   * a row may rest on a memory or an action that is in neither slice. Two such rows are put in the middle of the
+   * history here, around the rows the shown ones back, so a rebuild from the shown slices would lose them.
+   */
+  function withOutsideRows(w: World) {
+    const [memory] = w.remembered.memories;
+    const [action] = w.remembered.ownActions;
+    if (memory === undefined || action === undefined) {
+      throw new Error("the fixture needs a memory and an action");
+    }
+    const rows = w.remembered.goalHistory;
+    const middle = Math.floor(rows.length / 2);
+    const outsideMemory: GoalHistoryEntry = {
+      kind: "memory",
+      sequence: 0,
+      memory: {
+        ...memory,
+        id: "evt-m-outside" as typeof memory.id,
+        sourceEventId: "evt-7-outside" as typeof memory.sourceEventId,
+      },
+    };
+    const outsideAction: GoalHistoryEntry = {
+      kind: "action",
+      sequence: 0,
+      event: { ...action, id: "evt-8-outside" as typeof action.id },
+    };
+    const goalHistory = [
+      ...rows.slice(0, middle),
+      outsideMemory,
+      outsideAction,
+      ...rows.slice(middle),
+    ];
+    const world: World = {
+      ...w,
+      remembered: { ...w.remembered, goalHistory },
+    };
+    return { world, outside: [outsideMemory, outsideAction] };
+  }
+
+  const fixture = () =>
+    withOutsideRows(
+      busyZeus({ memories: [3, 4, 5], actions: 3, uniform: true }),
+    );
+
+  /** The shown ledger a row rests on is still shown. */
+  const backed = (
+    entry: GoalHistoryEntry,
+    remembered: {
+      memories: readonly { id: string }[];
+      ownActions: readonly { id: string }[];
+    },
+  ) =>
+    entry.kind === "memory"
+      ? remembered.memories.some((m) => m.id === entry.memory.id)
+      : remembered.ownActions.some((a) => a.id === entry.event.id);
+
+  test("positive control: the fixture holds rows no shown memory or action backs, and rows that some do", () => {
+    const { world, outside } = fixture();
+    const rows = world.remembered.goalHistory;
+    for (const entry of outside) {
+      expect(rows).toContain(entry);
+      expect(backed(entry, world.remembered)).toBe(false);
+    }
+    expect(
+      rows.filter((entry) => backed(entry, world.remembered)).length,
+    ).toBeGreaterThan(1);
+  });
+
+  test("Fro Bot's case: restoring a memory or an action keeps the independent rows, and the result fits", () => {
+    const { world: w, outside } = fixture();
+    let restored = 0;
+    for (let ratio = loosestPrayerRatio(w); ratio >= 1.5; ratio -= 0.01) {
+      const gross = shedAt(w, ratio);
+      if (!gross.fits) break;
+      const capped = capAt(w, ratio);
+      const back =
+        capped.remembered.memories.length > gross.remembered.memories.length ||
+        capped.remembered.ownActions.length >
+          gross.remembered.ownActions.length;
+      for (const entry of outside) {
+        expect(capped.remembered.goalHistory).toContain(entry);
+      }
+      expect(capped.fits).toBe(true);
+      expect(fitsCap(capped.context, ratio)).toBe(true);
+      if (back) restored += 1;
+      expectAgreement(w, capped);
+    }
+    // The scan met ratios where something came back.
+    expect(restored).toBeGreaterThan(0);
+  });
+
+  test("shedding a unit removes only the goal-history rows that unit backs", () => {
+    const { world: w, outside } = fixture();
+    const rows = w.remembered.goalHistory;
+    let shedSome = 0;
+    for (let ratio = 3.2; ratio >= 1.5; ratio -= 0.02) {
+      const gross = shedAt(w, ratio);
+      if (!gross.fits) break;
+      const goneMemories = new Set(
+        w.remembered.memories
+          .filter((m) => !gross.remembered.memories.includes(m))
+          .map((m) => m.id),
+      );
+      const goneActions = new Set(
+        w.remembered.ownActions
+          .filter((a) => !gross.remembered.ownActions.includes(a))
+          .map((a) => a.id),
+      );
+      const expected = rows.filter((entry) =>
+        entry.kind === "memory"
+          ? !goneMemories.has(entry.memory.id)
+          : !goneActions.has(entry.event.id),
+      );
+      expect(gross.remembered.goalHistory).toEqual(expected);
+      for (const entry of outside) {
+        expect(gross.remembered.goalHistory).toContain(entry);
+      }
+      if (goneMemories.size + goneActions.size > 0) shedSome += 1;
+    }
+    expect(shedSome).toBeGreaterThan(0);
+  });
+
+  test("a restored unit brings back only its own rows, and every row is in its original order, at every ratio", () => {
+    const { world: w } = fixture();
+    const rows = w.remembered.goalHistory;
+    let checked = 0;
+    for (let ratio = 3.4; ratio >= 1.5; ratio -= 0.01) {
+      const gross = shedAt(w, ratio);
+      if (!gross.fits) break;
+      const capped = capAt(w, ratio);
+      const kept = capped.remembered.goalHistory;
+      // The history is the original with some rows out, never reordered or added to.
+      expect(kept).toEqual(rows.filter((entry) => kept.includes(entry)));
+      for (const entry of rows) {
+        const shown = backed(entry, w.remembered)
+          ? backed(entry, capped.remembered)
+          : true;
+        expect(kept.includes(entry)).toBe(shown);
+      }
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(20);
+  });
+});
 
 // --- The causal set ---------------------------------------------------------------------------
 //

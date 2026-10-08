@@ -10,6 +10,7 @@ import type { PerceptionSnapshot, WorldState } from "@panthea/world";
 import type { RoutePlan } from "./config";
 import {
   buildGodContext,
+  type GoalHistoryEntry,
   type PetitionView,
   protectedPrayers,
   type Remembered,
@@ -358,15 +359,15 @@ function refillCandidates(
   const haveFeelings = new Set(now.relationships);
   const haveActions = new Set(now.ownActions);
   const haveEvents = new Set(shedPair.snapshot.events);
-  const goalHistoryOf = (
-    memories: readonly { readonly id: string }[],
-    actions: readonly { readonly id: string }[],
-  ) =>
-    was.goalHistory.filter((entry) =>
-      entry.kind === "memory"
-        ? memories.some((memory) => memory.id === entry.memory.id)
-        : actions.some((action) => action.id === entry.event.id),
-    );
+  // The goal history a restored unit leaves: the rows it already holds, plus the ones `linked` says tell of the unit
+  // brought back, all in the order they had. A row that rests on no shown unit is never lost to a restore.
+  const withRows = (
+    held: readonly GoalHistoryEntry[],
+    linked: (entry: GoalHistoryEntry) => boolean,
+  ) => {
+    const have = new Set(held);
+    return was.goalHistory.filter((entry) => have.has(entry) || linked(entry));
+  };
 
   const memories = was.memories
     .filter((memory) => !have.has(memory))
@@ -384,7 +385,11 @@ function refillCandidates(
             remembered: rederive(input, {
               ...remembered,
               memories: kept,
-              goalHistory: goalHistoryOf(kept, remembered.ownActions),
+              goalHistory: withRows(
+                remembered.goalHistory,
+                (entry) =>
+                  entry.kind === "memory" && entry.memory.id === memory.id,
+              ),
             }),
           };
         },
@@ -424,7 +429,11 @@ function refillCandidates(
             remembered: {
               ...remembered,
               ownActions: kept,
-              goalHistory: goalHistoryOf(remembered.memories, kept),
+              goalHistory: withRows(
+                remembered.goalHistory,
+                (entry) =>
+                  entry.kind === "action" && entry.event.id === action.id,
+              ),
             },
           };
         },
