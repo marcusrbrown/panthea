@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { sha256Hex } from "@panthea/assets";
 import { portraitFixture, spriteFixture } from "@panthea/assets/fixtures";
 import {
   emptyWorld,
+  fakeWatchFs,
   firstBlob,
   getJson,
   hiddenRgbSprite,
@@ -17,7 +24,7 @@ import {
   world,
   writeDraft,
 } from "./_testkit";
-import { COALESCE_MS } from "./dev-bridge";
+import { COALESCE_MS, fsWatcher } from "./dev-bridge";
 import {
   type AtlasBytes,
   BRIDGE_PREFIX,
@@ -729,5 +736,115 @@ describe("portraits and fixtures", () => {
 
   test("the vocabulary in use is the committed one", () => {
     expect(vocabulary.expressions).toContain("awed");
+  });
+});
+
+describe("the production watcher waits for a root that does not exist yet", () => {
+  test("it watches the nearest existing ancestor, then switches to a recursive root watch and reports the root", () => {
+    const present = new Set(["/repo"]);
+    const fake = fakeWatchFs((path) => present.has(path));
+    const changes: string[] = [];
+
+    fsWatcher("/repo/.studio", (relative) => changes.push(relative), fake.fs);
+
+    expect(fake.open().map((w) => [w.path, w.recursive])).toEqual([
+      ["/repo", false],
+    ]);
+
+    present.add("/repo/.studio");
+    fake.watches[0]?.fire(".studio");
+
+    expect(fake.watches[0]?.closed).toBe(true);
+    expect(fake.open().map((w) => [w.path, w.recursive])).toEqual([
+      ["/repo/.studio", true],
+    ]);
+    expect(changes).toEqual([""]);
+
+    fake.open()[0]?.fire("assets/zeus-take.json");
+    fake.open()[0]?.fire(null);
+    expect(changes).toEqual(["", "assets/zeus-take.json", ""]);
+  });
+
+  test("it follows a root several levels down as each level appears, and ignores unrelated entries", () => {
+    const present = new Set(["/repo"]);
+    const fake = fakeWatchFs((path) => present.has(path));
+    const changes: string[] = [];
+    fsWatcher("/repo/a/b", (relative) => changes.push(relative), fake.fs);
+
+    fake.watches[0]?.fire("unrelated");
+    expect(fake.watches).toHaveLength(1);
+    expect(changes).toEqual([]);
+
+    present.add("/repo/a");
+    fake.watches[0]?.fire("a");
+    expect(fake.open().map((w) => [w.path, w.recursive])).toEqual([
+      ["/repo/a", false],
+    ]);
+    expect(changes).toEqual([]);
+
+    present.add("/repo/a/b");
+    fake.open()[0]?.fire("b");
+    expect(fake.open().map((w) => [w.path, w.recursive])).toEqual([
+      ["/repo/a/b", true],
+    ]);
+    expect(changes).toEqual([""]);
+  });
+
+  test("a root that already exists is watched recursively with no report, and close stops everything", () => {
+    const fake = fakeWatchFs(() => true);
+    const changes: string[] = [];
+    const close = fsWatcher("/repo/.studio", (r) => changes.push(r), fake.fs);
+    expect(fake.open().map((w) => [w.path, w.recursive])).toEqual([
+      ["/repo/.studio", true],
+    ]);
+    expect(changes).toEqual([]);
+    close();
+    expect(fake.open()).toEqual([]);
+
+    const present = new Set(["/repo"]);
+    const waiting = fakeWatchFs((path) => present.has(path));
+    const stop = fsWatcher("/repo/.studio", (r) => changes.push(r), waiting.fs);
+    stop();
+    present.add("/repo/.studio");
+    waiting.watches[0]?.fire(".studio");
+    expect(waiting.watches).toHaveLength(1);
+    expect(changes).toEqual([]);
+  });
+
+  test("a store that appears after the bridge starts is listed and announced once its first draft lands", () => {
+    const w = world();
+    rmSync(w.studioRoot, { recursive: true });
+    const fake = fakeWatchFs((path) => existsSync(path));
+    const r = rig(w, {
+      watch: (root, onChange) => fsWatcher(root, onChange, fake.fs),
+    });
+    expect(listing(r).entries.map((e) => e.source)).toEqual(["canon"]);
+    expect(fake.open().find((watch) => watch.path === w.base)?.recursive).toBe(
+      false,
+    );
+
+    writeDraft(w.studioRoot, "zeus-take", spriteFixture("placeholder-zeus"));
+    fake
+      .open()
+      .find((watch) => watch.path === w.base)
+      ?.fire("studio");
+    expect(r.pending()).toBe(1);
+    r.tick();
+
+    expect(r.events).toEqual([
+      { changed: [{ source: "draft", id: "zeus-take" }], listing: true },
+    ]);
+    expect(listing(r).entries.map((e) => `${e.source}:${e.id}`)).toEqual([
+      "canon:zeus-portrait",
+      "draft:zeus-take",
+    ]);
+    expect(resolve(r, { source: "draft", id: "zeus-take" }).kind).toBe(
+      "frames",
+    );
+    expect(
+      fake
+        .open()
+        .some((watch) => watch.path === w.studioRoot && watch.recursive),
+    ).toBe(true);
   });
 });

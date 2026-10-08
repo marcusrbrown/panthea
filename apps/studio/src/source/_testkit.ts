@@ -19,6 +19,7 @@ import {
   createAssetBridge,
   type Scheduler,
   type Watcher,
+  type WatchFs,
 } from "./dev-bridge";
 import type { SourceChange } from "./port";
 
@@ -227,4 +228,39 @@ export function rig(w: World, options: Partial<BridgeOptions> = {}): Rig {
 
 export function getJson<T>(response: BridgeResponse): T {
   return JSON.parse(response.body as string) as T;
+}
+
+export interface FakeWatch {
+  readonly path: string;
+  readonly recursive: boolean;
+  closed: boolean;
+  fire(name: string | null): void;
+}
+
+export function fakeWatchFs(exists: (path: string) => boolean) {
+  const watches: FakeWatch[] = [];
+  const fs: WatchFs = {
+    exists,
+    watch(path, options, onEvent) {
+      const watch: FakeWatch = {
+        path,
+        recursive: options.recursive,
+        closed: false,
+        fire: (name) => {
+          if (!watch.closed) onEvent(name);
+        },
+      };
+      watches.push(watch);
+      return {
+        close() {
+          watch.closed = true;
+        },
+      };
+    },
+  };
+  return {
+    fs,
+    watches,
+    open: () => watches.filter((watch) => !watch.closed),
+  };
 }

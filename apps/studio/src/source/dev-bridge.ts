@@ -1,5 +1,5 @@
 import { existsSync, watch } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import {
   DEFAULT_PLACEHOLDER,
   type RegistrySnapshot,
@@ -508,14 +508,75 @@ export function createAssetBridge(options: BridgeOptions): AssetBridge {
   };
 }
 
-export const fsWatcher: Watcher = (root, onChange) => {
-  if (!existsSync(root)) return () => {};
-  const watcher = watch(root, { recursive: true }, (_event, name) =>
-    onChange(name === null ? "" : String(name)),
-  );
-  watcher.on("error", () => {});
-  return () => watcher.close();
+export interface WatchFs {
+  exists(path: string): boolean;
+  watch(
+    path: string,
+    options: { readonly recursive: boolean },
+    onEvent: (name: string | null) => void,
+  ): { close(): void };
+}
+
+const nodeWatchFs: WatchFs = {
+  exists: existsSync,
+  watch(path, options, onEvent) {
+    try {
+      const watcher = watch(path, options, (_event, name) =>
+        onEvent(name === null ? null : String(name)),
+      );
+      watcher.on("error", () => {});
+      return watcher;
+    } catch {
+      return { close() {} };
+    }
+  },
 };
+
+/**
+ * Watches `root` recursively. While it does not exist, watches its nearest
+ * existing ancestor and moves down as each level appears; when the root itself
+ * appears it reports an empty path so the caller rescans.
+ */
+export function fsWatcher(
+  root: string,
+  onChange: (relative: string) => void,
+  fs: WatchFs = nodeWatchFs,
+): () => void {
+  let current: { close(): void } | undefined;
+  let closed = false;
+
+  const nearestExisting = () => {
+    let at = root;
+    while (!fs.exists(at) && dirname(at) !== at) at = dirname(at);
+    return at;
+  };
+
+  const arm = (): void => {
+    current?.close();
+    current = undefined;
+    if (closed) return;
+    const target = fs.exists(root) ? root : nearestExisting();
+    current = fs.watch(target, { recursive: target === root }, (name) => {
+      if (closed) return;
+      if (target === root) return onChange(name ?? "");
+      const now = fs.exists(root) ? root : nearestExisting();
+      if (now === target) return;
+      arm();
+      if (now === root) onChange("");
+    });
+    if (target !== root && fs.exists(root)) {
+      arm();
+      onChange("");
+    }
+  };
+
+  arm();
+  return () => {
+    closed = true;
+    current?.close();
+    current = undefined;
+  };
+}
 
 export const timerScheduler: Scheduler = (run, delayMs) => {
   const timer = setTimeout(run, delayMs);
