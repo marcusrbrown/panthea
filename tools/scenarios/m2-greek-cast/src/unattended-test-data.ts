@@ -161,7 +161,13 @@ export function turn(
   scene: Scene,
   god: string,
   tick: number,
-  over: { elapsedMs?: number; kind?: string; recordedAtTick?: number } = {},
+  over: {
+    elapsedMs?: number;
+    kind?: string;
+    recordedAtTick?: number;
+    /** The tick the world consumed the proposal in; six ticks after the request began unless given. */
+    consumedTick?: number;
+  } = {},
 ): void {
   const n = nextId();
   const proposalId = `p${n}`;
@@ -195,7 +201,7 @@ export function turn(
       ...(kind === "travel" ? { to: `place-${n}` } : {}),
     },
     outcome: "committed",
-    consumedTick: tick + 6,
+    consumedTick: over.consumedTick ?? tick + 6,
   });
   const sourceId = `evt-${tick}-${n}`;
   scene.events.push({
@@ -205,7 +211,7 @@ export function turn(
     simTime: 0,
     correlationId: observationId,
     causationId: observationId,
-    tick: tick + 6,
+    tick: over.consumedTick ?? tick + 6,
     approximate: false,
     kind: kind === "legend" ? "legend-recorded" : "entity-moved",
     entityId: god,
@@ -219,9 +225,9 @@ export function turn(
       id: `evt-${tick}-${n}-b`,
       sequence: n * 10 + 1,
       simTime: 0,
-      correlationId: `tick-${tick + 6}`,
+      correlationId: `tick-${over.consumedTick ?? tick + 6}`,
       causationId: sourceId,
-      tick: tick + 6,
+      tick: over.consumedTick ?? tick + 6,
       approximate: false,
       kind: "memory-recorded",
       memoryKind: "told",

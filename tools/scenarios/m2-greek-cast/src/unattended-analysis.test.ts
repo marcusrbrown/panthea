@@ -229,6 +229,96 @@ test("positive control: a god action committed from a request that finished insi
   );
 });
 
+test("the outage row judges when an action commits, not when its request finished: a request that finished one second before the proxy failed, whose proposal commits at tick 904, fails the row", () => {
+  const scene = healthyScene();
+  // The request began at tick 890 and finished 1 s before the outage's wall boundary (tick 900); the world consumed its
+  // proposal four ticks into the outage.
+  turn(scene, "zeus", 890, { recordedAtTick: 894, consumedTick: 904 });
+  const { rows } = analyzeUnattended(runData({ scene }));
+  const row = rowOf(rows, "outage.no-god-action");
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("1 committed action");
+  expect(row.measured).toContain("zeus");
+  expect(failing(rows)).toEqual(["outage.no-god-action"]);
+});
+
+test("a proposal consumed at the outage's own boundary tick is before it, and the first tick after it is inside", () => {
+  const atBoundary = healthyScene();
+  turn(atBoundary, "zeus", 890, {
+    recordedAtTick: 894,
+    consumedTick: TICKS.outage,
+  });
+  expect(
+    rowOf(
+      analyzeUnattended(runData({ scene: atBoundary })).rows,
+      "outage.no-god-action",
+    ).ok,
+  ).toBe(true);
+  const after = healthyScene();
+  turn(after, "zeus", 890, {
+    recordedAtTick: 894,
+    consumedTick: TICKS.outage + 1,
+  });
+  expect(
+    rowOf(
+      analyzeUnattended(runData({ scene: after })).rows,
+      "outage.no-god-action",
+    ).ok,
+  ).toBe(false);
+});
+
+test("a proposal that commits after proxyRestoredAt does not count against the outage, even from a request that finished inside it, and one consumed at the restore tick still does", () => {
+  const late = healthyScene();
+  turn(late, "zeus", 1600, {
+    recordedAtTick: 1610,
+    consumedTick: TICKS.restored + 5,
+  });
+  expect(
+    rowOf(
+      analyzeUnattended(runData({ scene: late })).rows,
+      "outage.no-god-action",
+    ).ok,
+  ).toBe(true);
+  const inside = healthyScene();
+  turn(inside, "zeus", 1600, {
+    recordedAtTick: 1610,
+    consumedTick: TICKS.restored,
+  });
+  expect(
+    rowOf(
+      analyzeUnattended(runData({ scene: inside })).rows,
+      "outage.no-god-action",
+    ).ok,
+  ).toBe(false);
+});
+
+test("the participation counts use the same window: actions that commit inside the outage are left out whatever their request did, and actions that commit after it are counted whatever their request did", () => {
+  // Six legends by one god commit inside the outage from requests that finished before it: left out, so no repetition.
+  const inside = healthyScene();
+  for (let i = 0; i < 6; i += 1) {
+    turn(inside, "zeus", 880 + i, {
+      recordedAtTick: 890 + i,
+      kind: "legend",
+      consumedTick: 950 + i,
+    });
+  }
+  const left = analyzeUnattended(runData({ scene: inside })).rows;
+  expect(rowOf(left, "gods.repetition").ok).toBe(true);
+  expect(rowOf(left, "outage.no-god-action").ok).toBe(false);
+  // Six legends whose requests finished inside the outage but which commit after it: counted, so the run of six fails.
+  const after = healthyScene();
+  for (let i = 0; i < 6; i += 1) {
+    turn(after, "zeus", 1000 + i, {
+      recordedAtTick: 1100 + i,
+      kind: "legend",
+      consumedTick: TICKS.restored + 40 + i,
+    });
+  }
+  const counted = analyzeUnattended(runData({ scene: after })).rows;
+  expect(rowOf(counted, "gods.repetition").ok).toBe(false);
+  expect(rowOf(counted, "outage.no-god-action").ok).toBe(true);
+});
+
 test("positive control: a window with no routine or director events fails 'routines continue'", () => {
   const scene = healthyScene();
   scene.events = scene.events.filter(

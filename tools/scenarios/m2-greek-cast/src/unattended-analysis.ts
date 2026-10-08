@@ -387,9 +387,21 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     `${routine} events not caused by a god`,
     "at least 1",
   );
-  const duringOutage = godProposals.filter((p) =>
-    inWall(requestOf.get(p.proposalId)?.recordedAt, outageWall),
-  );
+  // When an action commits is the tick the world consumed its proposal in, not when its request finished: a request can
+  // finish just before the proxy fails and commit on a later tick, inside the outage. The window is the ticks after the
+  // outage's own boundary tick up to and including proxyRestoredAt's tick.
+  const committedInOutage = (p: RealProposal): boolean => {
+    if (outage === undefined) return false;
+    if (p.consumedTick !== undefined) {
+      return (
+        p.consumedTick > outage.tick &&
+        p.consumedTick <= (restored?.tick ?? endTick)
+      );
+    }
+    // A proposal not yet consumed has no tick: it falls back on when its request finished.
+    return inWall(requestOf.get(p.proposalId)?.recordedAt, outageWall);
+  };
+  const duringOutage = godProposals.filter(committedInOutage);
   row(
     "outage.no-god-action",
     "outage",
@@ -482,17 +494,11 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
   const keptRequests = input.requests.filter(
     (r) => !inWall(r.recordedAt, outageWall),
   );
-  const keptIds = new Set(
-    keptRequests.flatMap((r) =>
-      r.proposalId === undefined ? [] : [r.proposalId],
-    ),
-  );
+  // Requests are left out by when they finished, actions by when they commit: the same window the outage row judges.
   const keptInput: RealInput = {
     ...input,
     requests: keptRequests,
-    proposals: input.proposals.filter(
-      (p) => !requestOf.has(p.proposalId) || keptIds.has(p.proposalId),
-    ),
+    proposals: input.proposals.filter((p) => !committedInOutage(p)),
   };
   const episode = analyzeEpisode(keptInput, identities, gods);
   const allTimings = requestTimings(input);

@@ -93,6 +93,8 @@ export const CATCH_UP_TIMEOUT_MS = 180_000;
  * exactly that trail), and it does so on its next one-second tick; the wait covers that tick and a poll.
  */
 export const SETTLE_MS = 3_000;
+/** How long the driver waits for god proposals already journaled to commit before it starts the outage. */
+export const DRAIN_TIMEOUT_MS = 30_000;
 /** Applied time past the cap that is still the catch-up: the passes that follow the first, and the ticks that run live while the driver waits. */
 export const APPLIED_SLACK_MS = 2 * MINUTE;
 /** A request this close before the finish line is the first tick after the catch-up, not part of it (S10's tolerance). */
@@ -210,6 +212,8 @@ export interface UnattendedDeps {
   log?(line: string): void;
   /** The milliseconds of wall time the journal records the world discarded as over the catch-up cap, summed. */
   discardedMs(): number;
+  /** God proposals journaled and not yet consumed by the world. The outage waits for them to commit. */
+  pendingProposals?(): number;
   /**
    * Renders the report from the finished run and the samples of the observation, or `undefined` to keep the driver's own
    * summary. It returns the report's text with the threshold result the report's verdict rests on, which sets the exit.
@@ -524,14 +528,28 @@ export async function driveUnattended(
         break;
       }
     }
+    // A proposal journaled before the proxy fails can commit on a later tick, inside the outage. The outage waits for
+    // those to commit, so that "no god action commits during the outage" is true of the world and not of the requests.
+    const drainStarted = deps.now();
+    while (
+      (deps.pendingProposals?.() ?? 0) > 0 &&
+      deps.now() - drainStarted < DRAIN_TIMEOUT_MS
+    ) {
+      await poll();
+    }
+    const stillPending = deps.pendingProposals?.() ?? 0;
     const godsActed = deps.godsCommitted().length;
     outage = { trigger, godsActed };
     deps.proxy.fail();
-    await record(
-      "outage-started",
+    const acted =
       trigger === "gods"
         ? `${godsActed} of ${GODS.length} gods had acted`
-        : `the time bound: only ${godsActed} of ${GODS.length} gods had acted`,
+        : `the time bound: only ${godsActed} of ${GODS.length} gods had acted`;
+    await record(
+      "outage-started",
+      stillPending === 0
+        ? acted
+        : `${acted}; ${stillPending} god ${stillPending === 1 ? "proposal was" : "proposals were"} still pending after ${DRAIN_TIMEOUT_MS / 1000} s of waiting`,
     );
 
     const outageEndsAt = runningMs() + plan.outageMs;
@@ -1169,6 +1187,18 @@ export async function runUnattended(
         text: renderUnattendedReport(data, analysis),
         gate: gateOutcomeOf(analysis),
       };
+    },
+    pendingProposals: () => {
+      try {
+        return readProposals(activeStorePath(dataDir)).filter(
+          (entry) =>
+            entry.source === "model" &&
+            entry.outcome === undefined &&
+            gods.has(entry.actor),
+        ).length;
+      } catch {
+        return 0;
+      }
     },
     onEnd: async (world) => {
       await exportForBaseline(world, archivePath);

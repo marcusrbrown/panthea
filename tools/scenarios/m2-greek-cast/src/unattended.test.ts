@@ -18,6 +18,7 @@ import type { ProxyRecord } from "./outage-proxy";
 import {
   CATCH_UP_CAP_MS,
   CATCH_UP_TIMEOUT_MS,
+  DRAIN_TIMEOUT_MS,
   driveUnattended,
   exitCodeOf,
   FRAME_FAILURES_MAX,
@@ -123,6 +124,8 @@ interface Script {
   /** The summary id the final frames carry; a different one means the summary did not survive. */
   readonly finalSummaryId?: string;
   readonly proxyRecordsAfterRestore?: readonly Omit<ProxyRecord, "at">[];
+  /** God proposals journaled and not yet consumed, until this many running ms (forever when `Infinity`). */
+  readonly pendingUntil?: number;
 }
 
 const ALL_GODS_BY = Object.fromEntries(
@@ -345,6 +348,10 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
       script.emptyAt !== undefined &&
       t0 !== undefined &&
       running() >= script.emptyAt,
+    pendingProposals: () =>
+      script.pendingUntil !== undefined && running() < script.pendingUntil
+        ? 2
+        : 0,
     sampler: {
       start() {},
       stop: () => [] as readonly MemorySample[],
@@ -1274,4 +1281,43 @@ test("failureText says nothing for a run that exits 0, the reason for a failure,
   expect(failureText({ ...base, gate: gateOf("FAIL", ["a"]) })).toBe(
     "1 threshold row failed: a",
   );
+});
+
+// --- Blocker 2: proposals journaled before the outage are drained first ------------------------
+
+test("the outage does not start while god proposals are still waiting to commit: the proxy is failed once they have drained, so none commits inside it", async () => {
+  const h = harness(phasePlan(6), { pendingUntil: 40_000 });
+  const result = await driveUnattended(h.deps);
+  const outage = result.boundaries.find((b) => b.phase === "outage-started");
+
+  // Five gods had acted by 24 s, but proposals were pending until 40 s: the outage began once they drained.
+  expect(outage?.runningMs).toBeGreaterThanOrEqual(40_000);
+  expect(outage?.runningMs).toBeLessThan(40_000 + 3 * POLL_MS);
+  expect(outage?.note).not.toContain("pending");
+  expect(result.outage?.trigger).toBe("gods");
+  expect(h.calls).toEqual(["fail", "pass"]);
+});
+
+test("a drain that does not finish is bounded: the outage starts after the drain limit, and the boundary says how many proposals were still pending", async () => {
+  expect(DRAIN_TIMEOUT_MS).toBe(30_000);
+  const h = harness(phasePlan(6), { pendingUntil: Number.POSITIVE_INFINITY });
+  const result = await driveUnattended(h.deps);
+  const outage = result.boundaries.find((b) => b.phase === "outage-started");
+
+  expect(result.status).toBe("completed");
+  expect(outage?.runningMs).toBeGreaterThanOrEqual(24_000 + DRAIN_TIMEOUT_MS);
+  expect(outage?.runningMs).toBeLessThan(
+    24_000 + DRAIN_TIMEOUT_MS + 3 * POLL_MS,
+  );
+  expect(outage?.note).toContain("2 god proposals were still pending");
+  // The other gods acted while the driver waited, so the count is the one at the moment the proxy failed.
+  expect(outage?.note).toMatch(/\d of 7 gods had acted/);
+});
+
+test("a run with nothing pending starts its outage at once, as before", async () => {
+  const h = harness(phasePlan(6));
+  const result = await driveUnattended(h.deps);
+  expect(
+    result.boundaries.find((b) => b.phase === "outage-started")?.runningMs,
+  ).toBeLessThan(24_000 + 3 * POLL_MS);
 });
