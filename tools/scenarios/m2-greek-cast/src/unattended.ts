@@ -22,6 +22,11 @@ import {
   backdateCursor,
 } from "../../m1-living-world/src/world-db";
 import type { Args } from "./args";
+import {
+  type BaselineRecord,
+  captureBaseline,
+  exportForBaseline,
+} from "./baseline";
 import { resolveSidecarBinary } from "./binary";
 import { readProposals } from "./db";
 import {
@@ -133,6 +138,12 @@ export interface FrameReading {
 
 export interface RunningWorld {
   readonly pid: number;
+  /** The sidecar's authenticated HTTP API. */
+  request(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+  ): Promise<{ readonly status: number; readonly body: unknown }>;
   frame(): Promise<FrameReading>;
   /** SIGTERM, and the exit code. */
   stopClean(): Promise<number | null>;
@@ -165,8 +176,14 @@ export interface UnattendedDeps {
   readonly sampler: MemorySampler;
   /** Ollama's state, for a run that ends on a fault or a failure. */
   diagnose(): Promise<OllamaState>;
-  /** Runs at the end of a completed run, with the world still up; Unit 4's capture goes here. */
+  /** Runs at the end of a run that went through every phase, with the world still up: it pauses and exports. */
   onEnd?(world: RunningWorld): Promise<void>;
+  /** Runs once the sidecar has stopped, however the run ended: it captures the baseline from what is on disk. */
+  afterStop?(info: {
+    readonly status: UnattendedStatus;
+    /** Why there is no archive, when the export did not happen. */
+    readonly archiveMissingReason: string | undefined;
+  }): Promise<BaselineRecord>;
   /** Told each boundary as it is crossed. */
   log?(line: string): void;
 }
@@ -182,6 +199,8 @@ export type UnattendedStatus = "completed" | "failed" | "fault";
 export interface UnattendedResult {
   readonly status: UnattendedStatus;
   readonly settings?: RunSettings;
+  /** The end capture: sizes, the rebuild from genesis and the import proof. Absent when it could not be taken. */
+  readonly baseline?: BaselineRecord;
   /** Why the run did not complete; absent when it did. */
   readonly reason?: string;
   readonly plan: PhasePlan;
@@ -387,6 +406,8 @@ export async function driveUnattended(
     return code;
   }
 
+  let exportFailure: string | undefined;
+  let exported = false;
   let end: RunEnd | undefined;
   try {
     deps.sampler.start();
@@ -535,11 +556,10 @@ export async function driveUnattended(
     if (world !== undefined) {
       try {
         await deps.onEnd?.(world);
+        exported = true;
       } catch (error) {
-        throw new RunEnd(
-          "failed",
-          `the end capture failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        exportFailure = error instanceof Error ? error.message : String(error);
+        throw new RunEnd("failed", `the end capture failed: ${exportFailure}`);
       }
     }
     await stopWorld();
@@ -563,6 +583,28 @@ export async function driveUnattended(
       }
     }
     down();
+  }
+  const statusAfterStop: UnattendedStatus =
+    end !== undefined
+      ? end.status
+      : checks.some((entry) => !entry.ok)
+        ? "failed"
+        : "completed";
+  let baseline: BaselineRecord | undefined;
+  let baselineFailure: string | undefined;
+  if (deps.afterStop !== undefined) {
+    try {
+      baseline = await deps.afterStop({
+        status: statusAfterStop,
+        archiveMissingReason: exported
+          ? undefined
+          : exportFailure === undefined
+            ? "the run ended before the export"
+            : `the export failed: ${exportFailure}`,
+      });
+    } catch (error) {
+      baselineFailure = error instanceof Error ? error.message : String(error);
+    }
   }
   const samples = deps.sampler.stop();
   flush();
@@ -610,6 +652,7 @@ export async function driveUnattended(
   const result: UnattendedResult = {
     status,
     ...(deps.settings === undefined ? {} : { settings: deps.settings }),
+    ...(baseline === undefined ? {} : { baseline }),
     ...(reason === undefined ? {} : { reason }),
     plan,
     startedWallMs,
@@ -626,7 +669,7 @@ export async function driveUnattended(
     file("run.json"),
     `${JSON.stringify({ ...result, memory: summary }, null, 2)}\n`,
   );
-  writeFileSync(file("report.md"), renderRunSummary(result));
+  writeFileSync(file("report.md"), renderRunSummary(result, baselineFailure));
   return result;
 }
 
@@ -635,7 +678,10 @@ export async function driveUnattended(
 const minutes = (ms: number): string => (ms / MINUTE).toFixed(1);
 
 /** The plain account of the run that Unit 5's report builds on: its status, its phase boundaries and its checks. */
-export function renderRunSummary(result: UnattendedResult): string {
+export function renderRunSummary(
+  result: UnattendedResult,
+  baselineFailure?: string,
+): string {
   const heading =
     result.status === "completed"
       ? "COMPLETED"
@@ -684,6 +730,11 @@ export function renderRunSummary(result: UnattendedResult): string {
       "",
     );
   }
+  if (result.baseline !== undefined) {
+    lines.push(...renderBaseline(result.baseline), "");
+  } else if (baselineFailure !== undefined) {
+    lines.push(`The baseline could not be captured: ${baselineFailure}`, "");
+  }
   lines.push(
     "| Check | Result | Detail |",
     "| --- | --- | --- |",
@@ -695,6 +746,41 @@ export function renderRunSummary(result: UnattendedResult): string {
   return lines
     .filter((line, i, all) => !(line === "" && all[i - 1] === ""))
     .join("\n");
+}
+
+const KIB = 1024;
+const bytesText = (bytes: number): string =>
+  bytes >= KIB * KIB
+    ? `${(bytes / KIB / KIB).toFixed(1)} MiB`
+    : `${(bytes / KIB).toFixed(1)} KiB`;
+
+/** The baseline's lines in plain words: sizes, the rebuild and the import, each part captured or missing. */
+function renderBaseline(baseline: BaselineRecord): string[] {
+  const { store, archive, rebuild, importProof } = baseline;
+  const lines = ["Workload baseline:"];
+  lines.push(
+    store.state === "captured"
+      ? `- Store ${bytesText(store.bytes)}, WAL ${bytesText(store.walBytes)}.`
+      : `- Store: missing (${store.reason}).`,
+  );
+  lines.push(
+    archive.state === "captured"
+      ? `- Archive ${bytesText(archive.bytes)}, ${archive.eventSequence} events.`
+      : `- Archive: missing (${archive.reason}).`,
+  );
+  lines.push(
+    rebuild.state === "captured"
+      ? `- Rebuild from genesis and ${rebuild.events} events: ${rebuild.ms.toFixed(1)} ms in a separate process; the rebuilt projection ${rebuild.equal ? "equals the live projection" : `DIFFERS from the live projection (first at ${rebuild.firstDifference})`} (${rebuild.projectionBytes} bytes, digest ${rebuild.rebuiltDigest.slice(0, 12)}); integrity ${rebuild.integrity}.`
+      : `- Rebuild from genesis: missing (${rebuild.reason}).`,
+  );
+  lines.push(
+    importProof.state === "captured"
+      ? importProof.ok
+        ? `- Import of the archive into a scratch slot: accepted (${importProof.events} events).`
+        : `- Import of the archive into a scratch slot: REFUSED (${importProof.refusal?.kind}: ${importProof.refusal?.reason}).`
+      : `- Import of the archive: missing (${importProof.reason}).`,
+  );
+  return lines;
 }
 
 // --- The real wiring --------------------------------------------------------------------------
@@ -781,6 +867,7 @@ export async function runUnattended(
   const outDir = args.out ?? defaultUnattendedDir();
   mkdirSync(outDir, { recursive: true });
   const dataDir = join(outDir, "app-data");
+  const archivePath = join(outDir, "archive.sqlite");
   const binary = resolveSidecarBinary(args.skipBuild);
   const options = unattendedOptions(args, binary);
 
@@ -825,6 +912,7 @@ export async function runUnattended(
       current = sidecar;
       return {
         pid: sidecar.pid,
+        request: (method, path, body) => sidecar.request(method, path, body),
         async frame() {
           const { frame, state } = await readFrame(sidecar);
           return {
@@ -879,7 +967,17 @@ export async function runUnattended(
     sampler,
     diagnose: () => captureOllamaState({ ollama: OLLAMA, home: homedir() }),
     log: (line) => console.log(line),
-    ...(onEnd === undefined ? {} : { onEnd }),
+    onEnd: async (world) => {
+      await exportForBaseline(world, archivePath);
+      await onEnd?.(world);
+    },
+    afterStop: ({ archiveMissingReason }) =>
+      captureBaseline({
+        runDir: outDir,
+        dataDir,
+        archivePath,
+        ...(archiveMissingReason === undefined ? {} : { archiveMissingReason }),
+      }),
   };
 
   try {

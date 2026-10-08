@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "./args";
+import type { BaselineRecord } from "./baseline";
 import type { MemorySample } from "./memory";
 import type { ProxyRecord } from "./outage-proxy";
 import {
@@ -128,6 +129,11 @@ interface Harness {
   readonly backdated: number[];
   readonly diagnoses: { count: number };
   readonly stops: string[];
+  readonly captures: {
+    status: string;
+    archiveMissingReason: string | undefined;
+    stopsSoFar: number;
+  }[];
   readonly clock: () => number;
   readonly endHook: { world: RunningWorld | undefined };
 }
@@ -142,6 +148,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
   const backdated: number[] = [];
   const diagnoses = { count: 0 };
   const stops: string[] = [];
+  const captures: Harness["captures"] = [];
   const endHook: { world: RunningWorld | undefined } = { world: undefined };
   let starts = 0;
   let live: ReturnType<typeof makeWorld> | undefined;
@@ -273,6 +280,7 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
       const world = live;
       return {
         pid: world.pid,
+        request: async () => ({ status: 200, body: {} }),
         frame: () => world.frame(),
         stopClean: async () => world.stopClean(),
         exited: world.exited,
@@ -330,6 +338,14 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
     onEnd: async (world) => {
       endHook.world = world;
     },
+    async afterStop(info) {
+      captures.push({
+        status: info.status,
+        archiveMissingReason: info.archiveMissingReason,
+        stopsSoFar: stops.length,
+      });
+      return FAKE_BASELINE;
+    },
   };
   void proxyMode;
   return {
@@ -339,10 +355,29 @@ function harness(plan = phasePlan(6), script: Script = {}): Harness {
     backdated,
     diagnoses,
     stops,
+    captures,
     clock: () => clock,
     endHook,
   };
 }
+
+const FAKE_BASELINE: BaselineRecord = {
+  store: { state: "captured", bytes: 1000, walBytes: 0 },
+  archive: { state: "captured", bytes: 500, eventSequence: 42 },
+  rebuild: {
+    state: "captured",
+    ms: 12.5,
+    events: 42,
+    equal: true,
+    liveDigest: "a".repeat(64),
+    rebuiltDigest: "a".repeat(64),
+    projectionBytes: 2000,
+    integrity: "ok",
+    process: "separate",
+    childPid: 1,
+  },
+  importProof: { state: "captured", ok: true, events: 42, slotCreated: true },
+};
 
 const names = (result: UnattendedResult): PhaseName[] =>
   result.boundaries.map((b) => b.phase);
@@ -867,5 +902,65 @@ test("a run's settings are written into run.json beside the result", async () =>
   expect(run.settings).toEqual({ model: "m", endpoint: "local" });
   expect(read(h.outDir, "report.md")).toContain(
     "a local OpenAI-compatible endpoint",
+  );
+});
+
+// --- The end capture ---------------------------------------------------------------------------
+
+test("a completed run exports at its end with the world up, stops, and only then captures the baseline, which is kept in the result and in run.json", async () => {
+  const h = harness();
+  const result = await driveUnattended(h.deps);
+
+  expect(result.status).toBe("completed");
+  expect(h.captures).toEqual([
+    { status: "completed", archiveMissingReason: undefined, stopsSoFar: 2 },
+  ]);
+  expect(result.baseline).toEqual(FAKE_BASELINE);
+  const run = JSON.parse(read(h.outDir, "run.json")) as UnattendedResult;
+  expect(run.baseline).toEqual(FAKE_BASELINE);
+  const report = read(h.outDir, "report.md");
+  expect(report).toContain("Rebuild from genesis");
+  expect(report).toContain("12.5 ms");
+  expect(report).toContain("equals the live projection");
+});
+
+test("a run that ends on a fault or a failure still captures what it can, and says the export did not happen", async () => {
+  for (const script of [
+    { emptyAt: 40_000 },
+    { dieAt: { ms: 50_000, code: 137 } },
+  ]) {
+    const h = harness(phasePlan(6), script);
+    const result = await driveUnattended(h.deps);
+    expect(result.status).not.toBe("completed");
+    expect(h.captures).toHaveLength(1);
+    expect(h.captures[0]?.archiveMissingReason).toBe(
+      "the run ended before the export",
+    );
+    expect(result.baseline).toEqual(FAKE_BASELINE);
+  }
+});
+
+test("an export that fails fails the run, with the failure as the reason the archive is missing", async () => {
+  const h = harness();
+  h.deps.onEnd = async () => {
+    throw new Error("export answered 500");
+  };
+  const result = await driveUnattended(h.deps);
+  expect(result.status).toBe("failed");
+  expect(h.captures[0]?.archiveMissingReason).toBe(
+    "the export failed: export answered 500",
+  );
+});
+
+test("a capture that throws does not hide how the run ended: the run keeps its status and says the baseline could not be taken", async () => {
+  const h = harness();
+  h.deps.afterStop = async () => {
+    throw new Error("disk full");
+  };
+  const result = await driveUnattended(h.deps);
+  expect(result.status).toBe("completed");
+  expect(result.baseline).toBeUndefined();
+  expect(read(h.outDir, "report.md")).toContain(
+    "The baseline could not be captured: disk full",
   );
 });
