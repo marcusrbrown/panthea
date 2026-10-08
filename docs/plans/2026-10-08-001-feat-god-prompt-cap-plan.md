@@ -244,6 +244,8 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
 
 **Verification:** ratio selection and the estimate are pinned by tests, and the table is keyed by the same id the router resolves.
 
+**Status (2026-10-08):** built. The estimate is the bare request (instructions, a blank line, the prompt); no room is kept for a retry's note. The router cuts the note to the room `maxChars` leaves and sends the bare prompt when not even its wording fits.
+
 - [ ] **Unit 2: The shedding transform**
 
 **Goal:** reduce `(snapshot, remembered)` to fit the cap in the owner's order, keeping the protected floor and re-deriving everything that depends on a shed unit.
@@ -278,7 +280,7 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
 
 **Verification:** every shed kind keeps the prompt, schema and parser in agreement, and the over-cap world lands under the cap with the survivors the policy predicts.
 
-**Status (2026-10-08):** built, with a refill pass the owner added after the story run: once the request fits, each shed unit is tried once, most valuable first (memories by salience, feelings by strength, own actions newest first, events newest first), through the same re-derive path and kept only if the rebuilt request with the feedback reserve still fits. A shed prayer is never re-added. The shed counts are the net.
+**Status (2026-10-08):** built against the bare request, with a refill pass the owner added after the story run: once the request fits, each shed unit is tried once, most valuable first (memories by salience, feelings by strength, own actions newest first, events newest first), through the same re-derive path and kept only if the rebuilt request with the feedback reserve still fits. A shed prayer is never re-added. The shed counts are the net.
 
 - [ ] **Unit 3: Wire the cap into the turn, and record it**
 
