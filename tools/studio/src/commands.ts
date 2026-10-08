@@ -52,13 +52,24 @@ const str = (name: string, req = false): Spec => ({
   [name]: { t: "string", ...(req ? { req: true as const } : {}) },
 });
 
+/**
+ * A table's own entry for a key, never an inherited one: `toString`,
+ * `constructor` and `__proto__` are not commands or arguments.
+ */
+export function own<T>(
+  table: Readonly<Record<string, T>>,
+  key: string,
+): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 /** Checks an op's arguments against its spec: every key known, every type exact, required keys present. */
 export function readArgs(args: unknown, spec: Spec): Args | Outcome {
   if (typeof args !== "object" || args === null || Array.isArray(args))
     return refuse("invalid-arguments", "arguments must be an object");
   const found = args as Args;
   for (const [key, value] of Object.entries(found)) {
-    const field = spec[key];
+    const field = own(spec, key);
     if (field === undefined)
       return refuse("invalid-arguments", `unknown argument "${key}"`);
     const okType =
@@ -76,7 +87,7 @@ export function readArgs(args: unknown, spec: Spec): Args | Outcome {
       );
   }
   for (const [key, field] of Object.entries(spec))
-    if (field.req && found[key] === undefined)
+    if (field.req && !Object.hasOwn(found, key))
       return refuse("invalid-arguments", `argument "${key}" is required`);
   return found;
 }
@@ -969,7 +980,7 @@ async function editBring(
   });
 }
 
-export const opSpec = (op: string): OpDef | undefined => OPS[op];
+export const opSpec = (op: string): OpDef | undefined => own(OPS, op);
 export const opNames = (): string[] => Object.keys(OPS);
 
 /** The ops that read durable records and take no writer lock. */
@@ -986,16 +997,18 @@ export async function execute(
   op: string,
   args: unknown,
 ): Promise<Outcome> {
-  const def = OPS[op];
+  const def = own(OPS, op);
   if (def === undefined)
     return refuse("unknown-op", `unknown command "${op}"`, {
       known: opNames(),
     });
-  const read = readArgs(args ?? {}, def.spec);
-  if (isOutcome(read)) return read;
-  if (studio.stopping && !READ_ONLY.has(op))
-    return refuse("shutting-down", "the session is shutting down");
+  // Everything past the lookup is inside the try, so a throw while reading
+  // the arguments is still one error response for this request.
   try {
+    const read = readArgs(args ?? {}, def.spec);
+    if (isOutcome(read)) return read;
+    if (studio.stopping && !READ_ONLY.has(op))
+      return refuse("shutting-down", "the session is shutting down");
     return await def.run(studio, read);
   } catch {
     return refuse("internal", "the command failed unexpectedly");

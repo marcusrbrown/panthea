@@ -420,6 +420,61 @@ describe("a session", () => {
     expect(h.cap.err).toEqual([]);
   });
 
+  test("an op named like an inherited property is answered once with unknown-op and its id, and the next request is still served", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const stdin = pipe();
+    const h = harness({ stdin: stdin.iterable });
+    const done = main(["session", "--root", rig.root], h.io, {}, h.hub);
+
+    stdin.send('{"id":"bad","op":"toString","args":{}}');
+    stdin.send('{"id":"ctor","op":"constructor"}');
+    stdin.send('{"id":"proto","op":"__proto__","args":{}}');
+    stdin.send('{"id":"ok","op":"status","args":{}}');
+    await waitFor(() => h.cap.out.length >= 4);
+    stdin.end();
+    const code = await done;
+
+    expect(code).toBe(0);
+    const responses = parsed(h.cap.out);
+    expect(responses).toHaveLength(4);
+    for (const id of ["bad", "ctor", "proto"]) {
+      const mine = responses.filter((r) => r.id === id);
+      expect(mine, id).toHaveLength(1);
+      expect(mine[0], id).toMatchObject({
+        ok: false,
+        error: { code: "unknown-op" },
+      });
+    }
+    expect(responses.filter((r) => r.id === "ok")).toEqual([
+      expect.objectContaining({ ok: true, result: expect.any(Object) }),
+    ]);
+    expect(h.cap.err).toEqual([]);
+  });
+
+  test("exactly two responses come back for a bad inherited-name op followed by a status, in that order", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const stdin = pipe();
+    const h = harness({ stdin: stdin.iterable });
+    const done = main(["session", "--root", rig.root], h.io, {}, h.hub);
+
+    stdin.send('{"id":"bad","op":"toString","args":{}}');
+    await waitFor(() => h.cap.out.length >= 1);
+    stdin.send('{"id":"status","op":"status","args":{}}');
+    await waitFor(() => h.cap.out.length >= 2);
+    stdin.end();
+    await done;
+
+    const responses = parsed(h.cap.out);
+    expect(responses.map((r) => r.id)).toEqual(["bad", "status"]);
+    expect(responses[0]).toMatchObject({
+      ok: false,
+      error: { code: "unknown-op" },
+    });
+    expect(responses[1]).toMatchObject({ ok: true });
+  });
+
   test("keeps answering while a generation runs, ends a running job on abort, and on end of input finishes the queue before it exits 0", async () => {
     const rig = await runtimeRig({ sequence: ["hang", "ok"] });
     const stdin = pipe();

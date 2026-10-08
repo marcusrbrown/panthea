@@ -10,7 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { execute, opNames, opSpec, type Spec } from "./commands";
+import { execute, opNames, opSpec, own, type Spec } from "./commands";
 import { loadConfig, type StudioConfig } from "./config";
 import { exitOf, type Outcome, refuse } from "./format";
 import { type Deps, defaultDeps, isOutcome, Studio } from "./host";
@@ -116,7 +116,7 @@ export function parseArgv(argv: readonly string[]): Parsed | Outcome {
     else if (flag === "root") root = value;
     else {
       const key = camel(flag);
-      const converted = convert(value, spec[key]?.t ?? "string", flag);
+      const converted = convert(value, own(spec, key)?.t ?? "string", flag);
       if (isOutcome(converted)) return converted;
       args[key] = converted;
     }
@@ -189,7 +189,13 @@ async function serve(
           "a request is {id, op, args} with a string id and op",
         ),
       );
-    respond(id, await execute(studio, record.op, record.args ?? {}));
+    let outcome: Outcome;
+    try {
+      outcome = await execute(studio, record.op, record.args ?? {});
+    } catch {
+      outcome = refuse("internal", "the command failed unexpectedly");
+    }
+    respond(id, outcome);
   };
 
   let initialFailed = false;
@@ -203,7 +209,12 @@ async function serve(
     studio.editEnded = (id) => id === watched && ended();
     track(
       (async () => {
-        const outcome = await execute(studio, initial.op, initial.args);
+        let outcome: Outcome;
+        try {
+          outcome = await execute(studio, initial.op, initial.args);
+        } catch {
+          outcome = refuse("internal", "the command failed unexpectedly");
+        }
         respond(initial.op, outcome);
         if (!outcome.ok) {
           initialFailed = true;

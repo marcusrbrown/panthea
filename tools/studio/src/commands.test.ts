@@ -72,6 +72,50 @@ describe("argument checking", () => {
     expect(exitOf(outcome)).toBe(64);
   });
 
+  test("a name an object inherits is not a command: toString, constructor, __proto__ and hasOwnProperty are unknown ops", async () => {
+    for (const op of [
+      "toString",
+      "constructor",
+      "__proto__",
+      "hasOwnProperty",
+      "valueOf",
+    ]) {
+      const { outcome } = await run({ studioRoot: tempRoot() }, op, {});
+
+      expect(codeOf(outcome), op).toBe("unknown-op");
+      expect(!outcome.ok && Array.isArray(outcome.error.known), op).toBe(true);
+      expect(exitOf(outcome), op).toBe(64);
+    }
+  });
+
+  test("an inherited name is not an argument either, and a throw while reading arguments is an internal error, not a crash", async () => {
+    const spec = { a: { t: "string" as const } };
+    for (const key of ["toString", "constructor", "hasOwnProperty"])
+      expect(readArgs({ [key]: 1 }, spec), key).toMatchObject({
+        ok: false,
+        error: { code: "invalid-arguments" },
+      });
+    expect(
+      readArgs(JSON.parse('{"__proto__":1}'), spec),
+      "__proto__ as an own key",
+    ).toMatchObject({ ok: false, error: { code: "invalid-arguments" } });
+
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("boom");
+        },
+      },
+    );
+    const { outcome } = await run(
+      { studioRoot: tempRoot() },
+      "status",
+      hostile,
+    );
+    expect(codeOf(outcome)).toBe("internal");
+  });
+
   test("readArgs accepts exactly what a spec names", () => {
     expect(readArgs({ a: "x" }, { a: { t: "string", req: true } })).toEqual({
       a: "x",
