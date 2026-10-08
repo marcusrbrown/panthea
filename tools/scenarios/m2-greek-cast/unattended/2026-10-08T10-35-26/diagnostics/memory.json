@@ -1,0 +1,51 @@
+{
+  "last": {
+    "atMs": 1791459330177,
+    "runner": {
+      "state": "present",
+      "pids": [16301],
+      "rssBytes": 6178635776
+    },
+    "sidecar": {
+      "state": "present",
+      "pid": 16799,
+      "rssBytes": 141443072
+    },
+    "swap": {
+      "usedMiB": 6130.94,
+      "totalMiB": 7168
+    }
+  },
+  "summary": {
+    "samples": 361,
+    "spanMs": 3600754,
+    "runner": {
+      "start": 5602476032,
+      "peak": 8681766912,
+      "end": 6178635776,
+      "present": 349,
+      "absent": 12
+    },
+    "sidecar": {
+      "start": 63995904,
+      "peak": 254328832,
+      "end": 141443072,
+      "present": 360,
+      "absent": 1
+    },
+    "swapUsedMiB": {
+      "start": 991.94,
+      "peak": 6466.75,
+      "end": 6130.94,
+      "present": 361,
+      "absent": 0
+    },
+    "sidecarTrend": {
+      "judgeable": true,
+      "percentPer10Min": 5.82225749480999,
+      "levellingOff": false,
+      "windowSamples": 120
+    }
+  },
+  "postRunSamples": 0
+}

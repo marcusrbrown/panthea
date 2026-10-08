@@ -1,0 +1,189 @@
+{
+  "status": "failed",
+  "settings": {
+    "model": "granite3.3-8b-4k",
+    "reasoningEffort": "none",
+    "endpoint": "local"
+  },
+  "baseline": {
+    "store": {
+      "state": "captured",
+      "bytes": 253505536,
+      "walBytes": 0
+    },
+    "archive": {
+      "state": "captured",
+      "bytes": 96894976,
+      "eventSequence": 202162
+    },
+    "rebuild": {
+      "state": "captured",
+      "ms": 496.3,
+      "events": 202162,
+      "equal": true,
+      "liveDigest": "fc626881ef3c5132f4f98b09081be324cfd7f74496171b0ad522d28da2d1cdc7",
+      "rebuiltDigest": "fc626881ef3c5132f4f98b09081be324cfd7f74496171b0ad522d28da2d1cdc7",
+      "projectionBytes": 1070914,
+      "integrity": "ok",
+      "process": "separate",
+      "childPid": 18596
+    },
+    "importProof": {
+      "state": "captured",
+      "ok": true,
+      "events": 202162,
+      "slotCreated": true
+    }
+  },
+  "reason": "checks failed: the catch-up summary is still the summary at the end",
+  "plan": {
+    "minutes": 60,
+    "outageBoundMs": 900000,
+    "outageMs": 720000,
+    "stopAfterRestoreMs": 600000,
+    "runMs": 3600000,
+    "gapMs": 5400000,
+    "gate": true
+  },
+  "startedWallMs": 1791455729419,
+  "endedWallMs": 1791459338217,
+  "elapsedWallMs": 3608798,
+  "runningMs": 3602654,
+  "boundaries": [
+    {
+      "phase": "started",
+      "wallMs": 1791455730132,
+      "tick": 0,
+      "runningMs": 9
+    },
+    {
+      "phase": "outage-started",
+      "wallMs": 1791455776243,
+      "tick": 46,
+      "runningMs": 46120,
+      "note": "5 of 7 gods had acted"
+    },
+    {
+      "phase": "proxy-restored",
+      "wallMs": 1791456498000,
+      "tick": 766,
+      "runningMs": 767877
+    },
+    {
+      "phase": "stopped",
+      "wallMs": 1791457098081,
+      "tick": 1365,
+      "runningMs": 1367957
+    },
+    {
+      "phase": "restarted",
+      "wallMs": 1791457098524,
+      "tick": 1365,
+      "runningMs": 1368270
+    },
+    {
+      "phase": "catch-up-finished",
+      "wallMs": 1791457106640,
+      "tick": 4973,
+      "runningMs": 1376386
+    },
+    {
+      "phase": "ended",
+      "wallMs": 1791459331138,
+      "tick": 7196,
+      "runningMs": 3600884
+    }
+  ],
+  "checks": [
+    {
+      "name": "the sidecar stops cleanly",
+      "ok": true,
+      "detail": "exit code 0"
+    },
+    {
+      "name": "the catch-up is bracketed by its own log lines",
+      "ok": true,
+      "detail": "2026-10-08T10:58:18.211Z .. 2026-10-08T10:58:23.309Z"
+    },
+    {
+      "name": "the catch-up applies the cap and discards the rest",
+      "ok": true,
+      "detail": "2 passes; the journal: 60.1 min applied by tick, 30.1 min discarded"
+    },
+    {
+      "name": "no provider request is made during the catch-up",
+      "ok": true,
+      "detail": "0 requests inside it"
+    },
+    {
+      "name": "the catch-up summary is still the summary at the end",
+      "ok": false,
+      "detail": "25c13381-cf4b-4c9b-bd30-cd6304ea55d6 .. 563463af-73df-42b9-b9e9-8251b63d9c7f"
+    }
+  ],
+  "outage": {
+    "trigger": "gods",
+    "godsActed": 5
+  },
+  "restore": {
+    "runnerAtRestore": "absent",
+    "firstRequestAfterRestore": {
+      "latencyMs": 11360,
+      "status": 200,
+      "empty": false,
+      "afterRestoreMs": 372
+    }
+  },
+  "catchUp": {
+    "summaryId": "25c13381-cf4b-4c9b-bd30-cd6304ea55d6",
+    "appliedMs": 5000,
+    "skippedMs": 0,
+    "startedWallMs": 1791457098211,
+    "finishedWallMs": 1791457103309,
+    "passes": 2,
+    "journal": {
+      "appliedMs": 3608000,
+      "discardedMs": 1803097
+    }
+  },
+  "gate": {
+    "verdict": "FAIL",
+    "failedRows": [
+      "run.completed",
+      "catch-up.summary-survives",
+      "queue.wait",
+      "memory.sidecar-levels-off"
+    ]
+  },
+  "memory": {
+    "samples": 361,
+    "spanMs": 3600754,
+    "runner": {
+      "start": 5602476032,
+      "peak": 8681766912,
+      "end": 6178635776,
+      "present": 349,
+      "absent": 12
+    },
+    "sidecar": {
+      "start": 63995904,
+      "peak": 254328832,
+      "end": 141443072,
+      "present": 360,
+      "absent": 1
+    },
+    "swapUsedMiB": {
+      "start": 991.94,
+      "peak": 6466.75,
+      "end": 6130.94,
+      "present": 361,
+      "absent": 0
+    },
+    "sidecarTrend": {
+      "judgeable": true,
+      "percentPer10Min": 5.82225749480999,
+      "levellingOff": false,
+      "windowSamples": 120
+    }
+  }
+}

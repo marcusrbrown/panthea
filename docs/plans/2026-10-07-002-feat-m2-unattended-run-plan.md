@@ -409,6 +409,25 @@ Status (2026-10-08): Units 1–5 are built on `feat/unattended-run`. A 6-minute 
 
 **Verification:** the report, the threshold table and the owner's rating are committed. The roadmap records an M2 outcome only after a pass.
 
+Status (2026-10-08): the procedure is in the m2 README, generated from `report.ts`. The first real hour ran on granite3.3-8b-4k on a quiet machine: load about 2 and swap about 1 GB at the start (`tools/scenarios/m2-greek-cast/unattended/2026-10-08T10-35-26/`). The run went through every phase in 60.0 running minutes, with no empty responses. It exited 1, FAIL, with 4 of 24 threshold rows failed.
+
+**Held:**
+- **Outage:** routines and the director produced 19,121 events, and no god action committed. Reasoning resumed 12 ticks after the proxy was restored, and a god acted after 13.
+- **Catch-up:** it applied 60.1 minutes and discarded 30.1 over 2 passes, with no provider request during it.
+- **Per-god checks:** every god held minimum activity, repetition and influence.
+- **Knowledge boundary:** all three checks held.
+- **Rebuild:** it equals the live world, 202,162 events in 496 ms. The store is 242 MiB and the archive 92 MiB.
+
+**Failed in the world:**
+- **Queue wait:** the p95 was 113–117 ticks for every god, against 90. Median latency rose from 8.4 s at about 1,750 prompt tokens in the first 10 minutes to 13–14 s at about 3,400 tokens from minute 30.
+- **Sidecar memory:** it did not level off, rising 5.82% per 10 minutes over the last 20 minutes (61 MiB at the start, 243 MiB at peak, 135 MiB at the end).
+
+**Failed in the harness:** "the catch-up summary is still the summary at the end" assumed one catch-up pass, and "the run went through every phase" failed only through it.
+
+**At the limit:** the busiest prompt was 4,094 of 4,096 tokens, with 10 responses at 4,000 or more. The prompt budgets are in characters measured on qwen3's tokenizer.
+
+The owner chose to fix the harness row and to investigate the prompt budget on granite3.3, the cause of the queue wait, and the sidecar's memory growth before any rerun. Nothing was tuned. The rating sheet is unfilled. M2 does not exit on this run.
+
 ## System-Wide Impact
 
 - **Interaction graph:** the only production path exercised in a new way is the router meeting a failing endpoint mid-run, which is existing behaviour. Everything new lives in `tools/scenarios`. `apps/simulation` and the packages are unchanged unless the run finds a defect. A defect is fixed in a separate PR with a test.
