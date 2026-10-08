@@ -42,7 +42,12 @@ import {
   type ScriptedProvider,
   startProvider,
 } from "./provider";
-import { launchConfigFor, prepareOllama } from "./real";
+import {
+  endpointKind,
+  launchConfigFor,
+  prepareOllama,
+  type RealOptions,
+} from "./real";
 import { captureOllamaState, type OllamaState } from "./unattended-diagnostics";
 
 // --- The plan ---------------------------------------------------------------------------------
@@ -135,9 +140,17 @@ export interface RunningWorld {
   lines(): readonly { readonly at: number; readonly text: string }[];
 }
 
+/** What a run records about how it was set up: no host, port, path or key. */
+export interface RunSettings {
+  readonly model: string;
+  readonly reasoningEffort?: "none";
+  readonly endpoint: "local" | "hosted";
+}
+
 export interface UnattendedDeps {
   readonly outDir: string;
   readonly plan: PhasePlan;
+  settings?: RunSettings;
   now(): number;
   sleep(ms: number): Promise<void>;
   /** Starts the sidecar on the run's data directory: the first start, and the restart after the gap. */
@@ -168,6 +181,7 @@ export type UnattendedStatus = "completed" | "failed" | "fault";
 
 export interface UnattendedResult {
   readonly status: UnattendedStatus;
+  readonly settings?: RunSettings;
   /** Why the run did not complete; absent when it did. */
   readonly reason?: string;
   readonly plan: PhasePlan;
@@ -595,6 +609,7 @@ export async function driveUnattended(
   const endedWallMs = deps.now();
   const result: UnattendedResult = {
     status,
+    ...(deps.settings === undefined ? {} : { settings: deps.settings }),
     ...(reason === undefined ? {} : { reason }),
     plan,
     startedWallMs,
@@ -637,6 +652,10 @@ export function renderRunSummary(result: UnattendedResult): string {
       : `A ${result.plan.minutes}-minute run is not a gate run: it has no gate verdict.`,
     "",
     `Running time ${minutes(result.runningMs)} min of ${result.plan.minutes}; elapsed wall time ${minutes(result.elapsedWallMs)} min.`,
+    "",
+    result.settings === undefined
+      ? ""
+      : `The model ran at ${result.settings.endpoint === "local" ? "a local" : "a hosted"} OpenAI-compatible endpoint (${result.settings.model}${result.settings.reasoningEffort === undefined ? "" : `, reasoning ${result.settings.reasoningEffort}`}).`,
     "",
     "| Phase | Wall time | Tick | Running (min) | Note |",
     "| --- | --- | --- | --- | --- |",
@@ -705,6 +724,52 @@ function scriptedAnswers(provider: ScriptedProvider): void {
   }
 }
 
+/** The options of an unattended run: the local Ollama, reached through the outage proxy at `proxyUrl`. */
+function unattendedOptions(
+  args: Args,
+  binary: string,
+  proxyUrl?: string,
+): RealOptions {
+  return {
+    binary,
+    durationMs: args.unattendedMinutes * MINUTE,
+    ollama: OLLAMA,
+    model: args.model,
+    ...(args.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: args.reasoningEffort }),
+    ...(proxyUrl === undefined
+      ? {}
+      : { baseUrl: `${proxyUrl}/v1`, upstreamIsLocal: true as const }),
+  };
+}
+
+/** The launch line the sidecar is started with: the routing config pointing at the proxy, online, with no keys. */
+export function unattendedLaunchConfig(
+  args: Args,
+  binary: string,
+  proxyUrl: string,
+) {
+  return launchConfigFor(unattendedOptions(args, binary, proxyUrl));
+}
+
+/** What the run records about its settings: the model, and that the endpoint was local, never a host or port. */
+export function unattendedSettings(
+  args: Args,
+  binary: string,
+  proxyUrl: string,
+): RunSettings {
+  const options = unattendedOptions(args, binary, proxyUrl);
+  const endpoint = endpointKind(options);
+  return {
+    model: options.model,
+    ...(options.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: options.reasoningEffort }),
+    endpoint: endpoint ?? "local",
+  };
+}
+
 /**
  * One unattended run against the compiled sidecar. The model endpoint is local Ollama behind the outage proxy, or,
  * with `--scripted`, the scripted provider behind it. Returns the result; the caller exits with its code.
@@ -717,15 +782,7 @@ export async function runUnattended(
   mkdirSync(outDir, { recursive: true });
   const dataDir = join(outDir, "app-data");
   const binary = resolveSidecarBinary(args.skipBuild);
-  const options = {
-    binary,
-    durationMs: args.unattendedMinutes * MINUTE,
-    ollama: OLLAMA,
-    model: args.model,
-    ...(args.reasoningEffort === undefined
-      ? {}
-      : { reasoningEffort: args.reasoningEffort }),
-  };
+  const options = unattendedOptions(args, binary);
 
   let provider: ScriptedProvider | undefined;
   let upstream = OLLAMA;
@@ -748,10 +805,7 @@ export async function runUnattended(
       faulted = true;
     },
   });
-  const launchConfig = launchConfigFor({
-    ...options,
-    baseUrl: `${proxy.url}/v1`,
-  });
+  const launchConfig = unattendedLaunchConfig(args, binary, proxy.url);
 
   let current: { readonly pid: number } | undefined;
   const sampler = createMemorySampler({
@@ -763,6 +817,7 @@ export async function runUnattended(
   const deps: UnattendedDeps = {
     outDir,
     plan: phasePlan(args.unattendedMinutes),
+    settings: unattendedSettings(args, binary, proxy.url),
     now: Date.now,
     sleep: (ms) => Bun.sleep(ms),
     async startWorld() {

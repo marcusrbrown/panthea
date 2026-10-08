@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseArgs } from "./args";
 import type { MemorySample } from "./memory";
 import type { ProxyRecord } from "./outage-proxy";
 import {
@@ -28,6 +29,8 @@ import {
   requestsInside,
   type UnattendedDeps,
   type UnattendedResult,
+  unattendedLaunchConfig,
+  unattendedSettings,
 } from "./unattended";
 import type { OllamaState } from "./unattended-diagnostics";
 
@@ -808,4 +811,61 @@ test("exit codes: completed is 0, a failure is 1, and only an infrastructure fau
   expect(exitCodeOf({ ...base, status: "completed" })).toBe(0);
   expect(exitCodeOf({ ...base, status: "failed" })).toBe(1);
   expect(exitCodeOf({ ...base, status: "fault" })).toBe(2);
+});
+
+// --- What the run says about its endpoint -----------------------------------------------------
+
+test("the unattended run's routing names the local Ollama as the endpoint, through the proxy, and its recorded settings say local with no host, port, path or key", () => {
+  const args = parseArgs([
+    "--unattended",
+    "--model=granite3.3-8b-4k",
+    "--reasoning-effort=none",
+  ]);
+  const config = unattendedLaunchConfig(
+    args,
+    "/bin/sidecar",
+    "http://127.0.0.1:53211",
+  ) as {
+    models: { endpoints: Record<string, unknown>[]; fallback: string[] };
+    offline: boolean;
+    keys: Record<string, string>;
+  };
+  expect(config.models.endpoints).toEqual([
+    {
+      id: "ollama",
+      baseUrl: "http://127.0.0.1:53211/v1",
+      model: "granite3.3-8b-4k",
+      reasoningEffort: "none",
+    },
+  ]);
+  expect(config.models.fallback).toEqual(["ollama"]);
+  expect(config.offline).toBe(false);
+  expect(config.keys).toEqual({});
+  expect(JSON.stringify(config)).not.toContain("hosted");
+
+  const settings = unattendedSettings(
+    args,
+    "/bin/sidecar",
+    "http://127.0.0.1:53211",
+  );
+  expect(settings).toEqual({
+    model: "granite3.3-8b-4k",
+    reasoningEffort: "none",
+    endpoint: "local",
+  });
+  const text = JSON.stringify(settings);
+  for (const private_ of ["127.0.0.1", "53211", "/v1", "keyRef"]) {
+    expect(text).not.toContain(private_);
+  }
+});
+
+test("a run's settings are written into run.json beside the result", async () => {
+  const h = harness();
+  h.deps.settings = { model: "m", endpoint: "local" };
+  await driveUnattended(h.deps);
+  const run = JSON.parse(read(h.outDir, "run.json")) as { settings?: unknown };
+  expect(run.settings).toEqual({ model: "m", endpoint: "local" });
+  expect(read(h.outDir, "report.md")).toContain(
+    "a local OpenAI-compatible endpoint",
+  );
 });
