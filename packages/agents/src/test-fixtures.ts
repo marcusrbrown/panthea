@@ -169,6 +169,34 @@ export class WorldRun {
     this.events.push(...result.events);
     return result;
   }
+  /** `who` was told by `teller` that `agent` harmed `target`: a told memory with a claim. Returns the report, the cause the god may cite. */
+  accused(
+    who: string,
+    teller: string,
+    claim: { agent: string; target?: string },
+    salience = 4,
+  ): EventId {
+    const consequence = { effect: "harm", ...claim };
+    const report = this.apply({
+      kind: "report-told",
+      entityId: teller,
+      listenerId: who,
+      content: "You wronged me, and you know it.",
+      claim: consequence,
+    });
+    this.apply({
+      kind: "memory-recorded",
+      memoryKind: "told",
+      entityId: who,
+      sourceEventId: report.id,
+      teller,
+      content: "You wronged me, and you know it.",
+      subjects: [teller, claim.agent, ...(claim.target ? [claim.target] : [])],
+      salience,
+      consequence,
+    });
+    return report.id;
+  }
   /** `mortal` prays to `god` about food that spoiled; a tick passes first, so the next prayer is newer. */
   prays(mortal: string, god = "zeus"): EventId {
     this.state = { ...this.state, tick: this.state.tick + 1 };

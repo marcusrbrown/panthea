@@ -351,8 +351,8 @@ function memoryInvolves(memory: MemoryEntry, target: EntityId): boolean {
 
 /**
  * The bounded slice of `actorId`'s memory and feelings a turn's prompt shows:
- * its `MAX_REMEMBERED` most salient memories (the newest among equals),
- * oldest first, and its `MAX_FEELINGS` strongest feelings.
+ * its newest memory and the `MAX_REMEMBERED - 1` most salient others (the newest
+ * among equals), oldest first, and its `MAX_FEELINGS` strongest feelings.
  */
 /** What one petition's cause was, in the god's words. */
 /** How a god is told it may keep and change one goal. */
@@ -624,15 +624,22 @@ export function rememberedBy(
     }
     goalHistory.sort((a, b) => a.sequence - b.sequence);
   }
-  const memories = newestPerKey(
+  const known = newestPerKey(
     [...getMemories(state, actorId)].sort(
       (a, b) => a.recordedAt - b.recordedAt,
     ),
     (memory) => (memory.kind === "told" ? memory.teller : undefined),
-  )
-    .sort((a, b) => b.salience - a.salience || b.recordedAt - a.recordedAt)
-    .slice(0, MAX_REMEMBERED)
-    .sort((a, b) => a.recordedAt - b.recordedAt);
+  );
+  // The newest memory is always kept: the last thing that happened to the god, whatever its salience. The rest
+  // fill the other slots by salience.
+  const newest = known[known.length - 1];
+  const memories = [
+    ...(newest === undefined ? [] : [newest]),
+    ...known
+      .filter((memory) => memory !== newest)
+      .sort((a, b) => b.salience - a.salience || b.recordedAt - a.recordedAt)
+      .slice(0, MAX_REMEMBERED - 1),
+  ].sort((a, b) => a.recordedAt - b.recordedAt);
   const strength = (r: RelationshipState) => Math.abs(r.affinity) + r.grudge;
   const relationships = [...state.relationships.values()]
     .filter((r) => r.from === actorId)

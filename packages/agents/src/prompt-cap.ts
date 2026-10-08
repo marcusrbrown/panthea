@@ -5,7 +5,7 @@
 // Ollama (`prompt_eval_count` against request characters).
 
 import type { GodProfile } from "@panthea/content";
-import type { EntityId } from "@panthea/contracts";
+import type { EntityId, EventId } from "@panthea/contracts";
 import type { PerceptionSnapshot, WorldState } from "@panthea/world";
 import type { RoutePlan } from "./config";
 import {
@@ -132,6 +132,78 @@ function rederive(input: CapInput, remembered: Remembered): Remembered {
   };
 }
 
+/** The ledger ids the cap never sheds beyond the floor, fixed once from the world as built. */
+export interface CausalSet {
+  /** Memory ids: the newest memory, and the evidence behind the demand opening shown first. */
+  readonly memories: ReadonlySet<EventId>;
+  /** Prayer ids: the one prayer the god can answer, beyond those a live practice names. */
+  readonly prayers: ReadonlySet<EventId>;
+}
+
+/**
+ * What a turn's cap keeps besides the floor, so that what the god just learned, the bargain it is shown first
+ * and one prayer it can answer all survive:
+ * - the newest memory;
+ * - the memory (or the prayer, for harm a prayer told of) that the demand opening shown first rests on, only
+ *   that one and not every cause available;
+ * - one prayer with its choices: the prayer the first offer opening names, else the first prayer shown with an
+ *   offer, else the newest prayer with any answer.
+ * It is read from the unshed world once. Shedding re-derives the practice options from survivors, and what
+ * that derives later is never added here.
+ */
+export function causalSet(input: CapInput): CausalSet {
+  const { remembered, state } = input;
+  const memories = new Set<EventId>();
+  const prayers = new Set<EventId>();
+  const shownPrayer = new Set(remembered.petitions.map((p) => p.id));
+
+  const newest = [...remembered.memories].sort(
+    (a, b) => b.recordedAt - a.recordedAt || (a.id < b.id ? -1 : 1),
+  )[0];
+  if (newest !== undefined) memories.add(newest.id);
+
+  const first = remembered.practice.openings[0];
+  if (first?.kind === "demand") {
+    const evidence = remembered.practice.causes.find(
+      (cause) => cause.id === first.intent.cause,
+    )?.memoryId;
+    if (evidence !== undefined) {
+      if (remembered.memories.some((memory) => memory.id === evidence)) {
+        memories.add(evidence);
+      } else if (shownPrayer.has(evidence)) {
+        prayers.add(evidence);
+      }
+    }
+  }
+
+  const named = remembered.practice.openings.find(
+    (opening) => typeof opening.intent.prayer === "string",
+  )?.intent.prayer;
+  const offered = remembered.petitions.find(
+    (petition) => petition.offer !== undefined,
+  )?.id;
+  const answerable = [...remembered.petitions]
+    .filter(
+      (petition) =>
+        petition.bless !== undefined ||
+        petition.offer !== undefined ||
+        petition.redress !== undefined ||
+        petition.strikeMortal !== undefined ||
+        petition.strikeBuildings !== undefined ||
+        petition.refuse !== undefined,
+    )
+    .sort(
+      (a, b) =>
+        (state.petitions.get(b.id)?.sequence ?? 0) -
+          (state.petitions.get(a.id)?.sequence ?? 0) || (a.id < b.id ? -1 : 1),
+    )[0]?.id;
+  const keep = [named, offered, answerable].find(
+    (id): id is EventId => id !== undefined && shownPrayer.has(id as EventId),
+  );
+  if (keep !== undefined) prayers.add(keep);
+  return { memories, prayers };
+}
+
 /** Tier 1: the oldest recent event. */
 function withoutEvent({ snapshot, remembered }: Pair): Pair | undefined {
   if (snapshot.events.length === 0) return undefined;
@@ -158,16 +230,17 @@ function withoutAction({ snapshot, remembered }: Pair): Pair | undefined {
 }
 
 /**
- * Tier 3: the least salient memory (the oldest among equals), with its goal-history row, and everything
- * derived from it; once none is left, the weakest feeling.
+ * Tier 3: the least salient memory outside the causal set (the oldest among equals), with its goal-history row,
+ * and everything derived from it; once none is left, the weakest feeling.
  */
 function withoutMemory(
   { snapshot, remembered }: Pair,
   input: CapInput,
+  causal: CausalSet,
 ): Pair | undefined {
-  const gone = [...remembered.memories].sort(
-    (a, b) => a.salience - b.salience || a.recordedAt - b.recordedAt,
-  )[0];
+  const gone = remembered.memories
+    .filter((memory) => !causal.memories.has(memory.id))
+    .sort((a, b) => a.salience - b.salience || a.recordedAt - b.recordedAt)[0];
   if (gone !== undefined) {
     return {
       snapshot,
@@ -191,14 +264,15 @@ function withoutMemory(
   };
 }
 
-/** Tier 4: the oldest prayer no live practice names. Prayers are held protected first, then newest first. */
+/** Tier 4: the oldest prayer no live practice names and the causal set does not keep. Prayers are held protected first, then newest first. */
 function withoutPrayer(
   { snapshot, remembered }: Pair,
   input: CapInput,
+  causal: CausalSet,
 ): Pair | undefined {
-  const protectedIds = protectedPrayers(input.state, input.actorId);
+  const live = protectedPrayers(input.state, input.actorId);
   const at = remembered.petitions
-    .map((petition) => protectedIds.has(petition.id))
+    .map((petition) => live.has(petition.id) || causal.prayers.has(petition.id))
     .lastIndexOf(false);
   if (at < 0) return undefined;
   return {
@@ -213,7 +287,7 @@ function withoutPrayer(
 
 const TIERS: readonly (readonly [
   keyof ShedCounts,
-  (pair: Pair, input: CapInput) => Pair | undefined,
+  (pair: Pair, input: CapInput, causal: CausalSet) => Pair | undefined,
 ])[] = [
   ["events", withoutEvent],
   ["actions", withoutAction],
@@ -226,16 +300,19 @@ const TIERS: readonly (readonly [
  * the cap at `ratio` or nothing sheddable is left. It measures the rebuilt request after every unit, so the
  * result is the real size and a unit shed always changes what the prompt, the schema and the parser are built
  * from together. The protected floor is never touched: the instructions and persona, the goal and journey,
- * the god's own obligations and every prayer a live practice names. The loop ends after at most one rebuild
- * per unit, and asks no model.
+ * the god's own obligations, every prayer a live practice names, and the causal set (`causalSet`), fixed from
+ * the world as built. The loop ends after at most one rebuild per unit, and asks no model.
  */
-export function shedToCap(input: CapInput): Capped {
+export function shedToCap(
+  input: CapInput,
+  causal: CausalSet = causalSet(input),
+): Capped {
   let pair: Pair = { snapshot: input.snapshot, remembered: input.remembered };
   let context = buildGodContext(input.profile, pair.snapshot, pair.remembered);
   const shed = { events: 0, actions: 0, memories: 0, prayers: 0 };
   for (const [tier, next] of TIERS) {
     while (!fitsCap(context, input.ratio)) {
-      const reduced = next(pair, input);
+      const reduced = next(pair, input, causal);
       if (reduced === undefined) break;
       pair = reduced;
       shed[tier] += 1;
@@ -381,7 +458,7 @@ function refillCandidates(
  * what stayed out.
  */
 export function fitToCap(input: CapInput): Capped {
-  const shedOnly = shedToCap(input);
+  const shedOnly = shedToCap(input, causalSet(input));
   if (!shedOnly.fits || Object.values(shedOnly.shed).every((n) => n === 0)) {
     return shedOnly;
   }

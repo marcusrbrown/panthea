@@ -18,6 +18,7 @@ import {
 } from "./context";
 import { PROMPT_TOKEN_CAP } from "./practices";
 import {
+  causalSet,
   DEFAULT_RATIO,
   estimateTokens,
   fitsCap,
@@ -200,6 +201,10 @@ interface WorldOptions {
   readonly eventText?: number;
   /** The characters of the words each of the god's own reports tells. */
   readonly actionText?: number;
+  /** Told accusations of Zeus, oldest first (each older than every other memory): who told him, and the salience of the memory. The one with the highest salience is the demand opening shown first. */
+  readonly accusers?: readonly { teller: string; salience: number }[];
+  /** A witnessed memory newer than every other, of this salience. */
+  readonly newest?: number;
   /** Prayers after the live ones alternate between a help prayer and a (longer) punish prayer, the first of them a help prayer. */
   readonly mixedPrayers?: boolean;
 }
@@ -213,6 +218,8 @@ function busyZeus(options: WorldOptions = {}) {
     actions = 5,
     live = 3,
     uniform = false,
+    accusers = [],
+    newest,
     eventText = 0,
     actionText = 0,
     mixedPrayers = false,
@@ -301,6 +308,15 @@ function busyZeus(options: WorldOptions = {}) {
       });
     }
   }
+  const accusedBy = accusers.map((accuser) => ({
+    ...accuser,
+    cause: run.accused(
+      "zeus",
+      accuser.teller,
+      { agent: "zeus", target: accuser.teller },
+      accuser.salience,
+    ),
+  }));
   for (const salience of memories) {
     const subject =
       uniform || salience === 2 || salience === 5 ? "farmer" : people[salience];
@@ -315,6 +331,24 @@ function busyZeus(options: WorldOptions = {}) {
       subjects: ["woodcutter", subject],
       salience,
       consequence: { effect: "harm", agent: "woodcutter", target: subject },
+    });
+  }
+  if (newest !== undefined) {
+    run.apply({
+      id: "evt-m-newest",
+      sequence: 800,
+      kind: "memory-recorded",
+      memoryKind: "witnessed",
+      entityId: "zeus",
+      sourceEventId: "evt-7-1n",
+      eventKind: "theft",
+      subjects: ["woodcutter", people[newest]],
+      salience: newest,
+      consequence: {
+        effect: "harm",
+        agent: "woodcutter",
+        target: people[newest],
+      },
     });
   }
   for (const strength of feelings) {
@@ -362,6 +396,7 @@ function busyZeus(options: WorldOptions = {}) {
     remembered,
     prayerIds,
     protectedIds,
+    accusedBy,
   };
 }
 
@@ -553,20 +588,21 @@ describe("fitToCap: the order of shedding", () => {
 
   test("then feelings, weakest first, once every memory is gone", () => {
     const w = busyZeus();
+    // The newest memory (salience 6) is part of the floor, so it stays when every other is gone.
     const never = busyZeus({
       events: 0,
       actions: 0,
-      memories: [],
+      memories: [6],
       feelings: [3, 4, 5],
     });
     const capped = capAt(w, ratioAt(chars(never)));
     expect(capped.shed).toEqual({
       events: 6,
       actions: 5,
-      memories: 8,
+      memories: 7,
       prayers: 0,
     });
-    expect(capped.remembered.memories).toEqual([]);
+    expect(capped.remembered.memories.map((m) => m.salience)).toEqual([6]);
     expect(capped.remembered).toEqual({ ...never.remembered });
     expectAgreement(w, capped);
   });
@@ -577,7 +613,7 @@ describe("fitToCap: the order of shedding", () => {
     const bare = busyZeus({
       events: 0,
       actions: 0,
-      memories: [],
+      memories: [6],
       feelings: [],
     });
     // Room for the bare world and one unprotected prayer less than it shows.
@@ -587,7 +623,7 @@ describe("fitToCap: the order of shedding", () => {
     const capped = shedAt(w, ratioAt(chars(bare) - 1));
     expect(capped.shed.events).toBe(6);
     expect(capped.shed.actions).toBe(5);
-    expect(capped.shed.memories).toBe(11);
+    expect(capped.shed.memories).toBe(10);
     expect(capped.shed.prayers).toBe(1);
     expect(capped.remembered.petitions.map((p) => p.id)).toEqual(
       bare.remembered.petitions.slice(0, -1).map((p) => p.id),
@@ -618,7 +654,8 @@ describe("fitToCap: the order of shedding", () => {
     const w = busyZeus();
     const events = w.snapshot.events.length;
     const actions = w.remembered.ownActions.length;
-    const memoriesAndFeelings = 11;
+    // Eleven units, less the newest memory the cap keeps.
+    const memoriesAndFeelings = 10;
     let last = { events: 0, actions: 0, memories: 0, prayers: 0 };
     for (const ratio of [
       2.85, 2.6, 2.4, 2.2, 2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.8, 0.5,
@@ -645,10 +682,19 @@ describe("fitToCap: the floor", () => {
     expect(capped.fits).toBe(false);
     expect(capped.snapshot.events).toEqual([]);
     expect(capped.remembered.ownActions).toEqual([]);
-    expect(capped.remembered.memories).toEqual([]);
+    // Only the newest memory is left (it is part of the floor), and no feeling.
+    expect(capped.remembered.memories.map((m) => m.salience)).toEqual([6]);
     expect(capped.remembered.relationships).toEqual([]);
+    // The prayers a live practice names, and the one prayer the god can answer.
+    const answerable = w.remembered.petitions
+      .filter((petition) => !w.protectedIds.includes(petition.id))
+      .sort(
+        (a, b) =>
+          (w.state.petitions.get(b.id)?.sequence ?? 0) -
+          (w.state.petitions.get(a.id)?.sequence ?? 0),
+      )[0] as { id: string };
     expect(capped.remembered.petitions.map((p) => p.id).sort()).toEqual(
-      [...w.protectedIds].sort(),
+      [...w.protectedIds, answerable.id as EventId].sort(),
     );
     for (const kept of capped.remembered.petitions) {
       expect(w.remembered.petitions).toContainEqual(kept);
@@ -665,8 +711,8 @@ describe("fitToCap: the floor", () => {
     expect(capped.shed).toEqual({
       events: 6,
       actions: 5,
-      memories: 11,
-      prayers: w.remembered.petitions.length - 3,
+      memories: 10,
+      prayers: w.remembered.petitions.length - 4,
     });
     expectAgreement(w, capped);
   });
@@ -677,7 +723,7 @@ describe("fitToCap: the floor", () => {
     const capped = capAt(w, 0.5);
     expect(capped.shed.events).toBe(0);
     expect(capped.shed.actions).toBe(5);
-    expect(capped.shed.memories).toBe(11);
+    expect(capped.shed.memories).toBe(10);
     expect(capped.shed.prayers).toBe(0);
     expect(shownText(capped)).not.toContain(PRAYERS_HEADING);
     expect(shownText(capped)).not.toContain("more prayers");
@@ -755,18 +801,6 @@ describe("fitToCap: the boundary", () => {
 });
 
 describe("fitToCap: the refill", () => {
-  /** The loosest ratio at which `shedToCap` has to shed at least one prayer: just below it, one prayer closes the gap. */
-  function loosestPrayerRatio(w: World): number {
-    let lo = 0.5;
-    let hi = 4;
-    for (let step = 0; step < 60; step += 1) {
-      const mid = (lo + hi) / 2;
-      if (shedAt(w, mid).shed.prayers >= 1) lo = mid;
-      else hi = mid;
-    }
-    return lo;
-  }
-
   /**
    * Hera's tick-99 turn under granite3.3, in Zeus's world: two memories and a feeling, one recent event and one
    * action of their own that are long, and prayers over the budget. Tier 3 runs out before one prayer closes the gap.
@@ -785,14 +819,15 @@ describe("fitToCap: the refill", () => {
     const w = heraShape();
     const ratio = loosestPrayerRatio(w);
     const gross = shedAt(w, ratio);
-    // Everything of tiers 1 to 3 went (the two memories and the feeling are three units), and one prayer more.
+    // Everything of tiers 1 to 3 went but the newest memory, which the cap keeps (the other memory and the feeling
+    // are two units), and one prayer more.
     expect(gross.shed).toEqual({
       events: 1,
       actions: 1,
-      memories: 3,
+      memories: 2,
       prayers: 1,
     });
-    expect(gross.remembered.memories).toEqual([]);
+    expect(gross.remembered.memories.map((m) => m.salience)).toEqual([4]);
     expect(gross.remembered.relationships).toEqual([]);
 
     const capped = capAt(w, ratio);
@@ -906,7 +941,7 @@ describe("fitToCap: the refill", () => {
     }
     expect(sweeps).toBeGreaterThan(100);
     expect(fewest).toBe(1);
-    expect(most).toBeGreaterThan(2);
+    expect(most).toBeGreaterThan(1);
   });
 
   test("whatever the ratio, the refilled request fits and is no smaller than the shed one, brings back no more than was shed, and the unshed world is over the cap", () => {
@@ -942,5 +977,328 @@ describe("fitToCap: the refill", () => {
         }
       }
     }
+  });
+});
+
+/** The loosest ratio at which `shedToCap` has to shed at least one prayer: just below it, one prayer closes the gap. */
+function loosestPrayerRatio(w: World): number {
+  let lo = 0.5;
+  let hi = 4;
+  for (let step = 0; step < 60; step += 1) {
+    const mid = (lo + hi) / 2;
+    if (shedAt(w, mid).shed.prayers >= 1) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+// --- The causal set ---------------------------------------------------------------------------
+//
+// Beyond the floor the cap keeps three things, fixed from the world as built: the newest memory, the evidence
+// behind the demand opening shown first, and one prayer the god can answer.
+
+describe("the causal set: the newest memory", () => {
+  test("rememberedBy admits the newest memory first, even when its salience is the lowest of more than six", () => {
+    // Seven memories: salience 3 to 7 and a newest one of salience 1. By salience alone the newest is left out.
+    const w = busyZeus({
+      memories: [3, 4, 5, 6, 7],
+      newest: 1,
+      accusers: [{ teller: "hera", salience: 2 }],
+      live: 1,
+      feelings: [],
+    });
+    const shown = w.remembered.memories;
+    expect(shown).toHaveLength(6);
+    expect(shown.map((m) => String(m.id))).toContain("evt-m-newest");
+    // The least salient of the rest (the accusation, salience 2) is the one left out; the order is oldest first.
+    expect(shown.some((m) => m.salience === 2)).toBe(false);
+    expect(String(shown.at(-1)?.id)).toBe("evt-m-newest");
+  });
+
+  test("S13's shape: the newest memory survives a cap that sheds every memory by salience, and a prayer goes instead", () => {
+    const w = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      memories: [5, 6, 7],
+      newest: 1,
+    });
+    const ratio = loosestPrayerRatio(w);
+    const gross = shedAt(w, ratio);
+    expect(gross.shed.memories).toBe(3);
+    expect(gross.shed.prayers).toBeGreaterThanOrEqual(1);
+    // Exact survivors: the newest memory alone; every other memory is gone and some unprotected prayers with them.
+    expect(gross.remembered.memories.map((m) => String(m.id))).toEqual([
+      "evt-m-newest",
+    ]);
+    expect(gross.remembered.petitions.map((p) => p.id)).toEqual(
+      w.remembered.petitions
+        .slice(0, w.remembered.petitions.length - gross.shed.prayers)
+        .map((p) => p.id),
+    );
+    expect(shownText(gross)).toContain("evt-7-1n");
+    for (const salience of [5, 6, 7]) {
+      expect(shownText(gross)).not.toContain(`evt-7-1${salience}`);
+    }
+    // The memory is cited in the schema and the parser as it was.
+    const schema = godIntentSchema(w.profile, gross.snapshot, gross.remembered);
+    expect(
+      schema.parse({
+        action: "report",
+        listener: "hera",
+        content: "x",
+        linkedEventId: "evt-7-1n",
+      }).ok,
+    ).toBe(true);
+    expectAgreement(w, gross);
+    // It also survives the refill.
+    const capped = capAt(w, ratio);
+    expect(capped.remembered.memories.map((m) => String(m.id))).toContain(
+      "evt-m-newest",
+    );
+    expect(capped.fits).toBe(true);
+  });
+});
+
+describe("the causal set: the evidence behind the demand opening shown first", () => {
+  const accused = (extra: Partial<WorldOptions> = {}) =>
+    busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      memories: [5, 6, 7],
+      newest: 3,
+      accusers: [{ teller: "hera", salience: 2 }],
+      ...extra,
+    });
+
+  test("the first demand's cause memory survives a cap that would shed it, and its citation stays valid in the schema and the parser", () => {
+    const w = accused();
+    const first = w.remembered.practice.openings[0];
+    expect(first?.kind).toBe("demand");
+    const memory = w.accusedBy[0] as { cause: string };
+    const ratio = loosestPrayerRatio(w);
+    const gross = shedAt(w, ratio);
+    // The evidence is the least salient memory but one the cap does not shed: it and the newest memory are what is left.
+    expect(gross.remembered.memories.map((m) => m.salience).sort()).toEqual([
+      2, 3,
+    ]);
+    expect(gross.remembered.practice.openings[0]).toEqual(first);
+    expect(shownText(gross)).toContain(first?.label as string);
+    const schema = godIntentSchema(w.profile, gross.snapshot, gross.remembered);
+    expect(schema.parse(first?.intent).ok).toBe(true);
+    expect(JSON.stringify(schema.jsonSchema)).toContain(memory.cause);
+    expectAgreement(w, gross);
+    // And a bare cap sheds a memory that the cap with this protection keeps: the positive control.
+    expect(w.remembered.memories.map((m) => m.salience)).toContain(2);
+  });
+
+  test("only the opening shown first is protected: with two accusers, the other's evidence is shed", () => {
+    const w = accused({
+      accusers: [
+        { teller: "hera", salience: 2 },
+        { teller: "poseidon", salience: 3 },
+      ],
+    });
+    const first = w.remembered.practice.openings[0];
+    expect(first?.kind).toBe("demand");
+    // Poseidon's account is the more salient, so the opening rests on it.
+    expect(first?.label).toContain("poseidon");
+    const gross = shedAt(w, loosestPrayerRatio(w));
+    const told = gross.remembered.memories.filter((m) => m.kind === "told");
+    expect(
+      told.map((m) => (m.kind === "told" ? String(m.teller) : "")),
+    ).toEqual(["poseidon"]);
+    expect(gross.remembered.practice.openings[0]).toEqual(first);
+    expectAgreement(w, gross);
+  });
+});
+
+describe("the causal set: one answerable prayer", () => {
+  /** The floor and nothing else the cap may shed: every unprotected prayer that can go, goes. */
+  const squeezed = (w: World) => capAt(w, 0.5);
+
+  test("the prayer the first offer names survives, with its choices intact", () => {
+    const w = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      memories: [],
+    });
+    const offer = w.remembered.practice.openings.find(
+      (opening) => opening.kind === "offer",
+    );
+    const named = offer?.intent.prayer as EventId;
+    expect(named).toBeDefined();
+    expect(w.protectedIds).not.toContain(named);
+    const capped = squeezed(w);
+    expect(capped.remembered.petitions.map((p) => p.id).sort()).toEqual(
+      [...w.protectedIds, named].sort(),
+    );
+    const kept = capped.remembered.petitions.find((p) => p.id === named);
+    const was = w.remembered.petitions.find((p) => p.id === named);
+    expect(kept).toEqual(was);
+    // Its choices: help freely, set terms, refuse.
+    expect(kept?.bless).toBeDefined();
+    expect(kept?.offer).toBeDefined();
+    expect(kept?.refuse).toBeDefined();
+    expect(capped.remembered.practice.openings).toContainEqual(
+      offer as NonNullable<typeof offer>,
+    );
+    expectAgreement(w, capped);
+  });
+
+  test("with no offer naming one, the newest prayer the god can answer survives, with its choices intact", () => {
+    // A boon is owed, so no terms are offered on any prayer: no opening and no offer names a prayer.
+    const w = busyZeus({ events: 0, actions: 0, feelings: [], memories: [] });
+    expect(w.remembered.practice.openings).toEqual([]);
+    expect(w.remembered.petitions.some((p) => p.offer !== undefined)).toBe(
+      false,
+    );
+    const newest = w.remembered.petitions
+      .filter((p) => !w.protectedIds.includes(p.id))
+      .sort(
+        (a, b) =>
+          (w.state.petitions.get(b.id)?.sequence ?? 0) -
+          (w.state.petitions.get(a.id)?.sequence ?? 0),
+      )[0] as World["remembered"]["petitions"][number];
+    const capped = squeezed(w);
+    expect(capped.remembered.petitions.map((p) => p.id).sort()).toEqual(
+      [...w.protectedIds, newest.id].sort(),
+    );
+    expect(capped.remembered.petitions.find((p) => p.id === newest.id)).toEqual(
+      newest,
+    );
+    expect(newest.bless).toBeDefined();
+    expect(newest.refuse).toBeDefined();
+    expectAgreement(w, capped);
+  });
+});
+
+describe("the causal set: fixed once", () => {
+  test("the set is read from the world as built, and shedding adds nothing to it", () => {
+    const w = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      memories: [5, 6, 7],
+      newest: 3,
+      accusers: [
+        { teller: "hera", salience: 2 },
+        { teller: "poseidon", salience: 4 },
+      ],
+    });
+    const input = {
+      profile: w.profile,
+      state: w.state,
+      actorId: id("zeus"),
+      snapshot: w.snapshot,
+      remembered: w.remembered,
+      ratio: 0.5,
+    };
+    const set = causalSet(input);
+    // The newest memory and poseidon's account, the one the first demand opening rests on; the offer's prayer.
+    expect([...set.memories].map(String).sort()).toEqual(
+      [
+        "evt-m-newest",
+        String(
+          w.remembered.practice.causes.find(
+            (cause) =>
+              cause.id === w.remembered.practice.openings[0]?.intent.cause,
+          )?.memoryId,
+        ),
+      ].sort(),
+    );
+    expect(set.prayers.size).toBe(1);
+    // Reading it again from what the shed left asks the world about survivors only, and finds no more.
+    const squeezed = shedToCap(input, set);
+    const again = causalSet({ ...input, remembered: squeezed.remembered });
+    expect(again.memories).toEqual(set.memories);
+    expect(again.prayers).toEqual(set.prayers);
+    // Everything that survives of the set is the set: no other memory, and one prayer beyond the live practice.
+    expect(
+      squeezed.remembered.memories.map((m) => String(m.id)).sort(),
+    ).toEqual([...set.memories].sort());
+    expect(
+      squeezed.remembered.petitions
+        .map((p) => p.id)
+        .filter((pid) => !w.protectedIds.includes(pid)),
+    ).toEqual([...set.prayers]);
+  });
+});
+
+describe("the causal set: frozen before any shed", () => {
+  test("shedding keeps exactly the set it was given and never asks the survivors for another", () => {
+    const w = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      memories: [5, 6, 7],
+      newest: 3,
+      accusers: [{ teller: "hera", salience: 2 }],
+    });
+    const input = {
+      profile: w.profile,
+      state: w.state,
+      actorId: id("zeus"),
+      snapshot: w.snapshot,
+      remembered: w.remembered,
+      ratio: 0.5,
+    };
+    // A set the world would never derive: the memory of salience 6 alone, and no prayer.
+    const given = {
+      memories: new Set([toEntityId("evt-m-6") as unknown as EventId]),
+      prayers: new Set<EventId>(),
+    };
+    expect(
+      causalSet(input).memories.has(
+        given.memories.values().next().value as EventId,
+      ),
+    ).toBe(false);
+    const squeezed = shedToCap(input, given);
+    expect(squeezed.remembered.memories.map((m) => String(m.id))).toEqual([
+      "evt-m-6",
+    ]);
+    // Only the prayers a live practice names are left.
+    expect(squeezed.remembered.petitions.map((p) => p.id)).toEqual(
+      w.protectedIds,
+    );
+  });
+});
+
+describe("the causal set: the floor plus the set over the cap", () => {
+  test("is not sent: the cap reports it does not fit, however it is asked", () => {
+    const w = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      memories: [5, 6, 7],
+      newest: 3,
+      accusers: [{ teller: "hera", salience: 2 }],
+    });
+    const squeezed = capAt(w, 0.5);
+    // At the size of the floor and the set exactly, it fits; one character less and it does not.
+    const exact = requestChars(squeezed.context);
+    expect(capAt(w, ratioAt(exact)).fits).toBe(true);
+    const over = capAt(w, ratioAt(exact - 1));
+    expect(over.fits).toBe(false);
+    expect(over.remembered.memories).toEqual(squeezed.remembered.memories);
+    // The set is what is over: the same world with no memory to keep is smaller than the size that did not fit.
+    const floorOnly = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      memories: [],
+    });
+    const floor = requestChars(capAt(floorOnly, 0.5).context);
+    expect(floor).toBeLessThan(exact - 1);
+    expect(capAt(floorOnly, ratioAt(exact - 1)).fits).toBe(true);
   });
 });
