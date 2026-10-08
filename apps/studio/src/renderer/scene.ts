@@ -3,7 +3,7 @@
 // calling it, so no node-only code from @panthea/assets reaches the browser
 // bundle: everything imported from there is a type.
 
-import type { PlaceholderAsset, Resolution } from "@panthea/assets";
+import type { Resolution } from "@panthea/assets";
 import {
   type Cell,
   depthOf,
@@ -22,6 +22,22 @@ import {
 type Canon = Extract<Resolution, { source: "canon" }>;
 type Placeholder = Extract<Resolution, { source: "placeholder" }>;
 
+/** What placement needs of a placeholder; the resolver's PlaceholderAsset satisfies it. */
+export interface PlaceholderSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A resolver result, or the same shape rebuilt from what the bridge sends. */
+export type SceneResolution =
+  | Canon
+  | {
+      readonly source: "placeholder";
+      readonly reason: Placeholder["reason"];
+      readonly uri: string;
+      readonly placeholder: PlaceholderSize;
+    };
+
 export type SceneEntity =
   | {
       readonly kind: "diamond";
@@ -34,7 +50,7 @@ export type SceneEntity =
       readonly layer: Layer;
       /** The footprint's origin cell: its smallest x and y. */
       readonly cell: Cell;
-      readonly resolution: Resolution;
+      readonly resolution: SceneResolution;
     };
 
 export type InstanceArt =
@@ -51,7 +67,7 @@ export type InstanceArt =
       readonly source: "placeholder";
       readonly reason: Placeholder["reason"];
       readonly uri: string;
-      readonly placeholder: PlaceholderAsset;
+      readonly placeholder: PlaceholderSize;
     }
   | { readonly source: "diamond" };
 
