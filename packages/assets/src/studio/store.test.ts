@@ -27,7 +27,7 @@ import {
   workingSet,
 } from "./_test-fixtures";
 import type { EditRecord } from "./export-import";
-import { readStudioStatus } from "./index";
+import { readStudioBlob, readStudioStatus } from "./index";
 import { openStore } from "./store";
 
 afterEach(removeTempRoots);
@@ -58,6 +58,19 @@ describe("authoring root", () => {
       invalid: [],
     });
     expect(existsSync(root)).toBe(false);
+  });
+});
+
+describe("blob reads without the writer", () => {
+  test("readStudioBlob returns stored bytes by hash and nothing for a hash that is not stored", () => {
+    const root = tempRoot();
+    const bytes = new Uint8Array([7, 8, 9]);
+    const hash = openStore(root).putBlob(bytes);
+    expect(readStudioBlob(root, hash)).toEqual(bytes);
+    expect(
+      readStudioBlob(root, sha256Hex(new Uint8Array([1]))),
+    ).toBeUndefined();
+    expect(readStudioBlob(tempRoot(), hash)).toBeUndefined();
   });
 });
 

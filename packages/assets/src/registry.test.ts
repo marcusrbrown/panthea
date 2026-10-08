@@ -34,7 +34,9 @@ import {
 import { sha256Hex } from "./hash";
 import type { Palette } from "./palette";
 import {
+  checkBlob,
   loadRegistry,
+  parseAssetManifest,
   publishAsset,
   readRevision,
   selectRevision,
@@ -958,5 +960,43 @@ describe("reading one published revision", () => {
     writeFileSync(blobPath, bytes.slice(0, 40));
 
     expect(read(dir, older.revision).ok).toBe(false);
+  });
+});
+
+describe("the blob gate is exported for read-only callers", () => {
+  const sprite = spriteFixture();
+  const bytes = [...sprite.blobs.values()][0] as Uint8Array;
+  const { atlas } = sprite.manifest;
+
+  it("accepts the exact bytes the manifest names", () => {
+    expect(checkBlob(bytes, atlas.blob, atlas, "atlas.png")).toEqual({
+      ok: true,
+      value: true,
+    });
+  });
+
+  it("refuses a truncated PNG whose own hash is the recorded one", () => {
+    const cut = bytes.slice(0, 29);
+    const checked = checkBlob(cut, sha256Hex(cut), atlas, "atlas.png");
+    expect(checked.ok).toBe(false);
+    if (!checked.ok) expect(checked.code).toBe("corrupt-blob");
+  });
+
+  it("refuses an intact PNG whose size is not the declared atlas size", () => {
+    const checked = checkBlob(
+      bytes,
+      atlas.blob,
+      { width: atlas.width + 1, height: atlas.height },
+      "atlas.png",
+    );
+    expect(checked.ok).toBe(false);
+  });
+
+  it("re-exports the manifest parser so callers need no contracts dependency", () => {
+    const parsed = parseAssetManifest(
+      JSON.parse(JSON.stringify(sprite.manifest)),
+      vocabulary,
+    );
+    expect(parsed.ok).toBe(true);
   });
 });

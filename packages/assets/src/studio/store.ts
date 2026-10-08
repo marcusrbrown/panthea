@@ -410,3 +410,7 @@ export function openStore(root: string): Store {
 /** Inspects the durable records without owning the session lock. */
 export const readStudioStatus = (root: string): StudioStatus =>
   openStore(root).status();
+
+/** One stored blob by hash, without owning the session lock. */
+export const readStudioBlob = (root: string, hash: Sha256) =>
+  openStore(root).readBlob(hash);
