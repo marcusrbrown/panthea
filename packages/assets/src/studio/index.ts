@@ -19,6 +19,11 @@ export {
   type LoadedContent,
   loadStudioContent,
 } from "./content";
+export {
+  type EditSources,
+  type ResolvedEdit,
+  resolveEdit,
+} from "./edit";
 export type {
   EditCommandResult,
   EditFailure,

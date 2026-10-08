@@ -37,6 +37,11 @@ export interface SelectedProfile {
     readonly sampleSteps: number;
     readonly txtCfg: number;
   };
+  /** Masked edits sample with classifier-free guidance and a distilled guidance, as the probe's CLI runs measured; plain generation keeps `sampling.txtCfg`. */
+  readonly edit: {
+    readonly txtCfg: number;
+    readonly distilledGuidance: number;
+  };
   readonly negativePrompt: string;
   /** Generation sizes the probe measured; each is the native cell times `generationScale`. */
   readonly measuredCells: readonly { readonly w: number; readonly h: number }[];
@@ -91,6 +96,7 @@ export const SELECTED_PROFILE: SelectedProfile = {
   ],
   serverFlags: ["--offload-to-cpu", "--diffusion-fa"],
   sampling: { sampleMethod: "euler", sampleSteps: 8, txtCfg: 1 },
+  edit: { txtCfg: 7, distilledGuidance: 1 },
   negativePrompt:
     "blurry, antialiased, smooth gradients, photograph, 3d render, text, watermark",
   measuredCells: [

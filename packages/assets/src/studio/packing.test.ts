@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { canonicalManifestText, type Sha256 } from "@panthea/contracts";
+import {
+  canonicalManifestText,
+  type GenerationEdit,
+  parseProvenance,
+  type Sha256,
+} from "@panthea/contracts";
 import { sha256Hex } from "../hash";
 import {
   type AssetRig,
@@ -14,8 +19,11 @@ import {
   removeTempRoots,
   runSlots,
   spriteSet,
+  succeedWithImage,
+  upscale,
   withHiddenRgb,
 } from "./_test-fixtures";
+import { editSettings } from "./edit";
 import {
   type PackInput,
   type PackSources,
@@ -23,6 +31,7 @@ import {
   packAsset,
 } from "./packing";
 import { decodePng } from "./png/decode";
+import { newRequestRecord } from "./request";
 import { readStudioStatus } from "./store";
 
 afterEach(() => {
@@ -921,5 +930,231 @@ describe("carrying cells from the published revision", () => {
         }),
       ),
     ).toMatchObject({ ok: false });
+  });
+});
+
+describe("packing an edited portrait", () => {
+  const FACE = { w: 96, h: 96 };
+
+  /** A neutral job, an edit request of `base`, its succeeded job (recording the edit as the runtime does) and a set picking it for every expression. */
+  function editedSet(
+    rig: AssetRig,
+    makeBase: (
+      neutralJobId: string,
+      neutralOutput: Sha256,
+    ) => GenerationEdit["base"],
+  ) {
+    const { session, content } = rig;
+    const expressions = [...content.vocabulary.expressions];
+    runSlots(
+      rig,
+      "zeus-faces",
+      "portrait",
+      expressions.map((expression) => ({ expression })),
+    );
+    const [neutral] = runSlots(
+      rig,
+      "zeus-neutral",
+      "portrait",
+      [{ expression: "neutral" }],
+      200,
+    ) as [string];
+    const neutralJob = session.store.readJob(neutral);
+    if (
+      neutralJob.kind !== "found" ||
+      neutralJob.value.job.status !== "succeeded"
+    )
+      throw new Error("no neutral output");
+    const mask = new Uint8Array(768 * 768 * 4);
+    for (let at = 0; at < mask.length; at += 4) mask[at + 3] = 255;
+    mask.fill(255, (225 * 768 + 371) * 4, (225 * 768 + 371) * 4 + 3);
+    const maskHash = session.store.putBlob(
+      pngOf({ rgba: mask, width: 768, height: 768 }),
+    );
+    const edit: GenerationEdit = {
+      base: makeBase(
+        neutral,
+        (neutralJob.value.job.outputs[0] as { hash: Sha256 }).hash,
+      ),
+      mask: maskHash,
+      strength: 0.6,
+      cue: "furious scowl, brows drawn hard down",
+    };
+    const built = newRequestRecord(
+      content,
+      {
+        id: "zeus-angry",
+        subject: "zeus",
+        kind: "portrait",
+        slots: [{ expression: "angry" }],
+        batch: 1,
+        seed: 20261010,
+        edit,
+      },
+      () => 0,
+    );
+    if (!built.ok) throw new Error(JSON.stringify(built.error));
+    const submitted = session.submitRequest(built.value.record);
+    if (!submitted.ok) throw new Error(submitted.message);
+    const [editJob] = submitted.jobIds as [string];
+    succeedWithImage(
+      session,
+      editJob,
+      pngOf(upscale(paintFigure(content, FACE, 3), 8)),
+      { w: 768, h: 768 },
+      {
+        ...rig.engine,
+        settings: { ...rig.engine.settings, ...editSettings(edit) },
+      },
+    );
+    if (!session.conform(editJob, content, PROVISIONAL_TEST_PARAMS).ok)
+      throw new Error("conform");
+    session.openWorkingSet("wp", "zeus-faces", content);
+    session.replaceSheet("wp", "zeus-angry");
+    for (const expression of expressions)
+      if (!session.pick("wp", editJob, expression).ok)
+        throw new Error(`pick ${expression}`);
+    return { neutral, neutralOutput: edit.base, editJob, edit };
+  }
+
+  const portraitInput = (over: Partial<PackInput> = {}) =>
+    ({
+      id: "zeus-face-pack",
+      workingSetId: "wp",
+      assetId: "zeus-portrait",
+      styleTag: "draft",
+      stillFrameMs: 1000,
+      originalWork: { licence: "MIT" },
+      ...over,
+    }) as PackInput;
+  const provenanceOf = (result: ReturnType<typeof packAsset>) => {
+    if (!result.ok) throw new Error(result.message);
+    const { provenance } = result.value.manifest;
+    if (provenance.method !== "generated")
+      throw new Error("expected generated");
+    return provenance;
+  };
+
+  test("an edit of a job's output names the base job as a related job and records the edit in the generation", () => {
+    const rig = assetRig();
+    const { neutral, editJob, edit } = editedSet(rig, (jobId, output) => ({
+      kind: "job",
+      jobId,
+      output,
+    }));
+
+    const provenance = provenanceOf(
+      packAsset(portraitInput(), sources(rig, "wp")),
+    );
+
+    expect(provenance.generations.map((g) => g.jobId)).toEqual([editJob]);
+    expect(provenance.generations[0]?.request.edit).toEqual(edit);
+    expect(provenance.generations[0]?.settings).toMatchObject({
+      edit_strength: 0.6,
+      edit_base_kind: "job",
+      edit_base_job: neutral,
+      edit_base_sha256: edit.base.kind === "job" ? edit.base.output : "",
+      edit_mask_sha256: edit.mask,
+    });
+    expect(provenance.relatedJobs.map((j) => j.jobId).sort()).toEqual(
+      [editJob, neutral].sort(),
+    );
+    expect(provenance.handEdits).toEqual([]);
+  });
+
+  test("the manifest validator rejects an edit whose base job is not among the related jobs", () => {
+    const rig = assetRig();
+    editedSet(rig, (jobId, output) => ({ kind: "job", jobId, output }));
+    const provenance = provenanceOf(
+      packAsset(portraitInput(), sources(rig, "wp")),
+    );
+    const base = (provenance.generations[0]?.request.edit?.base ?? {}) as {
+      jobId?: string;
+    };
+
+    const without = parseProvenance({
+      ...provenance,
+      relatedJobs: provenance.relatedJobs.filter((j) => j.jobId !== base.jobId),
+    });
+
+    expect(parseProvenance(provenance).ok).toBe(true);
+    expect(without).toMatchObject({ ok: false });
+    expect(!without.ok && without.path).toContain("request.edit.base.jobId");
+  });
+
+  test("packing refuses when the base job is not a recorded succeeded job", () => {
+    const rig = assetRig();
+    const { neutral } = editedSet(rig, (jobId, output) => ({
+      kind: "job",
+      jobId,
+      output,
+    }));
+    const all = sources(rig, "wp");
+
+    const result = packAsset(portraitInput(), {
+      ...all,
+      jobs: new Map([...all.jobs].filter(([id]) => id !== neutral)),
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(!result.ok && result.message).toContain(neutral);
+  });
+
+  test("an edit of a hand-authored image records that image as a hand edit with its hash, and the owner's hand-work licence", () => {
+    const rig = assetRig();
+    const image = rig.session.store.putBlob(
+      pngOf(upscale(paintFigure(rig.content, FACE, 5), 8)),
+    );
+    const { editJob, edit } = editedSet(rig, () => ({
+      kind: "hand",
+      image,
+      description: "blocked in by hand",
+    }));
+
+    const result = packAsset(portraitInput(), sources(rig, "wp"));
+    const provenance = provenanceOf(result);
+
+    expect(provenance.generations.map((g) => g.jobId)).toEqual([editJob]);
+    expect(provenance.generations[0]?.request.edit).toEqual(edit);
+    expect(provenance.generations[0]?.settings).toMatchObject({
+      edit_base_kind: "hand-authored",
+      edit_base_sha256: image,
+    });
+    expect(provenance.handEdits).toEqual([
+      {
+        description: "hand-authored edit base: blocked in by hand",
+        hash: image,
+      },
+    ]);
+    expect(provenance.relatedJobs.map((j) => j.jobId)).toEqual([editJob]);
+    expect(provenance.licences).toContainEqual({
+      subject: "zeus-portrait",
+      role: "original-work",
+      licence: "MIT",
+    });
+  });
+
+  test("a hand-authored base needs the hand-work licence, a stored image and its handEdits record", () => {
+    const rig = assetRig();
+    const image = rig.session.store.putBlob(
+      pngOf(upscale(paintFigure(rig.content, FACE, 5), 8)),
+    );
+    editedSet(rig, () => ({ kind: "hand", image, description: "by hand" }));
+    const all = sources(rig, "wp");
+    const provenance = provenanceOf(
+      packAsset(portraitInput(), sources(rig, "wp")),
+    );
+
+    expect(
+      packAsset(portraitInput({ originalWork: undefined }), all),
+    ).toMatchObject({ ok: false });
+    expect(
+      packAsset(portraitInput(), { ...all, readBlob: () => undefined }),
+    ).toMatchObject({ ok: false });
+    const unrecorded = parseProvenance({ ...provenance, handEdits: [] });
+    expect(unrecorded).toMatchObject({ ok: false });
+    expect(!unrecorded.ok && unrecorded.path).toContain(
+      "request.edit.base.image",
+    );
   });
 });

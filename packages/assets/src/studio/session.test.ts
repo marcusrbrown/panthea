@@ -609,6 +609,7 @@ describe("public surface", () => {
       "readStudioStatus",
       "reportOnly",
       "resolveAseprite",
+      "resolveEdit",
       "sheet",
       "slotConformance",
       "slotKey",

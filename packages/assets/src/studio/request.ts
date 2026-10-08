@@ -8,6 +8,7 @@
 import type { GodProfile, GodVisualProfile } from "@panthea/content";
 import {
   type AssetVocabulary,
+  type GenerationEdit,
   type GenerationJob,
   type GenerationRequest,
   type GenerationSlot,
@@ -19,6 +20,13 @@ import { PROVIDER, SELECTED_PROFILE } from "./provider";
 import type { JobSource, RequestRecord } from "./store";
 
 export const DEFAULT_BATCH = 4;
+
+// The wording measured in the art-edit probe for masked img2img portraits:
+// the edit keeps the head and changes only what the cue names.
+const EDIT_PRESERVE =
+  "preserve the same head, hairline, face shape, eyes, beard, skin and composition";
+const EDIT_NEGATIVE_PROMPT =
+  "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth";
 
 const KINDS = ["sprite", "portrait"] as const;
 type StudioKind = (typeof KINDS)[number];
@@ -42,9 +50,15 @@ export interface RequestInput {
   readonly batch?: number;
   readonly seed?: number;
   readonly styleNote?: string;
+  readonly edit?: GenerationEdit;
 }
 
 export type RequestError =
+  | {
+      readonly kind: "invalid-edit";
+      readonly field: string;
+      readonly message: string;
+    }
   | {
       readonly kind: "invalid-request";
       readonly path: string;
@@ -130,6 +144,8 @@ export interface GenerationSpec {
   };
   readonly native: { readonly w: number; readonly h: number };
   readonly generated: { readonly w: number; readonly h: number };
+  /** Set when the request edits an earlier job's output. */
+  readonly edit?: GenerationEdit;
   /** Midpoint between the feet at the cell's bottom edge; portraits have none. */
   readonly pivot?: { readonly x: number; readonly y: number };
   readonly palette: {
@@ -151,6 +167,8 @@ export interface AdapterInput {
   readonly sampleMethod: string;
   readonly sampleSteps: number;
   readonly txtCfg: number;
+  /** Sent only for an edit; plain generation sends no distilled guidance. */
+  readonly distilledGuidance?: number;
 }
 
 export interface PlannedJob {
@@ -261,9 +279,12 @@ function promptFor(
   abilityName: string | undefined,
   view: string | undefined,
   styleNote: string | undefined,
+  edit: GenerationEdit | undefined,
 ): string {
   const subject = `${name}, Greek god, ${iconography.join(", ")}`;
   const style = styleNote === undefined ? "" : `, ${styleNote}`;
+  if (edit !== undefined)
+    return `same Greek god ${name}, ${EDIT_PRESERVE}; ${edit.cue}${style}`;
   if (kind === "portrait")
     return `pixel art portrait, ${subject}, bust, three-quarter view, ${slot.expression} expression, flat background, limited colour palette${style}`;
   const ability = abilityName === undefined ? "" : `, ${abilityName}`;
@@ -338,6 +359,7 @@ export function buildSpec(
         checked.value.ability?.name,
         checked.value.view,
         request.styleNote,
+        request.edit,
       ),
     });
   }
@@ -351,6 +373,7 @@ export function buildSpec(
     cell: { id: cell.id, w: cell.w, h: cell.h },
     native: { w: cell.w, h: cell.h },
     generated: { w: generated.w, h: generated.h },
+    ...(request.edit === undefined ? {} : { edit: request.edit }),
     ...(kind === "sprite"
       ? { pivot: { x: Math.floor(cell.w / 2), y: cell.h } }
       : {}),
@@ -468,6 +491,7 @@ export function planJobs(
           ...(request.styleNote === undefined
             ? {}
             : { styleNote: request.styleNote }),
+          ...(request.edit === undefined ? {} : { edit: request.edit }),
         },
         provider: PROVIDER,
         status: "queued",
@@ -492,10 +516,14 @@ export function adapterInput(
     });
   return good({
     prompt: slot.prompt,
-    negativePrompt: SELECTED_PROFILE.negativePrompt,
+    negativePrompt:
+      spec.edit === undefined
+        ? SELECTED_PROFILE.negativePrompt
+        : EDIT_NEGATIVE_PROMPT,
     width: spec.generated.w,
     height: spec.generated.h,
     seed,
     ...SELECTED_PROFILE.sampling,
+    ...(spec.edit === undefined ? {} : SELECTED_PROFILE.edit),
   });
 }

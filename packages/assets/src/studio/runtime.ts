@@ -18,8 +18,9 @@ import { createHash } from "node:crypto";
 import { accessSync, constants, createReadStream, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import type { ImageOutput } from "@panthea/contracts";
+import type { GenerationEdit, ImageOutput } from "@panthea/contracts";
 import type { RgbaImage } from "../conformance";
+import { editSettings, imgGenBody, resolveEdit } from "./edit";
 import { decodePng } from "./png/decode";
 import { SELECTED_PROFILE, type SelectedProfile } from "./provider";
 import { adapterInput, buildSpec, type StudioContent } from "./request";
@@ -560,13 +561,20 @@ interface SentBody {
   readonly sample_params: {
     readonly sample_method: string;
     readonly sample_steps: number;
-    readonly guidance: { readonly txt_cfg: number };
+    readonly guidance: {
+      readonly txt_cfg: number;
+      readonly distilled_guidance?: number;
+    };
   };
   readonly output_format: string;
 }
 
 /** Facts about the engine this runtime launched, whose artifacts it hash-verified before the launch. */
-function engineFor(profile: SelectedProfile, body: SentBody) {
+export function engineFor(
+  profile: SelectedProfile,
+  body: SentBody,
+  edit: GenerationEdit | undefined,
+) {
   const ref = (role: string) => {
     const component = profile.components.find((c) => c.role === role);
     return component === undefined
@@ -602,7 +610,14 @@ function engineFor(profile: SelectedProfile, body: SentBody) {
         sample_method: body.sample_params.sample_method,
         sample_steps: body.sample_params.sample_steps,
         txt_cfg: body.sample_params.guidance.txt_cfg,
+        ...(body.sample_params.guidance.distilled_guidance === undefined
+          ? {}
+          : {
+              distilled_guidance:
+                body.sample_params.guidance.distilled_guidance,
+            }),
         output_format: body.output_format,
+        ...(edit === undefined ? {} : editSettings(edit)),
       },
     },
     "engine",
@@ -717,21 +732,19 @@ export function openRuntime(
     const input = adapterInput(spec.value, source.slotKey, seed);
     if (!input.ok) return fail(JSON.stringify(input.error));
 
-    const body = {
-      prompt: input.value.prompt,
-      negative_prompt: input.value.negativePrompt,
-      width: input.value.width,
-      height: input.value.height,
-      seed: input.value.seed,
-      batch_count: 1,
-      sample_params: {
-        sample_method: input.value.sampleMethod,
-        sample_steps: input.value.sampleSteps,
-        guidance: { txt_cfg: input.value.txtCfg },
-      },
-      lora: [] as string[],
-      output_format: "png",
-    };
+    let resolved: ReturnType<typeof resolveEdit> | undefined;
+    if (spec.value.edit !== undefined) {
+      resolved = resolveEdit(spec.value.edit, spec.value.generated, {
+        readJob: session.store.readJob,
+        readBlob: session.store.readBlob,
+      });
+      if (!resolved.ok)
+        return fail(`the edit cannot run: ${JSON.stringify(resolved.error)}`);
+    }
+    const body = imgGenBody(
+      input.value,
+      resolved?.ok ? resolved.value : undefined,
+    );
     const mine = {
       id: job.id,
       controller: new AbortController(),
@@ -773,7 +786,7 @@ export function openRuntime(
       return fail(`could not store the image: ${(error as Error).message}`);
     }
     const output: ImageOutput = { medium: "image", hash, width, height };
-    const engine = engineFor(profile, body);
+    const engine = engineFor(profile, body, spec.value.edit);
     if (!engine.ok)
       return fail(`the engine facts cannot be recorded: ${engine.message}`);
     const done = session.succeed(job.id, [output], engine.value);

@@ -65,7 +65,7 @@ The environment is never passed to the server or the editor.
 | Command | What it does |
 | --- | --- |
 | `session` | Owns the studio root and serves the commands below as newline-delimited JSON (see Sessions) |
-| `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it |
+| `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it. Add `--edit-mask <png> --edit-strength <n> --edit-cue <text>` with one base (`--edit-base-job <id> --edit-base-output <sha256>` or `--edit-base-image <png> --edit-base-description <text>`) to make it a masked img2img edit (see Edits) |
 | `reroll` | `--request-id --per-slot`: more jobs for a request, continuing its seed sequence |
 | `status`, `list <kind>`, `sheet` | Read the durable records without taking the writer lock |
 | `report` | `--working-set-id --slot`: a fresh report-only conformance of the slot's stored pixels against the current `contentRoot` palette, without the writer lock; exit `1` with the exact diff when conforming would change them |
@@ -78,6 +78,29 @@ The environment is never passed to the server or the editor.
 | `derive` | Not supported: exits `1` and changes nothing |
 
 `--slots`, `--params` and the other JSON flags take JSON text or `@file`.
+
+## Edits
+
+A `generate` with the `--edit-*` flags edits an existing image instead of
+drawing from noise. White mask pixels are the ones the model may change; the
+mask must be an opaque black-and-white PNG the size of the base and the
+generated image, with at least one white pixel, and the strength is above 0 and
+at most 1. The base is either a succeeded job's output (`--edit-base-job` and
+the output hash it made) or a hand-authored PNG (`--edit-base-image`, with a
+description): no job made the latter, so a packed asset records it as hand work,
+with its hash, and needs the owner's hand-work licence. The mask and any
+hand-authored image are read from their paths and stored as blobs only once the
+whole edit has been checked. `--edit-cue` is the wording of the change; the
+studio prompts `same Greek god <name>, preserve the same head, hairline, face
+shape, eyes, beard, skin and composition; <cue>`, the wording measured in the
+art-edit probe. The request, every job's narrowed request and the job's recorded settings
+name the base, mask hash and strength, and a packed asset lists the base job
+among its related jobs. The runtime sends the pinned sd-server `init_image` and
+`mask_image` as base64 PNGs and `strength`. An edit samples with CFG 7 and
+distilled guidance 1 (`SELECTED_PROFILE.edit`), the settings the art-edit probe's
+CLI runs used; plain generation keeps CFG 1 and sends no distilled guidance.
+Edit jobs take about twice as long as plain ones, and record `txt_cfg` and
+`distilled_guidance` in their settings.
 
 ## One-shot and session
 

@@ -37,10 +37,14 @@ const camel = (flag: string) =>
 
 function convert(
   value: string,
-  type: "string" | "int" | "json",
+  type: "string" | "int" | "number" | "json",
   flag: string,
 ): unknown | Outcome {
   if (type === "string") return value;
+  if (type === "number")
+    return /^\d*\.?\d+$/.test(value)
+      ? Number(value)
+      : refuse("invalid-arguments", `--${flag} must be a number`);
   if (type === "int")
     return /^\d+$/.test(value)
       ? Number(value)

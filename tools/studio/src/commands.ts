@@ -2,6 +2,7 @@
 // call `execute`, so a command means the same thing in either. Every handler
 // calls the SDK; nothing here keeps a private pipeline or its own state.
 
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -12,6 +13,7 @@ import {
   newRequestRecord,
   type PackInput,
   type RequestInput,
+  resolveEdit,
   type StudioAssetRecord,
   type StudioContent,
   sheet,
@@ -35,7 +37,7 @@ import {
 } from "./format";
 import { isOutcome, type Studio } from "./host";
 
-type Kind = "string" | "int" | "json";
+type Kind = "string" | "int" | "number" | "json";
 export type Spec = Record<string, { t: Kind; req?: true }>;
 type Args = Record<string, unknown>;
 
@@ -64,11 +66,13 @@ export function readArgs(args: unknown, spec: Spec): Args | Outcome {
         ? typeof value === "string" && value !== ""
         : field.t === "int"
           ? typeof value === "number" && Number.isInteger(value) && value >= 0
-          : value !== undefined;
+          : field.t === "number"
+            ? typeof value === "number" && Number.isFinite(value)
+            : value !== undefined;
     if (!okType)
       return refuse(
         "invalid-arguments",
-        `argument "${key}" must be a ${field.t === "int" ? "whole number" : field.t === "string" ? "non-empty string" : "JSON value"}`,
+        `argument "${key}" must be a ${field.t === "int" ? "whole number" : field.t === "number" ? "number" : field.t === "string" ? "non-empty string" : "JSON value"}`,
       );
   }
   for (const [key, field] of Object.entries(spec))
@@ -114,6 +118,83 @@ function strictObject(
   return extra === undefined
     ? (value as Record<string, unknown>)
     : refuse("invalid-arguments", `${name} has an unknown key "${extra}"`);
+}
+
+const EDIT_COMMON = ["editMask", "editStrength", "editCue"] as const;
+const EDIT_JOB_BASE = ["editBaseJob", "editBaseOutput"] as const;
+const EDIT_HAND_BASE = ["editBaseImage", "editBaseDescription"] as const;
+
+type Edit = NonNullable<RequestInput["edit"]>;
+type EditArgs = {
+  readonly request: Edit;
+  /** Files read for the edit, by hash; stored only once the whole edit is valid. */
+  readonly blobs: ReadonlyMap<string, Uint8Array>;
+};
+
+const hashOf = (bytes: Uint8Array) =>
+  createHash("sha256").update(bytes).digest("hex");
+
+/**
+ * The masked-edit flags: the mask, strength and cue, and exactly one base: a
+ * job's output (`--edit-base-job` with `--edit-base-output`) or a hand-authored
+ * image (`--edit-base-image` with `--edit-base-description`). Files are read
+ * from their paths and named by their hashes.
+ */
+function readEditArgs(a: Args): EditArgs | undefined | Outcome {
+  const given = (keys: readonly string[]) =>
+    keys.filter((key) => a[key] !== undefined).length;
+  const all = (keys: readonly string[]) => given(keys) === keys.length;
+  if (given([...EDIT_COMMON, ...EDIT_JOB_BASE, ...EDIT_HAND_BASE]) === 0)
+    return undefined;
+  const jobBase = given(EDIT_JOB_BASE) > 0;
+  const handBase = given(EDIT_HAND_BASE) > 0;
+  if (
+    !all(EDIT_COMMON) ||
+    jobBase === handBase ||
+    (jobBase && !all(EDIT_JOB_BASE)) ||
+    (handBase && !all(EDIT_HAND_BASE))
+  )
+    return refuse(
+      "invalid-arguments",
+      "an edit needs --edit-mask, --edit-strength and --edit-cue with one base: --edit-base-job and --edit-base-output, or --edit-base-image and --edit-base-description",
+    );
+  const blobs = new Map<string, Uint8Array>();
+  const read = (path: string, what: string): Uint8Array | Outcome => {
+    try {
+      const bytes = new Uint8Array(readFileSync(path));
+      blobs.set(hashOf(bytes), bytes);
+      return bytes;
+    } catch {
+      return refuse("invalid-arguments", `the ${what} file cannot be read`);
+    }
+  };
+  const mask = read(a.editMask as string, "mask");
+  if (isOutcome(mask)) return mask;
+  let base: Edit["base"];
+  if (jobBase)
+    base = {
+      kind: "job",
+      jobId: a.editBaseJob as string,
+      output: a.editBaseOutput as Edit["mask"],
+    };
+  else {
+    const image = read(a.editBaseImage as string, "base image");
+    if (isOutcome(image)) return image;
+    base = {
+      kind: "hand",
+      image: hashOf(image) as Edit["mask"],
+      description: a.editBaseDescription as string,
+    };
+  }
+  return {
+    blobs,
+    request: {
+      base,
+      mask: hashOf(mask) as Edit["mask"],
+      strength: a.editStrength as number,
+      cue: a.editCue as string,
+    },
+  };
 }
 
 function readFiles(
@@ -388,6 +469,13 @@ const OPS: Record<string, OpDef> = {
       batch: { t: "int" },
       seed: { t: "int" },
       ...str("styleNote"),
+      ...str("editBaseJob"),
+      ...str("editBaseOutput"),
+      ...str("editBaseImage"),
+      ...str("editBaseDescription"),
+      ...str("editMask"),
+      editStrength: { t: "number" },
+      ...str("editCue"),
     },
     run: async (studio, a) => {
       const session = studio.owner();
@@ -400,6 +488,8 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(slots)) return slots;
       if (a.kind !== "sprite" && a.kind !== "portrait")
         return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
+      const edit = readEditArgs(a);
+      if (isOutcome(edit)) return edit;
       const built = newRequestRecord(
         content,
         {
@@ -412,6 +502,7 @@ const OPS: Record<string, OpDef> = {
           ...(a.styleNote === undefined
             ? {}
             : { styleNote: a.styleNote as string }),
+          ...(edit === undefined ? {} : { edit: edit.request }),
         },
         studio.deps.drawSeed,
       );
@@ -419,6 +510,29 @@ const OPS: Record<string, OpDef> = {
         return refuse("invalid-request", "the request is not valid", {
           error: j(built.error),
         });
+      const spec = built.value.spec;
+      if (edit !== undefined && spec.edit !== undefined) {
+        // Checked with the files served from memory, so a refusal stores nothing.
+        const checked = resolveEdit(spec.edit, spec.generated, {
+          readJob: session.store.readJob,
+          readBlob: (hash) =>
+            edit.blobs.get(hash) ?? session.store.readBlob(hash),
+        });
+        if (!checked.ok)
+          return refuse("invalid-request", "the edit is not valid", {
+            error: j(checked.error),
+          });
+        try {
+          for (const bytes of edit.blobs.values()) session.store.putBlob(bytes);
+        } catch (error) {
+          return refuse(
+            "write-failed",
+            safeMessage(
+              `could not store the edit files: ${(error as Error).message}`,
+            ),
+          );
+        }
+      }
       const ack = session.submitRequest(built.value.record);
       if (!ack.ok)
         return refuse(ack.reason, safeMessage(ack.message), {

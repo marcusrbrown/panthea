@@ -584,22 +584,63 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     });
     for (const id of found.edits) editIds.add(id);
   }
-  const licences: LicenceRecord[] = [];
+  // An edit starts from an earlier job's output, so that job (and the one it
+  // was itself edited from) is part of the asset's provenance. A hand-authored
+  // base is recorded as hand work, with the stored image's hash.
+  const baseJobs = new Map<string, JobRecord>();
+  const handBases = new Map<Sha256, string>();
   for (const generation of generations.values()) {
-    const engine = (sources.jobs.get(generation.jobId) as JobRecord).engine;
-    for (const licence of engine?.licences ?? [])
+    let edit = generation.request.edit;
+    while (edit !== undefined) {
+      const { base: from } = edit;
+      if (from.kind === "hand") {
+        const stored = sources.readBlob(from.image);
+        if (stored === undefined || sha256Hex(stored) !== from.image)
+          return refuse(
+            `job ${generation.jobId} edits the hand-authored image ${from.image}, which is not a stored blob`,
+          );
+        handBases.set(from.image, from.description);
+        break;
+      }
+      if (baseJobs.has(from.jobId)) break;
+      const base = sources.jobs.get(from.jobId);
+      if (
+        base === undefined ||
+        base.job.status !== "succeeded" ||
+        base.engine === undefined ||
+        !base.job.outputs.some((output) => output.hash === from.output)
+      )
+        return refuse(
+          `job ${generation.jobId} edits ${from.output} of job ${from.jobId}, which is not a recorded succeeded job with that output`,
+        );
+      baseJobs.set(base.job.id, base);
+      edit = base.job.request.edit;
+    }
+  }
+  const licences: LicenceRecord[] = [];
+  for (const record of [
+    ...[...generations.keys()].map((id) => sources.jobs.get(id) as JobRecord),
+    ...baseJobs.values(),
+  ])
+    for (const licence of record.engine?.licences ?? [])
       if (!licences.some((l) => canonicalJson(l) === canonicalJson(licence)))
         licences.push(licence);
-  }
   const seqOf = (id: string) =>
     sources.commands.find((c) => c.type === "finish-edit" && c.jobId === id)
       ?.seq ?? 0;
-  const handEdits = [...editIds]
-    .sort((a, b) => seqOf(a) - seqOf(b))
-    .map((id) => ({
-      description: `hand edit ${id}`,
-      hash: (sources.edits.get(id) as EditRecord).preview?.sheetHash as Sha256,
-    }));
+  const handEdits = [
+    ...[...handBases].map(([hash, description]) => ({
+      description: `hand-authored edit base: ${description}`,
+      hash,
+    })),
+    ...[...editIds]
+      .sort((a, b) => seqOf(a) - seqOf(b))
+      .map((id) => ({
+        description: `hand edit ${id}`,
+        hash: (sources.edits.get(id) as EditRecord).preview
+          ?.sheetHash as Sha256,
+      })),
+  ];
   if (handEdits.length > 0) {
     if (input.originalWork === undefined)
       return refuse(
@@ -620,7 +661,11 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     ),
   );
   const relatedJobs: JobRef[] = [...sources.jobs.values()]
-    .filter((record) => sourceRequests.has(record.source.requestId))
+    .filter(
+      (record) =>
+        sourceRequests.has(record.source.requestId) ||
+        baseJobs.has(record.job.id),
+    )
     .filter((record) =>
       ["succeeded", "failed", "unavailable", "cancelled"].includes(
         record.job.status,

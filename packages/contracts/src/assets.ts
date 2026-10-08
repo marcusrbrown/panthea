@@ -414,6 +414,31 @@ export interface GenerationSlot {
   readonly expression?: string;
 }
 
+/**
+ * What a masked edit starts from: an earlier job's output, named by the job and
+ * the output hash used; or a hand-authored image imported as a studio blob,
+ * which no job made and which provenance records as hand work.
+ */
+export type EditBase =
+  | { readonly kind: "job"; readonly jobId: string; readonly output: Sha256 }
+  | {
+      readonly kind: "hand";
+      readonly image: Sha256;
+      readonly description: string;
+    };
+
+/**
+ * A masked img2img edit of a base. The mask is a studio blob (white marks the
+ * pixels the model may change). `cue` is the wording of the change.
+ */
+export interface GenerationEdit {
+  readonly base: EditBase;
+  readonly mask: Sha256;
+  /** Denoising strength, greater than 0 and at most 1. */
+  readonly strength: number;
+  readonly cue: string;
+}
+
 export interface GenerationRequest {
   readonly schemaVersion: number;
   /** Subject id from the content pack, e.g. a god id. */
@@ -423,6 +448,8 @@ export interface GenerationRequest {
   readonly batch: number;
   readonly styleNote?: string;
   readonly seed?: number;
+  /** Present when the generation edits an earlier job's output instead of drawing from noise. */
+  readonly edit?: GenerationEdit;
 }
 
 export const LICENCE_ROLES = [
@@ -658,6 +685,80 @@ function parseSlot(value: unknown, path: string): ParseResult<GenerationSlot> {
   );
 }
 
+function parseEditBase(value: unknown, path: string): ParseResult<EditBase> {
+  if (!isRecord(value)) return fail(path, "expected an object");
+  const kind = parseEnum(value.kind, `${path}.kind`, ["job", "hand"] as const);
+  if (!kind.ok) return kind;
+  if (kind.value === "job")
+    return parseStrictRecord<EditBase>(
+      value,
+      path,
+      ["kind", "jobId", "output"],
+      (record) => {
+        const jobId = parseSlug(record.jobId, `${path}.jobId`);
+        if (!jobId.ok) return jobId;
+        const output = parseSha256(record.output, `${path}.output`);
+        if (!output.ok) return output;
+        return ok({ kind: "job", jobId: jobId.value, output: output.value });
+      },
+    );
+  return parseStrictRecord<EditBase>(
+    value,
+    path,
+    ["kind", "image", "description"],
+    (record) => {
+      const image = parseSha256(record.image, `${path}.image`);
+      if (!image.ok) return image;
+      const description = parseString(
+        record.description,
+        `${path}.description`,
+      );
+      if (!description.ok) return description;
+      return ok({
+        kind: "hand",
+        image: image.value,
+        description: description.value,
+      });
+    },
+  );
+}
+
+function parseGenerationEdit(
+  value: unknown,
+  path: string,
+): ParseResult<GenerationEdit> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["base", "mask", "strength", "cue"],
+    (record) => {
+      const base = parseEditBase(record.base, `${path}.base`);
+      if (!base.ok) return base;
+      const mask = parseSha256(record.mask, `${path}.mask`);
+      if (!mask.ok) return mask;
+      const { strength } = record;
+      if (
+        typeof strength !== "number" ||
+        !Number.isFinite(strength) ||
+        strength <= 0 ||
+        strength > 1
+      )
+        return fail(
+          `${path}.strength`,
+          "expected a number above 0 and at most 1",
+        );
+      const cue = parseString(record.cue, `${path}.cue`);
+      if (!cue.ok) return cue;
+      return ok({
+        base: base.value,
+        mask: mask.value,
+        strength,
+        cue: cue.value,
+      });
+    },
+  );
+}
+
 export function parseGenerationRequest(
   input: unknown,
   path = "request",
@@ -665,7 +766,16 @@ export function parseGenerationRequest(
   return parseStrictRecord(
     input,
     path,
-    ["schemaVersion", "subject", "kind", "slots", "batch", "styleNote", "seed"],
+    [
+      "schemaVersion",
+      "subject",
+      "kind",
+      "slots",
+      "batch",
+      "styleNote",
+      "seed",
+      "edit",
+    ],
     (record) => {
       const schemaVersion = parseSchemaVersion(
         record.schemaVersion,
@@ -701,6 +811,12 @@ export function parseGenerationRequest(
         if (!parsed.ok) return parsed;
         seed = parsed.value;
       }
+      let edit: GenerationEdit | undefined;
+      if (record.edit !== undefined) {
+        const parsed = parseGenerationEdit(record.edit, `${path}.edit`);
+        if (!parsed.ok) return parsed;
+        edit = parsed.value;
+      }
       return ok({
         schemaVersion: schemaVersion.value,
         subject: subject.value,
@@ -709,6 +825,7 @@ export function parseGenerationRequest(
         batch: batch.value,
         ...(styleNote === undefined ? {} : { styleNote }),
         ...(seed === undefined ? {} : { seed }),
+        ...(edit === undefined ? {} : { edit }),
       });
     },
   );
@@ -1033,6 +1150,34 @@ export function parseProvenance(
         `${at}.used`,
         `used hash ${stray} is not an output of job "${generation.jobId}"`,
       );
+    const { edit } = generation.request;
+    if (edit?.base.kind === "job") {
+      const { jobId, output } = edit.base;
+      const base = relatedJobs.value.find((ref) => ref.jobId === jobId);
+      if (base === undefined)
+        return fail(
+          `${at}.request.edit.base.jobId`,
+          `base job "${jobId}" is not in relatedJobs`,
+        );
+      if (base.status !== "succeeded")
+        return fail(
+          `${at}.request.edit.base.jobId`,
+          `base job "${jobId}" is ${base.status}, not succeeded`,
+        );
+      if (!(base.outputs ?? []).includes(output))
+        return fail(
+          `${at}.request.edit.base.output`,
+          `base output ${output} is not an output of job "${jobId}"`,
+        );
+    }
+    if (edit?.base.kind === "hand") {
+      const { image } = edit.base;
+      if (!handEdits.value.some((step) => step.hash === image))
+        return fail(
+          `${at}.request.edit.base.image`,
+          `the hand-authored base ${image} is not recorded in handEdits`,
+        );
+    }
     const licensed = (subject: string, role: LicenceRole) =>
       licences.value.some(
         (licence) => licence.subject === subject && licence.role === role,

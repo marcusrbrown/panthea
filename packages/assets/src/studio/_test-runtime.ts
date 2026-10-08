@@ -378,6 +378,7 @@ export function stageFixtureRuntime(
     ],
     serverFlags: SELECTED_PROFILE.serverFlags,
     sampling: SELECTED_PROFILE.sampling,
+    edit: SELECTED_PROFILE.edit,
     negativePrompt: SELECTED_PROFILE.negativePrompt,
     measuredCells: SELECTED_PROFILE.measuredCells,
     generationScale: SELECTED_PROFILE.generationScale,
