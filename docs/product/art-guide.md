@@ -24,7 +24,7 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 
 - Pivot is the midpoint between the feet, placed at the bottom vertex of the occupied tile. Collision footprint is declared in tiles (1×1 for humanoids).
 - Four directions for the MVP: south, north, east, west. West is east mirrored unless the asset declares an asymmetry (Hephaestus's hammer hand, Zeus's bolt hand). Eight directions are deferred.
-- States (versioned data, defaults here): `idle` (4 frames at 6 fps), `seated` (2 frames, gods only; Zeus on a cloud with body partly obscured is the reference), one `act` per declared ability (4–6 frames at 10–12 fps), `walk` (6 frames at 10 fps; deferred until the world carries position and facing), `hurt` (2 frames), `down` (1 frame). Timing is per-frame in milliseconds in the manifest.
+- States (versioned data, defaults here): `idle` (4 frames at 3–6 fps, so the rest and peak frames may hold longer, for example 333/167/333/167 ms), `seated` (2 frames, gods only; Zeus on a cloud with body partly obscured is the reference), one `act` per declared ability (4–6 frames at 10–12 fps), `walk` (6 frames at 10 fps; deferred until the world carries position and facing), `hurt` (2 frames), `down` (1 frame). Timing is per-frame in milliseconds in the manifest.
 - Only `idle` bob, east/west mirroring, palette swaps, and overlays are derived procedurally; `walk` and `act` frames are drawn or generated and repaired.
 - Silhouette first: a character must be identifiable at 1× from shape and two colours alone. Test by thresholding to black on white.
 - Readable features at this scale: head about one quarter of height, hands as 2–3 px blocks, no faces beyond eyes and brow on world sprites. Expression lives in portraits.

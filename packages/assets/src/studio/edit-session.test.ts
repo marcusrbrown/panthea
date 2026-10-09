@@ -565,7 +565,7 @@ const ms = (slot: string) => placeholderMs(content, "sprite", slot);
 
 describe("placeholder durations and timing bounds", () => {
   test("derive from the vocabulary's frame rates; states without one and portraits use 100 ms", () => {
-    expect(ms("idle/south")).toBe(167);
+    expect(ms("idle/south")).toBe(334);
     expect(ms("act/south/thunderbolt")).toBe(100);
     expect(ms("seated/south")).toBe(100);
     expect(ms("hurt/south")).toBe(100);
@@ -575,9 +575,9 @@ describe("placeholder durations and timing bounds", () => {
   test("bounds floor the fastest rate and ceil the slowest, as the contracts do", () => {
     expect(timingBounds(content, "sprite", "idle/south")).toEqual({
       min: 166,
-      max: 167,
+      max: 334,
     });
-    expect(placeholderMs(content, "sprite", "idle/south")).toBe(167);
+    expect(placeholderMs(content, "sprite", "idle/south")).toBe(334);
   });
 
   test("warnings list the frames outside their bounds and never the ones inside", () => {
@@ -607,20 +607,20 @@ describe("placeholder durations and timing bounds", () => {
       },
     });
 
-    const warned = timingWarnings(preview([123, 166, 167, 250, 333]) as never);
+    const warned = timingWarnings(preview([123, 166, 334, 335, 500]) as never);
 
     expect(warned.map((w) => [w.slot, w.frame, w.durationMs])).toEqual([
       ["idle/south", 0, 123],
-      ["idle/south", 3, 250],
-      ["idle/south", 4, 333],
+      ["idle/south", 3, 335],
+      ["idle/south", 4, 500],
     ]);
-    expect(timingWarnings(preview([166, 167]) as never)).toEqual([]);
+    expect(timingWarnings(preview([166, 167, 333, 334]) as never)).toEqual([]);
   });
 
   test("bounds are the per-frame milliseconds the rate range allows, or none", () => {
     expect(timingBounds(content, "sprite", "idle/south")).toEqual({
       min: 166,
-      max: 167,
+      max: 334,
     });
     expect(timingBounds(content, "sprite", "act/east/thunderbolt")).toEqual({
       min: 83,
@@ -663,7 +663,7 @@ describe("starting a sheet", () => {
       cell,
       max: { "idle/south": 4 },
     });
-    expect(meta.ok && meta.value.durations).toEqual([167]);
+    expect(meta.ok && meta.value.durations).toEqual([334]);
     expect(meta.ok && meta.value.pivots).toEqual({ "idle/south": null });
     const pixels = decodePng(result.value.png);
     expect(
@@ -692,7 +692,7 @@ describe("starting a sheet", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const meta = parseSheetJson(result.value.json, expectation);
-    expect(meta.ok && meta.value.durations).toEqual([123, 250, 333, 167]);
+    expect(meta.ok && meta.value.durations).toEqual([123, 250, 333, 334]);
     expect(meta.ok && meta.value.tags).toEqual([
       { name: "idle/south", from: 0, to: 2 },
       { name: "idle/north", from: 3, to: 3 },
@@ -794,7 +794,7 @@ describe("cropping and previews", () => {
     if (!parsedMeta.ok) throw new Error(parsedMeta.message);
     return parsedMeta.value;
   };
-  const build = (durations = [100, 200, 300, 334, 100, 100, 100]) =>
+  const build = (durations = [100, 200, 300, 335, 100, 100, 100]) =>
     buildPreview({
       image: sheet,
       sheetHash: sha256Hex(new Uint8Array([1])),
@@ -824,7 +824,7 @@ describe("cropping and previews", () => {
     const byHash = new Map(out.map((png) => [sha256Hex(png), png]));
     expect(preview.sheetHash).toBe(sha256Hex(new Uint8Array([1])));
     expect(preview.metadataHash).toBe(
-      metadataHash(meta([100, 200, 300, 334, 100, 100, 100])),
+      metadataHash(meta([100, 200, 300, 335, 100, 100, 100])),
     );
     expect(
       preview.slots["idle/south"]?.frames.map((f) => f.durationMs),
@@ -863,14 +863,14 @@ describe("cropping and previews", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.preview.slots["idle/south"]?.timing).toEqual([
-      { frame: 0, durationMs: 100, bounds: { min: 166, max: 167 } },
-      { frame: 1, durationMs: 200, bounds: { min: 166, max: 167 } },
-      { frame: 2, durationMs: 300, bounds: { min: 166, max: 167 } },
+      { frame: 0, durationMs: 100, bounds: { min: 166, max: 334 } },
+      { frame: 1, durationMs: 200, bounds: { min: 166, max: 334 } },
+      { frame: 2, durationMs: 300, bounds: { min: 166, max: 334 } },
     ]);
     expect(result.value.preview.slots["idle/north"]?.timing[0]).toEqual({
       frame: 3,
-      durationMs: 334,
-      bounds: { min: 166, max: 167 },
+      durationMs: 335,
+      bounds: { min: 166, max: 334 },
     });
   });
 
@@ -1689,14 +1689,14 @@ describe("importing an edit", () => {
     session.close();
   });
 
-  test("a sheet with identical held frames and a 334 ms idle frame is accepted and only diagnosed", () => {
+  test("a sheet with identical held frames and a 335 ms idle frame is accepted and only diagnosed", () => {
     const { root, session } = opened();
     const hold = toneFrame(cell, 0, 7);
     const edited = authored([
       {
         slot: "idle/south",
         frames: [hold, hold, hold, hold],
-        durations: [334, 167, 167, 167],
+        durations: [335, 167, 167, 167],
       },
       { slot: "idle/north", frames: frames(4, 10, 40) },
     ]);
@@ -1709,8 +1709,8 @@ describe("importing an edit", () => {
     const timing = editOf(root, "e1")?.preview?.slots["idle/south"]?.timing[0];
     expect(timing).toEqual({
       frame: 0,
-      durationMs: 334,
-      bounds: { min: 166, max: 167 },
+      durationMs: 335,
+      bounds: { min: 166, max: 334 },
     });
     const hashes = editOf(root, "e1")?.preview?.slots["idle/south"]?.frames.map(
       (f) => f.hash,
@@ -2022,6 +2022,112 @@ describe("finishing an edit", () => {
     ]);
     expect(editOf(root, "e1")?.status).toBe("finished");
     expect(ledgerOf(root)).toEqual(["open-edit:e1", "finish-edit:e1"]);
+    session.close();
+  });
+
+  test("a scripted finish records a script step with its description on every slot and on the edit; a named hand finish keeps the hand form", () => {
+    const scripted = opened();
+    const final = full();
+    const script = {
+      method: "script",
+      description:
+        "scripted idle loop (tools/probes/art-edit/sprite_idle_c2.py)",
+    } as const;
+
+    expect(
+      scripted.session.finishEdit("e1", final.png, final.json, content, script),
+    ).toEqual({ ok: true, changed: true });
+
+    const sheetHash = sha256Hex(final.png);
+    const step = {
+      description: script.description,
+      method: "script",
+      hash: sheetHash,
+    } as const;
+    expect(setOf(scripted.root)?.frames["idle/south"]?.handEdits).toEqual([
+      step,
+    ]);
+    expect(setOf(scripted.root)?.frames["idle/north"]?.handEdits).toEqual([
+      step,
+    ]);
+    expect(editOf(scripted.root, "e1")?.step).toEqual(script);
+    scripted.session.close();
+
+    const named = opened();
+    const again = full();
+    expect(
+      named.session.finishEdit("e1", again.png, again.json, content, {
+        method: "hand",
+        description: "redrew the left hand",
+      }),
+    ).toEqual({ ok: true, changed: true });
+    expect(setOf(named.root)?.frames["idle/south"]?.handEdits).toEqual([
+      { description: "redrew the left hand", hash: sha256Hex(again.png) },
+    ]);
+    expect(editOf(named.root, "e1")?.step).toEqual({
+      method: "hand",
+      description: "redrew the left hand",
+    });
+    named.session.close();
+  });
+
+  test("a plain finish records no step on the edit and no method on the hand edit", () => {
+    const { root, session } = opened();
+    const final = full();
+    session.finishEdit("e1", final.png, final.json, content);
+    expect(editOf(root, "e1")?.step).toBeUndefined();
+    const step = setOf(root)?.frames["idle/south"]?.handEdits[0];
+    expect(step).toEqual({
+      description: "hand edit e1",
+      hash: sha256Hex(final.png),
+    });
+    expect(step && "method" in step).toBe(false);
+    session.close();
+  });
+
+  test("a scripted finish without a description or with an unknown method is refused with nothing written", () => {
+    const { root, session } = opened();
+    const final = full();
+    for (const bad of [
+      { method: "script" },
+      { method: "script", description: "" },
+      { method: "magic", description: "x" },
+    ]) {
+      expect(
+        session.finishEdit("e1", final.png, final.json, content, bad as never),
+      ).toMatchObject({ ok: false, reason: "invalid-params" });
+    }
+    expect(editOf(root, "e1")?.status).toBe("open");
+    expect(setOf(root)?.status).toBe("open");
+    session.close();
+  });
+
+  test("a retry after a failed finished mark must repeat the same step", () => {
+    const { root, session } = opened();
+    const final = full();
+    const script = { method: "script", description: "scripted a" } as const;
+    chmodSync(join(root, "edits"), 0o500);
+    try {
+      expect(
+        session.finishEdit("e1", final.png, final.json, content, script),
+      ).toMatchObject({ ok: false, reason: "write-failed" });
+    } finally {
+      chmodSync(join(root, "edits"), 0o700);
+    }
+
+    expect(
+      session.finishEdit("e1", final.png, final.json, content),
+    ).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(
+      session.finishEdit("e1", final.png, final.json, content, {
+        ...script,
+        description: "scripted b",
+      }),
+    ).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(
+      session.finishEdit("e1", final.png, final.json, content, script),
+    ).toEqual({ ok: true, changed: true });
+    expect(editOf(root, "e1")?.step).toEqual(script);
     session.close();
   });
 

@@ -126,6 +126,34 @@ describe("command lines", () => {
     });
   });
 
+  test("finish takes a method and a description as flags", () => {
+    expect(
+      parseArgv([
+        "finish",
+        "--id",
+        "e1",
+        "--png",
+        "/a.png",
+        "--json",
+        "/a.json",
+        "--method",
+        "script",
+        "--description",
+        "scripted outline recolour (tools/probes/art-edit/sprite_cleanup_c2c.py)",
+      ]),
+    ).toMatchObject({
+      op: "finish",
+      args: {
+        id: "e1",
+        png: "/a.png",
+        json: "/a.json",
+        method: "script",
+        description:
+          "scripted outline recolour (tools/probes/art-edit/sprite_cleanup_c2c.py)",
+      },
+    });
+  });
+
   test("a bare word fills the command's positional argument, and set takes a sub-command", () => {
     expect(parseArgv(["list", "jobs"])).toMatchObject({
       op: "list",

@@ -141,4 +141,45 @@ The original-work MIT licence is the one the owner accepted on 2026-10-06 for th
 
 ## Zeus idle-south: deferred
 
+> Superseded on 2026-10-08: the sprite was later made and published; see "Zeus god sprite (idle-south)" below. The text that follows records the deferral as it stood.
+
 Not published. The owner deferred the Zeus idle-south sprite on 2026-10-08 as a feasibility conflict with R20: no local technique on the 16 GiB M1 Pro produced a usable 64×80 sprite, and every attempt failed owner review. The reasons and the attempts are in the plan's Unit 7 "Sprite deferral (owner, 2026-10-08)" note (`docs/plans/2026-10-05-001-feat-studio-pipeline-cli-plan.md`); the measurements and run records are in `tools/probes/art-edit/README.md` and its `r8-run-manifest.json` and `r9-run-manifest.json`. Zeus keeps the M0 `placeholder-zeus` sprite. An earlier idle-south draft (`draft-zeus-idle-south-u7-r7`) remains an unapproved draft in the authoring store and is not in the registry. The sprite moves to a later unit, human-drawn or generated with a stronger local model.
+
+## Zeus god sprite (idle-south): published canon (2026-10-08)
+
+**Status: owner-approved and published.** One asset `zeus-sprite`, canon revision `be87747b727142391a5b48bfb4101a6618bc229797045b464780270fc93b8286`, atlas blob `0fe8067fda22c1704ef491513419c412ec77a1a9ffa05907b593346540ac515e` (256×80, four 64×80 frames), pivot (32,80), footprint 1×1. `GodProfile.sprite` for Zeus is now `zeus-sprite`; the seated, strike and realm-variant states are not made and fall back to the placeholder. This is not a claim that a model can produce a usable sprite on this machine: the model output is the lineage pick only, and every pixel of the published frames comes from scripts.
+
+### Lineage
+
+- **Source.** Job `zeus-idle-south-u7-c1-0003`, seed 20261043, Z-Image Turbo (Apache-2.0) on stable-diffusion.cpp (MIT), 512×640, exactly 8× the 64×80 god cell. Its own 8× conform result is `fail`; the job stands as the pick the packed draft descends from.
+- **C2a, re-key and palette-mode downscale** (`run_sprite_c2a.py`): keys the background and the ground shadow by recorded rules, then downscales by the mode of palette-snapped source pixels at any real ratio, not an integer cell, onto the 16 Olympus colours.
+- **C2b, face, bolt and cloth pixel edits** (`sprite_cleanup_c2b.py`): 131 explicit pixel changes against the C2a tile, each inside a declared region. The owner accepted it with one outline fix.
+- **C2c, selective outline recolour** (`sprite_cleanup_c2c.py`): recolours 236 pixels so the exterior and overlap outlines are 1 px in the darkest shade of the form beside them; alpha is identical to C2b. The owner accepted it as the static frame (`zeus-sprite/c2c-1x.png`, sha256 `a36ebc86…`, 1×).
+- **Idle loop** (`sprite_idle_c2.py`): four frames from the static frame, with the head and upper body raised 1 px at the peak and the chest fold shifted; fixed parts are pixel-identical in all four. The owner accepted it with hold frames (`zeus-sprite/idle-sheet-1x.png`, the four frames in a strip, 1×, sha256 `f86c684a…`).
+- **Draft and publish.** Packed as `zeus-sprite-u7-c2-draft`, approved by the pack report (`report-pass`) with the owner's confirmation of the manifest revision, then published to `content/greek/assets/registry/`.
+
+The method, settings, tile measurements and each script's tests are in `tools/probes/art-edit/README.md`: "Sprite downscale (Phase A)", "Sprite Phase C2" and "Sprite Phase C2 idle".
+
+### Timing
+
+The four frames last 333, 167, 333 and 167 ms, a 1000 ms loop. The vocabulary's idle range was 6 fps (166–167 ms per frame). The owner widened it to 3–6 fps (166–334 ms) so the rest and peak frames can hold; `docs/product/art-guide.md` states the new default. The contract test pins 333/167/333/167 as valid and 165 and 335 ms as rejected.
+
+### Provenance
+
+- Generation: job `zeus-idle-south-u7-c1-0003`; model `z_image_turbo-Q3_K` (Apache-2.0), encoder `Qwen3-4B-Instruct-2507-Q4_K_M` (Apache-2.0), VAE `z-image-ae` (Apache-2.0), runtime `sd-cpp-master-929-3f8527a` (MIT). No LoRA.
+- One hand-edit step, recorded with `method: "script"` and the description: "scripted re-key and palette-mode downscale (tools/probes/art-edit/run_sprite_c2a.py), face, bolt and cloth pixel edits (sprite_cleanup_c2b.py), selective outline recolour (sprite_cleanup_c2c.py), 4-frame idle (sprite_idle_c2.py)". This is the first asset to record a scripted edit as scripted; the portrait's steps still read "hand edit …". `method` is optional on a step, and a step without it means a hand edit, so the published portrait is unchanged.
+- Original work: `zeus-sprite`, MIT.
+- `relatedJobs` lists the four jobs of the c1 request, `-0000` to `-0003`; only `-0003` contributed. The manifest says `generated` because the studio derives the method from the pick, although the frames are scripted; the hand-edit step is the part that says what was done.
+
+### Verification
+
+- Pack report: pass, no failed checks; all five licence assessments compatible. The four frames also passed report-only conformance at scale 1 before packing.
+- The packed manifest re-parses with `parseAssetManifest` against the committed vocabulary.
+- `bun run --cwd tools/content validate:assets`: exit 0 with both canon entries and Zeus's sprite mapping.
+- `bun run check`: exit 0 (4504 pass, 1 skip, 0 fail across 234 files).
+
+### Limits
+
+- The c1 job's own conform fails, and the lineage pick is not the published pixels; anyone reading the registry has to read the hand-edit step to see that.
+- The published frames were judged by the owner and an independent reviewer; nothing here measures quality.
+- One host, macOS only, one candidate. The studio preview has not been re-run against this sprite.

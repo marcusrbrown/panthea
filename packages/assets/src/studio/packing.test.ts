@@ -485,6 +485,89 @@ describe("packing portraits", () => {
     ).toBe(true);
   });
 
+  test("a scripted finish packs a script step with its own description and no hand-edit label; a plain finish still packs hand edit e1 without a method", () => {
+    const description =
+      "scripted idle loop (tools/probes/art-edit/sprite_idle_c2.py)";
+    const scripted = assetRig();
+    const { expressions } = portraitSet(scripted);
+    finishSheet(
+      scripted,
+      "e1",
+      "wp",
+      face,
+      [
+        {
+          slot: expressions[0] as string,
+          frames: [paintFigure(scripted.content, face, 20)],
+        },
+      ],
+      { method: "script", description },
+    );
+
+    const packed = pp(scripted);
+
+    expect(packed.ok).toBe(true);
+    if (!packed.ok) return;
+    const steps = packed.value.manifest.provenance.handEdits;
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({ description, method: "script" });
+    expect(steps[0]?.description).not.toMatch(/^hand edit/);
+    expect(parseProvenance(packed.value.manifest.provenance).ok).toBe(true);
+
+    const plain = assetRig();
+    const set = portraitSet(plain);
+    finishSheet(plain, "e1", "wp", face, [
+      {
+        slot: set.expressions[0] as string,
+        frames: [paintFigure(plain.content, face, 20)],
+      },
+    ]);
+    const hand = pp(plain);
+    expect(hand.ok).toBe(true);
+    if (!hand.ok) return;
+    const handStep = hand.value.manifest.provenance.handEdits[0];
+    expect(handStep?.description).toBe("hand edit e1");
+    expect(handStep && "method" in handStep).toBe(false);
+  });
+
+  test("a hand step and a script step of two edits keep their own methods in edit order", () => {
+    const rig = assetRig();
+    const { expressions } = portraitSet(rig);
+    finishSheet(rig, "e1", "wp", face, [
+      {
+        slot: expressions[0] as string,
+        frames: [paintFigure(rig.content, face, 20)],
+      },
+    ]);
+    finishSheet(
+      rig,
+      "e2",
+      "wp",
+      face,
+      [
+        {
+          slot: expressions[1] as string,
+          frames: [paintFigure(rig.content, face, 21)],
+        },
+      ],
+      { method: "script", description: "scripted recolour of the second" },
+    );
+
+    const packed = pp(rig);
+
+    expect(packed.ok).toBe(true);
+    if (!packed.ok) return;
+    expect(
+      packed.value.manifest.provenance.handEdits.map((s) => [
+        s.description,
+        s.method,
+      ]),
+    ).toEqual([
+      ["hand edit e1", undefined],
+      ["scripted recolour of the second", "script"],
+    ]);
+  });
+
   test("hand edits need the owner's original-work licence to be given", () => {
     const rig = assetRig();
     const { expressions } = portraitSet(rig);

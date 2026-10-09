@@ -41,7 +41,9 @@ const dirs: string[] = [];
  * A content root with the committed gods, vocabulary, palette and subjects, an
  * empty canon and no subject portrait mappings. The committed registry and the
  * mappings that point into it are left out, so every scenario starts from the
- * same state however much has been published to `content/greek`.
+ * same state however much has been published to `content/greek`: a god whose
+ * stable sprite id is published there gets its `placeholder-<id>` id back, and
+ * a subject loses its portrait.
  */
 function contentRoot(): string {
   const dir = mkdtempSync(join(tmpdir(), "assets-validator-"));
@@ -58,6 +60,22 @@ function contentRoot(): string {
     join(registryOf(dir), "index.json"),
     `${JSON.stringify({ schemaVersion: 1, entries: [] }, null, 2)}\n`,
   );
+  const published = new Set(
+    (
+      JSON.parse(
+        readFileSync(join(committedRegistry, "index.json"), "utf8"),
+      ) as { entries: { assetId: string }[] }
+    ).entries.map((entry) => entry.assetId),
+  );
+  for (const name of readdirSync(join(dir, "gods"))) {
+    const path = join(dir, "gods", name);
+    const god = JSON.parse(readFileSync(path, "utf8"));
+    if (!published.has(god.sprite)) continue;
+    writeFileSync(
+      path,
+      `${JSON.stringify({ ...god, sprite: `placeholder-${god.id}` }, null, 2)}\n`,
+    );
+  }
   const subjects = join(dir, "assets", "subjects");
   for (const name of readdirSync(subjects)) {
     const { portrait: _mapped, ...subject } = JSON.parse(
@@ -153,6 +171,23 @@ describe("committed content", () => {
     }
   });
 
+  it("resolves each god's published stable sprite to a canon sprite", () => {
+    const { snapshot } = loadRegistry(
+      join(COMMITTED, "assets", "registry"),
+      vocabulary,
+    );
+    const gods = join(COMMITTED, "gods");
+    const resolved = readdirSync(gods).flatMap((name) => {
+      const { sprite } = JSON.parse(readFileSync(join(gods, name), "utf8"));
+      return snapshot.entries.has(sprite)
+        ? [[sprite, resolveAsset(snapshot, { spriteId: sprite })] as const]
+        : [];
+    });
+    expect(resolved.map(([sprite]) => sprite)).toEqual(["zeus-sprite"]);
+    for (const [, result] of resolved)
+      expect(result).toMatchObject({ source: "canon", kind: "sprite" });
+  });
+
   it("has an empty-canon fixture tree: no published asset and no portrait mapping", () => {
     const root = contentRoot();
     expect(
@@ -163,6 +198,9 @@ describe("committed content", () => {
       readFileSync(join(root, "assets", "subjects", "zeus.json"), "utf8"),
     );
     expect(zeus).not.toHaveProperty("portrait");
+    expect(
+      JSON.parse(readFileSync(join(root, "gods", "zeus.json"), "utf8")).sprite,
+    ).toBe("placeholder-zeus");
     expect(zeus).toMatchObject({ godId: "zeus", paletteFamily: "olympus" });
     expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
   });

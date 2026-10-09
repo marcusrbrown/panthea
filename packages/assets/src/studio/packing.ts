@@ -28,7 +28,7 @@ import { sha256Hex } from "../hash";
 import type { Palette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateParams } from "./candidates";
-import type { EditRecord } from "./export-import";
+import { type EditRecord, handStepOf } from "./export-import";
 import { decodePng } from "./png/decode";
 import { buildSpec, type StudioContent } from "./request";
 import type { CommandRecord, JobRecord, RequestRecord } from "./store";
@@ -269,11 +269,12 @@ function trace(
   const oldest = [...chain].reverse();
   if (authored !== undefined) {
     const steps = authored.handEdits.map(
-      (step) => `${step.description}|${step.hash}`,
+      (step) => `${step.description}|${step.method ?? ""}|${step.hash}`,
     );
-    const expected = oldest.map(
-      (edit) => `hand edit ${edit.id}|${edit.preview?.sheetHash}`,
-    );
+    const expected = oldest.map((edit) => {
+      const made = handStepOf(edit);
+      return `${made.description}|${made.method ?? ""}|${edit.preview?.sheetHash}`;
+    });
     if (JSON.stringify(steps) !== JSON.stringify(expected))
       return {
         ok: false,
@@ -635,11 +636,13 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     })),
     ...[...editIds]
       .sort((a, b) => seqOf(a) - seqOf(b))
-      .map((id) => ({
-        description: `hand edit ${id}`,
-        hash: (sources.edits.get(id) as EditRecord).preview
-          ?.sheetHash as Sha256,
-      })),
+      .map((id) => {
+        const edit = sources.edits.get(id) as EditRecord;
+        return {
+          ...handStepOf(edit),
+          hash: edit.preview?.sheetHash as Sha256,
+        };
+      }),
   ];
   if (handEdits.length > 0) {
     if (input.originalWork === undefined)

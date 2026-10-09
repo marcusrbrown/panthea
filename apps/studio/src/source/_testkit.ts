@@ -1,4 +1,11 @@
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeRgbaPng, sha256Hex } from "@panthea/assets";
@@ -48,15 +55,40 @@ export interface World {
   readonly studioRoot: string;
 }
 
-/** A copy of the committed registry and an empty, existing studio root. */
+/**
+ * A copy of the committed registry reduced to its `zeus-portrait` entry, so every scenario starts from one canon
+ * asset however much has been published to `content/greek`, and an empty, existing studio root.
+ */
 export function world(): World {
   const base = mkdtempSync(join(tmpdir(), "studio-bridge-"));
   dirs.push(base);
   const registryRoot = join(base, "registry");
   const studioRoot = join(base, "studio");
-  cpSync(join(COMMITTED, "assets", "registry"), registryRoot, {
-    recursive: true,
-  });
+  const committed = join(COMMITTED, "assets", "registry");
+  const index = JSON.parse(readFileSync(join(committed, "index.json"), "utf8"));
+  const portrait = index.entries.find(
+    (entry: { assetId: string }) => entry.assetId === "zeus-portrait",
+  );
+  const manifest = JSON.parse(
+    readFileSync(
+      join(committed, "manifests", `${portrait.revision}.json`),
+      "utf8",
+    ),
+  );
+  mkdirSync(join(registryRoot, "manifests"), { recursive: true });
+  mkdirSync(join(registryRoot, "blobs"));
+  copyFileSync(
+    join(committed, "manifests", `${portrait.revision}.json`),
+    join(registryRoot, "manifests", `${portrait.revision}.json`),
+  );
+  copyFileSync(
+    join(committed, "blobs", `${manifest.atlas.blob}.png`),
+    join(registryRoot, "blobs", `${manifest.atlas.blob}.png`),
+  );
+  writeFileSync(
+    join(registryRoot, "index.json"),
+    `${JSON.stringify({ entries: [portrait], schemaVersion: 1 })}\n`,
+  );
   mkdirSync(studioRoot);
   return { base, registryRoot, studioRoot };
 }

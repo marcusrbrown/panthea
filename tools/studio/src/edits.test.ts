@@ -163,6 +163,80 @@ describe("editing with files and no editor", () => {
     expect(set?.status).toBe("complete");
   });
 
+  test("finish with --method script and a --description records a script step; the default stays a hand edit", async () => {
+    const { rig, config, over } = pickedSet();
+    const dir = scratch();
+    const open = new Studio(config, depsFor(capture(), over), "oneshot");
+    const session = open.owner();
+    if ("ok" in session) throw new Error("busy");
+    session.openEdit("e1", "w", ["idle/south"], rig.content);
+    await open.teardown();
+    const sheet = sheetOf(CELL, [
+      { slot: "idle/south", frames: four(rig, 20) },
+    ]);
+    writeFileSync(join(dir, "edited.png"), sheet.png);
+    writeFileSync(join(dir, "edited.json"), sheet.json);
+    const files = {
+      png: join(dir, "edited.png"),
+      json: join(dir, "edited.json"),
+    };
+    const description =
+      "scripted idle loop (tools/probes/art-edit/sprite_idle_c2.py)";
+
+    const finished = await run(
+      config,
+      "finish",
+      { id: "e1", ...files, method: "script", description },
+      over,
+    );
+
+    expect(finished.outcome).toMatchObject({
+      ok: true,
+      result: { state: "finished", changed: true },
+    });
+    const step = readStudioStatus(rig.root).workingSets[0]?.frames["idle/south"]
+      ?.handEdits[0];
+    expect(step).toMatchObject({ description, method: "script" });
+  });
+
+  test("a scripted finish needs a description, an unknown method is refused, and method or description need the files", async () => {
+    const { config, over } = pickedSet();
+    const files = { png: "/x.png", json: "/x.json" };
+
+    const noDescription = await run(
+      config,
+      "finish",
+      { id: "e1", ...files, method: "script" },
+      over,
+    );
+    const unknown = await run(
+      config,
+      "finish",
+      { id: "e1", ...files, method: "magic", description: "x" },
+      over,
+    );
+    const noFiles = await run(
+      config,
+      "finish",
+      { id: "e1", method: "script", description: "x" },
+      over,
+    );
+    const emptyDescription = await run(
+      config,
+      "finish",
+      { id: "e1", ...files, method: "hand", description: "" },
+      over,
+    );
+
+    for (const result of [noDescription, unknown, noFiles, emptyDescription]) {
+      expect(result.outcome).toMatchObject({
+        ok: false,
+        error: { code: "invalid-arguments" },
+      });
+      expect(exitOf(result.outcome)).toBe(64);
+    }
+  });
+
   test("finish and import need both files or neither, and a missing editor config is a usage error when no files are given", async () => {
     const { config, over } = pickedSet();
     const { editor: _editor, ...noEditor } = config;

@@ -35,7 +35,7 @@ export type {
   EditRecord,
   PreviewSlot,
 } from "./export-import";
-export { canonicalFrameHash } from "./export-import";
+export { canonicalFrameHash, type FinishStep } from "./export-import";
 export type { PackInput } from "./packing";
 export { decodePng, type PngDecode } from "./png/decode";
 export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";

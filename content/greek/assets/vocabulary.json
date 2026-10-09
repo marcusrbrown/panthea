@@ -22,7 +22,7 @@
     {
       "id": "idle",
       "frames": { "min": 4, "max": 4 },
-      "fps": { "min": 6, "max": 6 }
+      "fps": { "min": 3, "max": 6 }
     },
     {
       "id": "seated",

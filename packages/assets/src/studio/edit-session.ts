@@ -5,8 +5,11 @@ import { sha256Hex } from "../hash";
 import {
   applyFinish,
   buildPreview,
+  checkFinishStep,
   type EditEvidence,
   type EditRecord,
+  type FinishStep,
+  handStepOf,
   metadataHash,
   parseSheetJson,
   placeholderMs,
@@ -82,6 +85,7 @@ export interface EditOps {
     png: Uint8Array,
     json: string,
     content: StudioContent,
+    step?: FinishStep,
   ): EditResult;
   discardEdit(id: string): EditCommandResult;
 }
@@ -358,8 +362,11 @@ export function createEditOps(host: EditHost): EditOps {
     png: Uint8Array,
     json: string,
     content: StudioContent,
+    how?: FinishStep,
   ): EditResult {
     if (host.isClosed()) return refused("closed", CLOSED);
+    const step = checkFinishStep(how);
+    if (!step.ok) return refused("invalid-params", step.message);
     const loaded = load(id);
     if ("ok" in loaded) return loaded;
     const { edit, set } = loaded;
@@ -385,6 +392,7 @@ export function createEditOps(host: EditHost): EditOps {
       ...edit,
       status: "finished",
       preview: built.value.preview,
+      ...(step.value === undefined ? {} : { step: step.value }),
     };
     if (applied) {
       const same = edit.slots.every(
@@ -395,13 +403,30 @@ export function createEditOps(host: EditHost): EditOps {
           "wrong-state",
           `edit ${id} was finished with a different sheet`,
         );
+      const recorded = handStepOf(finished);
+      const alike = edit.slots.every((slot) => {
+        const last = set.frames[slot]?.handEdits.at(-1);
+        return (
+          last?.description === recorded.description &&
+          last?.method === recorded.method
+        );
+      });
+      if (!alike)
+        return refused(
+          "wrong-state",
+          `edit ${id} was finished with a different step; repeat it as it was`,
+        );
       const written = host.write(() => {
         storeBlobs(png, built.value.blobs);
         store.putEdit(finished);
       });
       return written.ok ? { ok: true, changed: true } : written;
     }
-    const next = applyFinish({ set, edit, preview: built.value.preview });
+    const next = applyFinish({
+      set,
+      edit: finished,
+      preview: built.value.preview,
+    });
     if (!next.ok) return refused("invalid-params", next.message);
     const write = () => {
       storeBlobs(png, built.value.blobs);

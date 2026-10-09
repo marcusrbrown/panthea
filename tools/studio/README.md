@@ -73,7 +73,7 @@ The environment is never passed to the server or the editor.
 | `conform` | `--job-id` with `--set <name>` or `--params <json>`: a candidate from a generated image |
 | `set create`, `set replace-sheet`, `pick` | Working sets and keyframe picks |
 | `reject` | Rejects a packed draft |
-| `open`, `import`, `finish`, `discard`, `export` | Hand edits, in the editor or with files |
+| `open`, `import`, `finish`, `discard`, `export` | Hand edits, in the editor or with files; `finish --png --json` also takes `--method hand\|script` (default `hand`) and `--description` (required for `script`: what ran), so a scripted edit is not recorded as a hand edit |
 | `pack`, `approve`, `approve-with-exception`, `publish` | Final records and canon |
 | `derive` | Not supported: exits `1` and changes nothing |
 

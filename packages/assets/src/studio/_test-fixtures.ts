@@ -23,7 +23,7 @@ import { type Palette, paletteDigest, parsePalette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateRecord, ConformParams } from "./candidates";
 import { loadStudioContent } from "./content";
-import { sheetJson } from "./export-import";
+import { type FinishStep, sheetJson } from "./export-import";
 import { SELECTED_PROFILE } from "./provider";
 import type { StudioContent } from "./request";
 import { newRequestRecord } from "./request";
@@ -714,6 +714,7 @@ export function finishSheet(
   setId: string,
   cell: { w: number; h: number },
   specs: Parameters<typeof sheetOf>[1],
+  step?: FinishStep,
 ) {
   const { session, content } = rig;
   const opened = session.openEdit(
@@ -724,7 +725,7 @@ export function finishSheet(
   );
   if (!opened.ok) throw new Error(`open ${editId}: ${opened.message}`);
   const sheet = sheetOf(cell, specs);
-  const done = session.finishEdit(editId, sheet.png, sheet.json, content);
+  const done = session.finishEdit(editId, sheet.png, sheet.json, content, step);
   if (!done.ok) throw new Error(`finish ${editId}: ${done.message}`);
   return sheet;
 }

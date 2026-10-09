@@ -491,9 +491,14 @@ export interface AssetRevisionRef {
   readonly revision: Sha256;
 }
 
+/** How an edit step was made: by the owner's hand in an editor, or by a script that ran on the frames. */
+export type HandEditMethod = "hand" | "script";
+
 export interface HandEditStep {
   readonly description: string;
   readonly hash?: Sha256;
+  /** Absent means "hand": steps recorded before scripted edits were told apart carry none. */
+  readonly method?: HandEditMethod;
 }
 
 export interface OwnerException {
@@ -913,15 +918,38 @@ function parseHandEdit(
   value: unknown,
   path: string,
 ): ParseResult<HandEditStep> {
-  return parseStrictRecord(value, path, ["description", "hash"], (record) => {
-    const description = parseString(record.description, `${path}.description`);
-    if (!description.ok) return description;
-    if (record.hash === undefined)
-      return ok({ description: description.value });
-    const hash = parseSha256(record.hash, `${path}.hash`);
-    if (!hash.ok) return hash;
-    return ok({ description: description.value, hash: hash.value });
-  });
+  return parseStrictRecord(
+    value,
+    path,
+    ["description", "hash", "method"],
+    (record) => {
+      const description = parseString(
+        record.description,
+        `${path}.description`,
+      );
+      if (!description.ok) return description;
+      let method: HandEditMethod | undefined;
+      if (record.method !== undefined) {
+        const parsed = parseEnum(record.method, `${path}.method`, [
+          "hand",
+          "script",
+        ] as const);
+        if (!parsed.ok) return parsed;
+        method = parsed.value;
+      }
+      let hash: Sha256 | undefined;
+      if (record.hash !== undefined) {
+        const parsed = parseSha256(record.hash, `${path}.hash`);
+        if (!parsed.ok) return parsed;
+        hash = parsed.value;
+      }
+      return ok({
+        description: description.value,
+        ...(hash === undefined ? {} : { hash }),
+        ...(method === undefined ? {} : { method }),
+      });
+    },
+  );
 }
 
 function parseRevisionRef(
