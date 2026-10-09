@@ -115,9 +115,19 @@ write is durable, and the drain runs behind it. These are different answers by
 design.
 
 Only one process owns a studio root. Reads work against a root someone else
-owns. A command that changes anything against a root another process owns is
-refused with `busy`; there is no remote control of another process. `abort`
-only works inside the process that is running the job.
+owns. A one-shot command that changes anything against a root another process
+owns is refused with `busy`; there is no remote control of another process.
+`abort` only works inside the process that is running the job.
+
+A `session` started on a root another process holds does not exit. It serves
+every read and refuses every other op with `root-locked`, whose error carries
+`holder` (the holding process id, or `null` when it left no live record).
+`status` reports `rootLock`: `{"holder":"self"|"other"|"none","pid":number|null}`,
+read from the lock holder's session record and a liveness check. There is no
+polling: the session tries the lock again at each write, so the first write
+after the holder has exited takes the root (`rootLock` then says `self`), and a
+holder that has come back is `root-locked` again. `open`, which exists to
+write, still stops with `root-locked` and exit `1`.
 
 ### Sessions
 

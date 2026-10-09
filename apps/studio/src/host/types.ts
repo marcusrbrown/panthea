@@ -34,27 +34,43 @@ export const HOST_STATES = [
   "not-configured",
   "starting",
   "running",
+  "read-only",
   "restarting",
   "unavailable",
   "stopped",
 ] as const;
 export type HostState = (typeof HOST_STATES)[number];
 
-/** Where the app is. A restarting or given-up sidecar says which attempt. */
+/**
+ * Where the app is. A restarting or given-up sidecar says which attempt. A
+ * read-only host is a healthy sidecar beside another session that holds the
+ * studio root: reads work, writes are refused, and `lockHolder` is that
+ * session's process id. It is not a failure and has no attempt.
+ */
 export interface HostStatus {
   readonly state: HostState;
   readonly attempt?: number;
   readonly maxAttempts?: number;
+  readonly lockHolder?: number;
 }
 
 const ATTEMPT_STATES: readonly HostState[] = ["restarting", "unavailable"];
 
 export function parseHostStatus(value: unknown): Parsed<HostStatus> {
   if (!isObject(value)) return bad("host", "not an object");
-  const { state, attempt, maxAttempts } = value;
+  const { state, attempt, maxAttempts, lockHolder } = value;
   if (!HOST_STATES.includes(state as HostState))
     return bad("host.state", "not a known state");
   const known = state as HostState;
+  if (known === "read-only") {
+    if (attempt !== undefined || maxAttempts !== undefined)
+      return bad("host", "an attempt on a state that has none");
+    if (!isCount(lockHolder) || lockHolder < 1)
+      return bad("host.lockHolder", "not a positive process id");
+    return good({ state: known, lockHolder });
+  }
+  if (lockHolder !== undefined)
+    return bad("host.lockHolder", "a lock holder on a state that has none");
   if (!ATTEMPT_STATES.includes(known)) {
     if (attempt !== undefined || maxAttempts !== undefined)
       return bad("host", "an attempt on a state that has none");

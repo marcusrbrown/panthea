@@ -20,6 +20,7 @@ import {
   alive,
   assetRig,
   capture,
+  heldBy,
   parsed,
   pipe,
   removeTempRoots,
@@ -85,6 +86,65 @@ function configFile(rig: Awaited<ReturnType<typeof runtimeRig>>): string {
   );
   return file;
 }
+
+describe("a session started on a root another process holds", () => {
+  test("it stays up read-only instead of exiting: reads answer, a write is root-locked with the holder, and ending stdin exits 0", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const deps = heldBy(4242);
+    const stdin = pipe();
+    const h = harness({ stdin: stdin.iterable });
+    const done = main(["session", "--root", rig.root], h.io, deps, h.hub);
+
+    stdin.send('{"id":"s","op":"status","args":{}}');
+    stdin.send('{"id":"l","op":"list","args":{"kind":"jobs"}}');
+    stdin.send(
+      JSON.stringify({
+        id: "g",
+        op: "generate",
+        args: { id: "r", subject: "zeus", kind: "sprite", slots: [] },
+      }),
+    );
+    stdin.send('{"id":"s2","op":"status","args":{}}');
+    stdin.end();
+    const code = await done;
+
+    const responses = parsed(h.cap.out);
+    const byId = (id: string) => responses.find((r) => r.id === id);
+    expect(code).toBe(0);
+    expect(responses).toHaveLength(4);
+    expect(byId("s")).toMatchObject({
+      ok: true,
+      result: { rootLock: { holder: "other", pid: 4242 } },
+    });
+    expect(byId("l")).toMatchObject({ ok: true, result: [] });
+    expect(byId("g")).toMatchObject({
+      ok: false,
+      error: { code: "root-locked", holder: 4242 },
+    });
+    expect(byId("s2")).toMatchObject({ ok: true });
+    expect(h.cap.err.join("\n")).toContain("read-only");
+  });
+
+  test("an edit session exists to write, so it still stops on a held root", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const h = harness();
+
+    const code = await main(
+      ["open", "--root", rig.root, "--id", "e1", "--working-set-id", "w"],
+      h.io,
+      heldBy(4242),
+      h.hub,
+    );
+
+    expect(code).toBe(1);
+    expect(parsed(h.cap.out)[0]).toMatchObject({
+      ok: false,
+      error: { code: "root-locked", holder: 4242 },
+    });
+  });
+});
 
 describe("command lines", () => {
   test("flags become arguments by name, with whole numbers and JSON converted by the command's own spec", () => {
@@ -774,19 +834,15 @@ describe("a session", () => {
     ]);
   });
 
-  test("a session takes the root when it starts: on a root another process owns it refuses with busy and exit 1", async () => {
+  test("a session started on a root another process owns no longer exits busy: it serves read-only and exits 0 when stdin ends", async () => {
     const rig = assetRig();
     const h = harness();
 
     const code = await main(["session", "--root", rig.root], h.io, {}, h.hub);
 
-    expect(code).toBe(1);
-    expect(parsed(h.cap.out)).toEqual([
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({ code: "busy" }),
-      }),
-    ]);
+    expect(code).toBe(0);
+    expect(parsed(h.cap.out)).toEqual([]);
+    expect(h.cap.err.join("\n")).toContain("serving read-only");
     rig.session.close();
   });
 });

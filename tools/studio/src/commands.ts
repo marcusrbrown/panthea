@@ -508,7 +508,13 @@ const OPS: Record<string, OpDef> = {
       const status = studio.readOnly();
       return isOutcome(status)
         ? status
-        : done(statusSummary(status, studio.deps.isAlive));
+        : done({
+            ...(statusSummary(status, studio.deps.isAlive) as Record<
+              string,
+              Json
+            >),
+            rootLock: studio.rootLock(status),
+          });
     },
   },
   list: {
@@ -1258,6 +1264,12 @@ export async function execute(
     if (isOutcome(read)) return read;
     if (studio.stopping && !READ_ONLY.has(op))
       return refuse("shutting-down", "the session is shutting down");
+    if (studio.mode === "session" && !READ_ONLY.has(op)) {
+      // A session that does not own the root tries the lock now, so every
+      // write is refused (or promoted) in one place, before the op's own work.
+      const owned = studio.owner();
+      if (isOutcome(owned)) return owned;
+    }
     return await def.run(studio, read);
   } catch {
     return refuse("internal", "the command failed unexpectedly");

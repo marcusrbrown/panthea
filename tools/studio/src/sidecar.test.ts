@@ -198,24 +198,59 @@ suite("the compiled studio sidecar", () => {
     expect(ended.rest).toEqual([]);
   }, 30_000);
 
-  test("bun:sqlite works compiled: the session holds the root's lock, and a second sidecar on the same root is refused busy", async () => {
+  test("bun:sqlite works compiled: the first sidecar holds the root's lock, and a second runs read-only beside it, then takes the lock once the first has gone", async () => {
     const { root, config } = quiet();
     const first = spawnSidecar(["session", "--config", config]);
     first.send({ id: "s1", op: "status", args: {} });
-    expect(await first.reply()).toMatchObject({ id: "s1", ok: true });
+    expect(await first.reply()).toMatchObject({
+      id: "s1",
+      ok: true,
+      result: { rootLock: { holder: "self", pid: first.proc.pid } },
+    });
     expect(existsSync(root)).toBe(true);
 
+    // Two real processes, one root: the second does not exit.
     const second = spawnSidecar(["session", "--config", config]);
-    const refused = await second.reply();
-    const secondEnd = await second.end();
-    const firstEnd = await first.end();
-
-    expect(refused).toMatchObject({
-      ok: false,
-      error: { code: "busy" },
+    second.send({ id: "a", op: "status", args: {} });
+    second.send({ id: "b", op: "list", args: { kind: "jobs" } });
+    second.send({ id: "c", op: "remove", args: { jobId: "nope" } });
+    const replies = [
+      await second.reply(),
+      await second.reply(),
+      await second.reply(),
+    ];
+    expect(second.proc.exitCode).toBeNull();
+    expect(replies[0]).toMatchObject({
+      id: "a",
+      ok: true,
+      result: { rootLock: { holder: "other", pid: first.proc.pid } },
     });
-    expect(secondEnd.code).toBe(1);
+    expect(replies[1]).toMatchObject({ id: "b", ok: true, result: [] });
+    expect(replies[2]).toMatchObject({
+      id: "c",
+      ok: false,
+      error: { code: "root-locked", holder: first.proc.pid },
+    });
+
+    // The holder goes; the second sees it gone and its next write takes the lock.
+    const firstEnd = await first.end();
     expect(firstEnd.code).toBe(0);
+    second.send({ id: "d", op: "status", args: {} });
+    expect(await second.reply()).toMatchObject({
+      id: "d",
+      result: { rootLock: { holder: "none", pid: null } },
+    });
+    second.send({ id: "e", op: "remove", args: { jobId: "nope" } });
+    const written = await second.reply();
+    expect(written.id).toBe("e");
+    expect(written.error?.code).not.toBe("root-locked");
+    second.send({ id: "f", op: "status", args: {} });
+    expect(await second.reply()).toMatchObject({
+      id: "f",
+      result: { rootLock: { holder: "self", pid: second.proc.pid } },
+    });
+    const secondEnd = await second.end();
+    expect(secondEnd.code).toBe(0);
   }, 30_000);
 
   test("a bad --parent-pid is a usage refusal on stdout and exit 64", async () => {

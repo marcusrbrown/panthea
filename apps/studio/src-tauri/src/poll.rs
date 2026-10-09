@@ -490,6 +490,7 @@ mod tests {
             state: crate::state::HostState::Running,
             attempt: None,
             max_attempts: None,
+            lock_holder: None,
         };
 
         assert_eq!(
@@ -505,6 +506,7 @@ mod tests {
             state: crate::state::HostState::Running,
             attempt: None,
             max_attempts: None,
+            lock_holder: None,
         };
         assert_eq!(
             compose(Some(&json!({ "host": "forged" })), &host),
@@ -729,6 +731,65 @@ mod tests {
         assert!(publish_host(&mut lifecycle));
 
         assert_eq!(delivered.lock().unwrap()[1], host_only("starting"));
+    }
+
+    fn running_lifecycle() -> (Lifecycle, Arc<Mutex<Vec<Value>>>, u64) {
+        let (mut lifecycle, delivered) = lifecycle_with_channel();
+        let id = crate::state::begin_spawn(&mut lifecycle).unwrap();
+        crate::state::attach_child(&mut lifecycle, id, crate::state::ChildHandle { pid: 7 });
+        (lifecycle, delivered, id)
+    }
+
+    #[test]
+    fn a_status_naming_another_holder_puts_the_host_in_read_only_with_that_holder() {
+        let (mut lifecycle, delivered, id) = running_lifecycle();
+
+        assert!(apply_snapshot(
+            &mut lifecycle,
+            id,
+            json!({ "status": { "rootLock": { "holder": "other", "pid": 4242 } }, "jobs": [] })
+        ));
+
+        let seen = delivered.lock().unwrap();
+        let last = seen.last().unwrap();
+        assert_eq!(
+            last["host"],
+            json!({ "state": "read-only", "lockHolder": 4242 })
+        );
+        assert_eq!(last["jobs"], json!([]), "the reads still arrive");
+    }
+
+    #[test]
+    fn when_the_holder_leaves_the_next_snapshot_is_plain_running_and_says_so_once() {
+        let (mut lifecycle, delivered, id) = running_lifecycle();
+        let locked = json!({ "status": { "rootLock": { "holder": "other", "pid": 4242 } } });
+        let free = json!({ "status": { "rootLock": { "holder": "none", "pid": null } } });
+        apply_snapshot(&mut lifecycle, id, locked.clone());
+
+        assert!(apply_snapshot(&mut lifecycle, id, free.clone()));
+        assert!(!apply_snapshot(&mut lifecycle, id, free));
+
+        let seen = delivered.lock().unwrap();
+        assert_eq!(seen.last().unwrap()["host"], json!({ "state": "running" }));
+        let states: Vec<&Value> = seen
+            .iter()
+            .map(|snapshot| &snapshot["host"]["state"])
+            .collect();
+        assert_eq!(
+            states,
+            [&json!("starting"), &json!("read-only"), &json!("running")]
+        );
+    }
+
+    #[test]
+    fn no_snapshot_carries_the_sidecar_pid() {
+        let (mut lifecycle, delivered, id) = running_lifecycle();
+        apply_snapshot(&mut lifecycle, id, json!({ "n": 1 }));
+        publish_host(&mut lifecycle);
+
+        for snapshot in delivered.lock().unwrap().iter() {
+            assert!(snapshot.get("sidecarPid").is_none(), "{snapshot}");
+        }
     }
 
     #[test]

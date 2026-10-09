@@ -88,6 +88,10 @@ pub enum HostState {
     /// A launch has begun and has no child yet.
     Starting,
     Running,
+    /// The sidecar runs, but another process holds the studio root's writer
+    /// lock: reads work, writes are refused. This is not a failure and spends
+    /// no restart.
+    ReadOnly,
     /// The sidecar exited and a retry is scheduled.
     Restarting,
     /// The supervisor gave up.
@@ -109,16 +113,45 @@ pub struct HostStatus {
     pub attempt: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_attempts: Option<u32>,
+    /// The process holding the root's writer lock; present only in `read-only`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lock_holder: Option<u32>,
+}
+
+/// The other holder of the root's writer lock, as the sidecar's last polled
+/// `status` reported it in `rootLock`. Anything that is not a holder other than
+/// the sidecar itself, with a real process id, is not a holder.
+fn other_lock_holder(snapshot: Option<&serde_json::Value>) -> Option<u32> {
+    let lock = snapshot?.get("status")?.get("rootLock")?;
+    if lock.get("holder")?.as_str()? != "other" {
+        return None;
+    }
+    let pid = u32::try_from(lock.get("pid")?.as_u64()?).ok()?;
+    (pid > 0).then_some(pid)
+}
+
+/// The holder that makes a running sidecar read-only. Only a sidecar that is up
+/// can be read-only; every other state outranks a lock reading left in the cache.
+pub fn read_only_holder<C>(lifecycle: &Lifecycle<C>, state: HostState) -> Option<u32> {
+    (state == HostState::Running)
+        .then(|| other_lock_holder(lifecycle.last_snapshot.as_ref()))
+        .flatten()
 }
 
 pub fn host_status<C>(lifecycle: &Lifecycle<C>) -> HostStatus {
     let state = host_state(lifecycle, lifecycle.configured);
     let attempt = matches!(state, HostState::Restarting | HostState::Unavailable)
         .then(|| lifecycle.restarts.min(MAX_RESTARTS));
+    let lock_holder = read_only_holder(lifecycle, state);
     HostStatus {
-        state,
+        state: if lock_holder.is_some() {
+            HostState::ReadOnly
+        } else {
+            state
+        },
         attempt,
         max_attempts: attempt.map(|_| MAX_RESTARTS),
+        lock_holder,
     }
 }
 
@@ -751,6 +784,7 @@ mod tests {
                     state: HostState::Restarting,
                     attempt: Some(expected),
                     max_attempts: Some(MAX_RESTARTS),
+                    lock_holder: None,
                 }
             );
         }
@@ -772,6 +806,7 @@ mod tests {
                 state: HostState::Unavailable,
                 attempt: Some(MAX_RESTARTS),
                 max_attempts: Some(MAX_RESTARTS),
+                lock_holder: None,
             }
         );
     }
@@ -804,6 +839,7 @@ mod tests {
                 state: HostState::Restarting,
                 attempt: Some(2),
                 max_attempts: Some(3),
+                lock_holder: None,
             })
             .unwrap(),
             serde_json::json!({ "state": "restarting", "attempt": 2, "maxAttempts": 3 })
@@ -813,6 +849,127 @@ mod tests {
                 state: HostState::Running,
                 attempt: None,
                 max_attempts: None,
+                lock_holder: None,
+            })
+            .unwrap(),
+            serde_json::json!({ "state": "running" })
+        );
+    }
+
+    /// A running lifecycle whose last poll saw `root_lock` in the sidecar's status.
+    fn running_with_lock(root_lock: serde_json::Value) -> Lifecycle {
+        let mut lifecycle = configured();
+        let id = begin_spawn(&mut lifecycle).unwrap();
+        attach_child(&mut lifecycle, id, "child");
+        lifecycle.last_snapshot = Some(serde_json::json!({ "status": { "rootLock": root_lock } }));
+        lifecycle
+    }
+
+    #[test]
+    fn a_sidecar_that_runs_beside_another_holder_is_read_only_and_names_it() {
+        let lifecycle = running_with_lock(serde_json::json!({ "holder": "other", "pid": 4242 }));
+
+        assert_eq!(
+            host_status(&lifecycle),
+            HostStatus {
+                state: HostState::ReadOnly,
+                attempt: None,
+                max_attempts: None,
+                lock_holder: Some(4242),
+            }
+        );
+    }
+
+    #[test]
+    fn read_only_is_not_a_crash_it_spends_no_restart_and_is_never_unavailable() {
+        let lifecycle = running_with_lock(serde_json::json!({ "holder": "other", "pid": 4242 }));
+
+        assert_eq!(lifecycle.restarts, 0);
+        assert!(!lifecycle.exhausted);
+        let status = host_status(&lifecycle);
+        assert_ne!(status.state, HostState::Unavailable);
+        assert_ne!(status.state, HostState::Restarting);
+        assert_eq!(status.attempt, None);
+    }
+
+    #[test]
+    fn holding_the_lock_itself_or_finding_it_free_is_plain_running() {
+        for lock in [
+            serde_json::json!({ "holder": "self", "pid": 77 }),
+            serde_json::json!({ "holder": "none", "pid": null }),
+        ] {
+            let status = host_status(&running_with_lock(lock.clone()));
+            assert_eq!(status.state, HostState::Running, "{lock}");
+            assert_eq!(status.lock_holder, None, "{lock}");
+        }
+    }
+
+    #[test]
+    fn a_lock_reading_that_is_not_a_known_holder_with_a_real_pid_is_ignored() {
+        for lock in [
+            serde_json::json!({ "holder": "other" }),
+            serde_json::json!({ "holder": "other", "pid": 0 }),
+            serde_json::json!({ "holder": "other", "pid": -3 }),
+            serde_json::json!({ "holder": "other", "pid": "4242" }),
+            serde_json::json!({ "holder": "other", "pid": 1.5 }),
+            serde_json::json!({ "holder": "other", "pid": 4294967296u64 }),
+            serde_json::json!({ "holder": "someone", "pid": 4242 }),
+            serde_json::json!({ "pid": 4242 }),
+            serde_json::json!("other"),
+            serde_json::json!(null),
+        ] {
+            assert_eq!(
+                host_status(&running_with_lock(lock.clone())).state,
+                HostState::Running,
+                "{lock}"
+            );
+        }
+        let mut no_status = running_with_lock(serde_json::json!(null));
+        no_status.last_snapshot = Some(serde_json::json!({ "jobs": [] }));
+        assert_eq!(host_status(&no_status).state, HostState::Running);
+        no_status.last_snapshot = None;
+        assert_eq!(host_status(&no_status).state, HostState::Running);
+    }
+
+    #[test]
+    fn the_lifecycle_outranks_a_lock_reading_left_in_the_cache() {
+        let other = serde_json::json!({ "holder": "other", "pid": 4242 });
+        let mut lifecycle = running_with_lock(other.clone());
+        lifecycle.child = None;
+        assert_eq!(host_status(&lifecycle).state, HostState::Starting);
+
+        let mut lifecycle = running_with_lock(other.clone());
+        lifecycle.stopped = true;
+        assert_eq!(host_status(&lifecycle).state, HostState::Stopped);
+
+        let mut lifecycle = running_with_lock(other.clone());
+        lifecycle.configured = false;
+        assert_eq!(host_status(&lifecycle).state, HostState::NotConfigured);
+
+        let mut lifecycle = running_with_lock(other);
+        lifecycle.child = None;
+        lifecycle.restarts = 1;
+        assert_eq!(host_status(&lifecycle).state, HostState::Restarting);
+    }
+
+    #[test]
+    fn read_only_serializes_with_its_holder_and_other_states_leave_the_holder_out() {
+        assert_eq!(
+            serde_json::to_value(HostStatus {
+                state: HostState::ReadOnly,
+                attempt: None,
+                max_attempts: None,
+                lock_holder: Some(4242),
+            })
+            .unwrap(),
+            serde_json::json!({ "state": "read-only", "lockHolder": 4242 })
+        );
+        assert_eq!(
+            serde_json::to_value(HostStatus {
+                state: HostState::Running,
+                attempt: None,
+                max_attempts: None,
+                lock_holder: None,
             })
             .unwrap(),
             serde_json::json!({ "state": "running" })

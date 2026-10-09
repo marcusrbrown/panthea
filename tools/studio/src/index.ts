@@ -327,7 +327,19 @@ export async function main(
   try {
     if (isSession) {
       const owned = studio.owner();
-      if (isOutcome(owned)) return finish(owned);
+      // A root another process holds is not a failure for a session: it serves
+      // reads and refuses writes until the holder is gone. An edit session
+      // (`open`) exists to write, so it still stops.
+      const readOnly =
+        isOutcome(owned) &&
+        !owned.ok &&
+        owned.error.code === "root-locked" &&
+        parsed.op === "session";
+      if (isOutcome(owned) && !readOnly) return finish(owned);
+      if (readOnly)
+        deps.log(
+          "the studio root is held by another process; serving read-only",
+        );
       const code = await serve(
         studio,
         io,

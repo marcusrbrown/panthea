@@ -85,6 +85,25 @@ describe("the host status", () => {
       { state: "running", attempt: 1, maxAttempts: 3 },
     ],
     ["a missing maximum", { state: "restarting", attempt: 1 }],
+    ["read-only without a holder", { state: "read-only" }],
+    ["read-only with holder zero", { state: "read-only", lockHolder: 0 }],
+    [
+      "read-only with a fractional holder",
+      { state: "read-only", lockHolder: 1.5 },
+    ],
+    [
+      "read-only with a text holder",
+      { state: "read-only", lockHolder: "4242" },
+    ],
+    [
+      "read-only with an attempt",
+      { state: "read-only", lockHolder: 4242, attempt: 1, maxAttempts: 3 },
+    ],
+    ["a holder on a running host", { state: "running", lockHolder: 4242 }],
+    [
+      "a holder on a restarting host",
+      { state: "restarting", attempt: 1, maxAttempts: 3, lockHolder: 4242 },
+    ],
     ["null", null],
     ["a string", "running"],
     ["an array", []],
@@ -143,6 +162,24 @@ describe("the snapshot", () => {
       ok: true,
       value: { host: { state: "restarting", attempt: 1 } },
     });
+  });
+
+  test("a read-only host names the process that holds the root", () => {
+    expect(
+      parseSnapshot({ host: { state: "read-only", lockHolder: 6304 } }),
+    ).toEqual({
+      ok: true,
+      value: { host: { state: "read-only", lockHolder: 6304 } },
+    });
+    expect(parseHostStatus({ state: "read-only", lockHolder: 1 }).ok).toBe(
+      true,
+    );
+  });
+
+  test("a snapshot no longer carries the sidecar pid: it is not a field", () => {
+    expect(
+      parseSnapshot({ host: { state: "running" }, sidecarPid: 6304 }),
+    ).toEqual({ ok: true, value: { host: { state: "running" } } });
   });
 
   test.each([

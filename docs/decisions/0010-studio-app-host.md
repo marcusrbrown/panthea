@@ -37,6 +37,10 @@ The studio session (`tools/studio`) already speaks newline-JSON request and repl
 - The schema table can drift from the dispatcher; the parity test fails when a row names an argument the session does not know.
 - Native code launches an editor on a path from the sidecar's reply. That path is the session's own workspace file, never webview input.
 
+## Correction: a held root
+
+The "Deliberately absent" paragraph above says a second app finds the root locked and "the session answers `busy`, which the UI shows as read-only". That was never true: the session answered `busy` once and exited `1`, so the host restarted it three times and showed "Unavailable 3/3". Superseded: a session on a held root now stays up read-only. Reads are served, every other op is refused with `root-locked` naming the holder's pid, and `status` reports `rootLock`. The host maps a running sidecar whose polled `status.rootLock` is `other` to a distinct `read-only` state (`lockHolder` is the pid) that spends no restart and is never `unavailable`. The session takes the lock lazily, at the first write after the holder has gone; there is no lock polling. The earlier `sidecarPid` signal in snapshots was dropped in favour of this explicit state.
+
 ## Evidence/links
 
 [Plan Unit 3](../plans/2026-10-08-003-feat-studio-tauri-app-plan.md), [ADR-0003](0003-simulation-service.md) (sidecar lifecycle), [ADR-0008](0008-world-state-and-client-transport.md) (changed-frame channel), [ADR-0009](0009-asset-registry-lifecycle-and-uris.md), `apps/studio/src-tauri/tests/sidecar_integration.rs`, [CSP learning](../solutions/integration-issues/koota-new-function-tauri-csp-2026-09-27.md).

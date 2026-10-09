@@ -153,6 +153,47 @@ export class Studio {
     );
   }
 
+  /**
+   * Who holds the writer lock, as the durable records and a liveness check
+   * say. `none` also covers a lock whose holder left no live record: nothing
+   * is guessed. A session that has the lock itself reports `self`.
+   */
+  rootLock(status: StudioStatus): Json {
+    if (this.session !== undefined)
+      return { holder: "self", pid: status.session?.pid ?? process.pid };
+    const record = status.session;
+    return record !== undefined &&
+      record.endedAt === undefined &&
+      this.deps.isAlive(record.pid)
+      ? { holder: "other", pid: record.pid }
+      : { holder: "none", pid: null };
+  }
+
+  /** The typed refusal of a write while another process holds the root. */
+  private rootLocked(): Outcome {
+    const lock =
+      this.root === undefined
+        ? undefined
+        : this.rootLock(this.deps.readStatus(this.root));
+    const holder =
+      lock !== undefined &&
+      typeof lock === "object" &&
+      !Array.isArray(lock) &&
+      lock?.holder === "other"
+        ? (lock.pid as number)
+        : null;
+    return refuse(
+      "root-locked",
+      holder === null
+        ? "another process holds this studio root; this session is read-only"
+        : `another studio session (pid ${holder}) holds this studio root; this session is read-only`,
+      {
+        holder,
+        hint: "reads still work; a write is accepted once the holder has exited",
+      },
+    );
+  }
+
   owner(): StudioSession | Outcome {
     if (this.stopping)
       return refuse("shutting-down", "the session is shutting down");
@@ -160,9 +201,13 @@ export class Studio {
     if (this.root === undefined) return this.missing("studioRoot");
     const opened = this.deps.openSession(this.root);
     if (opened.kind === "busy")
-      return refuse("busy", "another session owns this studio root", {
-        hint: "read it with status or list, or send the command to the owning session",
-      });
+      // A session keeps serving reads and tries the lock again at the next
+      // write; a one-shot command has nothing to wait for.
+      return this.mode === "session"
+        ? this.rootLocked()
+        : refuse("busy", "another session owns this studio root", {
+            hint: "read it with status or list, or send the command to the owning session",
+          });
     this.session = opened.session;
     for (const id of opened.session.recovered)
       this.deps.log(`recovered interrupted job ${id}`);

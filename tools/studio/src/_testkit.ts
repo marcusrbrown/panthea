@@ -7,7 +7,9 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import {
   loadStudioContent,
+  readStudioStatus,
   type SelectedProfile,
+  type StudioStatus,
 } from "@panthea/assets/studio";
 import {
   type AssetRig,
@@ -188,4 +190,38 @@ export function contentRootWithPalette(files: Record<string, string>): string {
   for (const [name, text] of Object.entries(files))
     writeFileSync(join(root, "palette", name), text);
   return root;
+}
+
+/** A session record for another process, as the lock holder left it. */
+const holderRecord = (pid: number, ended = false) => ({
+  schemaVersion: 1 as const,
+  id: "other-session",
+  pid,
+  startedAt: "2026-10-09T00:00:00.000Z",
+  ...(ended ? { endedAt: "2026-10-09T01:00:00.000Z" } : {}),
+});
+
+/** Deps for a root another process holds: the lock is busy, and the records name `pid` as the open holder. */
+export function heldBy(
+  pid: number | undefined,
+  over: Partial<Deps> = {},
+): Partial<Deps> & { alive: Set<number>; probes: () => number } {
+  const alive = new Set<number>(pid === undefined ? [] : [pid]);
+  let probes = 0;
+  return {
+    alive,
+    probes: () => probes,
+    openSession: () => {
+      probes += 1;
+      return { kind: "busy" as const };
+    },
+    readStatus: (root: string): StudioStatus => {
+      const real = readStudioStatus(root);
+      return pid === undefined
+        ? { ...real, session: undefined }
+        : { ...real, session: holderRecord(pid) };
+    },
+    isAlive: (p: number) => alive.has(p),
+    ...over,
+  };
 }

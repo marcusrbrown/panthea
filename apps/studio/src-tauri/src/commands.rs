@@ -16,7 +16,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::bridge::{self, CommandError, LaunchFailure, PreviewTarget};
 use crate::config::{editor_executable, ConfigStore};
 use crate::poll::apply_subscribe;
-use crate::state::{host_state, HostState, StudioState};
+use crate::state::{host_state, read_only_holder, HostState, StudioState};
 
 /// Where the app is, for the webview: whether a config is chosen and what the
 /// sidecar is doing. It carries no path.
@@ -36,9 +36,14 @@ fn status(state: &StudioState, config: &ConfigStore) -> ConfigStatus {
         .lifecycle
         .lock()
         .expect("sidecar state mutex poisoned");
+    let state = host_state(&lifecycle, configured);
     ConfigStatus {
         configured,
-        state: host_state(&lifecycle, configured),
+        state: if read_only_holder(&lifecycle, state).is_some() {
+            HostState::ReadOnly
+        } else {
+            state
+        },
     }
 }
 
