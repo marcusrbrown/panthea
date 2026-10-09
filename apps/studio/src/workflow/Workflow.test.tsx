@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fakeTransport } from "../host/_testkit";
@@ -32,6 +33,19 @@ const render = (state: ReturnType<typeof stateFor>) =>
   renderToStaticMarkup(createElement(WorkflowView, { state, host }));
 
 describe("WorkflowView controls", () => {
+  test("field-to-card gaps use the workflow row rhythm", () => {
+    const css = readFileSync(
+      new URL("./workflow.css", import.meta.url),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /\.working-set-select\s*\{[^}]*margin-bottom:\s*10px;/s,
+    );
+    expect(css).toMatch(/\.pack-form\s*\{[^}]*margin-top:\s*0;/s);
+    expect(css).toMatch(/\.asset-select\s*\{[^}]*margin-bottom:\s*10px;/s);
+    expect(css).toMatch(/\.scale-conform-form\s*\{[^}]*row-gap:\s*10px;/s);
+  });
+
   test("empty queue has no job actions", () => {
     const html = render(stateFor());
     expect(html).toContain("Queue is empty");

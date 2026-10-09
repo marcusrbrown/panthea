@@ -386,7 +386,8 @@
 .scale-conform-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 10px;
   padding: 10px;
   border: 1px solid var(--line);
   background: var(--paper-raised);
@@ -519,7 +520,7 @@
   grid-template-columns: 1fr 1fr;
   align-items: end;
   gap: 9px;
-  margin-top: 17px;
+  margin-top: 0;
   padding-top: 13px;
   border-top: 1px solid var(--line);
 }
@@ -631,6 +632,7 @@
 }
 .working-set-select {
   margin-top: 14px;
+  margin-bottom: 10px;
 }
 .edit-panel {
   margin-top: 18px;
