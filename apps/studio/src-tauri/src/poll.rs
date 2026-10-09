@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use tauri::ipc::Channel;
 
 use crate::mux::{Mux, MuxError, OpClass};
-use crate::state::{is_current, Lifecycle};
+use crate::state::{host_status, is_current, HostStatus, Lifecycle};
 
 /// The wait between the end of one tick and the start of the next. The timer is
 /// re-armed after a tick finishes, so ticks never overlap or queue up behind a
@@ -152,15 +152,26 @@ impl Poller {
     }
 }
 
-/// Applies one polled snapshot to `lifecycle` under the caller's single lock: the
-/// launch check, the cache, the channel send and the last-sent mark. Returns
-/// whether it was sent. A snapshot from a launch that is no longer current
-/// changes nothing.
-pub fn apply_snapshot(lifecycle: &mut Lifecycle, launch_id: u64, snapshot: Value) -> bool {
-    if !is_current(lifecycle, launch_id) {
-        return false;
-    }
-    lifecycle.last_snapshot = Some(snapshot.clone());
+/// What the webview receives: the polled store data (if a sidecar has answered
+/// this launch) with the host state beside it. The host state is always there,
+/// so a webview has one place to learn where the app is, with or without a
+/// store to show.
+pub fn compose(data: Option<&Value>, host: &HostStatus) -> Value {
+    let mut snapshot = match data {
+        Some(Value::Object(map)) => map.clone(),
+        _ => Map::new(),
+    };
+    snapshot.insert(
+        "host".into(),
+        serde_json::to_value(host).expect("host status serializes"),
+    );
+    Value::Object(snapshot)
+}
+
+/// Sends the composed snapshot to the subscriber if it differs from the last
+/// one sent. Returns whether it was sent.
+fn send_if_changed(lifecycle: &mut Lifecycle) -> bool {
+    let snapshot = compose(lifecycle.last_snapshot.as_ref(), &host_status(lifecycle));
     if lifecycle.last_sent.as_ref() == Some(&snapshot) {
         return false;
     }
@@ -179,17 +190,39 @@ pub fn apply_snapshot(lifecycle: &mut Lifecycle, launch_id: u64, snapshot: Value
     }
 }
 
-/// Installs `channel` as the subscriber and, if a snapshot is cached, replays it
-/// at once, so a reloaded webview does not wait for the next change.
-pub fn apply_subscribe(lifecycle: &mut Lifecycle, channel: Channel<Value>) {
-    if let Some(snapshot) = lifecycle.last_snapshot.clone() {
-        match channel.send(snapshot.clone()) {
-            Ok(()) => lifecycle.last_sent = Some(snapshot),
-            Err(error) => eprintln!(
-                "panthea-studio: failed to replay the cached snapshot to a new subscriber: {error}"
-            ),
-        }
+/// Pushes the host state when it changed, even if the store did not: a sidecar
+/// that is restarting or has given up changes what the webview should show
+/// before any new data arrives. Call it after every lifecycle transition, under
+/// the same lock. Returns whether anything was sent.
+pub fn publish_host(lifecycle: &mut Lifecycle) -> bool {
+    send_if_changed(lifecycle)
+}
+
+/// Applies one polled snapshot to `lifecycle` under the caller's single lock: the
+/// launch check, the cache, the channel send and the last-sent mark. Returns
+/// whether it was sent. A snapshot from a launch that is no longer current
+/// changes nothing.
+pub fn apply_snapshot(lifecycle: &mut Lifecycle, launch_id: u64, snapshot: Value) -> bool {
+    if !is_current(lifecycle, launch_id) {
+        return false;
     }
+    lifecycle.last_snapshot = Some(snapshot);
+    send_if_changed(lifecycle)
+}
+
+/// Installs `channel` as the subscriber and replays the current snapshot at
+/// once: the polled data if there is any, and always the host state, so a
+/// reloaded webview does not wait for the next change and learns even a
+/// not-configured app's state.
+pub fn apply_subscribe(lifecycle: &mut Lifecycle, channel: Channel<Value>) {
+    let snapshot = compose(lifecycle.last_snapshot.as_ref(), &host_status(lifecycle));
+    lifecycle.last_sent = match channel.send(snapshot.clone()) {
+        Ok(()) => Some(snapshot),
+        Err(error) => {
+            eprintln!("panthea-studio: failed to replay the snapshot to a new subscriber: {error}");
+            None
+        }
+    };
     lifecycle.channel = Some(channel);
 }
 
@@ -235,6 +268,7 @@ mod tests {
     fn lifecycle_with_channel() -> (Lifecycle, Arc<Mutex<Vec<Value>>>) {
         let mut lifecycle = Lifecycle {
             launch_id: 1,
+            configured: true,
             ..Default::default()
         };
         let (channel, delivered) = recording_channel();
@@ -439,10 +473,50 @@ mod tests {
         });
     }
 
+    /// `value` with the host state of a configured lifecycle that has not
+    /// started a child: what the tests below expect on the wire.
+    fn starting(mut value: Value) -> Value {
+        value["host"] = json!({ "state": "starting" });
+        value
+    }
+
+    fn host_only(state: &str) -> Value {
+        json!({ "host": { "state": state } })
+    }
+
     #[test]
-    fn a_new_subscriber_gets_the_cached_snapshot_at_once() {
+    fn a_snapshot_is_the_polled_data_with_the_host_state_beside_it() {
+        let host = HostStatus {
+            state: crate::state::HostState::Running,
+            attempt: None,
+            max_attempts: None,
+        };
+
+        assert_eq!(
+            compose(Some(&json!({ "jobs": [1] })), &host),
+            json!({ "jobs": [1], "host": { "state": "running" } })
+        );
+        assert_eq!(compose(None, &host), host_only("running"));
+    }
+
+    #[test]
+    fn the_host_state_wins_over_a_field_of_that_name_in_the_data() {
+        let host = HostStatus {
+            state: crate::state::HostState::Running,
+            attempt: None,
+            max_attempts: None,
+        };
+        assert_eq!(
+            compose(Some(&json!({ "host": "forged" })), &host),
+            host_only("running")
+        );
+    }
+
+    #[test]
+    fn a_new_subscriber_gets_the_cached_snapshot_with_the_host_state_at_once() {
         let mut lifecycle = Lifecycle {
             launch_id: 1,
+            configured: true,
             ..Default::default()
         };
         assert!(
@@ -454,18 +528,27 @@ mod tests {
         let (channel, delivered) = recording_channel();
         apply_subscribe(&mut lifecycle, channel);
 
-        assert_eq!(*delivered.lock().unwrap(), vec![json!({ "n": 1 })]);
-        assert_eq!(lifecycle.last_sent, Some(json!({ "n": 1 })));
+        assert_eq!(
+            *delivered.lock().unwrap(),
+            vec![starting(json!({ "n": 1 }))]
+        );
+        assert_eq!(lifecycle.last_sent, Some(starting(json!({ "n": 1 }))));
     }
 
     #[test]
-    fn a_subscriber_with_nothing_cached_gets_nothing_until_the_first_snapshot() {
-        let (mut lifecycle, delivered) = lifecycle_with_channel();
-        assert!(delivered.lock().unwrap().is_empty());
+    fn a_subscriber_with_no_data_yet_still_learns_where_the_app_is() {
+        for (configured, state) in [(false, "not-configured"), (true, "starting")] {
+            let mut lifecycle = Lifecycle {
+                launch_id: 1,
+                configured,
+                ..Default::default()
+            };
+            let (channel, delivered) = recording_channel();
 
-        assert!(apply_snapshot(&mut lifecycle, 1, json!({ "n": 1 })));
+            apply_subscribe(&mut lifecycle, channel);
 
-        assert_eq!(*delivered.lock().unwrap(), vec![json!({ "n": 1 })]);
+            assert_eq!(*delivered.lock().unwrap(), vec![host_only(state)]);
+        }
     }
 
     #[test]
@@ -480,7 +563,12 @@ mod tests {
 
         assert_eq!(
             *delivered.lock().unwrap(),
-            vec![json!({ "n": 1 }), json!({ "n": 2 }), json!({ "n": 1 })]
+            vec![
+                host_only("starting"),
+                starting(json!({ "n": 1 })),
+                starting(json!({ "n": 2 })),
+                starting(json!({ "n": 1 }))
+            ]
         );
     }
 
@@ -499,10 +587,10 @@ mod tests {
         );
         apply_snapshot(&mut lifecycle, 1, json!({ "n": 3 }));
 
-        assert_eq!(first.lock().unwrap().len(), 2);
+        assert_eq!(first.lock().unwrap().len(), 3, "host, n=1, n=2");
         assert_eq!(
             *second.lock().unwrap(),
-            vec![json!({ "n": 2 }), json!({ "n": 3 })]
+            vec![starting(json!({ "n": 2 })), starting(json!({ "n": 3 }))]
         );
     }
 
@@ -514,20 +602,151 @@ mod tests {
         assert!(!apply_snapshot(&mut lifecycle, 1, json!({ "n": "stale" })));
 
         assert!(lifecycle.last_snapshot.is_none());
-        assert!(lifecycle.last_sent.is_none());
-        assert!(delivered.lock().unwrap().is_empty());
+        assert_eq!(lifecycle.last_sent, Some(host_only("starting")));
+        assert_eq!(*delivered.lock().unwrap(), vec![host_only("starting")]);
         assert!(is_current(&lifecycle, 2));
     }
 
     #[test]
-    fn after_a_restart_the_new_launch_resends_what_the_webview_already_has() {
+    fn after_a_restart_the_new_launch_sends_the_same_data_again_only_after_the_gap_was_shown() {
         let (mut lifecycle, delivered) = lifecycle_with_channel();
         apply_snapshot(&mut lifecycle, 1, json!({ "n": 1 }));
         let id = crate::state::begin_spawn(&mut lifecycle).unwrap();
 
+        // The ended launch's data is gone, and the webview is told so.
+        assert!(publish_host(&mut lifecycle));
+        // The new launch's first poll differs from that, so it is sent even
+        // though the store did not change.
         assert!(apply_snapshot(&mut lifecycle, id, json!({ "n": 1 })));
 
+        let seen = delivered.lock().unwrap();
+        assert_eq!(
+            seen.as_slice()[seen.len() - 2..],
+            [host_only("starting"), starting(json!({ "n": 1 }))]
+        );
+    }
+
+    #[test]
+    fn a_restart_that_shows_no_gap_does_not_resend_identical_data() {
+        let (mut lifecycle, delivered) = lifecycle_with_channel();
+        apply_snapshot(&mut lifecycle, 1, json!({ "n": 1 }));
+        let id = crate::state::begin_spawn(&mut lifecycle).unwrap();
+        apply_snapshot(&mut lifecycle, id, json!({ "n": 1 }));
+
         assert_eq!(delivered.lock().unwrap().len(), 2);
+    }
+
+    // The host state travels in the snapshot, and a change of it is pushed even
+    // when the store did not change.
+
+    #[test]
+    fn a_host_state_change_is_pushed_though_no_store_data_arrived() {
+        let (mut lifecycle, delivered) = lifecycle_with_channel();
+        let id = crate::state::begin_spawn(&mut lifecycle).unwrap();
+        assert!(!publish_host(&mut lifecycle), "still starting: nothing new");
+
+        crate::state::attach_child(&mut lifecycle, id, crate::state::ChildHandle { pid: 7 });
+        assert!(publish_host(&mut lifecycle));
+
+        assert_eq!(
+            *delivered.lock().unwrap(),
+            vec![host_only("starting"), host_only("running")]
+        );
+    }
+
+    #[test]
+    fn an_unchanged_host_state_is_not_pushed_again() {
+        let (mut lifecycle, delivered) = lifecycle_with_channel();
+        assert!(!publish_host(&mut lifecycle), "the subscribe replay had it");
+        assert!(!publish_host(&mut lifecycle));
+        assert!(!publish_host(&mut lifecycle));
+        assert_eq!(delivered.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_store_snapshot_after_a_host_push_carries_the_host_state_and_is_sent_once() {
+        let (mut lifecycle, delivered) = lifecycle_with_channel();
+
+        assert!(apply_snapshot(&mut lifecycle, 1, json!({ "n": 1 })));
+        assert!(!apply_snapshot(&mut lifecycle, 1, json!({ "n": 1 })));
+
+        let seen = delivered.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[1], starting(json!({ "n": 1 })));
+    }
+
+    #[test]
+    fn a_crash_pushes_restarting_with_its_attempt_and_drops_the_stale_store_data() {
+        let (mut lifecycle, delivered) = lifecycle_with_channel();
+        let id = crate::state::begin_spawn(&mut lifecycle).unwrap();
+        crate::state::attach_child(&mut lifecycle, id, crate::state::ChildHandle { pid: 7 });
+        apply_snapshot(&mut lifecycle, id, json!({ "n": 1 }));
+
+        crate::state::on_terminated(&mut lifecycle, id, false);
+        assert!(publish_host(&mut lifecycle));
+
+        let seen = delivered.lock().unwrap();
+        assert_eq!(
+            seen.last().unwrap(),
+            &json!({ "host": { "state": "restarting", "attempt": 1, "maxAttempts": 3 } })
+        );
+    }
+
+    #[test]
+    fn giving_up_is_pushed_as_unavailable_and_quitting_as_stopped() {
+        let (mut lifecycle, delivered) = lifecycle_with_channel();
+        for _ in 0..=crate::state::MAX_RESTARTS {
+            let id = crate::state::begin_spawn(&mut lifecycle).unwrap();
+            crate::state::attach_child(&mut lifecycle, id, crate::state::ChildHandle { pid: 7 });
+            crate::state::on_terminated(&mut lifecycle, id, false);
+        }
+        assert!(publish_host(&mut lifecycle));
+        let _ = crate::state::stop(&mut lifecycle);
+        assert!(publish_host(&mut lifecycle));
+
+        let seen = delivered.lock().unwrap();
+        assert_eq!(
+            seen[seen.len() - 2],
+            json!({ "host": { "state": "unavailable", "attempt": 3, "maxAttempts": 3 } })
+        );
+        assert_eq!(seen.last().unwrap(), &host_only("stopped"));
+    }
+
+    #[test]
+    fn choosing_a_config_pushes_the_change_from_not_configured() {
+        let mut lifecycle = Lifecycle {
+            launch_id: 1,
+            ..Default::default()
+        };
+        let (channel, delivered) = recording_channel();
+        apply_subscribe(&mut lifecycle, channel);
+        assert_eq!(
+            *delivered.lock().unwrap(),
+            vec![host_only("not-configured")]
+        );
+
+        lifecycle.configured = true;
+        assert!(publish_host(&mut lifecycle));
+
+        assert_eq!(delivered.lock().unwrap()[1], host_only("starting"));
+    }
+
+    #[test]
+    fn a_host_push_with_no_subscriber_sends_nothing_and_a_later_subscriber_replays_the_latest() {
+        let mut lifecycle = Lifecycle {
+            launch_id: 1,
+            configured: true,
+            ..Default::default()
+        };
+        assert!(!publish_host(&mut lifecycle));
+        let id = crate::state::begin_spawn(&mut lifecycle).unwrap();
+        crate::state::attach_child(&mut lifecycle, id, crate::state::ChildHandle { pid: 7 });
+        assert!(!publish_host(&mut lifecycle));
+
+        let (channel, delivered) = recording_channel();
+        apply_subscribe(&mut lifecycle, channel);
+
+        assert_eq!(*delivered.lock().unwrap(), vec![host_only("running")]);
     }
 
     #[test]

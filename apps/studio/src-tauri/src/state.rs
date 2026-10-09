@@ -57,6 +57,9 @@ pub struct Lifecycle<C = ChildHandle> {
     /// ending does not reset it: a subscribed webview stays subscribed across a
     /// sidecar restart.
     pub channel: Option<Channel<serde_json::Value>>,
+    /// Whether a studio config file is chosen. The host state in every snapshot
+    /// depends on it, so it lives with the rest of the state it is read with.
+    pub configured: bool,
 }
 
 impl<C> Default for Lifecycle<C> {
@@ -71,6 +74,7 @@ impl<C> Default for Lifecycle<C> {
             last_sent: None,
             last_snapshot: None,
             channel: None,
+            configured: false,
         }
     }
 }
@@ -90,6 +94,32 @@ pub enum HostState {
     Unavailable,
     /// The app is quitting.
     Stopped,
+}
+
+/// The host state as the webview sees it in every snapshot: where the app is,
+/// and for a sidecar that is coming back or has given up, how many restarts it
+/// has made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostStatus {
+    pub state: HostState,
+    /// The restart attempt in progress (`restarting`) or the last one made
+    /// (`unavailable`); absent in every other state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_attempts: Option<u32>,
+}
+
+pub fn host_status<C>(lifecycle: &Lifecycle<C>) -> HostStatus {
+    let state = host_state(lifecycle, lifecycle.configured);
+    let attempt = matches!(state, HostState::Restarting | HostState::Unavailable)
+        .then(|| lifecycle.restarts.min(MAX_RESTARTS));
+    HostStatus {
+        state,
+        attempt,
+        max_attempts: attempt.map(|_| MAX_RESTARTS),
+    }
 }
 
 pub fn host_state<C>(lifecycle: &Lifecycle<C>, configured: bool) -> HostState {
@@ -113,8 +143,10 @@ pub fn is_current<C>(lifecycle: &Lifecycle<C>, launch_id: u64) -> bool {
     lifecycle.launch_id == launch_id
 }
 
+/// A launch beginning or ending drops the polled data (nothing about an ended
+/// launch's store describes anything live), but not `last_sent`: that records
+/// what the webview last received, which stays true whatever the launch does.
 fn reset_snapshot_fields<C>(lifecycle: &mut Lifecycle<C>) {
-    lifecycle.last_sent = None;
     lifecycle.last_snapshot = None;
 }
 
@@ -385,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_spawn_resets_the_snapshot_fields_but_keeps_the_subscriber() {
+    fn begin_spawn_drops_the_polled_data_but_keeps_what_was_sent_and_the_subscriber() {
         let mut lifecycle = Lifecycle {
             last_sent: Some(serde_json::json!({ "a": 1 })),
             last_snapshot: Some(serde_json::json!({ "a": 1 })),
@@ -393,7 +425,7 @@ mod tests {
             ..Default::default()
         };
         begin_spawn(&mut lifecycle).unwrap();
-        assert!(lifecycle.last_sent.is_none());
+        assert_eq!(lifecycle.last_sent, Some(serde_json::json!({ "a": 1 })));
         assert!(lifecycle.last_snapshot.is_none());
         assert!(lifecycle.channel.is_some());
     }
@@ -681,6 +713,110 @@ mod tests {
 
         lifecycle.stopped = true;
         assert_eq!(host_state(&lifecycle, true), HostState::Stopped);
+    }
+
+    fn configured() -> Lifecycle {
+        Lifecycle {
+            configured: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_host_status_follows_the_lifecycle_and_the_configured_flag() {
+        let lifecycle = Lifecycle::default();
+        assert_eq!(host_status(&lifecycle).state, HostState::NotConfigured);
+
+        let mut lifecycle = configured();
+        assert_eq!(host_status(&lifecycle).state, HostState::Starting);
+        let id = begin_spawn(&mut lifecycle).unwrap();
+        attach_child(&mut lifecycle, id, "child");
+        assert_eq!(host_status(&lifecycle).state, HostState::Running);
+
+        lifecycle.configured = false;
+        assert_eq!(host_status(&lifecycle).state, HostState::NotConfigured);
+    }
+
+    #[test]
+    fn a_restarting_sidecar_reports_the_attempt_it_is_on_out_of_the_maximum() {
+        let mut lifecycle = configured();
+        for expected in 1..=MAX_RESTARTS {
+            let id = begin_spawn(&mut lifecycle).unwrap();
+            attach_child(&mut lifecycle, id, "child");
+            on_terminated(&mut lifecycle, id, false);
+
+            assert_eq!(
+                host_status(&lifecycle),
+                HostStatus {
+                    state: HostState::Restarting,
+                    attempt: Some(expected),
+                    max_attempts: Some(MAX_RESTARTS),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn an_exhausted_supervisor_reports_unavailable_with_the_attempts_it_made_capped_at_the_maximum()
+    {
+        let mut lifecycle = configured();
+        for _ in 0..=MAX_RESTARTS {
+            let id = begin_spawn(&mut lifecycle).unwrap();
+            attach_child(&mut lifecycle, id, "child");
+            on_terminated(&mut lifecycle, id, false);
+        }
+
+        assert_eq!(
+            host_status(&lifecycle),
+            HostStatus {
+                state: HostState::Unavailable,
+                attempt: Some(MAX_RESTARTS),
+                max_attempts: Some(MAX_RESTARTS),
+            }
+        );
+    }
+
+    #[test]
+    fn the_other_states_carry_no_attempt_and_a_healthy_launch_clears_the_count() {
+        let mut lifecycle = configured();
+        let id = begin_spawn(&mut lifecycle).unwrap();
+        attach_child(&mut lifecycle, id, "child");
+        on_terminated(&mut lifecycle, id, false);
+        let id = begin_spawn(&mut lifecycle).unwrap();
+        attach_child(&mut lifecycle, id, "child");
+        assert_eq!(host_status(&lifecycle).attempt, None, "running");
+
+        mark_healthy(&mut lifecycle, id);
+        lifecycle.child = None;
+        assert_eq!(host_status(&lifecycle).state, HostState::Starting);
+        assert_eq!(host_status(&lifecycle).attempt, None);
+
+        lifecycle.stopped = true;
+        assert_eq!(host_status(&lifecycle).state, HostState::Stopped);
+        assert_eq!(host_status(&lifecycle).attempt, None);
+        assert_eq!(host_status(&Lifecycle::default()).attempt, None);
+    }
+
+    #[test]
+    fn the_host_status_serializes_with_camel_case_names_and_omits_absent_fields() {
+        assert_eq!(
+            serde_json::to_value(HostStatus {
+                state: HostState::Restarting,
+                attempt: Some(2),
+                max_attempts: Some(3),
+            })
+            .unwrap(),
+            serde_json::json!({ "state": "restarting", "attempt": 2, "maxAttempts": 3 })
+        );
+        assert_eq!(
+            serde_json::to_value(HostStatus {
+                state: HostState::Running,
+                attempt: None,
+                max_attempts: None,
+            })
+            .unwrap(),
+            serde_json::json!({ "state": "running" })
+        );
     }
 
     #[test]

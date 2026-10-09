@@ -11,7 +11,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::mux::{Mux, MuxError, OpClass};
@@ -149,19 +149,77 @@ pub async fn studio_call(
     Ok(value)
 }
 
+/// What `preview_bytes` fetches: a held atlas by selection (with the version key
+/// it was resolved under), or the placeholder by its hash.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum PreviewTarget {
+    Atlas(AtlasRef),
+    Placeholder(PlaceholderRef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AtlasRef {
+    pub source: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlaceholderRef {
+    pub placeholder: String,
+}
+
+fn is_sha256_hex(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn invalid_arguments(message: &str) -> CommandError {
+    CommandError {
+        code: "invalid-arguments".into(),
+        message: message.into(),
+        retryable: false,
+        detail: None,
+    }
+}
+
 /// `preview_bytes`: the validated atlas for a selection as raw bytes, only under
-/// the version key it was resolved with.
+/// the version key it was resolved with; or the placeholder's PNG by its hash,
+/// which has no version.
 pub async fn preview_bytes(
     mux: &Mux,
     configured: bool,
-    source: &str,
-    id: &str,
-    version: &str,
+    target: &PreviewTarget,
+    version: Option<&str>,
 ) -> Result<Vec<u8>, CommandError> {
     if !configured {
         return Err(CommandError::not_configured());
     }
-    let args = json!({ "source": source, "id": id, "v": version });
+    let args = match (target, version) {
+        (PreviewTarget::Atlas(AtlasRef { source, id }), Some(v)) => {
+            json!({ "source": source, "id": id, "v": v })
+        }
+        (PreviewTarget::Atlas(_), None) => {
+            return Err(invalid_arguments(
+                "an atlas needs the version it was resolved under",
+            ));
+        }
+        (PreviewTarget::Placeholder(PlaceholderRef { placeholder }), None) => {
+            if !is_sha256_hex(placeholder) {
+                return Err(invalid_arguments(
+                    "a placeholder is named by 64 lowercase hex digits",
+                ));
+            }
+            json!({ "placeholder": placeholder })
+        }
+        (PreviewTarget::Placeholder(_), Some(_)) => {
+            return Err(invalid_arguments("a placeholder has no version"));
+        }
+    };
     let reply = mux.request("source-bytes", args, OpClass::Read).await?;
     reply
         .get("base64")
@@ -584,7 +642,7 @@ mod tests {
                 )
             });
 
-            let bytes = preview_bytes(&mux, true, "draft", "zeus-take", "k1")
+            let bytes = preview_bytes(&mux, true, &atlas("draft", "zeus-take"), Some("k1"))
                 .await
                 .unwrap();
 
@@ -605,7 +663,7 @@ mod tests {
             let (mux, _sidecar, _dirty) =
                 attached(|_, _| Reply::Refuse("stale-version", "resolve it again"));
 
-            let error = preview_bytes(&mux, true, "draft", "zeus-take", "old")
+            let error = preview_bytes(&mux, true, &atlas("draft", "zeus-take"), Some("old"))
                 .await
                 .unwrap_err();
 
@@ -624,7 +682,7 @@ mod tests {
                 json!(null),
             ] {
                 let (mux, _sidecar, _dirty) = attached(move |_, _| Reply::Ok(result.clone()));
-                let error = preview_bytes(&mux, true, "draft", "a", "k")
+                let error = preview_bytes(&mux, true, &atlas("draft", "a"), Some("k"))
                     .await
                     .unwrap_err();
                 assert_eq!(error.code, "malformed-reply");
@@ -636,12 +694,123 @@ mod tests {
     fn preview_bytes_with_no_config_asks_nothing() {
         runtime().block_on(async {
             let (mux, sidecar, _dirty) = attached(echo);
-            let error = preview_bytes(&mux, false, "draft", "a", "k")
+            let error = preview_bytes(&mux, false, &atlas("draft", "a"), Some("k"))
                 .await
                 .unwrap_err();
             assert_eq!(error.code, "not-configured");
             assert_eq!(sidecar.seen(), vec![]);
         });
+    }
+
+    fn atlas(source: &str, id: &str) -> PreviewTarget {
+        PreviewTarget::Atlas(AtlasRef {
+            source: source.into(),
+            id: id.into(),
+        })
+    }
+
+    fn placeholder(hash: &str) -> PreviewTarget {
+        PreviewTarget::Placeholder(PlaceholderRef {
+            placeholder: hash.into(),
+        })
+    }
+
+    const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn the_placeholder_is_fetched_by_its_hash_alone_and_returned_as_raw_bytes() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) =
+                attached(|_, _| Reply::Ok(json!({ "placeholder": HASH, "base64": encoded(PNG) })));
+
+            let bytes = preview_bytes(&mux, true, &placeholder(HASH), None)
+                .await
+                .unwrap();
+
+            assert_eq!(bytes, PNG);
+            assert_eq!(
+                sidecar.seen(),
+                vec![("source-bytes".to_string(), json!({ "placeholder": HASH }))]
+            );
+        });
+    }
+
+    #[test]
+    fn a_placeholder_hash_that_is_not_64_lowercase_hex_never_reaches_the_session() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) = attached(echo);
+            for hash in [
+                "",
+                "abc",
+                "../../etc/passwd",
+                &HASH.to_uppercase(),
+                &format!("{HASH}0"),
+                &HASH[..63],
+                "g123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            ] {
+                let error = preview_bytes(&mux, true, &placeholder(hash), None)
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.code, "invalid-arguments", "{hash:?}");
+            }
+            assert_eq!(sidecar.seen(), vec![]);
+        });
+    }
+
+    #[test]
+    fn a_placeholder_with_a_version_and_an_atlas_without_one_are_both_refused_untouched() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) = attached(echo);
+
+            let versioned = preview_bytes(&mux, true, &placeholder(HASH), Some("k"))
+                .await
+                .unwrap_err();
+            let bare = preview_bytes(&mux, true, &atlas("draft", "a"), None)
+                .await
+                .unwrap_err();
+
+            assert_eq!(versioned.code, "invalid-arguments");
+            assert_eq!(bare.code, "invalid-arguments");
+            assert_eq!(sidecar.seen(), vec![]);
+        });
+    }
+
+    #[test]
+    fn an_unknown_placeholder_is_not_found_and_not_retryable() {
+        runtime().block_on(async {
+            let (mux, _sidecar, _dirty) =
+                attached(|_, _| Reply::Refuse("not-found", "no such placeholder"));
+            let error = preview_bytes(&mux, true, &placeholder(HASH), None)
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "not-found");
+            assert!(!error.retryable);
+        });
+    }
+
+    #[test]
+    fn the_target_comes_from_either_selection_shape_and_rejects_anything_else() {
+        let atlas_shape: PreviewTarget =
+            serde_json::from_value(json!({ "source": "draft", "id": "a" })).unwrap();
+        let placeholder_shape: PreviewTarget =
+            serde_json::from_value(json!({ "placeholder": HASH })).unwrap();
+
+        assert_eq!(atlas_shape, atlas("draft", "a"));
+        assert_eq!(placeholder_shape, placeholder(HASH));
+        for bad in [
+            json!({}),
+            json!({ "source": "draft" }),
+            json!({ "source": "draft", "id": "a", "placeholder": HASH }),
+            json!({ "source": "draft", "id": "a", "path": "/x" }),
+            json!({ "placeholder": HASH, "id": "a" }),
+            json!("draft:a"),
+            json!(null),
+        ] {
+            assert!(
+                serde_json::from_value::<PreviewTarget>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     // edit_open

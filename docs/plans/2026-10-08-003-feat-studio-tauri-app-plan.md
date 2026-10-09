@@ -168,7 +168,7 @@ sequenceDiagram
 
 ## Implementation Units
 
-- [ ] **U1: Session additions for the app**
+- [x] **U1: Session additions for the app**
 
 **Goal:** Give the session the read-only and source ops the app needs, without changing CLI behaviour.
 
@@ -206,7 +206,7 @@ sequenceDiagram
 
 **Verification:** `bun run check` passes. CLI behaviour is unchanged for existing ops.
 
-- [ ] **U2: Studio sidecar build**
+- [x] **U2: Studio sidecar build**
 
 **Goal:** Produce the triple-suffixed `panthea-studio-sidecar` binary from the studio session.
 
@@ -230,7 +230,7 @@ sequenceDiagram
 
 **Verification:** The script builds on macOS arm64. The binary answers a session request and completes an Aseprite batch export.
 
-- [ ] **U3: Native host crate**
+- [x] **U3: Native host crate**
 
 **Goal:** `apps/studio/src-tauri` supervises the sidecar, exposes named commands, and builds a packaged app.
 
@@ -272,7 +272,7 @@ sequenceDiagram
 
 **Verification:** `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `cargo test` pass in `apps/studio/src-tauri` after the sidecar build. `tauri build` produces a `.app` whose window loads and reaches the sidecar. The packaged preview is proven in U4 and U6.
 
-- [ ] **U4: Packaged asset source**
+- [x] **U4: Packaged asset source**
 
 **Goal:** The preview reads drafts, approved assets and canon through the native bridge, with live reload.
 

@@ -7,23 +7,16 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::bridge::{self, CommandError, LaunchFailure};
+use crate::bridge::{self, CommandError, LaunchFailure, PreviewTarget};
 use crate::config::{editor_executable, ConfigStore};
 use crate::poll::apply_subscribe;
 use crate::state::{host_state, HostState, StudioState};
-
-/// What a preview names: a published asset, a draft or an approved record.
-#[derive(Debug, Deserialize)]
-pub struct Selection {
-    pub source: String,
-    pub id: String,
-}
 
 /// Where the app is, for the webview: whether a config is chosen and what the
 /// sidecar is doing. It carries no path.
@@ -80,23 +73,18 @@ pub fn subscribe_studio(state: State<'_, StudioState>, channel: Channel<Value>) 
 }
 
 /// The validated atlas for a selection, as raw bytes, only under the version key
-/// it was resolved with.
+/// it was resolved with (`{source, id}` and `v`). The placeholder a resolution
+/// names is fetched by its hash alone (`{placeholder}`, no `v`).
 #[tauri::command]
 pub async fn preview_bytes(
     state: State<'_, StudioState>,
     config: State<'_, ConfigStore>,
-    selection: Selection,
-    v: String,
+    selection: PreviewTarget,
+    v: Option<String>,
 ) -> Result<Response, CommandError> {
-    bridge::preview_bytes(
-        &state.mux,
-        configured(&config),
-        &selection.source,
-        &selection.id,
-        &v,
-    )
-    .await
-    .map(Response::new)
+    bridge::preview_bytes(&state.mux, configured(&config), &selection, v.as_deref())
+        .await
+        .map(Response::new)
 }
 
 fn is_executable(path: &Path) -> bool {

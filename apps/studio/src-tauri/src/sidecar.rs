@@ -20,7 +20,7 @@ use tauri_plugin_shell::ShellExt;
 
 use crate::config::ConfigStore;
 use crate::mux::{LineSink, ReplyReader};
-use crate::poll::{apply_snapshot, poll_loop, Poller, POLL_GAP};
+use crate::poll::{apply_snapshot, poll_loop, publish_host, Poller, POLL_GAP};
 use crate::state::{
     apply_restart, attach_child, begin_spawn, mark_healthy, on_retry, on_terminated, stop,
     ApplyRestartResult, AttachOutcome, ChildHandle, Lifecycle, StopResult, StudioState,
@@ -63,13 +63,27 @@ fn lock<'a>(state: &'a StudioState) -> std::sync::MutexGuard<'a, Lifecycle> {
         .expect("sidecar state mutex poisoned")
 }
 
+/// Pushes the host state to the subscriber if it changed. Called after every
+/// lifecycle transition, once the lock that made it is released.
+fn publish(app: &AppHandle) {
+    publish_host(&mut lock(&app.state::<StudioState>()));
+}
+
 /// Starts the first launch when a config is chosen. With none, nothing starts
 /// and the host reports not-configured.
 pub fn spawn_sidecar(app: AppHandle) {
-    if app.state::<ConfigStore>().path().is_none() {
-        return;
-    }
-    let launch_id = begin_spawn(&mut lock(&app.state::<StudioState>()));
+    let state = app.state::<StudioState>();
+    let configured = app.state::<ConfigStore>().path().is_some();
+    let launch_id = {
+        let mut lifecycle = lock(&state);
+        lifecycle.configured = configured;
+        if configured {
+            begin_spawn(&mut lifecycle)
+        } else {
+            None
+        }
+    };
+    publish(&app);
     if let Some(launch_id) = launch_id {
         run_off_caller_thread(move || spawn_with_id(app, launch_id));
     }
@@ -79,22 +93,30 @@ pub fn spawn_sidecar(app: AppHandle) {
 /// one that reads the new config. The old session must be gone first: it holds
 /// the root's lock. Blocks on the OS; call it off the main thread.
 pub fn apply_restart_sidecar(app: AppHandle) {
+    let configured = app.state::<ConfigStore>().path().is_some();
     let ApplyRestartResult {
         child,
         poll_task,
         replaced_launch,
         launch_id,
-    } = apply_restart(&mut lock(&app.state::<StudioState>()));
+    } = {
+        let state = app.state::<StudioState>();
+        let mut lifecycle = lock(&state);
+        lifecycle.configured = configured;
+        apply_restart(&mut lifecycle)
+    };
+    publish(&app);
     if let Some(task) = poll_task {
         task.abort();
     }
     end_launch(&app, replaced_launch, child);
-    if app.state::<ConfigStore>().path().is_none() {
+    if !configured {
         return;
     }
     // `apply_restart` began a launch only if not stopped; a first config chosen
     // after startup begins the launch here.
     let launch_id = launch_id.or_else(|| begin_spawn(&mut lock(&app.state::<StudioState>())));
+    publish(&app);
     if let Some(launch_id) = launch_id {
         spawn_with_id(app, launch_id);
     }
@@ -161,6 +183,7 @@ fn spawn_with_id(app: AppHandle, launch_id: u64) {
     let state = app.state::<StudioState>();
 
     let attached = attach_child(&mut lock(&state), launch_id, ChildHandle { pid });
+    publish(&app);
     if let AttachOutcome::Refused(_) = attached {
         // The launch went stale (a newer spawn or a quit) while this child was
         // starting. It was never tracked, so nothing else will ever end it.
@@ -263,6 +286,7 @@ fn handle_termination(app: &AppHandle, reason: &str, launch_id: u64) {
     let state = app.state::<StudioState>();
     let quitting = *state.quitting.lock().expect("sidecar state mutex poisoned");
     let result = on_terminated(&mut lock(&state), launch_id, quitting);
+    publish(app);
     state
         .exit_watch
         .lock()
@@ -309,6 +333,7 @@ pub fn quit_sidecar(app: &AppHandle) {
         poll_task,
         ended_launch,
     } = stop(&mut lock(&state));
+    publish(app);
     if let Some(task) = poll_task {
         task.abort();
     }
