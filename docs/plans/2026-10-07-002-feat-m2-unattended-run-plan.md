@@ -437,6 +437,39 @@ Status (2026-10-08, rows corrected after the first hour): four gate checks were 
 
 Re-judged, the hour still fails, now on three rows: queue wait (124–134 ticks against 90), prompt size (9 cut responses) and memory (not judgeable). A rerun is needed for the footprint, and the queue wait and the cut prompts are the model's and the prompts' to answer, not the harness's.
 
+Status (2026-10-08, second hour, with the prompt cap): the hour was rerun on granite3.3-8b-4k from `main` at `459a459`, with the runtime prompt cap (#176) in place (`tools/scenarios/m2-greek-cast/unattended/2026-10-08T22-59-35/`). Load was 1.0–1.9 at the start and rose to 3.5–4.6, from the model server, Spotlight indexing and media analysis. Swap peaked at 2.07 GB. The run went through every phase in 60.1 running minutes, with no empty responses. It exited 1, FAIL, on 3 of 24 rows.
+
+**Held:**
+- No prompt was cut. Real prompt tokens: median 2,729, p95 2,845, maximum 3,002 (one request), against a first-hour median of 3,343 with 9 cut.
+- Recovery: a god acted 15 ticks after the proxy returned.
+- Catch-up: 60.1 minutes applied, 30.1 discarded, no provider request inside it.
+- Activity, influence and repetition held for all seven gods.
+- Perception, goal and petition privacy held.
+- Rebuild equals live: 203,387 events in 515 ms.
+- Archive import held.
+
+**Failed:**
+- **Queue wait:** p95 102–108 ticks for six gods and 286 for Zeus, against 90.
+  - Steady latency had a median of 11.0 s and a p95 of 14.4 s. At the same prompt size it drifted from 9.3 s (minutes 12–25) to 12.1 s (minutes 55–60) as load rose.
+  - 59% of rounds had 8 picks, because a god that owes goes ahead of the round.
+  - Modelled from this run's latencies, p95 is about 91 on a quiet machine and 108 loaded. Meeting 90 needs a mean of about 8.8 s per request.
+- **Longest quiet stretch:** Zeus went 375 ticks (6363–6738), against 300.
+  - The stretch, and his 286 p95, come from 5 turns skipped as `prompt-over-cap`. Athena had 1.
+  - A skipped turn changes nothing, so the same state recurred until a shorter prayer replaced the kept one.
+  - What could not be shed: a 96-character goal-history row whose memory was outside the shown memories, and the practice digest repeating the kept prayer's offer.
+  - One id-dense request ran at 2.807 characters a token, under the cap's 2.85, and reached 3,002 tokens.
+- **Memory:** the sidecar's footprint slope over the last 20 minutes was 2.61% per 10 minutes, against 1%.
+  - The footprint sat in a noisy band of 100–133 MiB after the restart.
+  - Noise alone moves a 20-minute slope by about ±1.8%, and the same data gives −1.65 to +4.34% depending on the window.
+  - Retained heap after a forced GC grows about 0.15–0.2 MiB per 1,000 ticks. No leak was found, and a fast in-process run levelled off.
+
+The owner chose to:
+- make the over-cap stalls fixable: unshown goal-history rows shed in the memories tier, the digest stops repeating the kept offer, and granite3.3's ratio becomes 2.75;
+- judge memory by comparing the two halves of the settled span after catch-up;
+- keep the scheduler, which lets a god that owes go ahead of the round.
+
+After those fixes, the hour is rerun once on a quiet machine. If queue wait is still over 90, the measured conflict goes to the owner with a proposed amendment to ADR-0005's target. The rating sheet is unfilled. M2 does not exit on this run.
+
 ## System-Wide Impact
 
 - **Interaction graph:** the only production path exercised in a new way is the router meeting a failing endpoint mid-run, which is existing behaviour. Everything new lives in `tools/scenarios`. `apps/simulation` and the packages are unchanged unless the run finds a defect. A defect is fixed in a separate PR with a test.
