@@ -1,0 +1,32 @@
+[package]
+name = "panthea-studio"
+version = "0.1.0"
+description = "Panthea — asset studio app"
+authors = ["Marcus R. Brown"]
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the library name from colliding with the bin name
+# (https://github.com/rust-lang/cargo/issues/8519).
+name = "panthea_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Pinned exactly, as in apps/desktop: tauri, tauri-runtime and
+# tauri-runtime-wry must all resolve to the same release.
+tauri = { version = "=2.12.1", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Spawns the studio sidecar only; the webview gets no shell permission.
+tauri-plugin-shell = "2"
+# Called from Rust only (native pickers); the webview gets no dialog permission.
+tauri-plugin-dialog = "2"
+tokio = { version = "1", default-features = false, features = ["time", "sync"] }
+# Decodes `source-bytes` replies so `preview_bytes` can return raw bytes.
+base64 = "0.22"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "time", "sync", "test-util"] }

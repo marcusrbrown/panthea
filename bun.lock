@@ -55,12 +55,14 @@
       "version": "0.1.0",
       "dependencies": {
         "@panthea/assets": "workspace:*",
+        "@tauri-apps/api": "2.12.1",
         "react": "19.3.0",
         "react-dom": "19.3.0",
         "three": "0.185.1",
         "three-flatland": "0.1.0-alpha.10",
       },
       "devDependencies": {
+        "@tauri-apps/cli": "2.12.1",
         "@types/react": "19.3.0",
         "@types/react-dom": "19.3.0",
         "@types/three": "0.185.4",
