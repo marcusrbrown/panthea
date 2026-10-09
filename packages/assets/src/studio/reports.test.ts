@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, relative } from "node:path";
+import { sha256Hex } from "../hash";
 import { parsePalette } from "../palette";
 import {
   assetRig,
@@ -26,7 +27,9 @@ import {
   withHiddenRgb,
   workingSet,
 } from "./_test-fixtures";
+import { decodePng } from "./png/decode";
 import {
+  candidateFrames,
   reportOnly,
   sheet,
   slotConformance,
@@ -413,6 +416,139 @@ describe("slotConformance", () => {
     });
 
     expect(result).toMatchObject({ ok: false, reason: "invalid" });
+    rig.session.close();
+  });
+});
+
+describe("candidateFrames", () => {
+  const withCandidate = () => {
+    const rig = assetRig();
+    const [id] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    const candidate = rig.session.store
+      .status()
+      .candidates.find((c) => c.id === id);
+    if (candidate?.result.status !== "done") throw new Error("not conformed");
+    return { rig, id: id as string, result: candidate.result };
+  };
+  const snapshot = (root: string) => {
+    const out: Record<string, string> = {};
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (!name.startsWith("session.lock"))
+          out[relative(root, path)] = readFileSync(path).toString("base64");
+      }
+    };
+    walk(root);
+    return out;
+  };
+
+  test("a conformed candidate is one frame: the stored 1x image the pick would keep, with no timing", () => {
+    const { rig, id, result } = withCandidate();
+
+    const frames = candidateFrames(rig.root, id);
+
+    if (!frames.ok) throw new Error(frames.message);
+    expect(frames.candidateId).toBe(id);
+    expect(frames.frames).toHaveLength(1);
+    const [only] = frames.frames;
+    expect(only?.index).toBe(0);
+    expect(only?.durationMs).toBeNull();
+    expect(only?.imageHash).toBe(result.imageHash);
+    expect(sha256Hex(only?.bytes as Uint8Array)).toBe(result.imageHash);
+    const decoded = decodePng(only?.bytes as Uint8Array);
+    expect(decoded.ok && [decoded.image.width, decoded.image.height]).toEqual([
+      frames.width,
+      frames.height,
+    ]);
+    expect([frames.width, frames.height]).toEqual([64, 80]);
+    rig.session.close();
+  });
+
+  test("it is the pixels a pick keeps, not the proposal and not the generated original", () => {
+    const { rig, id } = withCandidate();
+    rig.session.openWorkingSet("w", "zeus-idle", rig.content);
+    rig.session.pick("w", id);
+
+    const frames = candidateFrames(rig.root, id);
+
+    const picked =
+      rig.session.store.status().workingSets[0]?.picks["idle/south"];
+    if (!frames.ok) throw new Error(frames.message);
+    expect(frames.frames[0]?.imageHash).toBe(picked?.imageHash);
+    rig.session.close();
+  });
+
+  test("it answers while another session holds the lock and writes nothing", () => {
+    const { rig, id } = withCandidate();
+    const before = snapshot(rig.root);
+
+    expect(candidateFrames(rig.root, id).ok).toBe(true);
+
+    expect(snapshot(rig.root)).toEqual(before);
+    rig.session.close();
+  });
+
+  test("an unknown candidate and a malformed id are not-found", () => {
+    const { rig } = withCandidate();
+
+    for (const id of ["nope", "../x", "", "A B", "x".repeat(200)])
+      expect(candidateFrames(rig.root, id), id).toMatchObject({
+        ok: false,
+        reason: "not-found",
+      });
+    rig.session.close();
+  });
+
+  test("a candidate that needs a scale has no conformed image to show", () => {
+    const { rig } = withCandidate();
+    rig.session.store.putCandidate(needsScaleCandidate("stuck"));
+
+    expect(candidateFrames(rig.root, "stuck")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    rig.session.close();
+  });
+
+  test("a missing or altered blob is corrupt-blob, and the refusal prints no pixels", () => {
+    const { rig, id, result } = withCandidate();
+    const file = join(rig.root, "blobs", `${result.imageHash}.png`);
+    const good = readFileSync(file);
+
+    writeFileSync(file, "SECRET-PIXELS");
+    const altered = candidateFrames(rig.root, id);
+    rmSync(file);
+    const missing = candidateFrames(rig.root, id);
+    writeFileSync(file, good);
+    const restored = candidateFrames(rig.root, id);
+
+    expect(altered).toMatchObject({ ok: false, reason: "corrupt-blob" });
+    expect(missing).toMatchObject({ ok: false, reason: "corrupt-blob" });
+    expect(JSON.stringify([altered, missing])).not.toContain("SECRET-PIXELS");
+    expect(restored.ok).toBe(true);
+    rig.session.close();
+  });
+
+  test("a blob that matches its hash but is not a PNG is refused as corrupt-png", () => {
+    const { rig, id, result } = withCandidate();
+    const record = rig.session.store
+      .status()
+      .candidates.find((c) => c.id === id);
+    const junk = new TextEncoder().encode("hashed but not an image");
+    const hash = rig.session.store.putBlob(junk);
+    rig.session.store.putCandidate({
+      ...(record as NonNullable<typeof record>),
+      result: { ...result, imageHash: hash },
+    });
+
+    expect(candidateFrames(rig.root, id)).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/corrupt-png|unsupported-png/),
+    });
     rig.session.close();
   });
 });

@@ -8,7 +8,9 @@ import { join } from "node:path";
 import {
   type ApproveOptions,
   type AssetOpResult,
+  type CandidateFrames,
   type CommandResult,
+  candidateFrames,
   type EditResult,
   editReport,
   type FinishStep,
@@ -467,6 +469,29 @@ function reportSlot(
   return done(detail);
 }
 
+function candidateReply(studio: Studio, a: Args, withBytes: boolean): Outcome {
+  const root = studio.root;
+  if (root === undefined) return studio.missing("studioRoot");
+  const result: CandidateFrames = candidateFrames(
+    root,
+    a.candidateId as string,
+  );
+  if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+  return done({
+    candidateId: result.candidateId,
+    width: result.width,
+    height: result.height,
+    frames: result.frames.map((frame) => ({
+      index: frame.index,
+      durationMs: frame.durationMs,
+      imageHash: frame.imageHash,
+      ...(withBytes
+        ? { base64: Buffer.from(frame.bytes).toString("base64") }
+        : {}),
+    })),
+  });
+}
+
 const LIST_KINDS = [
   "requests",
   "jobs",
@@ -551,6 +576,17 @@ const OPS: Record<string, OpDef> = {
       const { ok: _ok, ...reply } = result;
       return done(j(reply));
     },
+  },
+  // A candidate's stored conformed image. `candidate-frames` is the metadata
+  // alone; `candidate-bytes` adds each frame's PNG as base64 and is reached
+  // only by the host's byte path. Both read without the writer lock.
+  "candidate-frames": {
+    spec: str("candidateId", true),
+    run: (studio, a) => candidateReply(studio, a, false),
+  },
+  "candidate-bytes": {
+    spec: str("candidateId", true),
+    run: (studio, a) => candidateReply(studio, a, true),
   },
   derive: { spec: {}, run: () => unsupported() },
 
@@ -1195,6 +1231,8 @@ export const READ_ONLY = new Set([
   "sheet",
   "report",
   "edit-report",
+  "candidate-frames",
+  "candidate-bytes",
   "resolve",
   "source-list",
   "source-resolve",

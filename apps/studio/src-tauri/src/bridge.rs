@@ -150,12 +150,21 @@ pub async fn studio_call(
 }
 
 /// What `preview_bytes` fetches: a held atlas by selection (with the version key
-/// it was resolved under), or the placeholder by its hash.
+/// it was resolved under), the placeholder by its hash, or one frame of a
+/// candidate's stored image.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
 pub enum PreviewTarget {
     Atlas(AtlasRef),
     Placeholder(PlaceholderRef),
+    Candidate(CandidateRef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateRef {
+    pub candidate: String,
+    pub frame: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -178,6 +187,25 @@ fn is_sha256_hex(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// A lowercase hyphenated id: the shape every studio record id has.
+fn is_slug(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 128
+        && text.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
+fn base64_field(value: &Value) -> Option<Vec<u8>> {
+    value
+        .get("base64")
+        .and_then(Value::as_str)
+        .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
+}
+
 fn invalid_arguments(message: &str) -> CommandError {
     CommandError {
         code: "invalid-arguments".into(),
@@ -188,8 +216,9 @@ fn invalid_arguments(message: &str) -> CommandError {
 }
 
 /// `preview_bytes`: the validated atlas for a selection as raw bytes, only under
-/// the version key it was resolved with; or the placeholder's PNG by its hash,
-/// which has no version.
+/// the version key it was resolved with; the placeholder's PNG by its hash,
+/// which has no version; or one frame of a candidate's stored image, which has
+/// none either. The webview never handles base64: it is decoded here.
 pub async fn preview_bytes(
     mux: &Mux,
     configured: bool,
@@ -219,13 +248,35 @@ pub async fn preview_bytes(
         (PreviewTarget::Placeholder(_), Some(_)) => {
             return Err(invalid_arguments("a placeholder has no version"));
         }
+        (PreviewTarget::Candidate(CandidateRef { candidate, frame }), None) => {
+            if !is_slug(candidate) {
+                return Err(invalid_arguments(
+                    "a candidate is named by a lowercase hyphenated id",
+                ));
+            }
+            let reply = mux
+                .request(
+                    "candidate-bytes",
+                    json!({ "candidateId": candidate }),
+                    OpClass::Read,
+                )
+                .await?;
+            let frames = reply
+                .get("frames")
+                .and_then(Value::as_array)
+                .filter(|frames| !frames.is_empty())
+                .ok_or_else(|| CommandError::from(MuxError::Malformed))?;
+            let entry = frames.get(*frame as usize).ok_or_else(|| {
+                CommandError::new("not-found", "the candidate has no such frame", false)
+            })?;
+            return base64_field(entry).ok_or_else(|| CommandError::from(MuxError::Malformed));
+        }
+        (PreviewTarget::Candidate(_), Some(_)) => {
+            return Err(invalid_arguments("a candidate frame has no version"));
+        }
     };
     let reply = mux.request("source-bytes", args, OpClass::Read).await?;
-    reply
-        .get("base64")
-        .and_then(Value::as_str)
-        .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
-        .ok_or_else(|| CommandError::from(MuxError::Malformed))
+    base64_field(&reply).ok_or_else(|| CommandError::from(MuxError::Malformed))
 }
 
 /// Why the editor did not start.
@@ -786,6 +837,183 @@ mod tests {
             assert_eq!(error.code, "not-found");
             assert!(!error.retryable);
         });
+    }
+
+    fn candidate(id: &str, frame: u32) -> PreviewTarget {
+        PreviewTarget::Candidate(CandidateRef {
+            candidate: id.into(),
+            frame,
+        })
+    }
+
+    const PNG_2: &[u8] = &[0x89, b'P', b'N', b'G', 9, 9, 9];
+    const PNG_3: &[u8] = &[0x89, b'P', b'N', b'G', 7, 7];
+
+    fn frames_reply(frames: &[&[u8]]) -> Reply {
+        Reply::Ok(json!({
+            "candidateId": "zeus-idle-0000",
+            "width": 64,
+            "height": 80,
+            "frames": frames.iter().enumerate().map(|(index, bytes)| json!({
+                "index": index,
+                "durationMs": null,
+                "imageHash": "a".repeat(64),
+                "base64": encoded(bytes),
+            })).collect::<Vec<_>>(),
+        }))
+    }
+
+    #[test]
+    fn a_candidate_frame_is_fetched_by_id_alone_and_returned_as_raw_bytes() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) = attached(|_, _| frames_reply(&[PNG]));
+
+            let bytes = preview_bytes(&mux, true, &candidate("zeus-idle-0000", 0), None)
+                .await
+                .unwrap();
+
+            assert_eq!(bytes, PNG);
+            assert_eq!(
+                sidecar.seen(),
+                vec![(
+                    "candidate-bytes".to_string(),
+                    json!({ "candidateId": "zeus-idle-0000" })
+                )]
+            );
+        });
+    }
+
+    #[test]
+    fn each_frame_of_a_multi_frame_reply_is_addressable_and_one_past_the_end_is_not_found() {
+        runtime().block_on(async {
+            let (mux, _sidecar, _dirty) = attached(|_, _| frames_reply(&[PNG, PNG_2, PNG_3]));
+
+            for (frame, expected) in [(0, PNG), (1, PNG_2), (2, PNG_3)] {
+                let bytes = preview_bytes(&mux, true, &candidate("zeus-idle-0000", frame), None)
+                    .await
+                    .unwrap();
+                assert_eq!(bytes, expected, "frame {frame}");
+            }
+            let error = preview_bytes(&mux, true, &candidate("zeus-idle-0000", 3), None)
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "not-found");
+            assert!(!error.retryable);
+        });
+    }
+
+    #[test]
+    fn a_candidate_id_that_is_not_a_lowercase_hyphenated_slug_never_reaches_the_session() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) = attached(echo);
+            for id in [
+                "",
+                "../x",
+                "a/b",
+                "A",
+                "zeus idle",
+                "zeus_idle",
+                "-a",
+                "a-",
+                "a--b",
+                "zeus\nidle",
+                &"a".repeat(129),
+            ] {
+                let error = preview_bytes(&mux, true, &candidate(id, 0), None)
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.code, "invalid-arguments", "{id:?}");
+            }
+            assert_eq!(sidecar.seen(), vec![]);
+        });
+    }
+
+    #[test]
+    fn a_candidate_has_no_version_and_a_versioned_one_is_refused_untouched() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) = attached(echo);
+
+            let error = preview_bytes(&mux, true, &candidate("zeus-idle-0000", 0), Some("k"))
+                .await
+                .unwrap_err();
+
+            assert_eq!(error.code, "invalid-arguments");
+            assert_eq!(sidecar.seen(), vec![]);
+        });
+    }
+
+    #[test]
+    fn a_candidate_the_session_refuses_keeps_its_code_and_is_not_retryable() {
+        runtime().block_on(async {
+            for code in ["not-found", "wrong-state", "corrupt-blob"] {
+                let (mux, _sidecar, _dirty) = attached(move |_, _| match code {
+                    "not-found" => Reply::Refuse("not-found", "no candidate"),
+                    "wrong-state" => Reply::Refuse("wrong-state", "needs a scale"),
+                    _ => Reply::Refuse("corrupt-blob", "does not match its hash"),
+                });
+                let error = preview_bytes(&mux, true, &candidate("zeus-idle-0000", 0), None)
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.code, code);
+                assert!(!error.retryable, "{code}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_candidate_reply_that_is_not_frames_with_base64_is_malformed() {
+        runtime().block_on(async {
+            for result in [
+                json!({}),
+                json!({ "frames": [] }),
+                json!({ "frames": "x" }),
+                json!({ "frames": [{ "index": 0 }] }),
+                json!({ "frames": [{ "index": 0, "base64": 7 }] }),
+                json!({ "frames": [{ "index": 0, "base64": "!!!not base64!!!" }] }),
+            ] {
+                let (mux, _sidecar, _dirty) = attached(move |_, _| Reply::Ok(result.clone()));
+                let error = preview_bytes(&mux, true, &candidate("zeus-idle-0000", 0), None)
+                    .await
+                    .unwrap_err();
+                assert_eq!(error.code, "malformed-reply");
+            }
+        });
+    }
+
+    #[test]
+    fn a_candidate_with_no_config_asks_nothing() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) = attached(echo);
+            let error = preview_bytes(&mux, false, &candidate("zeus-idle-0000", 0), None)
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "not-configured");
+            assert_eq!(sidecar.seen(), vec![]);
+        });
+    }
+
+    #[test]
+    fn the_candidate_target_needs_a_whole_frame_number_and_nothing_else() {
+        let target: PreviewTarget =
+            serde_json::from_value(json!({ "candidate": "zeus-idle-0000", "frame": 2 })).unwrap();
+        assert_eq!(target, candidate("zeus-idle-0000", 2));
+        for bad in [
+            json!({ "candidate": "a" }),
+            json!({ "candidate": "a", "frame": -1 }),
+            json!({ "candidate": "a", "frame": 1.5 }),
+            json!({ "candidate": "a", "frame": "0" }),
+            json!({ "candidate": "a", "frame": 4294967296u64 }),
+            json!({ "candidate": "a", "frame": 0, "v": "k" }),
+            json!({ "candidate": "a", "frame": 0, "path": "/x" }),
+            json!({ "candidate": "a", "frame": 0, "source": "draft", "id": "a" }),
+            json!({ "candidate": "a", "frame": 0, "placeholder": HASH }),
+            json!({ "frame": 0 }),
+        ] {
+            assert!(
+                serde_json::from_value::<PreviewTarget>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

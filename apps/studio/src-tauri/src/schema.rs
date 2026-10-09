@@ -38,6 +38,9 @@ pub const OPS: &[OpSpec] = &[
     // The latest save of an edit: stored report-only results and the changed
     // pixels against the version before it. By id; it reads without the lock.
     spec("edit-report", &["id"], Read),
+    // A candidate's stored image, metadata only. Its pixels travel through
+    // `preview_bytes`; `candidate-bytes` is not in this table.
+    spec("candidate-frames", &["candidateId"], Read),
     spec(
         "resolve",
         &[
@@ -182,6 +185,7 @@ mod tests {
                 "sheet",
                 "report",
                 "edit-report",
+                "candidate-frames",
                 "resolve",
                 "source-list",
                 "source-resolve",
@@ -201,6 +205,26 @@ mod tests {
                 "approve-with-exception",
                 "publish",
             ]
+        );
+    }
+
+    #[test]
+    fn candidate_frames_is_a_read_that_takes_one_candidate_id_and_the_bytes_op_is_not_callable() {
+        let row = lookup("candidate-frames").unwrap();
+        assert_eq!(row.args, ["candidateId"]);
+        assert_eq!(row.class, OpClass::Read);
+        for stray in ["id", "frame", "path", "dir", "toString"] {
+            assert_eq!(
+                check("candidate-frames", &json!({ stray: "x" })),
+                Err(Refusal::UnknownArgument(stray.into())),
+                "{stray}"
+            );
+        }
+        // Pixels reach the webview only through `preview_bytes`, never as base64 in a reply.
+        assert!(lookup("candidate-bytes").is_none());
+        assert_eq!(
+            check("candidate-bytes", &json!({ "candidateId": "a" })),
+            Err(Refusal::UnknownOp)
         );
     }
 
@@ -400,6 +424,7 @@ mod tests {
             "sheet",
             "report",
             "edit-report",
+            "candidate-frames",
             "resolve",
             "source-list",
             "source-resolve",

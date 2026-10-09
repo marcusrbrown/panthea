@@ -584,3 +584,57 @@ export function parseEditReport(value: unknown): Parsed<EditReport> {
     slots,
   });
 }
+
+// --- A candidate's stored frames -------------------------------------------------
+
+export interface CandidateFrame {
+  readonly index: number;
+  /** A candidate is one generated still, so null; a frame with timing carries it. */
+  readonly durationMs: number | null;
+  readonly imageHash: string;
+}
+
+/** The metadata of a candidate's stored image. The pixels are fetched by frame number, never carried here. */
+export interface CandidateFrames {
+  readonly candidateId: string;
+  readonly width: number;
+  readonly height: number;
+  readonly frames: readonly CandidateFrame[];
+}
+
+export function parseCandidateFrames(value: unknown): Parsed<CandidateFrames> {
+  if (!isObject(value)) return bad("candidate", "not an object");
+  if (!isSlug(value.candidateId))
+    return bad("candidate.candidateId", "not an id");
+  if (!isCount(value.width) || value.width < 1)
+    return bad("candidate.width", "not a positive whole number");
+  if (!isCount(value.height) || value.height < 1)
+    return bad("candidate.height", "not a positive whole number");
+  if (!Array.isArray(value.frames) || value.frames.length === 0)
+    return bad("candidate.frames", "not a list of frames");
+  const frames: CandidateFrame[] = [];
+  for (let i = 0; i < value.frames.length; i += 1) {
+    const at = `candidate.frames[${i}]`;
+    const frame: unknown = value.frames[i];
+    if (!isObject(frame)) return bad(at, "not an object");
+    if (frame.index !== i) return bad(`${at}.index`, "out of order");
+    if (
+      frame.durationMs !== null &&
+      (!isCount(frame.durationMs) || frame.durationMs < 1)
+    )
+      return bad(`${at}.durationMs`, "not null or a positive whole number");
+    if (!isText(frame.imageHash) || !SHA256.test(frame.imageHash))
+      return bad(`${at}.imageHash`, "not a hash");
+    frames.push({
+      index: i,
+      durationMs: frame.durationMs as number | null,
+      imageHash: frame.imageHash,
+    });
+  }
+  return good({
+    candidateId: value.candidateId,
+    width: value.width,
+    height: value.height,
+    frames,
+  });
+}

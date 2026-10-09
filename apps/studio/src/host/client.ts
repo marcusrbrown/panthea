@@ -5,6 +5,7 @@
 // `HostError`, never a bare string or an untyped object.
 
 import {
+  type CandidateFrames,
   type CommandError,
   type ConfigChoice,
   type ConfigStatus,
@@ -13,6 +14,7 @@ import {
   type EditOpened,
   type EditReport,
   type Parsed,
+  parseCandidateFrames,
   parseCommandError,
   parseConfigChoice,
   parseConfigStatus,
@@ -41,6 +43,7 @@ export const STUDIO_OPS = [
   "sheet",
   "report",
   "edit-report",
+  "candidate-frames",
   "resolve",
   "source-list",
   "source-resolve",
@@ -79,10 +82,15 @@ export class HostError extends Error implements CommandError {
 const malformed = (message: string) =>
   new HostError({ code: "malformed-reply", message, retryable: false });
 
-/** What a bytes request names: a held atlas, or the placeholder by its hash. */
+/**
+ * What a bytes request names: a held atlas (with the version it was resolved
+ * under), the placeholder by its hash, or one frame of a candidate's stored
+ * image (no version). Frame metadata comes from `candidateFrames`.
+ */
 export type BytesTarget =
   | { readonly source: "canon" | "draft" | "approved"; readonly id: string }
-  | { readonly placeholder: string };
+  | { readonly placeholder: string }
+  | { readonly candidate: string; readonly frame: number };
 
 export type HostProblem =
   | { readonly kind: "invalid-snapshot"; readonly message: string }
@@ -115,6 +123,8 @@ export interface StudioHost {
   ): Promise<EditOpened>;
   editExport(editId: string): Promise<EditExport>;
   editImport(editId: string, finish?: boolean): Promise<EditBrought>;
+  /** The metadata of a candidate's stored frames; its pixels come from `previewBytes`. Refuses with not-found, wrong-state or corrupt-blob. */
+  candidateFrames(candidateId: string): Promise<CandidateFrames>;
   /** The latest save of an open or finished edit; refuses with not-found or wrong-state. */
   editReport(editId: string): Promise<EditReport>;
   configStatus(): Promise<ConfigStatus>;
@@ -247,6 +257,15 @@ export function createStudioHost(transport: HostTransport): StudioHost {
       return parsed(
         await invoke("edit_import", { editId, finish }),
         parseEditBrought,
+      );
+    },
+    async candidateFrames(candidateId) {
+      return parsed(
+        await invoke("studio_call", {
+          op: "candidate-frames",
+          args: { candidateId },
+        }),
+        parseCandidateFrames,
       );
     },
     async editReport(editId) {

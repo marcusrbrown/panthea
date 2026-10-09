@@ -493,6 +493,8 @@ describe("a session", () => {
       "source-bytes",
       "source-keys",
       "edit-report",
+      "candidate-frames",
+      "candidate-bytes",
     ];
 
     for (const op of ops) {

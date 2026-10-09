@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { openStudioSession, readStudioStatus } from "@panthea/assets/studio";
@@ -8,6 +9,7 @@ import {
   finishSheet,
   keyframe,
   loadContent,
+  needsScaleCandidate,
   olympusMovedPaletteFiles,
   PROVISIONAL_TEST_PARAMS,
   paintFigure,
@@ -125,6 +127,8 @@ describe("argument checking", () => {
       "source-bytes",
       "source-keys",
       "edit-report",
+      "candidate-frames",
+      "candidate-bytes",
     ]) {
       expect(opSpec(op), op).toBeDefined();
       expect(opNames(), op).toContain(op);
@@ -1004,5 +1008,170 @@ describe("edit-report", () => {
       error: { code: "corrupt-blob" },
     });
     expect(JSON.stringify(outcome)).not.toContain("SECRET-PIXELS");
+  });
+});
+
+describe("candidate-frames and candidate-bytes", () => {
+  const sha = (bytes: Uint8Array) =>
+    createHash("sha256").update(bytes).digest("hex");
+
+  function withCandidate() {
+    const rig = assetRig();
+    spriteSet(rig);
+    const candidate = readStudioStatus(rig.root).candidates.find(
+      (c) => c.id === "zeus-idle-0000",
+    );
+    if (candidate?.result.status !== "done") throw new Error("not conformed");
+    return { rig, imageHash: candidate.result.imageHash as string };
+  }
+
+  test("candidate-frames lists the frame's metadata with no pixels, while another session holds the lock", async () => {
+    const { rig, imageHash } = withCandidate();
+
+    const { outcome } = await run(
+      { studioRoot: rig.root },
+      "candidate-frames",
+      {
+        candidateId: "zeus-idle-0000",
+      },
+    );
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        candidateId: "zeus-idle-0000",
+        width: 64,
+        height: 80,
+        frames: [{ index: 0, durationMs: null, imageHash }],
+      },
+    });
+    expect(JSON.stringify(outcome)).not.toContain("base64");
+    expect(openStudioSession(rig.root).kind).toBe("busy");
+    rig.session.close();
+  });
+
+  test("candidate-bytes returns each frame's PNG as base64 that matches its hash", async () => {
+    const { rig, imageHash } = withCandidate();
+
+    const { outcome } = await run({ studioRoot: rig.root }, "candidate-bytes", {
+      candidateId: "zeus-idle-0000",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const reply = outcome.result as {
+      candidateId: string;
+      width: number;
+      height: number;
+      frames: {
+        index: number;
+        durationMs: number | null;
+        imageHash: string;
+        base64: string;
+      }[];
+    };
+    expect(reply).toMatchObject({
+      candidateId: "zeus-idle-0000",
+      width: 64,
+      height: 80,
+    });
+    expect(reply.frames).toHaveLength(1);
+    expect(reply.frames[0]).toMatchObject({
+      index: 0,
+      durationMs: null,
+      imageHash,
+    });
+    const bytes = Buffer.from(reply.frames[0]?.base64 as string, "base64");
+    expect(sha(bytes)).toBe(imageHash);
+    expect([...bytes.subarray(0, 4)]).toEqual([137, 80, 78, 71]);
+    expect(Object.keys(reply.frames[0] as object).sort()).toEqual([
+      "base64",
+      "durationMs",
+      "imageHash",
+      "index",
+    ]);
+    rig.session.close();
+  });
+
+  test("both refuse an unknown candidate and a needs-scale one, each without a write", async () => {
+    const { rig } = withCandidate();
+    rig.session.store.putCandidate(needsScaleCandidate("stuck"));
+    const config: StudioConfig = { studioRoot: rig.root };
+
+    for (const op of ["candidate-frames", "candidate-bytes"]) {
+      const unknown = await run(config, op, { candidateId: "nope" });
+      const bad = await run(config, op, { candidateId: "../../etc" });
+      const stuck = await run(config, op, { candidateId: "stuck" });
+      expect(codeOf(unknown.outcome), op).toBe("not-found");
+      expect(codeOf(bad.outcome), op).toBe("not-found");
+      expect(codeOf(stuck.outcome), op).toBe("wrong-state");
+      expect(exitOf(unknown.outcome)).toBe(1);
+    }
+    rig.session.close();
+  });
+
+  test("a tampered or missing blob is corrupt-blob for both, and the refusal prints no pixels", async () => {
+    const { rig, imageHash } = withCandidate();
+    rig.session.close();
+    writeFileSync(join(rig.root, "blobs", `${imageHash}.png`), "SECRET-PIXELS");
+
+    for (const op of ["candidate-frames", "candidate-bytes"]) {
+      const { outcome } = await run({ studioRoot: rig.root }, op, {
+        candidateId: "zeus-idle-0000",
+      });
+      expect(outcome, op).toMatchObject({
+        ok: false,
+        error: { code: "corrupt-blob" },
+      });
+      expect(JSON.stringify(outcome)).not.toContain("SECRET-PIXELS");
+    }
+  });
+
+  test("each takes a candidate id and nothing else, and needs a configured root", async () => {
+    const config: StudioConfig = { studioRoot: tempRoot() };
+    for (const op of ["candidate-frames", "candidate-bytes"]) {
+      for (const args of [
+        {},
+        { candidateId: "" },
+        { candidateId: 3 },
+        { candidateId: "a", extra: 1 },
+        { candidateId: "a", path: "/tmp/x" },
+        { candidateId: "a", frame: 0 },
+        { id: "a" },
+        [],
+      ]) {
+        const { outcome } = await run(config, op, args);
+        expect(codeOf(outcome), `${op} ${JSON.stringify(args)}`).toBe(
+          "invalid-arguments",
+        );
+      }
+      const none = await run({}, op, { candidateId: "a" });
+      expect(none.outcome).toMatchObject({
+        ok: false,
+        error: { code: "missing-config", field: "studioRoot" },
+      });
+    }
+  });
+
+  test("both are lock-free reads, still answered while the session is shutting down", async () => {
+    expect(READ_ONLY.has("candidate-frames")).toBe(true);
+    expect(READ_ONLY.has("candidate-bytes")).toBe(true);
+    const { rig } = withCandidate();
+    const studio = new Studio(
+      { studioRoot: rig.root },
+      depsFor(capture()),
+      "session",
+    );
+    await studio.teardown();
+
+    const frames = await execute(studio, "candidate-frames", {
+      candidateId: "zeus-idle-0000",
+    });
+    const bytes = await execute(studio, "candidate-bytes", {
+      candidateId: "zeus-idle-0000",
+    });
+
+    expect(frames.ok && bytes.ok).toBe(true);
+    rig.session.close();
   });
 });

@@ -159,6 +159,23 @@ describe("preview bytes", () => {
     });
   });
 
+  test("a candidate frame is fetched by id and frame number with no version", async () => {
+    const transport = fakeTransport({
+      preview_bytes: () => png.buffer.slice(0),
+    });
+
+    const bytes = await createStudioHost(transport).previewBytes({
+      candidate: "zeus-idle-0000",
+      frame: 2,
+    });
+
+    expect([...bytes]).toEqual([...png]);
+    expect(transport.calls[0]).toEqual({
+      command: "preview_bytes",
+      args: { selection: { candidate: "zeus-idle-0000", frame: 2 } },
+    });
+  });
+
   test("a Uint8Array reply is accepted too", async () => {
     const transport = fakeTransport({ preview_bytes: () => png });
     const bytes = await createStudioHost(transport).previewBytes(
@@ -291,6 +308,51 @@ describe("edit and config commands", () => {
     await expect(host.editReport("e1")).rejects.toMatchObject({
       code: "malformed-reply",
     });
+  });
+
+  test("candidateFrames asks candidate-frames for the id alone and parses the metadata", async () => {
+    const reply = {
+      candidateId: "zeus-idle-0000",
+      width: 64,
+      height: 80,
+      frames: [{ index: 0, durationMs: null, imageHash: "c".repeat(64) }],
+    };
+    const transport = fakeTransport({
+      studio_call: callsTo({ "candidate-frames": () => reply }),
+    });
+    const host = createStudioHost(transport);
+
+    expect(await host.candidateFrames("zeus-idle-0000")).toEqual(reply);
+    expect(transport.calls[0]?.args).toEqual({
+      op: "candidate-frames",
+      args: { candidateId: "zeus-idle-0000" },
+    });
+
+    transport.answer(
+      "studio_call",
+      callsTo({ "candidate-frames": () => ({ candidateId: 5 }) }),
+    );
+    await expect(host.candidateFrames("zeus-idle-0000")).rejects.toMatchObject({
+      code: "malformed-reply",
+    });
+  });
+
+  test("a candidate refusal keeps its code", async () => {
+    for (const code of ["not-found", "wrong-state", "corrupt-blob"]) {
+      const transport = fakeTransport({
+        studio_call: () => {
+          throw hostError(code, "no");
+        },
+        preview_bytes: () => {
+          throw hostError(code, "no");
+        },
+      });
+      const host = createStudioHost(transport);
+      await expect(host.candidateFrames("a")).rejects.toMatchObject({ code });
+      await expect(
+        host.previewBytes({ candidate: "a", frame: 0 }),
+      ).rejects.toMatchObject({ code, retryable: false });
+    }
   });
 
   test("an edit-report refusal keeps its code", async () => {

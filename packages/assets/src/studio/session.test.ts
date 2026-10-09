@@ -602,6 +602,7 @@ describe("public surface", () => {
       "STUDIO_SCHEMA_VERSION",
       "adapterInput",
       "buildSpec",
+      "candidateFrames",
       "canonicalFrameHash",
       "createEditorAdapter",
       "createPreviewSource",

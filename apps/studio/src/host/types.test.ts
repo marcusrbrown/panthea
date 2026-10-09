@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   type EditReport,
+  parseCandidateFrames,
   parseCommandError,
   parseConfigChoice,
   parseConfigStatus,
@@ -611,4 +612,82 @@ describe("the edit report", () => {
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.message).not.toContain("secret");
   });
+});
+
+describe("a candidate's frames", () => {
+  const H = "c".repeat(64);
+  const reply = (over: Record<string, unknown> = {}) => ({
+    candidateId: "zeus-idle-0000",
+    width: 64,
+    height: 80,
+    frames: [{ index: 0, durationMs: null, imageHash: H }],
+    ...over,
+  });
+
+  test("one still frame with no timing parses as it is", () => {
+    expect(parseCandidateFrames(reply())).toEqual({ ok: true, value: reply() });
+  });
+
+  test("several frames keep their order and their timing", () => {
+    const frames = [
+      { index: 0, durationMs: 100, imageHash: H },
+      { index: 1, durationMs: 167, imageHash: "d".repeat(64) },
+      { index: 2, durationMs: null, imageHash: "e".repeat(64) },
+    ];
+    expect(parseCandidateFrames(reply({ frames }))).toEqual({
+      ok: true,
+      value: reply({ frames }),
+    });
+  });
+
+  test("pixels never come through: a base64 field on a frame is dropped, not passed on", () => {
+    const parsed = parseCandidateFrames(
+      reply({
+        frames: [{ index: 0, durationMs: null, imageHash: H, base64: "AAAA" }],
+      }),
+    );
+    expect(parsed).toEqual({ ok: true, value: reply() });
+  });
+
+  const bad: [string, unknown][] = [
+    ["not an object", 7],
+    ["null", null],
+    ["a bad candidate id", reply({ candidateId: "../x" })],
+    ["a zero width", reply({ width: 0 })],
+    ["a fractional height", reply({ height: 1.5 })],
+    ["no frames", reply({ frames: [] })],
+    ["frames that are not a list", reply({ frames: {} })],
+    ["a frame that is not an object", reply({ frames: [1] })],
+    [
+      "frames out of order",
+      reply({
+        frames: [
+          { index: 1, durationMs: null, imageHash: H },
+          { index: 0, durationMs: null, imageHash: H },
+        ],
+      }),
+    ],
+    [
+      "a duration of zero",
+      reply({ frames: [{ index: 0, durationMs: 0, imageHash: H }] }),
+    ],
+    [
+      "a duration that is text",
+      reply({ frames: [{ index: 0, durationMs: "100", imageHash: H }] }),
+    ],
+    [
+      "a duration that is missing",
+      reply({ frames: [{ index: 0, imageHash: H }] }),
+    ],
+    [
+      "a bad image hash",
+      reply({ frames: [{ index: 0, durationMs: null, imageHash: "x" }] }),
+    ],
+  ];
+  for (const [name, value] of bad)
+    test(`a reply with ${name} is refused`, () => {
+      const parsed = parseCandidateFrames(value);
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) expect(parsed.message.length).toBeGreaterThan(0);
+    });
 });

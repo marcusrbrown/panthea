@@ -482,3 +482,91 @@ export function editReport(root: string, editId: string): EditReport {
     slots,
   };
 }
+
+// --- A candidate's stored image --------------------------------------------------------
+
+export type CandidateFramesFailure =
+  | "not-found"
+  | "wrong-state"
+  | "corrupt-blob"
+  | "corrupt-png"
+  | "unsupported-png";
+
+export interface CandidateFrame {
+  readonly index: number;
+  /** A candidate is one generated still: no stored timing, so null. */
+  readonly durationMs: number | null;
+  readonly imageHash: Sha256;
+  /** The PNG bytes, checked against `imageHash`. */
+  readonly bytes: Uint8Array;
+}
+
+export type CandidateFrames =
+  | {
+      readonly ok: true;
+      readonly candidateId: string;
+      readonly width: number;
+      readonly height: number;
+      readonly frames: readonly CandidateFrame[];
+    }
+  | {
+      readonly ok: false;
+      readonly reason: CandidateFramesFailure;
+      readonly message: string;
+    };
+
+/**
+ * The stored image of a conformed candidate: the 1x image the conformance
+ * sampled from the generated original, which is exactly what a pick keeps as
+ * the slot's pixels (`proposalHash`, the palette-snapped proposal beside it,
+ * and the larger original are not shown). The bytes are checked against their
+ * hash and decoded. It reads the durable records without the writer lock and
+ * writes nothing.
+ */
+export function candidateFrames(
+  root: string,
+  candidateId: string,
+): CandidateFrames {
+  const failure = (
+    reason: CandidateFramesFailure,
+    message: string,
+  ): CandidateFrames => ({ ok: false, reason, message });
+  if (!parseSlug(candidateId, "candidate").ok)
+    return failure("not-found", `no candidate ${candidateId}`);
+  const store = openStore(root);
+  const found = store.readCandidate(candidateId);
+  if (found.kind === "missing")
+    return failure("not-found", `no candidate ${candidateId}`);
+  if (found.kind === "invalid")
+    return failure(
+      "wrong-state",
+      `candidate ${candidateId} is invalid: ${found.message}`,
+    );
+  const { result } = found.value;
+  if (result.status !== "done")
+    return failure(
+      "wrong-state",
+      `candidate ${candidateId} has no conformed image: it needs a scale`,
+    );
+  const bytes = store.readBlob(result.imageHash);
+  if (bytes === undefined || sha256Hex(bytes) !== result.imageHash)
+    return failure(
+      "corrupt-blob",
+      `the image of candidate ${candidateId} is missing or does not match its hash`,
+    );
+  const decoded = decodePng(bytes);
+  if (!decoded.ok)
+    return failure(
+      decoded.code,
+      `the image of candidate ${candidateId} cannot be decoded`,
+    );
+  return {
+    ok: true,
+    candidateId,
+    width: decoded.image.width,
+    height: decoded.image.height,
+    frames: [
+      { index: 0, durationMs: null, imageHash: result.imageHash, bytes },
+    ],
+  };
+}
