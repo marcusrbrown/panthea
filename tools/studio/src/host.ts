@@ -6,15 +6,20 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   type AsepriteConfig,
   createEditorAdapter,
+  createPreviewSource,
   type EditorAdapter,
+  fsWatcher,
   type LoadedContent,
   loadStudioContent,
   openRuntime,
   openStudioSession,
+  type PreviewScheduler,
+  type PreviewSource,
+  type PreviewWatcher,
   type RuntimeConfig,
   readStudioStatus,
   type SelectedProfile,
@@ -24,6 +29,7 @@ import {
   type StudioSession,
   type StudioStatus,
   studioPaths,
+  timerScheduler,
 } from "@panthea/assets/studio";
 import type { StudioConfig } from "./config";
 import {
@@ -49,6 +55,10 @@ export interface Deps {
   /** A runtime profile other than the selected production one, for tests of a staged runtime. */
   readonly profile?: SelectedProfile;
   readonly drawSeed: () => number;
+  /** Watches a root for changes, including one that does not exist yet; the preview source rescans on them. */
+  readonly watchRoot: PreviewWatcher;
+  /** The clock: runs a callback once after a delay. The preview source's coalesced rescans and the parent guard's polls use it. */
+  readonly schedule: PreviewScheduler;
   /** Whether a process id names a live process; status uses it to tell an open session from a crashed one. */
   readonly isAlive: (pid: number) => boolean;
   readonly sleep: (ms: number) => Promise<void>;
@@ -73,6 +83,8 @@ export const defaultDeps = (log: (line: string) => void): Deps => ({
   openRuntime,
   createEditor: createEditorAdapter,
   drawSeed: () => crypto.getRandomValues(new Uint32Array(1))[0] as number,
+  watchRoot: fsWatcher,
+  schedule: timerScheduler,
   isAlive: processAlive,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log,
@@ -83,6 +95,10 @@ export const isOutcome = (value: unknown): value is Outcome =>
 
 const sha256 = (bytes: Uint8Array) =>
   createHash("sha256").update(bytes).digest("hex");
+
+/** Where an edit's workspace file lives under the session's root. */
+const workspaceFile = (session: StudioSession, editId: string) =>
+  join(studioPaths(session.store.root).edits, editId, "workspace.aseprite");
 
 interface Watch {
   readonly timer: ReturnType<typeof setInterval>;
@@ -98,6 +114,7 @@ export class Studio {
   private content: StudioContent | undefined;
   private runtime: StudioRuntime | undefined;
   private editor: EditorAdapter | undefined;
+  private preview: PreviewSource | undefined;
   private drain: Promise<void> | undefined;
   private refusal: string | undefined;
   private unfinished = 0;
@@ -166,6 +183,33 @@ export class Studio {
       });
     this.content = loaded.content;
     return this.content;
+  }
+
+  /**
+   * The read-only asset source over the configured registry and studio roots,
+   * validated against the content's vocabulary. It takes no writer lock. The
+   * first call starts its watchers, so a session that is already stopping
+   * refuses rather than start new ones; an existing source keeps answering from
+   * its last scan.
+   */
+  previewSource(): PreviewSource | Outcome {
+    if (this.preview !== undefined) return this.preview;
+    if (this.stopping)
+      return refuse("shutting-down", "the session is shutting down");
+    const studioRoot = this.root;
+    if (studioRoot === undefined) return this.missing("studioRoot");
+    const registryRoot = this.registryRoot();
+    if (isOutcome(registryRoot)) return registryRoot;
+    const content = this.loadedContent();
+    if (isOutcome(content)) return content;
+    this.preview = createPreviewSource({
+      registryRoot,
+      studioRoot,
+      vocabulary: { ok: true, vocabulary: content.vocabulary },
+      watch: this.deps.watchRoot,
+      schedule: this.deps.schedule,
+    });
+    return this.preview;
   }
 
   registryRoot(): string | Outcome {
@@ -306,11 +350,7 @@ export class Studio {
     const content = this.content;
     const pollMs = this.config.editor?.editPollMs;
     if (!session || !editor || !content || pollMs === undefined) return;
-    const file = join(
-      studioPaths(session.store.root).edits,
-      editId,
-      "workspace.aseprite",
-    );
+    const file = workspaceFile(session, editId);
     const watch: Watch = {
       baseline: workspaceHash ?? "",
       busy: false,
@@ -335,14 +375,17 @@ export class Studio {
     this.watches.set(editId, watch);
   }
 
+  /** The edit's workspace file, for a host that launches the editor on it; undefined before the session is open. */
+  workspacePath(editId: string): string | undefined {
+    return this.session === undefined
+      ? undefined
+      : resolve(workspaceFile(this.session, editId));
+  }
+
   workspaceHash(editId: string): string | undefined {
     const session = this.session;
     if (session === undefined) return undefined;
-    const file = join(
-      studioPaths(session.store.root).edits,
-      editId,
-      "workspace.aseprite",
-    );
+    const file = workspaceFile(session, editId);
     return existsSync(file)
       ? sha256(new Uint8Array(readFileSync(file)))
       : undefined;
@@ -367,6 +410,7 @@ export class Studio {
    */
   teardown(): Promise<void> {
     this.tearingDown ??= (async () => {
+      this.preview?.close();
       for (const id of [...this.watches.keys()]) this.unwatchEdit(id);
       await this.editor?.close();
       if (this.runtime !== undefined) {

@@ -592,9 +592,11 @@ describe("a closed session's store", () => {
 });
 
 describe("public surface", () => {
-  test("the studio subpath exposes the host and the lock-free reader, not the unlocked store factory", () => {
+  test("the studio subpath exposes the host, the lock-free reader and the preview source, not the unlocked store factory", () => {
     expect(Object.keys(studio).sort()).toEqual([
+      "COALESCE_MS",
       "DEFAULT_BATCH",
+      "PREVIEW_SOURCE_KINDS",
       "PROVIDER",
       "SELECTED_PROFILE",
       "STUDIO_SCHEMA_VERSION",
@@ -602,11 +604,16 @@ describe("public surface", () => {
       "buildSpec",
       "canonicalFrameHash",
       "createEditorAdapter",
+      "createPreviewSource",
       "decodePng",
+      "fsWatcher",
+      "isPreviewSlug",
+      "isPreviewSourceKind",
       "loadStudioContent",
       "newRequestRecord",
       "openRuntime",
       "openStudioSession",
+      "parsePreviewResolve",
       "planJobs",
       "readStudioBlob",
       "readStudioStatus",
@@ -619,6 +626,7 @@ describe("public surface", () => {
       "sortSheet",
       "studioPaths",
       "summarizeSheet",
+      "timerScheduler",
     ]);
   });
 });

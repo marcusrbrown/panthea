@@ -68,12 +68,14 @@ The environment is never passed to the server or the editor.
 | `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it. Add `--edit-mask <png> --edit-strength <n> --edit-cue <text>` with one base (`--edit-base-job <id> --edit-base-output <sha256>` or `--edit-base-image <png> --edit-base-description <text>`) to make it a masked img2img edit (see Edits) |
 | `reroll` | `--request-id --per-slot`: more jobs for a request, continuing its seed sequence |
 | `status`, `list <kind>`, `sheet` | Read the durable records without taking the writer lock |
+| `resolve` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: the request `generate` would store and the generation spec built from it, from the content root alone. It takes no lock and writes nothing, so it works while another session owns the root. An omitted seed is drawn and reported; pass the reported seed to `generate` for the same request. An unknown subject, state or kind is the same refusal `generate` gives, with the valid alternatives. Edit files are not accepted. Reply: `{"id","request","spec"}` |
+| `source-list`, `source-resolve`, `source-bytes`, `source-keys` | The preview's asset source: published canon (`registryRoot`) plus the store's drafts and approved records (`studioRoot`), validated against the `contentRoot` vocabulary. Read-only, no lock (see Asset source) |
 | `report` | `--working-set-id --slot`: a fresh report-only conformance of the slot's stored pixels against the current `contentRoot` palette, without the writer lock; exit `1` with the exact diff when conforming would change them |
 | `remove`, `abort` | Cancel a queued job, or the running one (only the process that owns it) |
 | `conform` | `--job-id` with `--set <name>` or `--params <json>`: a candidate from a generated image |
 | `set create`, `set replace-sheet`, `pick` | Working sets and keyframe picks |
 | `reject` | Rejects a packed draft |
-| `open`, `import`, `finish`, `discard`, `export` | Hand edits, in the editor or with files; `finish --png --json` also takes `--method hand\|script` (default `hand`) and `--description` (required for `script`: what ran), so a scripted edit is not recorded as a hand edit |
+| `open`, `import`, `finish`, `discard`, `export` | Hand edits, in the editor or with files; `open` replies with `workspacePath`, the absolute path of the workspace file, for a host that launches the editor on it; `finish --png --json` also takes `--method hand\|script` (default `hand`) and `--description` (required for `script`: what ran), so a scripted edit is not recorded as a hand edit |
 | `pack`, `approve`, `approve-with-exception`, `publish` | Final records and canon |
 | `derive` | Not supported: exits `1` and changes nothing |
 
@@ -131,6 +133,27 @@ session that serves one edit: it builds the workspace, imports it again when the
 file's content changes, and exits `0` after `finish` or `discard`, or `1` if
 input ends first.
 
+### Asset source
+
+`source-list`, `source-resolve`, `source-bytes` and `source-keys` serve what the
+isometric preview reads, through the same node-side core
+(`@panthea/assets/studio`, `createPreviewSource`) that backs the Vite dev bridge.
+They need `studioRoot`, `registryRoot` and `contentRoot` in the config and take
+no writer lock. The source scans on first use and again, after a short
+coalescing window, when either root changes; a root that does not exist yet is
+picked up once it is created.
+
+| Op | Arguments | Reply |
+| --- | --- | --- |
+| `source-list` | none | `{"entries":[{"source","id","assetId","kind","state","ok"}],"problems":[{"scope","message"}]}` |
+| `source-resolve` | `source` (`canon`, `draft` or `approved`), `id`, optional `state`, `direction`, `ability`, `expression` | `{"kind":"frames","selection","manifestKey","asset","bytes":{"width","height","pixelKey"}}`, or `{"kind":"placeholder","selection","reason","uri","problems","bytes"}` when nothing valid is held |
+| `source-bytes` | `source`, `id` and `v` (the `pixelKey` from `source-resolve`), or `placeholder` (a placeholder's `pixelKey`) alone | `{"source","id","pixelKey","width","height","base64"}`, or `{"placeholder","base64"}`; `base64` is the validated PNG. A `v` that is not the selection's current key is refused `stale-version` (resolve again); nothing held is `not-found` |
+| `source-keys` | none | `{"listing","selections":[{"source","id","key"}]}`: compare with the previous reply to see what changed |
+
+Ids are lowercase hyphenated slugs; anything else, and any unknown argument, is
+`invalid-arguments`. Bytes are pinned to the key they were resolved with, so a
+rewritten draft is never served under the old key.
+
 ## Approval and publication
 
 Neither is ever automatic and `--yes` is refused. `approve` and
@@ -143,6 +166,11 @@ the owner's approval of a failing report; it does not clear licence terms, which
 need separate `--assessments` of the exact records.
 
 ## Stopping
+
+`--parent-pid <pid>` (with `session` or `open`) arms a parent guard for a session
+run as a sidecar: every two seconds it checks that process is alive, and when it
+is not, the session stops exactly as on `SIGTERM`: the editor and runtime close
+before the lock is released, and it exits `1`. Without the flag there is no guard.
 
 End of input, an error, `SIGINT` and `SIGTERM` all close the editor and shut the
 runtime down before the writer lock is released. If the owned server will not

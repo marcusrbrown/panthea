@@ -38,6 +38,33 @@ export type {
 export { canonicalFrameHash, type FinishStep } from "./export-import";
 export type { PackInput } from "./packing";
 export { decodePng, type PngDecode } from "./png/decode";
+export {
+  COALESCE_MS,
+  createPreviewSource,
+  fsWatcher,
+  isPreviewSlug,
+  isPreviewSourceKind,
+  PREVIEW_SOURCE_KINDS,
+  type PreviewAtlas,
+  type PreviewBytesResult,
+  type PreviewChange,
+  type PreviewKeys,
+  type PreviewListing,
+  type PreviewListingEntry,
+  type PreviewProblem,
+  type PreviewResolution,
+  type PreviewResolveRequest,
+  type PreviewScheduler,
+  type PreviewSelection,
+  type PreviewSource,
+  type PreviewSourceKind,
+  type PreviewSourceOptions,
+  type PreviewVocabulary,
+  type PreviewWatcher,
+  parsePreviewResolve,
+  timerScheduler,
+  type WatchFs,
+} from "./preview-source";
 export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
 export type {
   ApproveOptions,

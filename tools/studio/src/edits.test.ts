@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   type EditorAdapter,
   readStudioStatus,
@@ -388,6 +388,34 @@ describe("opening an edit in the editor", () => {
     }
     expect(calls.at(-1)).toBe("close");
     expect(cap.err.join("\n")).toContain("edit e1 imported");
+  });
+
+  test("replies with the workspace file's location for a host that launches the editor itself, and keeps every other reply field", async () => {
+    const { rig, config, over } = pickedSet();
+
+    const { outcome } = await run(
+      config,
+      "open",
+      { id: "e1", workingSetId: "w", slots: ["idle/south"] },
+      { ...over, createEditor: (session) => fakeEditor(session, []) },
+    );
+
+    const file = join(rig.root, "edits", "e1", "workspace.aseprite");
+    expect(outcome).toEqual({
+      ok: true,
+      result: {
+        editId: "e1",
+        slots: ["idle/south"],
+        workspace: {
+          size: { w: 64, h: 80 },
+          durationsMs: [167],
+          tags: [{ name: "idle/south", from: 1, to: 1 }],
+        },
+        workspacePath: file,
+      },
+    });
+    expect(isAbsolute(file)).toBe(true);
+    expect(existsSync(file)).toBe(true);
   });
 
   test("an editor that is not there is reported with fallback guidance, no editor output leaks, and the edit stays open for a hand export", async () => {

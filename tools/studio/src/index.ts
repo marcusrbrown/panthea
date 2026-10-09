@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { execute, opNames, opSpec, own, type Spec } from "./commands";
 import { loadConfig, type StudioConfig } from "./config";
 import { exitOf, type Outcome, refuse } from "./format";
+import { startParentGuard } from "./guard";
 import { type Deps, defaultDeps, isOutcome, Studio } from "./host";
 
 export interface Io {
@@ -30,6 +31,8 @@ interface Parsed {
   readonly args: Record<string, unknown>;
   readonly config: string | undefined;
   readonly root: string | undefined;
+  /** The process whose death ends a session: set only by `--parent-pid`. */
+  readonly parentPid?: number;
 }
 
 const camel = (flag: string) =>
@@ -111,17 +114,37 @@ export function parseArgv(argv: readonly string[]): Parsed | Outcome {
   }
   let config: string | undefined;
   let root: string | undefined;
+  let parentPid: number | undefined;
   for (const [flag, value] of flags) {
     if (flag === "config") config = value;
     else if (flag === "root") root = value;
-    else {
+    else if (flag === "parent-pid") {
+      // Zero or a negative id would signal a process group, not a process.
+      if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))
+        return refuse(
+          "invalid-arguments",
+          "--parent-pid must be a positive whole number",
+        );
+      if (verb !== "session" && verb !== "open")
+        return refuse(
+          "invalid-arguments",
+          "--parent-pid applies to session and open only",
+        );
+      parentPid = Number(value);
+    } else {
       const key = camel(flag);
       const converted = convert(value, own(spec, key)?.t ?? "string", flag);
       if (isOutcome(converted)) return converted;
       args[key] = converted;
     }
   }
-  return { op, args, config, root };
+  return {
+    op,
+    args,
+    config,
+    root,
+    ...(parentPid === undefined ? {} : { parentPid }),
+  };
 }
 
 async function* lines(source: AsyncIterable<string>): AsyncGenerator<string> {
@@ -282,11 +305,25 @@ export async function main(
   const stop = new Promise<void>((resolveStop) => {
     stopNow = resolveStop;
   });
-  const unsubscribe = signals?.subscribe((signal) => {
+  const interrupt = (signal: string) => {
     studio.stopRequested = signal;
     stopNow();
     void studio.teardown();
-  });
+  };
+  const unsubscribe = signals?.subscribe(interrupt);
+  // The same stop path as a signal: the parent is gone, so close down in order and exit 1.
+  const parentGuard =
+    isSession && parsed.parentPid !== undefined
+      ? startParentGuard({
+          parentPid: parsed.parentPid,
+          isAlive: deps.isAlive,
+          schedule: deps.schedule,
+          onOrphan: () => {
+            deps.log("the parent process is gone; shutting down");
+            interrupt("parent-dead");
+          },
+        })
+      : undefined;
   try {
     if (isSession) {
       const owned = studio.owner();
@@ -306,6 +343,7 @@ export async function main(
   } catch {
     return finish(refuse("internal", "the command failed unexpectedly"));
   } finally {
+    parentGuard?.stop();
     unsubscribe?.();
     await studio.teardown();
   }

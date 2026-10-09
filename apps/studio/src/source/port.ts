@@ -1,74 +1,39 @@
-import type { Resolution } from "@panthea/assets";
+import type {
+  PreviewAtlas,
+  PreviewChange,
+  PreviewListing,
+  PreviewListingEntry,
+  PreviewProblem,
+  PreviewResolution,
+  PreviewResolveRequest,
+  PreviewSelection,
+} from "@panthea/assets/studio";
 
+// The data types are the preview-source core's, so the dev bridge, the studio
+// session and the webview share one shape. Type-only: the browser bundle takes
+// nothing at runtime from the assets package.
+export type Selection = PreviewSelection;
+export type ListingEntry = PreviewListingEntry;
+export type AssetProblem = PreviewProblem;
+export type Listing = PreviewListing;
+export type ResolveRequest = PreviewResolveRequest;
+export type SourceChange = PreviewChange;
+
+// The browser's copies of the core's source kinds and id check; a test pins
+// them to the core's so the two cannot drift.
 export const SOURCE_KINDS = ["canon", "draft", "approved"] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
-/** Canon selections name the asset id; draft and approved selections name the studio record id. */
-export interface Selection {
-  readonly source: SourceKind;
-  readonly id: string;
-}
-
-export interface ListingEntry extends Selection {
-  readonly assetId: string;
-  readonly kind: "sprite" | "portrait" | "unknown";
-  readonly state: SourceKind;
-  /** False when the entry failed validation and resolves to the placeholder. */
-  readonly ok: boolean;
-}
-
-export interface AssetProblem {
-  readonly scope: string;
-  readonly message: string;
-}
-
-export interface Listing {
-  readonly entries: readonly ListingEntry[];
-  readonly problems: readonly AssetProblem[];
-}
-
-export interface ResolveRequest extends Selection {
-  readonly state?: string;
-  readonly direction?: string;
-  readonly ability?: string;
-  readonly expression?: string;
-}
-
-export interface AtlasBytes {
+export interface AtlasBytes extends PreviewAtlas {
   readonly url: string;
-  readonly width: number;
-  readonly height: number;
-  /** Hash of the atlas pixels with RGB under alpha 0 zeroed. Equal keys mean the same visible image. */
-  readonly pixelKey: string;
 }
 
-type CanonResolution = Extract<Resolution, { source: "canon" }>;
-type PlaceholderResolution = Extract<Resolution, { source: "placeholder" }>;
-
-export type SourceResolution =
-  | {
-      readonly kind: "frames";
-      readonly selection: Selection;
-      /** Hash of the manifest with its atlas blob hash left out: equal keys mean the same geometry and timing. */
-      readonly manifestKey: string;
-      readonly asset: Omit<CanonResolution, "source">;
-      readonly bytes: AtlasBytes;
-    }
-  | {
-      readonly kind: "placeholder";
-      readonly selection: Selection;
-      readonly reason: PlaceholderResolution["reason"];
-      readonly uri: string;
-      readonly problems: readonly AssetProblem[];
-      readonly bytes: AtlasBytes;
-    };
-
-export interface SourceChange {
-  /** Selections whose resolved content changed, appeared or disappeared. */
-  readonly changed: readonly Selection[];
-  /** True when the listing or its problems changed. */
-  readonly listing: boolean;
-}
+/** The core's resolution, with a URL on the bytes it names. */
+export type SourceResolution = PreviewResolution extends infer R
+  ? R extends { readonly bytes: PreviewAtlas }
+    ? Omit<R, "bytes"> & { readonly bytes: AtlasBytes }
+    : never
+  : never;
 
 /** What the preview needs from wherever assets live. Fallback never leaves the selected source. */
 export interface AssetSource {

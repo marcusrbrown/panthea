@@ -11,8 +11,11 @@ import {
   type CommandResult,
   type EditResult,
   type FinishStep,
+  isPreviewSlug,
+  isPreviewSourceKind,
   newRequestRecord,
   type PackInput,
+  parsePreviewResolve,
   type RequestInput,
   resolveEdit,
   type StudioAssetRecord,
@@ -250,6 +253,51 @@ function readFiles(
       "the sheet or metadata file cannot be read",
     );
   }
+}
+
+interface Shape {
+  readonly slots: RequestInput["slots"];
+  readonly kind: "sprite" | "portrait";
+}
+
+/** The request fields `generate` and `resolve` both take, checked before anything is built or opened. */
+function requestShape(a: Args): Shape | Outcome {
+  const slots = parseSlots(a.slots);
+  if (isOutcome(slots)) return slots;
+  if (a.kind !== "sprite" && a.kind !== "portrait")
+    return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
+  return { slots, kind: a.kind };
+}
+
+/** The request record and spec for these arguments, built from content alone: no store, lock or runtime. */
+function buildRequest(
+  studio: Studio,
+  content: StudioContent,
+  a: Args,
+  shape: Shape,
+  edit?: Edit,
+) {
+  const built = newRequestRecord(
+    content,
+    {
+      id: a.id as string,
+      subject: a.subject as string,
+      kind: shape.kind,
+      slots: shape.slots,
+      ...(a.batch === undefined ? {} : { batch: a.batch as number }),
+      ...(a.seed === undefined ? {} : { seed: a.seed as number }),
+      ...(a.styleNote === undefined
+        ? {}
+        : { styleNote: a.styleNote as string }),
+      ...(edit === undefined ? {} : { edit }),
+    },
+    studio.deps.drawSeed,
+  );
+  return built.ok
+    ? built.value
+    : refuse("invalid-request", "the request is not valid", {
+        error: j(built.error),
+      });
 }
 
 /** Runs the queued drain to its end in a one-shot command; in a session it answers at once. */
@@ -492,6 +540,101 @@ const OPS: Record<string, OpDef> = {
   },
   derive: { spec: {}, run: () => unsupported() },
 
+  // The preview's asset source: read-only, no writer lock, answered from the
+  // source's last scan of the configured registry and studio roots.
+  "source-list": {
+    spec: {},
+    run: (studio) => {
+      const source = studio.previewSource();
+      return isOutcome(source) ? source : done(j(source.list()));
+    },
+  },
+  "source-resolve": {
+    spec: {
+      ...str("source", true),
+      ...str("id", true),
+      ...str("state"),
+      ...str("direction"),
+      ...str("ability"),
+      ...str("expression"),
+    },
+    run: (studio, a) => {
+      const request = parsePreviewResolve(a);
+      if (typeof request === "string")
+        return refuse("invalid-arguments", request);
+      const source = studio.previewSource();
+      return isOutcome(source) ? source : done(j(source.resolve(request)));
+    },
+  },
+  "source-bytes": {
+    // A held atlas by selection and the pixel key it was resolved with, or the placeholder by its hash.
+    spec: {
+      ...str("source"),
+      ...str("id"),
+      ...str("v"),
+      ...str("placeholder"),
+    },
+    run: (studio, a) => {
+      const base64 = (bytes: Uint8Array) =>
+        Buffer.from(bytes).toString("base64");
+      if (a.placeholder !== undefined) {
+        if (
+          a.source !== undefined ||
+          a.id !== undefined ||
+          a.v !== undefined ||
+          !/^[0-9a-f]{64}$/.test(a.placeholder as string)
+        )
+          return refuse(
+            "invalid-arguments",
+            "give a placeholder hash alone, or source, id and v",
+          );
+        const source = studio.previewSource();
+        if (isOutcome(source)) return source;
+        const bytes = source.placeholder(a.placeholder as string);
+        return bytes === undefined
+          ? refuse("not-found", "no such placeholder")
+          : done({
+              placeholder: a.placeholder as string,
+              base64: base64(bytes),
+            });
+      }
+      if (
+        !isPreviewSourceKind(a.source) ||
+        !isPreviewSlug(a.id) ||
+        typeof a.v !== "string"
+      )
+        return refuse(
+          "invalid-arguments",
+          "give source (canon, draft or approved), a lowercase hyphenated id and the version v from source-resolve",
+        );
+      const source = studio.previewSource();
+      if (isOutcome(source)) return source;
+      const got = source.bytes({ source: a.source, id: a.id }, a.v);
+      if (!got.ok)
+        return got.reason === "stale"
+          ? refuse(
+              "stale-version",
+              "the version is not the selection's current one: resolve it again",
+            )
+          : refuse("not-found", "no validated atlas for this selection");
+      return done({
+        source: a.source,
+        id: a.id,
+        pixelKey: got.pixelKey,
+        width: got.width,
+        height: got.height,
+        base64: base64(got.bytes),
+      });
+    },
+  },
+  "source-keys": {
+    spec: {},
+    run: (studio) => {
+      const source = studio.previewSource();
+      return isOutcome(source) ? source : done(j(source.keys()));
+    },
+  },
+
   generate: {
     spec: {
       ...str("id", true),
@@ -516,33 +659,13 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(content)) return content;
       const runtime = studio.runtimeFor(session);
       if (isOutcome(runtime)) return runtime;
-      const slots = parseSlots(a.slots);
-      if (isOutcome(slots)) return slots;
-      if (a.kind !== "sprite" && a.kind !== "portrait")
-        return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
+      const shape = requestShape(a);
+      if (isOutcome(shape)) return shape;
       const edit = readEditArgs(a);
       if (isOutcome(edit)) return edit;
-      const built = newRequestRecord(
-        content,
-        {
-          id: a.id as string,
-          subject: a.subject as string,
-          kind: a.kind,
-          slots,
-          ...(a.batch === undefined ? {} : { batch: a.batch as number }),
-          ...(a.seed === undefined ? {} : { seed: a.seed as number }),
-          ...(a.styleNote === undefined
-            ? {}
-            : { styleNote: a.styleNote as string }),
-          ...(edit === undefined ? {} : { edit: edit.request }),
-        },
-        studio.deps.drawSeed,
-      );
-      if (!built.ok)
-        return refuse("invalid-request", "the request is not valid", {
-          error: j(built.error),
-        });
-      const spec = built.value.spec;
+      const built = buildRequest(studio, content, a, shape, edit?.request);
+      if (isOutcome(built)) return built;
+      const spec = built.spec;
       if (edit !== undefined && spec.edit !== undefined) {
         // Checked with the files served from memory, so a refusal stores nothing.
         const checked = resolveEdit(spec.edit, spec.generated, {
@@ -565,13 +688,38 @@ const OPS: Record<string, OpDef> = {
           );
         }
       }
-      const ack = session.submitRequest(built.value.record);
+      const ack = session.submitRequest(built.record);
       if (!ack.ok)
         return refuse(ack.reason, safeMessage(ack.message), {
           requestId: a.id as string,
           enqueued: [...ack.enqueued],
         });
       return afterEnqueue(studio, a.id as string, ack.jobIds);
+    },
+  },
+  resolve: {
+    // The request fields only: edits name files by path, and a preview never reads files.
+    spec: {
+      ...str("id", true),
+      ...str("subject", true),
+      ...str("kind", true),
+      slots: { t: "json", req: true },
+      batch: { t: "int" },
+      seed: { t: "int" },
+      ...str("styleNote"),
+    },
+    run: (studio, a) => {
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const shape = requestShape(a);
+      if (isOutcome(shape)) return shape;
+      const built = buildRequest(studio, content, a, shape);
+      if (isOutcome(built)) return built;
+      return done({
+        id: a.id as string,
+        request: j(built.record.request),
+        spec: j(built.spec),
+      });
     },
   },
   reroll: {
@@ -738,6 +886,7 @@ const OPS: Record<string, OpDef> = {
             "the edit is open: export its sheet with `export`, edit it by hand and bring it back with `import` or `finish` using --png and --json",
         });
       studio.watchEdit(a.id as string, studio.workspaceHash(a.id as string));
+      const workspacePath = studio.workspacePath(a.id as string);
       return done({
         editId: a.id as string,
         slots: slots as string[],
@@ -750,6 +899,8 @@ const OPS: Record<string, OpDef> = {
             to: t.to,
           })),
         },
+        // A path the native host launches the editor on; the host strips it before anything reaches the webview.
+        ...(workspacePath === undefined ? {} : { workspacePath }),
       });
     },
   },
@@ -1029,6 +1180,11 @@ export const READ_ONLY = new Set([
   "list",
   "sheet",
   "report",
+  "resolve",
+  "source-list",
+  "source-resolve",
+  "source-bytes",
+  "source-keys",
   "derive",
 ]);
 

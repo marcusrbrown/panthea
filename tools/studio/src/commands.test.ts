@@ -29,7 +29,7 @@ import {
   tempRoot,
   waitFor,
 } from "./_testkit";
-import { execute, readArgs } from "./commands";
+import { execute, opNames, opSpec, readArgs } from "./commands";
 import type { StudioConfig } from "./config";
 import { exitOf } from "./format";
 import { Studio } from "./host";
@@ -114,6 +114,35 @@ describe("argument checking", () => {
       hostile,
     );
     expect(codeOf(outcome)).toBe("internal");
+  });
+
+  test("every op the app added is found by own-property lookup only, and refuses an inherited name as an argument", async () => {
+    for (const op of [
+      "resolve",
+      "source-list",
+      "source-resolve",
+      "source-bytes",
+      "source-keys",
+    ]) {
+      expect(opSpec(op), op).toBeDefined();
+      expect(opNames(), op).toContain(op);
+      for (const key of ["toString", "constructor", "hasOwnProperty"]) {
+        const { outcome } = await run({ studioRoot: tempRoot() }, op, {
+          [key]: 1,
+        });
+        expect(codeOf(outcome), `${op} ${key}`).toBe("invalid-arguments");
+      }
+      const proto = await run(
+        { studioRoot: tempRoot() },
+        op,
+        JSON.parse('{"__proto__":1}'),
+      );
+      expect(codeOf(proto.outcome), `${op} __proto__`).toBe(
+        "invalid-arguments",
+      );
+    }
+    for (const inherited of ["toString", "constructor", "__proto__"])
+      expect(opSpec(inherited), inherited).toBeUndefined();
   });
 
   test("readArgs accepts exactly what a spec names", () => {
