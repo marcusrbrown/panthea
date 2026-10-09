@@ -299,7 +299,7 @@ sequenceDiagram
 
 **Verification:** Unit tests pass. In the packaged app, rewriting a draft updates the preview without a restart (shown in U6).
 
-- [ ] **U5: Workflow UI**
+- [x] **U5: Workflow UI**
 
 **Goal:** The owner workflow in one window: request and queue, contact sheet with reports and provenance, edit, pack/approve/publish, and the preview.
 
