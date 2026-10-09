@@ -1,9 +1,14 @@
 import { expect, test } from "bun:test";
 import {
   createMemorySampler,
+  FULL_RUN_MINUTES,
   findOllamaServePid,
   LEVELLING_OFF_PERCENT_PER_10_MIN,
+  MAX_SETTLED_GROWTH_PERCENT,
   type MemorySample,
+  SETTLE_AFTER_CATCH_UP_MS,
+  SETTLED_FLOOR_MS,
+  type SettleOptions,
   summarizeMemory,
   TREND_WINDOW_MS,
   takeMemorySample,
@@ -647,4 +652,253 @@ test("the summary gives start, peak and end for the sidecar's and the runner's f
     present: 3,
     absent: 1,
   });
+});
+
+// --- Growth across the settled span ------------------------------------------------------------------
+//
+// The memory row compares the mean footprint of the second half of the settled span with the first half's. The settled
+// span starts 15 minutes after the last catch-up finishes and ends with the last sample; a window slope read
+// -1.65% to +4.34% per 10 minutes over one real hour depending on where the window sat, which is noise in a footprint
+// that swings by ±10 MiB.
+
+const MINUTE_MS = 60_000;
+const settleAt = (catchUpMinute: number, runMinutes = 60): SettleOptions => ({
+  catchUpFinishedMs: catchUpMinute * MINUTE_MS,
+  runMinutes,
+});
+/** A series of `minutes` whose sidecar footprint, in MiB, is `footprintAt(minute)`. */
+const footprints = (
+  minutes: number,
+  footprintAt: (minute: number) => number | undefined,
+  options: { sidecarPid?: number } = {},
+) => sidecarSeries(minutes, () => 400, { ...options, footprintAt });
+
+function judged(samples: MemorySample[], settle: SettleOptions | undefined) {
+  const { settledGrowth } = summarizeMemory(samples, settle);
+  if (!settledGrowth.judgeable) {
+    throw new Error(`expected a judgement: ${settledGrowth.reason}`);
+  }
+  return settledGrowth;
+}
+function unjudged(samples: MemorySample[], settle: SettleOptions | undefined) {
+  const { settledGrowth } = summarizeMemory(samples, settle);
+  if (settledGrowth.judgeable) throw new Error("expected not judgeable");
+  return settledGrowth.reason;
+}
+
+test("the constants: a fifteen-minute settle, a twenty-minute floor, ten percent, for a run of sixty minutes", () => {
+  expect(SETTLE_AFTER_CATCH_UP_MS).toBe(15 * MINUTE_MS);
+  expect(SETTLED_FLOOR_MS).toBe(20 * MINUTE_MS);
+  expect(MAX_SETTLED_GROWTH_PERCENT).toBe(10);
+  expect(FULL_RUN_MINUTES).toBe(60);
+});
+
+test("drift with flat halves passes: a footprint ramping 4 MiB per 10 minutes through the last 20 fails the slope but grows under 10% across the halves", () => {
+  // Catch-up done at minute 23; the settled span is minutes 38 to 60. The footprint is flat to minute 40, then
+  // ramps 118 to 126 MiB, which is 3.3% of the mean per 10 minutes.
+  const samples = footprints(60, (minute) =>
+    minute < 40 ? 118 : 118 + 0.4 * (minute - 40),
+  );
+  const summary = summarizeMemory(samples, settleAt(23));
+  // The old test: the last 20 minutes' slope is over the 1% limit, so it would have failed the run.
+  expect(summary.footprintTrend).toMatchObject({
+    judgeable: true,
+    levellingOff: false,
+  });
+  if (!summary.footprintTrend.judgeable) throw new Error("expected a slope");
+  expect(summary.footprintTrend.percentPer10Min).toBeGreaterThan(
+    LEVELLING_OFF_PERCENT_PER_10_MIN,
+  );
+  // The new one: the halves' means differ by under 10%.
+  const growth = judged(samples, settleAt(23));
+  expect(growth.growthPercent).toBeGreaterThan(0);
+  expect(growth.growthPercent).toBeLessThan(MAX_SETTLED_GROWTH_PERCENT);
+  expect(growth.withinLimit).toBe(true);
+});
+
+test("real growth fails: a second half more than 10% over the first, and the figure is the means' ratio", () => {
+  const samples = footprints(60, (minute) => (minute < 49 ? 100 : 125));
+  const growth = judged(samples, settleAt(23));
+  // The settled span is minutes 38 to 60, split at 49: 100 MiB over 11 minutes, then 125 MiB.
+  expect(growth.firstHalfMeanBytes / MIB).toBeCloseTo(100, 6);
+  expect(growth.secondHalfMeanBytes / MIB).toBeCloseTo(125, 6);
+  expect(growth.growthPercent).toBeCloseTo(25, 6);
+  expect(growth.withinLimit).toBe(false);
+});
+
+test("the limit is 'more than 10%': 9.9% passes, 10.5% fails, and a falling footprint passes", () => {
+  const at = (second: number) =>
+    judged(
+      footprints(60, (minute) => (minute < 49 ? 100 : second)),
+      settleAt(23),
+    );
+  expect(at(109.9).withinLimit).toBe(true);
+  expect(at(110.5).withinLimit).toBe(false);
+  const falling = at(60);
+  expect(falling.growthPercent).toBeCloseTo(-40, 6);
+  expect(falling.withinLimit).toBe(true);
+});
+
+test("a burst in the first fifteen minutes after the catch-up is not in the settled span", () => {
+  // 300 MiB in the 15 minutes after the catch-up, 100 MiB after: judged on the 100.
+  const samples = footprints(60, (minute) =>
+    minute >= 23 && minute < 38 ? 300 : 100,
+  );
+  const growth = judged(samples, settleAt(23));
+  expect(growth.firstHalfMeanBytes / MIB).toBeCloseTo(100, 6);
+  expect(growth.growthPercent).toBeCloseTo(0, 6);
+  expect(growth.settledFromMs).toBe((23 + 15) * MINUTE_MS);
+  expect(growth.settledMs).toBe(22 * MINUTE_MS);
+});
+
+test("the settled span is the later part of the run: samples before it, even rising ones, do not count", () => {
+  const samples = footprints(60, (minute) =>
+    minute < 38 ? 50 + 3 * minute : 200,
+  );
+  const growth = judged(samples, settleAt(23));
+  expect(growth.growthPercent).toBeCloseTo(0, 6);
+  expect(growth.withinLimit).toBe(true);
+});
+
+test("a settled span under the floor is not judgeable, not a pass; exactly the floor is judged", () => {
+  // Catch-up at minute 30: the settled span is 45 to 60, 15 minutes.
+  const reason = unjudged(
+    footprints(60, () => 100),
+    settleAt(30),
+  );
+  expect(reason).toContain("15");
+  expect(reason).toContain("20");
+  // Catch-up at minute 25: 40 to 60 is exactly 20 minutes.
+  expect(
+    judged(
+      footprints(60, () => 100),
+      settleAt(25),
+    ).settledMs,
+  ).toBe(20 * MINUTE_MS);
+  // Just under it.
+  expect(
+    summarizeMemory(
+      footprints(59.5, () => 100),
+      settleAt(25),
+    ).settledGrowth.judgeable,
+  ).toBe(false);
+});
+
+test("no catch-up time, no samples, or a catch-up after the last sample are not judgeable", () => {
+  expect(
+    unjudged(
+      footprints(60, () => 100),
+      { catchUpFinishedMs: undefined, runMinutes: 60 },
+    ),
+  ).toContain("catch-up");
+  expect(
+    unjudged(
+      footprints(60, () => 100),
+      undefined,
+    ),
+  ).toContain("catch-up");
+  expect(unjudged([], settleAt(23))).toContain("no samples");
+  expect(
+    unjudged(
+      footprints(60, () => 100),
+      settleAt(70),
+    ),
+  ).toContain("catch-up");
+});
+
+test("a run scaled down scales both the fifteen-minute drop and the twenty-minute floor", () => {
+  // A six-minute run is a tenth of the gate: drop 1.5 minutes, floor 2 minutes. Catch-up done at minute 2.3.
+  const samples = footprints(6, (minute) =>
+    minute >= 2.3 && minute < 3.8 ? 300 : 100,
+  );
+  const growth = judged(samples, settleAt(2.3, 6));
+  expect(growth.settledFromMs).toBeCloseTo(3.8 * MINUTE_MS, 3);
+  expect(growth.settledMs).toBeCloseTo(2.2 * MINUTE_MS, 3);
+  expect(growth.firstHalfMeanBytes / MIB).toBeCloseTo(100, 6);
+  expect(growth.growthPercent).toBeCloseTo(0, 6);
+  // The same samples read as a full-length run have a settled span of nothing at all, which is not judgeable.
+  expect(unjudged(samples, settleAt(2.3, 60))).toContain("20");
+  // Under the scaled floor of two minutes the six-minute run is not judgeable either: catch-up at minute 3 leaves 1.5.
+  expect(
+    unjudged(
+      footprints(6, () => 100),
+      settleAt(3, 6),
+    ),
+  ).toContain("2");
+  // A thirty-minute run halves both: drop 7.5 minutes, floor 10 minutes.
+  const half = judged(
+    footprints(30, () => 100),
+    settleAt(10, 30),
+  );
+  expect(half.settledFromMs).toBeCloseTo(17.5 * MINUTE_MS, 3);
+  expect(half.settledMs).toBeCloseTo(12.5 * MINUTE_MS, 3);
+});
+
+test("a footprint unread, or a sidecar absent, anywhere in the settled span is not judgeable; a gap before it does not matter", () => {
+  const unread = unjudged(
+    footprints(60, (minute) => (minute > 50 && minute < 51 ? undefined : 100)),
+    settleAt(23),
+  );
+  expect(unread).toContain("footprint");
+  expect(unread).toContain("not read");
+  expect(
+    judged(
+      footprints(60, (minute) =>
+        minute > 30 && minute < 31 ? undefined : 100,
+      ),
+      settleAt(23),
+    ).withinLimit,
+  ).toBe(true);
+  // The sidecar absent inside the span.
+  const gone = footprints(60, () => 100).map((taken) =>
+    taken.atMs > 45 * MINUTE_MS && taken.atMs < 46 * MINUTE_MS
+      ? { ...taken, sidecar: { state: "absent" as const } }
+      : taken,
+  );
+  expect(unjudged(gone, settleAt(23))).toContain("absent");
+  // Samples that never recorded a footprint.
+  expect(
+    unjudged(
+      sidecarSeries(60, () => 400),
+      settleAt(23),
+    ),
+  ).toContain("not read");
+});
+
+test("a sidecar that restarted inside the settled span is not judged across two processes; one restarted before it is", () => {
+  const first = footprints(45, () => 100, { sidecarPid: 200 });
+  const second = footprints(15, () => 100, { sidecarPid: 201 }).map(
+    (taken) => ({ ...taken, atMs: taken.atMs + 45 * MINUTE_MS + 10_000 }),
+  );
+  expect(unjudged([...first, ...second], settleAt(23))).toContain("restart");
+  // The restart is before the span: only the later process is in it.
+  const early = footprints(20, () => 300, { sidecarPid: 200 });
+  const late = footprints(40, () => 100, { sidecarPid: 201 }).map((taken) => ({
+    ...taken,
+    atMs: taken.atMs + 20 * MINUTE_MS + 10_000,
+  }));
+  const growth = judged([...early, ...late], settleAt(23));
+  expect(growth.growthPercent).toBeCloseTo(0, 6);
+});
+
+test("RSS is not what the row reads: a rising RSS beside a flat footprint passes, and the RSS trend is still reported", () => {
+  const samples = sidecarSeries(60, (minute) => 100 + 4 * minute, {
+    footprintAt: () => 78,
+  });
+  const summary = summarizeMemory(samples, settleAt(23));
+  expect(summary.sidecarTrend).toMatchObject({
+    judgeable: true,
+    levellingOff: false,
+  });
+  expect(judged(samples, settleAt(23)).withinLimit).toBe(true);
+});
+
+test("the settled growth takes its sample counts from each half", () => {
+  const growth = judged(
+    footprints(60, () => 100),
+    settleAt(23),
+  );
+  // 22 minutes at 6 samples a minute, split at the middle: 11 minutes each.
+  expect(growth.firstHalfSamples).toBe(66);
+  expect(growth.secondHalfSamples).toBe(67);
 });

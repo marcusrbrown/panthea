@@ -28,6 +28,12 @@ const trendText = (
   trend.judgeable
     ? `${trend.percentPer10Min.toFixed(2)}% per 10 min over the last ${trend.windowSamples} samples`
     : `not judgeable: ${trend.reason}`;
+const growthText = (
+  growth: UnattendedAnalysis["memory"]["settledGrowth"],
+): string =>
+  growth.judgeable
+    ? `${growth.growthPercent < 0 ? "-" : "+"}${Math.abs(growth.growthPercent).toFixed(2)}% (the mean of the second half over the first half's, over ${min(growth.settledMs)} min that start after the first 15 minutes (scaled to the run's length) following the last catch-up; ${mib(growth.firstHalfMeanBytes)} then ${mib(growth.secondHalfMeanBytes)}; at most +10% passes)`
+    : `not judgeable: ${growth.reason}`;
 const cell = (text: string): string => text.replaceAll("|", "/");
 
 /** What the run proves, and what it does not. */
@@ -255,7 +261,7 @@ export function renderUnattendedReport(
     "",
     `${memory.samples} samples over ${min(memory.spanMs)} min. Ollama runner: start ${mib(memory.runner.start)}, peak ${mib(memory.runner.peak)}, end ${mib(memory.runner.end)} (${memory.runner.present} present, ${memory.runner.absent} absent); footprint start ${mib(memory.runnerFootprint.start)}, peak ${mib(memory.runnerFootprint.peak)}, end ${mib(memory.runnerFootprint.end)}. Sidecar: RSS start ${mib(memory.sidecar.start)}, peak ${mib(memory.sidecar.peak)}, end ${mib(memory.sidecar.end)}. Sidecar footprint: start ${mib(memory.sidecarFootprint.start)}, peak ${mib(memory.sidecarFootprint.peak)}, end ${mib(memory.sidecarFootprint.end)}. Swap used: peak ${memory.swapUsedMiB.peak === undefined ? "—" : `${memory.swapUsedMiB.peak.toFixed(0)} MiB`}.`,
     "",
-    `The levelling-off row is judged on the sidecar's physical footprint (${trendText(memory.footprintTrend)}), not on RSS, which counts pages the allocator has freed and the kernel has not taken back and rises under allocation churn. Sidecar RSS trend, for context: ${trendText(memory.sidecarTrend)}.`,
+    `The memory row is judged on the sidecar's physical footprint across the settled span: ${growthText(memory.settledGrowth)}. It is not judged on RSS, which counts pages the allocator has freed and the kernel has not taken back and rises under allocation churn, nor on a slope: a window slope of a footprint that swings by ±10 MiB reads differently with where the window sits. For context only, Footprint trend over the last 20 minutes: ${trendText(memory.footprintTrend)}. Sidecar RSS trend: ${trendText(memory.sidecarTrend)}.`,
     "",
     "## Export and rebuild",
     "",

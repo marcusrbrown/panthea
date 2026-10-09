@@ -1,8 +1,8 @@
 // Memory sampling for the unattended run: every 10 s, the Ollama runner's and the sidecar's RSS and physical footprint
 // and swap use, recorded as pids and numbers only (never a command line), and a summary of start, peak and end for each
-// series plus whether the sidecar's memory is still rising over the last 20 minutes.
+// series plus whether the sidecar's memory is still growing once it has settled.
 //
-// The levelling-off verdict is read on the footprint, not on RSS. RSS counts pages the allocator has freed and the
+// The verdict is read on the footprint, not on RSS. RSS counts pages the allocator has freed and the
 // kernel has not yet taken back, which grow under allocation churn while the memory the process holds stays flat; the
 // footprint (`footprint -p <pid>`, the figure Activity Monitor shows as Memory) leaves them out. RSS is still recorded
 // and its trend reported, for context. `footprint` took about 90 ms on a process holding 1 GB, `top -l 1` about 325 ms
@@ -25,10 +25,22 @@ export type { RunCommand };
 
 /** The sampling interval of the unattended run. */
 export const SAMPLE_INTERVAL_MS = 10_000;
-/** The window the sidecar's RSS trend is judged over: the last 20 minutes. */
+/** The window of the slope kept as context: the last 20 minutes. It no longer decides the memory row. */
 export const TREND_WINDOW_MS = 20 * 60_000;
-/** The sidecar's RSS is levelling off when its slope over the window is under this many percent of its mean per 10 minutes. */
+/** A slope over the context window is under this many percent of its mean per 10 minutes when it is flat enough to read as levelling off. Context only. */
 export const LEVELLING_OFF_PERCENT_PER_10_MIN = 1;
+
+// The memory row compares two halves of the settled span. A window slope could not tell a drift of a few MiB in a
+// footprint that swings by ±10 MiB from real growth: over the same hour-long run the last-20-minute slope read
+// anywhere from -1.65% to +4.34% per 10 minutes depending on where the window sat.
+/** The length of the gate run, in minutes. The settle drop and the floor below are for a run of this length and scale with it. */
+export const FULL_RUN_MINUTES = 60;
+/** The time after the catch-up finishes that is left out of the settled span: the heap is still settling from the catch-up's burst. At the full run length. */
+export const SETTLE_AFTER_CATCH_UP_MS = 15 * 60_000;
+/** The settled span must be at least this long to be judged. At the full run length. */
+export const SETTLED_FLOOR_MS = 20 * 60_000;
+/** The row fails when the footprint's mean over the second half of the settled span is more than this many percent above the first half's. */
+export const MAX_SETTLED_GROWTH_PERCENT = 10;
 
 const BYTES_PER_KIB = 1024;
 const TEN_MINUTES_MS = 10 * 60_000;
@@ -238,6 +250,31 @@ export type SidecarTrend =
     }
   | { readonly judgeable: false; readonly reason: string };
 
+export type SettledGrowth =
+  | {
+      readonly judgeable: true;
+      /** The second half's mean footprint over the first half's, in percent. Negative when falling. */
+      readonly growthPercent: number;
+      /** True when {@link growthPercent} is not above {@link MAX_SETTLED_GROWTH_PERCENT}. */
+      readonly withinLimit: boolean;
+      readonly firstHalfMeanBytes: number;
+      readonly secondHalfMeanBytes: number;
+      /** Where the settled span starts (epoch ms), its length, and the samples in each half. */
+      readonly settledFromMs: number;
+      readonly settledMs: number;
+      readonly firstHalfSamples: number;
+      readonly secondHalfSamples: number;
+    }
+  | { readonly judgeable: false; readonly reason: string };
+
+/** What the settled span depends on besides the samples: when the last catch-up finished, and how long the run was meant to be. */
+export interface SettleOptions {
+  /** Wall-clock time (epoch ms) the last catch-up finished; `undefined` when the run recorded none. */
+  readonly catchUpFinishedMs: number | undefined;
+  /** The run's length in minutes: the settle drop and the floor scale by this over {@link FULL_RUN_MINUTES}. */
+  readonly runMinutes: number;
+}
+
 export interface MemorySummary {
   readonly samples: number;
   readonly spanMs: number;
@@ -248,10 +285,12 @@ export interface MemorySummary {
   /** The sidecar's and the runner's physical footprint in bytes. */
   readonly sidecarFootprint: SeriesSummary;
   readonly runnerFootprint: SeriesSummary;
-  /** The sidecar's RSS trend, for context. */
+  /** The sidecar's RSS trend over the last 20 minutes, for context. */
   readonly sidecarTrend: SidecarTrend;
-  /** The sidecar's footprint trend: what the levelling-off verdict is read on. */
+  /** The sidecar's footprint trend over the last 20 minutes, for context. */
   readonly footprintTrend: SidecarTrend;
+  /** The growth of the sidecar's footprint across the settled span: what the memory row is read on. */
+  readonly settledGrowth: SettledGrowth;
 }
 
 function summarizeSeries(
@@ -336,8 +375,101 @@ function sidecarTrend(
   };
 }
 
+/**
+ * The footprint's growth across the settled span: the span starts `SETTLE_AFTER_CATCH_UP_MS` (scaled to the run's
+ * length) after the last catch-up finished and ends with the last sample, and is split at its middle in time; the
+ * result is the second half's mean over the first's. A span under `SETTLED_FLOOR_MS` (scaled), a footprint unread in
+ * it, the sidecar absent from it, or a restart inside it make the series not judgeable, never a pass.
+ */
+function settledGrowth(
+  samples: readonly MemorySample[],
+  settle: SettleOptions | undefined,
+): SettledGrowth {
+  const last = samples[samples.length - 1];
+  if (last === undefined) return { judgeable: false, reason: "no samples" };
+  if (settle === undefined || settle.catchUpFinishedMs === undefined) {
+    return {
+      judgeable: false,
+      reason:
+        "the run recorded no catch-up finish, so there is no settled span to judge",
+    };
+  }
+  const dropMs =
+    (SETTLE_AFTER_CATCH_UP_MS * settle.runMinutes) / FULL_RUN_MINUTES;
+  const floorMs = (SETTLED_FLOOR_MS * settle.runMinutes) / FULL_RUN_MINUTES;
+  const settledFromMs = settle.catchUpFinishedMs + dropMs;
+  const settledMs = last.atMs - settledFromMs;
+  if (settledMs < floorMs) {
+    const minutes = (ms: number): string =>
+      String(Number((ms / 60_000).toFixed(1)));
+    return {
+      judgeable: false,
+      reason: `the settled span is ${minutes(Math.max(0, settledMs))} minutes (the ${minutes(dropMs)} minutes after the catch-up finished are left out), under the ${minutes(floorMs)}-minute floor`,
+    };
+  }
+  const inSpan = samples.filter((taken) => taken.atMs >= settledFromMs);
+  const points: { atMs: number; bytes: number; pid: number }[] = [];
+  let unread = 0;
+  for (const taken of inSpan) {
+    if (taken.sidecar.state === "absent") {
+      return {
+        judgeable: false,
+        reason: "the sidecar was absent in the settled span",
+      };
+    }
+    if (taken.sidecar.footprintBytes === undefined) {
+      unread += 1;
+      continue;
+    }
+    points.push({
+      atMs: taken.atMs,
+      bytes: taken.sidecar.footprintBytes,
+      pid: taken.sidecar.pid,
+    });
+  }
+  if (unread > 0) {
+    return {
+      judgeable: false,
+      reason: `the sidecar's footprint was not read for ${unread} of ${inSpan.length} samples in the settled span`,
+    };
+  }
+  if (new Set(points.map(({ pid }) => pid)).size > 1) {
+    return {
+      judgeable: false,
+      reason:
+        "the sidecar restarted inside the settled span, so its halves would span two processes",
+    };
+  }
+  const middle = settledFromMs + settledMs / 2;
+  const first = points.filter(({ atMs }) => atMs < middle);
+  const second = points.filter(({ atMs }) => atMs >= middle);
+  const mean = (list: typeof points): number =>
+    list.reduce((sum, { bytes }) => sum + bytes, 0) / list.length;
+  if (first.length === 0 || second.length === 0) {
+    return {
+      judgeable: false,
+      reason: "the settled span has no samples in one of its halves",
+    };
+  }
+  const firstHalfMeanBytes = mean(first);
+  const secondHalfMeanBytes = mean(second);
+  const growthPercent = (secondHalfMeanBytes / firstHalfMeanBytes - 1) * 100;
+  return {
+    judgeable: true,
+    growthPercent,
+    withinLimit: growthPercent <= MAX_SETTLED_GROWTH_PERCENT,
+    firstHalfMeanBytes,
+    secondHalfMeanBytes,
+    settledFromMs,
+    settledMs,
+    firstHalfSamples: first.length,
+    secondHalfSamples: second.length,
+  };
+}
+
 export function summarizeMemory(
   samples: readonly MemorySample[],
+  settle?: SettleOptions,
 ): MemorySummary {
   const first = samples[0];
   const last = samples[samples.length - 1];
@@ -372,5 +504,6 @@ export function summarizeMemory(
     ),
     sidecarTrend: sidecarTrend(samples, "rss"),
     footprintTrend: sidecarTrend(samples, "footprint"),
+    settledGrowth: settledGrowth(samples, settle),
   };
 }

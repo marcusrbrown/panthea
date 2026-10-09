@@ -888,13 +888,17 @@ test("positive control: five empty responses in a row fail the empty-200 row; fo
   );
 });
 
-/** 160 minutes of samples, the sidecar's RSS and footprint given by functions of the milliseconds since the start. */
+/**
+ * Samples across the fixture's wall clock to its end at minute 230, the sidecar's RSS and footprint given by functions
+ * of the milliseconds since the start. The fixture's catch-up finishes at minute 187, so the settled span is 202 to 230.
+ */
 function sidecarMemory(
   rssAt: (at: number) => number,
   footprintAt: (at: number) => number | undefined,
+  endMinute = 230,
 ): MemorySample[] {
   const samples: MemorySample[] = [];
-  for (let at = 0; at <= 160 * MINUTE; at += 10_000) {
+  for (let at = 0; at <= endMinute * MINUTE; at += 10_000) {
     const footprintBytes = footprintAt(at);
     samples.push({
       atMs: T0 + at,
@@ -911,24 +915,63 @@ function sidecarMemory(
   return samples;
 }
 
-test("positive control: a sidecar whose physical footprint keeps rising through the last 20 minutes fails the memory row, and a series too short to judge fails it too, saying so", () => {
+const MEMORY_ROW = "memory.sidecar-levels-off";
+
+test("positive control: a sidecar whose physical footprint grows over 10% across the settled span fails the memory row, saying the growth", () => {
+  // The settled span is minutes 202 to 230, split at 216: 80 MB, then 100 MB, which is 25%.
   const rising = sidecarMemory(
     () => 500_000_000,
-    (at) => 80_000_000 + at * 40,
+    (at) => (at < 216 * MINUTE ? 80_000_000 : 100_000_000),
   );
   const bad = analyzeUnattended(runData({ memory: rising }));
-  expect(rowOf(bad.rows, "memory.sidecar-levels-off").ok).toBe(false);
-  expect(rowOf(bad.rows, "memory.sidecar-levels-off").measured).toContain(
-    "% per 10 min",
+  const row = rowOf(bad.rows, MEMORY_ROW);
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("+25.00%");
+  expect(row.name).toContain("physical footprint");
+  expect(row.name).toContain("settled span");
+  expect(row.threshold).toContain("10%");
+  expect(failing(bad.rows)).toEqual([MEMORY_ROW]);
+});
+
+test("a settled span under the floor is not judgeable and fails the row, saying so", () => {
+  // Cut at minute 215: the settled span is 202 to 215, 13 minutes, under the 20-minute floor.
+  const short = analyzeUnattended(
+    runData({
+      memory: sidecarMemory(
+        () => 500_000_000,
+        () => 80_000_000,
+        215,
+      ),
+    }),
   );
-  expect(rowOf(bad.rows, "memory.sidecar-levels-off").name).toContain(
-    "physical footprint",
+  const row = rowOf(short.rows, MEMORY_ROW);
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("not judgeable");
+  expect(row.measured).toContain("settled span is 13");
+});
+
+test("drift with flat halves passes the memory row where the 20-minute slope would fail it", () => {
+  // Flat at 118 MiB to minute 210, then up 0.4 MiB a minute to 126 at the end: 3.3% per 10 minutes over the last 20,
+  // and under 5% between the halves.
+  const MIB = 1_048_576;
+  const drifting = sidecarMemory(
+    () => 500_000_000,
+    (at) =>
+      Math.round(
+        (at < 210 * MINUTE ? 118 : 118 + (0.4 * (at - 210 * MINUTE)) / MINUTE) *
+          MIB,
+      ),
   );
-  const short = analyzeUnattended(runData({ memory: rising.slice(0, 20) }));
-  expect(rowOf(short.rows, "memory.sidecar-levels-off").ok).toBe(false);
-  expect(rowOf(short.rows, "memory.sidecar-levels-off").measured).toContain(
-    "not judgeable",
-  );
+  const { rows, memory } = analyzeUnattended(runData({ memory: drifting }));
+  expect(memory.footprintTrend).toMatchObject({
+    judgeable: true,
+    levellingOff: false,
+  });
+  const row = rowOf(rows, MEMORY_ROW);
+  expect(row.ok).toBe(true);
+  expect(row.measured).toMatch(/^\+[34]\.\d\d%/);
+  expect(row.measured).toContain("20-minute slope");
+  expect(failing(rows)).toEqual([]);
 });
 
 test("a flat physical footprint with a steadily rising RSS passes the memory row, and the row shows the RSS trend beside it", () => {
@@ -937,7 +980,7 @@ test("a flat physical footprint with a steadily rising RSS passes the memory row
     () => 80_000_000,
   );
   const { rows, memory } = analyzeUnattended(runData({ memory: churn }));
-  const row = rowOf(rows, "memory.sidecar-levels-off");
+  const row = rowOf(rows, MEMORY_ROW);
   expect(row.ok).toBe(true);
   expect(row.measured).toContain("RSS");
   // The RSS alone would have failed the row, as it did in the first hour.
@@ -947,17 +990,15 @@ test("a flat physical footprint with a steadily rising RSS passes the memory row
   });
 });
 
-test("positive control: a footprint that could not be read inside the last 20 minutes makes the memory row not judgeable and fails it, and so do samples that never recorded one", () => {
+test("positive control: a footprint that could not be read inside the settled span makes the memory row not judgeable and fails it, and so do samples that never recorded one", () => {
   const unread = sidecarMemory(
     () => 500_000_000,
-    (at) => (at > 150 * MINUTE && at < 151 * MINUTE ? undefined : 80_000_000),
+    (at) => (at > 220 * MINUTE && at < 221 * MINUTE ? undefined : 80_000_000),
   );
   const gap = analyzeUnattended(runData({ memory: unread }));
-  expect(rowOf(gap.rows, "memory.sidecar-levels-off").ok).toBe(false);
-  expect(rowOf(gap.rows, "memory.sidecar-levels-off").measured).toContain(
-    "not judgeable",
-  );
-  expect(rowOf(gap.rows, "memory.sidecar-levels-off").measured).toContain(
+  expect(rowOf(gap.rows, MEMORY_ROW).ok).toBe(false);
+  expect(rowOf(gap.rows, MEMORY_ROW).measured).toContain("not judgeable");
+  expect(rowOf(gap.rows, MEMORY_ROW).measured).toContain(
     "footprint was not read",
   );
   const legacy = analyzeUnattended(
@@ -968,7 +1009,52 @@ test("positive control: a footprint that could not be read inside the last 20 mi
       ),
     }),
   );
-  expect(rowOf(legacy.rows, "memory.sidecar-levels-off").ok).toBe(false);
+  expect(rowOf(legacy.rows, MEMORY_ROW).ok).toBe(false);
+});
+
+test("a run with no catch-up finish recorded has no settled span: the row is not judgeable, not a pass", () => {
+  const base = baseResult();
+  const { rows } = analyzeUnattended(
+    runData({
+      result: {
+        boundaries: base.boundaries.filter(
+          (b) => b.phase !== "catch-up-finished",
+        ),
+      },
+    }),
+  );
+  const row = rowOf(rows, MEMORY_ROW);
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("not judgeable");
+  expect(row.measured).toContain("catch-up");
+});
+
+test("the settle drop and the floor scale with the run's length: a six-minute run drops 1.5 minutes and needs 2", () => {
+  // The catch-up finishes at minute 187 of the fixture's clock; the six-minute run ends 4.2 minutes later.
+  const base = baseResult();
+  const scaled = {
+    plan: phasePlan(6),
+    boundaries: base.boundaries,
+  };
+  const samples = sidecarMemory(
+    () => 500_000_000,
+    (at) => (at < (187 + 1.5) * MINUTE ? 300_000_000 : 80_000_000),
+    187 + 4.2,
+  );
+  const row = rowOf(
+    analyzeUnattended(runData({ result: scaled, memory: samples })).rows,
+    MEMORY_ROW,
+  );
+  // The burst in the first 1.5 minutes is dropped, and the 2.7 minutes left are judged.
+  expect(row.measured).toMatch(/^\+0\.00%/);
+  expect(row.ok).toBe(true);
+  // The same samples under a sixty-minute plan have a 0-minute span after a 15-minute drop: not judgeable.
+  const full = rowOf(
+    analyzeUnattended(runData({ memory: samples })).rows,
+    MEMORY_ROW,
+  );
+  expect(full.ok).toBe(false);
+  expect(full.measured).toContain("not judgeable");
 });
 
 test("positive control: an unequal rebuild fails 'rebuild equals live' and an import refused for the event log fails 'import', each naming why; a missing baseline fails both and says so", () => {

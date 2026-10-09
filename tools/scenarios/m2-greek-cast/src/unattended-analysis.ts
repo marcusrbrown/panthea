@@ -776,19 +776,29 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
     `${emptyTotal} empty responses, at most ${longestEmpty} in a row`,
     "fewer than 5 in a row",
   );
-  const memory = summarizeMemory(data.memory);
-  const rssTrend = memory.sidecarTrend.judgeable
-    ? `${memory.sidecarTrend.percentPer10Min.toFixed(2)}% per 10 min`
-    : "not judgeable";
+  const memory = summarizeMemory(data.memory, {
+    catchUpFinishedMs: result.boundaries.find(
+      (b) => b.phase === "catch-up-finished",
+    )?.wallMs,
+    runMinutes: plan.minutes,
+  });
+  const growth = memory.settledGrowth;
+  const slopeText = (trend: MemorySummary["sidecarTrend"]): string =>
+    trend.judgeable
+      ? `${trend.percentPer10Min.toFixed(2)}% per 10 min`
+      : "not judgeable";
+  const signed = (percent: number): string =>
+    `${percent < 0 ? "-" : "+"}${Math.abs(percent).toFixed(2)}%`;
+  const mib = (bytes: number): string => (bytes / 1048576).toFixed(0);
   row(
     "memory.sidecar-levels-off",
     "resources",
-    "the sidecar's physical footprint levels off over the last 20 minutes",
-    memory.footprintTrend.judgeable && memory.footprintTrend.levellingOff,
-    memory.footprintTrend.judgeable
-      ? `${memory.footprintTrend.percentPer10Min.toFixed(2)}% per 10 min over ${memory.footprintTrend.windowSamples} samples (RSS ${rssTrend}, for context)`
-      : `not judgeable: ${memory.footprintTrend.reason}`,
-    "under 1% of the mean per 10 min",
+    "the sidecar's physical footprint does not grow more than 10% across the settled span, second half over first",
+    growth.judgeable && growth.withinLimit,
+    growth.judgeable
+      ? `${signed(growth.growthPercent)} (${mib(growth.firstHalfMeanBytes)} MiB mean over the first half, ${mib(growth.secondHalfMeanBytes)} MiB over the second; the settled span is ${minutes(growth.settledMs)} min from ${minutes(growth.settledFromMs - result.startedWallMs)} min in); for context, the 20-minute slope of the footprint is ${slopeText(memory.footprintTrend)} and of RSS ${slopeText(memory.sidecarTrend)}`
+      : `not judgeable: ${growth.reason}`,
+    "second-half mean at most 10% above the first half's, over a settled span of at least 20 min (15 min after the last catch-up is left out)",
   );
 
   // --- Export and rebuild ----------------------------------------------------------------------
