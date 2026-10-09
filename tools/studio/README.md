@@ -84,6 +84,10 @@ The environment is never passed to the server or the editor.
 
 `--slots`, `--params` and the other JSON flags take JSON text or `@file`.
 
+## Parity check
+
+`bun tools/studio/src/parity.ts --a <root> --a-candidate <id> --b <root> --b-candidate <id>` reads two conformed candidates without the writer lock and compares the decoded generated image, the decoded conformed 1x image, the conformance report and the metrics. It prints one JSON line and exits `0` when they are identical, `1` when they differ (naming the first differing pixel) or a candidate cannot be read, and `64` for a usage error. The seed is shown, not compared: a different seed shows up as different pixels. `parity.test.ts` pins the comparison and the CLI-path against session-path pair against the staged fake runtime; the packaged-app run is recorded in `docs/evidence/asset-studio/unit7/README.md`.
+
 ## Edits
 
 A `generate` with the `--edit-*` flags edits an existing image instead of
