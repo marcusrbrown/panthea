@@ -812,7 +812,11 @@ export async function driveUnattended(
       ...postRun.map((sample) => jsonl({ ...sample, phase: "post-run" })),
     ].join(""),
   );
-  const summary = summarizeMemory(samples);
+  const summary = summarizeMemory(samples, {
+    catchUpFinishedMs: boundaries.find((b) => b.phase === "catch-up-finished")
+      ?.wallMs,
+    runMinutes: plan.minutes,
+  });
 
   const failedChecks = checks.filter((entry) => !entry.ok);
   const status: UnattendedStatus =

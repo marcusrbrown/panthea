@@ -15,6 +15,7 @@ import { REPO_ROOT } from "../../m1-living-world/src/sidecar";
 import { parseArgs } from "./args";
 import type { BaselineRecord } from "./baseline";
 import {
+  FULL_RUN_MINUTES,
   type MemorySample,
   type MemorySampler,
   summarizeMemory,
@@ -29,6 +30,7 @@ import {
   FRAME_FAILURES_MAX,
   failureText,
   GAP_MS,
+  GATE_MINUTES,
   type GateOutcome,
   OUTAGE_GODS,
   type PhaseName,
@@ -80,6 +82,10 @@ test("the full plan is the owner's: an outage by five gods or fifteen minutes, t
   expect(OUTAGE_GODS).toBe(5);
   expect(GAP_MS).toBe(90 * MINUTE);
   expect(CATCH_UP_CAP_MS).toBe(60 * MINUTE);
+});
+
+test("the memory row's full-run length is the gate's length", () => {
+  expect(FULL_RUN_MINUTES).toBe(GATE_MINUTES);
 });
 
 test("a shorter run scales the running phases in proportion and leaves the gap alone; only sixty minutes is a gate run", () => {

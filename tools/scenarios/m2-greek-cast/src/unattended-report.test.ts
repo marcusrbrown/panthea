@@ -296,7 +296,22 @@ test("the memory section is present-or-absent honest: it shows the sample count,
   expect(text).toContain("Swap used: peak 1000 MiB");
   // The footprint the verdict is read on, and the RSS beside it.
   expect(text).toContain("Sidecar footprint: start 76 MiB, peak 76 MiB");
+  // Context only: the two slopes over the last 20 minutes.
   expect(text).toContain("Sidecar RSS trend");
+  expect(text).toContain("Footprint trend over the last 20 minutes");
+  // What the row judges.
+  expect(text).toContain(
+    "The memory row is judged on the sidecar's physical footprint across the settled span",
+  );
+  expect(text).toMatch(
+    /\+0\.00% \(the mean of the second half over the first half's, over 28\.0 min/,
+  );
+  expect(text).not.toContain("The levelling-off row");
+});
+
+test("the memory section says when the settled span could not be judged, and why", () => {
+  const text = report({ memory: [] });
+  expect(text).toContain("not judgeable: no samples");
 });
 
 test("the rating sheet uses the acceptance rubric the episode transcripts use: the same five dimensions, the same scale, scored separately for the director's episodes and the gods'", () => {

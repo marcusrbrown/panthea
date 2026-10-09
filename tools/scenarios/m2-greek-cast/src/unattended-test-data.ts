@@ -323,18 +323,23 @@ export function healthyScene(): Scene {
   return scene;
 }
 
+/**
+ * The sidecar's samples across the run's wall clock (`boundaryAt`): the first process until the stop, none while it is
+ * down (minutes 125 to 127, the restart at 127), a second from the restart to the end at minute 230. The catch-up
+ * finishes at minute 187, so the settled span is 202 to 230.
+ */
 export function memorySeries(): MemorySample[] {
   const samples: MemorySample[] = [];
-  for (let at = 0; at <= 160 * MINUTE; at += 10_000) {
+  for (let at = 0; at <= 230 * MINUTE; at += 10_000) {
     samples.push({
       atMs: T0 + at,
       runner: { state: "present", pids: [9], rssBytes: 6_000_000_000 },
       sidecar:
-        at > 100 * MINUTE && at < 105 * MINUTE
+        at > 125 * MINUTE && at < 127 * MINUTE
           ? { state: "absent" }
           : {
               state: "present",
-              pid: at < 100 * MINUTE ? 100 : 200,
+              pid: at < 127 * MINUTE ? 100 : 200,
               rssBytes: 500_000_000,
               footprintBytes: 80_000_000,
             },
@@ -342,7 +347,7 @@ export function memorySeries(): MemorySample[] {
     });
   }
   return samples.filter(
-    (s) => s.atMs >= T0 + 105 * MINUTE || s.atMs < T0 + 100 * MINUTE,
+    (s) => s.atMs <= T0 + 125 * MINUTE || s.atMs >= T0 + 127 * MINUTE,
   );
 }
 
