@@ -2530,7 +2530,7 @@ describe("the prompt cap", () => {
     expect(row).toMatchObject({
       outcome: "intent",
       exhausted_reason: null,
-      token_ratio: 2.75,
+      token_ratio: 2.8,
       shed_events: 0,
       shed_actions: 0,
       shed_memories: 0,
@@ -2558,7 +2558,7 @@ describe("the prompt cap", () => {
     expect(rows[0]).toMatchObject({
       outcome: "exhausted",
       exhausted_reason: "prompt-over-cap",
-      token_ratio: 2.75,
+      token_ratio: 2.8,
     });
     expect(rows[0]?.estimated_tokens).toBeGreaterThan(3_000);
     // No provider failed: the model is not degraded and no endpoint changed.

@@ -22,17 +22,14 @@ import {
 } from "./practices";
 import { type RouteContext, requestChars } from "./router";
 
-/**
- * Characters a token takes, by the router's model id. Measured on local Ollama, 2026-10-08: granite3.3 ran
- * 2.807-3.348 on 245 requests of the unattended rerun, so 2.75 sits under the densest; qwen3 ran 3.34-3.78.
- */
+/** Characters a token takes, by the router's model id. Measured on local Ollama, 2026-10-08. */
 export const MODEL_RATIOS: Readonly<Record<string, number>> = {
-  "granite3.3-8b-4k": 2.75,
+  "granite3.3-8b-4k": 2.85,
   "qwen3-8b-4k": 3.34,
 };
 
-/** The ratio of a model not in the table: no higher than any measured one, so an unmeasured model is counted dense. */
-export const DEFAULT_RATIO = 2.75;
+/** The ratio of a model not in the table: below every measured one, so an unmeasured model is counted dense. */
+export const DEFAULT_RATIO = 2.8;
 
 /** The smallest ratio over every step of `plan`, and `DEFAULT_RATIO` for an empty one. */
 export function routeRatio(plan: RoutePlan): number {

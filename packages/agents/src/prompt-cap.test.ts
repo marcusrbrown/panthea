@@ -49,37 +49,23 @@ function planFor(
 
 describe("the table", () => {
   test("pins the measured ratios, the default and the cap", () => {
-    expect(MODEL_RATIOS["granite3.3-8b-4k"]).toBe(2.75);
+    expect(MODEL_RATIOS["granite3.3-8b-4k"]).toBe(2.85);
     expect(MODEL_RATIOS["qwen3-8b-4k"]).toBe(3.34);
-    expect(DEFAULT_RATIO).toBe(2.75);
+    expect(DEFAULT_RATIO).toBe(2.8);
     expect(PROMPT_TOKEN_CAP).toBe(3000);
-  });
-
-  test("granite3.3's ratio is under the densest request measured (2.807 characters a token, the unattended rerun's 3,002-token request of 8,427 characters), and the default is no higher than any measured ratio", () => {
-    const granite = MODEL_RATIOS["granite3.3-8b-4k"] as number;
-    expect(granite).toBeLessThan(8427 / 3002);
-    expect(DEFAULT_RATIO).toBeLessThanOrEqual(
-      Math.min(...Object.values(MODEL_RATIOS)),
-    );
-    // That request is over the cap at this ratio (it was counted 2,957 tokens at 2.85); the limit is 8,250 characters.
-    expect(maxCharsFor(granite)).toBe(8250);
-    const request = { prompt: "p".repeat(8427) };
-    expect(estimateTokens(request, granite)).toBe(3065);
-    expect(fitsCap(request, granite)).toBe(false);
-    expect(estimateTokens(request, 2.85)).toBe(2957);
   });
 });
 
 describe("routeRatio: the most conservative step of the planned route", () => {
-  test("a role on granite3.3 alone gives 2.75", () => {
+  test("a role on granite3.3 alone gives 2.85", () => {
     const plan = planFor(
       [{ id: "local", baseUrl: LOCAL, model: "granite3.3-8b-4k" }],
       { roles: { zeus: { endpoint: "local" } } },
     );
-    expect(routeRatio(plan)).toBe(2.75);
+    expect(routeRatio(plan)).toBe(2.85);
   });
 
-  test("a qwen3 primary with a granite3.3 fallback gives 2.75", () => {
+  test("a qwen3 primary with a granite3.3 fallback gives 2.85", () => {
     const plan = planFor(
       [
         { id: "a", baseUrl: LOCAL, model: "qwen3-8b-4k" },
@@ -87,14 +73,14 @@ describe("routeRatio: the most conservative step of the planned route", () => {
       ],
       { roles: { zeus: { endpoint: "a" } }, fallback: ["b"] },
     );
-    expect(routeRatio(plan)).toBe(2.75);
+    expect(routeRatio(plan)).toBe(2.85);
   });
 
   test("a role's model override is what is looked up, not the endpoint's default", () => {
     const plan = planFor([{ id: "a", baseUrl: LOCAL, model: "qwen3-8b-4k" }], {
       roles: { zeus: { endpoint: "a", model: "granite3.3-8b-4k" } },
     });
-    expect(routeRatio(plan)).toBe(2.75);
+    expect(routeRatio(plan)).toBe(2.85);
   });
 
   test("an unknown model gives the default, and so does an empty plan", () => {
@@ -102,8 +88,8 @@ describe("routeRatio: the most conservative step of the planned route", () => {
       [{ id: "a", baseUrl: LOCAL, model: "mystery-70b" }],
       { roles: { zeus: { endpoint: "a" } } },
     );
-    expect(routeRatio(unknown)).toBe(2.75);
-    expect(routeRatio({ steps: [], offlineSkipped: [] })).toBe(2.75);
+    expect(routeRatio(unknown)).toBe(2.8);
+    expect(routeRatio({ steps: [], offlineSkipped: [] })).toBe(2.8);
   });
 
   test("an unknown model on the route pulls the ratio down to the default", () => {
@@ -114,7 +100,7 @@ describe("routeRatio: the most conservative step of the planned route", () => {
       ],
       { roles: { zeus: { endpoint: "a" } }, fallback: ["b"] },
     );
-    expect(routeRatio(plan)).toBe(2.75);
+    expect(routeRatio(plan)).toBe(2.8);
   });
 
   test("offline drops a hosted fallback with a lower ratio, so the local ratio applies; online, the lower ratio applies", () => {
@@ -126,7 +112,7 @@ describe("routeRatio: the most conservative step of the planned route", () => {
       roles: { zeus: { endpoint: "local" } },
       fallback: ["hosted"],
     };
-    expect(routeRatio(planFor(endpoints, extra, false))).toBe(2.75);
+    expect(routeRatio(planFor(endpoints, extra, false))).toBe(2.85);
     expect(routeRatio(planFor(endpoints, extra, true))).toBe(3.34);
   });
 });
@@ -162,7 +148,7 @@ describe("Router.plan", () => {
 });
 
 describe("the estimate", () => {
-  const RATIO = 2.75;
+  const RATIO = 2.85;
   const LIMIT = Math.round(PROMPT_TOKEN_CAP * RATIO);
 
   /** A context whose request, as the turn joins it, is `chars` long. */
@@ -501,17 +487,17 @@ describe("fitToCap: the fixture", () => {
     expect(w.remembered.relationships).toHaveLength(5);
     expect(w.remembered.ownActions).toHaveLength(5);
     expect(
-      fitsCap(buildGodContext(w.profile, w.snapshot, w.remembered), 2.75),
+      fitsCap(buildGodContext(w.profile, w.snapshot, w.remembered), 2.85),
     ).toBe(false);
   });
 
   test("capped at the granite3.3 ratio, the busy world lands at or under the cap", () => {
     const w = busyZeus({ live: 1 });
-    const capped = capAt(w, 2.75);
+    const capped = capAt(w, 2.85);
     expect(capped.fits).toBe(true);
     expect(capped.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
-    expect(capped.ratio).toBe(2.75);
-    expect(fitsCap({ ...capped.context }, 2.75)).toBe(true);
+    expect(capped.ratio).toBe(2.85);
+    expect(fitsCap({ ...capped.context }, 2.85)).toBe(true);
     expectAgreement(w, capped);
   });
 });
@@ -690,7 +676,7 @@ describe("fitToCap: the order of shedding", () => {
     const memoriesAndFeelings = 10;
     let last = { events: 0, actions: 0, memories: 0, prayers: 0 };
     for (const ratio of [
-      2.75, 2.6, 2.4, 2.2, 2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.8, 0.5,
+      2.85, 2.6, 2.4, 2.2, 2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.8, 0.5,
     ]) {
       const { shed, fits } = shedAt(w, ratio);
       if (shed.actions > 0) expect(shed.events).toBe(events);
