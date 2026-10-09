@@ -1,6 +1,7 @@
 ---
 title: The first canon publish broke the asset validator tests
 date: 2026-10-08
+last_updated: 2026-10-08
 category: test-failures
 module: assets
 problem_type: test_failure
@@ -42,9 +43,11 @@ cpSync(join(COMMITTED, "assets"), join(dir, "assets"), { recursive: true });
 ## Solution
 
 - The fixture skips the committed registry, writes its own empty `index.json`, and strips `portrait` from each copied subject.
-- Two tests pin the boundary:
+- The same coupling came back when `zeus-sprite` was published (#188) and `gods/zeus.json` mapped `sprite` to it. The fixture now also gives every god whose sprite is in the committed registry its `placeholder-<id>` back. `apps/studio/src/source/_testkit.ts` copies only the `zeus-portrait` entry its tests expect, not the whole registry.
+- Three tests pin the boundary:
   - every mapped portrait in committed content resolves to canon;
-  - the fixture really is empty-canon with no portrait mappings, and is still valid.
+  - every published god sprite resolves to canon;
+  - the fixture really is empty-canon, with no portrait mappings and placeholder sprites restored, and is still valid.
 - `biome.json` excludes `content/greek/assets/registry`. The studio owns those bytes, `canonicalJson` and `canonicalManifestText` write them, and `validate:assets` checks them.
 
 ```ts
@@ -61,6 +64,7 @@ Committed-content tests assert real canon. Scenario tests start from a canon sta
 
 ## Prevention
 
+- Every new kind of canon mapping needs the same fixture treatment. Check fixture builders whenever a publish adds one.
 - Never let fixtures copy mutable committed data that a scenario's expectations depend on. Build that state explicitly.
 - Give fixture builders self-tests for their isolation guarantees.
 - Exclude content-addressed or canonical generated files from formatters.
