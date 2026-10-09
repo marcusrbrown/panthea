@@ -457,3 +457,288 @@ Verification: `python3 -m unittest tools/probes/art-edit/test_round9_pixels.py` 
 
 ## Round 9 review
 
+
+## Sprite downscale (Phase A)
+
+Status: complete, no model runs. Research evidence only; nothing here is canon, and no file under `content/` was written. The independent visual review is pending, so this section records measurements only.
+
+### Question
+
+Earlier sprite routes forced an integer downscale, because the studio conform step accepts a scale only when the source size equals scale × cell. A 512×640 source therefore had to be scale 8, and the B2 route used an 11× nearest snap. The best pose so far, Z-Image r4c candidate 0001, came out 63 px tall against a 48–56 px target. Hypothesis: downscaling at any real ratio, straight onto the palette, and only then conforming at scale 1 puts the figure in range and may keep the silhouette readable.
+
+### Method
+
+`sprite_downscale.py` (standard library; PNG I/O through `pipeline.py`), `sprite_sheet.py`, `unfake_compare.py` and `run_sprite_downscale.py` are the code; `test_sprite_downscale.py` holds the unit tests.
+
+1. **Foreground.** At source resolution, border-connected pixels within a Euclidean RGB tolerance of the mean corner colour become transparent. Opaque components smaller than 0.1% of the largest are dropped. The figure bounding box comes from what remains.
+2. **Ratio.** The figure is sampled onto `H` rows, where `H` is the target total height minus 2 for the outline, so the scale is `H / figure_height`, any real number. Targets are 50, 54 and 56 px total including the outline. Each output pixel covers one source rectangle, anchored at the figure box's left and top edges, with exact overlap areas as weights.
+3. **Alpha.** An output pixel is opaque when the opaque share of its rectangle is at least 0.5, so alpha stays binary.
+4. **Colour, three methods per rectangle,** over its opaque pixels only: **A** overlap-weighted mean, snapped to the palette; **K** k-means (k=3, farthest-point start, up to 8 iterations) in OKLab, mean of the heaviest cluster, snapped; **M** the palette colour carrying the most overlap area after each source pixel is snapped. Snapping is nearest in OKLab (a unit test pins a colour where RGB distance would pick a different entry).
+5. **Outline.** A 1 px exterior outline, 4-connected, drawn only on transparent pixels reachable from the cell border, so enclosed holes get none and no interior pixel changes. Each outline pixel takes the darkest shade of the ramp of its darkest adjacent pixel.
+6. **Placement.** The cell is 64×80. The soles are the lowest opaque row of the downscaled figure, placed on row 78 so that the outline's bottom row is row 79. The feet midpoint is the midpoint of the opaque width over the two lowest figure rows, in pixel-edge coordinates, moved by a whole number of pixels to the nearest value to x=32.0. When that width has odd parity the best reachable value is 32.5. It is read from the pre-outline figure so a hem overhang cannot move it.
+7. **Conformance.** `conform_report.ts` runs the studio's `reportOnly` (`packages/assets`, the function `tools/studio report` calls) at `scale: 1` on every 64×80 result, against the Zeus sprite spec built from the committed content: background `alpha`, alpha cutoff 128, grid edge tolerance 8, min confidence 0.6, min edges 20.
+
+### Palette
+
+All 16 entries of the `olympus` family of `greek-master` (the family Zeus declares as `paletteFamily`), in four ramps, listed dark to light:
+
+| Ramp | Shades | Outline shade (darkest) |
+| --- | --- | --- |
+| marble | `#526471` `#8fa6ad` `#c7d8d4` `#f0eee0` | `#526471` |
+| pale-gold | `#76572f` `#b38b43` `#ddbf70` `#f4e4ae` | `#76572f` |
+| lapis | `#243f63` `#3c6290` `#7194b8` `#c5d1d3` | `#243f63` |
+| cloud | `#637b89` `#9fb5bf` `#d6e1df` `#f3f0dc` | `#637b89` |
+
+The outline shades are members of those 16, so the budget is 16 colours including outline. The palette has no skin ramp, and the studio checks a Zeus sprite against exactly these 16 entries, so a ramp from another family would fail its palette check. Skin therefore snaps to the pale-gold ramp.
+
+### Sources
+
+| Row | Source | Path | SHA-256 | Size | Key (mean corners) | Tolerance | Figure box (x0,y0,x1,y1) | Figure h × w | Specks dropped |
+| --- | --- | --- | --- | --- | --- | ---: | --- | --- | ---: |
+| S1 | job `zeus-idle-south-u7-r4c-0001`, text-to-image, Z-Image Turbo Q3_K (Apache-2.0) | `<repo>/.context/studio-pipeline/u7-creative/studio/blobs/f7f548b015690f98c02418c03ac21c6d349f3c1a5fe1d7275a3e2027bcf3779c.png` | `f7f548b015690f98c02418c03ac21c6d349f3c1a5fe1d7275a3e2027bcf3779c` | 512×640 | (232,222,191) | 24 | (127, 64, 398, 572) | 508 × 271 | 8 |
+| S2 | B2 round 1, SDXL + pixel-art-xl, euler_a, 20 steps, cfg 7 (OpenRAIL-M, so not a canon route) | `<repo>/.context/studio-pipeline/art-edit/outputs/b2-sdxl-20261007.png` | `407c43ad610794c82d45286ea43fb479dec72c80206eba29921815be271ad5f7` | 1024×1280 | (249,250,251) | 16 | (296, 80, 769, 1201) | 1121 × 473 | 2 |
+| S3 | B2 round 2 base `b2-r2-base-20261007.png`, same model and seed, regenerated at 512x640 | `<repo>/.context/studio-pipeline/art-edit/outputs/b2-r2-base-20261007.png` | `5ff836681bc439f2508a89672e124c1db14f3d518ceef973a0dcc6ec11b13880` | 512×640 | (250,250,251) | 16 | (152, 32, 368, 617) | 585 × 216 | 1 |
+| S4 | job `zeus-idle-south-u7-r8-full-s075-20261023-0000`, masked img2img from the hand-blocked init, strength 0.75, Z-Image Turbo Q3_K (Apache-2.0) | `<repo>/.context/studio-pipeline/u7-creative/studio/blobs/db95d09f58f358038eb179193a58c5da8b6419b2b7156317fe0aaafa6c4343fb.png` | `db95d09f58f358038eb179193a58c5da8b6419b2b7156317fe0aaafa6c4343fb` | 512×640 | (60,76,101) | 135 | (86, 190, 367, 640) | 450 × 281 | 6 |
+
+Key notes:
+
+- S1 at 8× is the 63 px figure of the earlier round: the keyed figure here is 508 px, so the hypothesised ratios are 50→48/508 = 1/10.6, 54→52/508 = 1/9.8, 56→54/508 = 1/9.4 (interior rows, outline excluded).
+- S2 has a pale grey ground shadow (about `#b6abb1`) under the hem and feet that is far from the key and so stays foreground. It does not move the bottom of the box, which is the soles.
+- S4 carries a dark halo around the figure (down to about `#00051b`, about 120 from the key), so its tolerance is 135. Lower tolerances kept the halo as foreground. The source figure also runs off the bottom of the canvas (`touches_bottom_edge` is true), so its "soles" are the canvas edge, not drawn feet.
+
+### unfake comparison
+
+- Version `unfake==1.0.7` (PyPI), licence MIT per its package metadata. Installed into the probe-local, gitignored venv `tools/probes/art-edit/.venv` (Python 3.13.15, via `uv venv --python 3.13` and `uv pip install -r tools/probes/art-edit/requirements-unfake.txt`); pins: numpy 2.5.3, opencv-python 5.0.0.93, pillow 12.3.0.
+- unfake has a fixed-palette mode (`fixed_palette`, hex colours), which maps by nearest RGB. It was used as supplied. Its whole-number block downscalers cannot take an arbitrary ratio; only its content-adaptive downscaler takes a target size.
+- **C**: the keyed figure crop, with RGB under alpha 0 filled from the nearest opaque pixel so no background colour is averaged in, goes through `content_adaptive_downscale` at the same target size as A/K/M, then alpha binarisation at 128 and `quantize_colors` with the 16-colour fixed palette.
+- **D**: `process_image` with `manual_scale` = the nearest whole number to figure height ÷ interior rows, `downscale_method="dominant"`, the fixed palette (applied before the downscale), `snap_grid=False`. The crop is padded with transparent rows on top and columns on the right so no block is cut off at the soles. Its height therefore follows the block size, not the target.
+- The same outline and placement steps were applied to C and D, and a shared palette-snap step ran on their output as a guard. It moved 0 pixels in every unfake tile, so unfake's fixed-palette output was already on the palette.
+
+### Results
+
+Tile code = method letter + target total height. "Fig h" and "Fig w" are the opaque bounding box of the finished 64×80 cell, outline included; "Colours" is the distinct opaque colours including outline; "Outline" is yes when every exterior boundary pixel is one of the four ramp-darkest shades; "Foot mid x" is in pixel-edge coordinates; all bottom rows are 79. Conform is the report-only status at scale 1.
+
+**S1 — job `zeus-idle-south-u7-r4c-0001`**
+
+| Tile | Method | Fig h | Fig w | Colours | Outline | Foot mid x | Conform | Notes |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- |
+| A50 | area-average | 50 | 28 | 15 | yes | 32.5 | pass |  |
+| A54 | area-average | 54 | 30 | 16 | yes | 32.5 | pass |  |
+| A56 | area-average | 56 | 31 | 15 | yes | 32.5 | pass |  |
+| K50 | k-centroid (k=3) | 50 | 28 | 12 | yes | 32.5 | pass |  |
+| K54 | k-centroid (k=3) | 54 | 30 | 12 | yes | 32.5 | pass |  |
+| K56 | k-centroid (k=3) | 56 | 31 | 12 | yes | 32.5 | pass |  |
+| M50 | mode | 50 | 28 | 11 | yes | 32.5 | pass |  |
+| M54 | mode | 54 | 30 | 12 | yes | 32.5 | pass |  |
+| M56 | mode | 56 | 31 | 12 | yes | 32.5 | pass |  |
+| C50 | unfake content-adaptive | 50 | 28 | 14 | yes | 32.0 | pass | target 26×48 |
+| C54 | unfake content-adaptive | 54 | 30 | 15 | yes | 32.0 | pass | target 28×52 |
+| C56 | unfake content-adaptive | 56 | 31 | 15 | yes | 32.5 | pass | target 29×54 |
+| D50 | unfake dominant (whole-number block) | 48 | 27 | 10 | yes | 32.5 | pass | block 11 |
+| D54 | unfake dominant (whole-number block) | 53 | 29 | 11 | yes | 32.5 | pass | block 10 |
+| D56 | unfake dominant (whole-number block) | 58 | 32 | 11 | yes | 32.0 | pass | block 9 |
+
+**S2 — B2 round 1**
+
+| Tile | Method | Fig h | Fig w | Colours | Outline | Foot mid x | Conform | Notes |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- |
+| A50 | area-average | 50 | 22 | 15 | yes | 32.0 | pass |  |
+| A54 | area-average | 54 | 24 | 15 | yes | 32.0 | pass |  |
+| A56 | area-average | 56 | 25 | 15 | yes | 32.5 | pass |  |
+| K50 | k-centroid (k=3) | 50 | 22 | 15 | yes | 32.0 | pass |  |
+| K54 | k-centroid (k=3) | 54 | 24 | 15 | yes | 32.0 | pass |  |
+| K56 | k-centroid (k=3) | 56 | 25 | 15 | yes | 32.5 | pass |  |
+| M50 | mode | 50 | 22 | 14 | yes | 32.0 | pass |  |
+| M54 | mode | 54 | 24 | 14 | yes | 32.0 | pass |  |
+| M56 | mode | 56 | 25 | 14 | yes | 32.5 | pass |  |
+| C50 | unfake content-adaptive | 50 | 23 | 12 | yes | 32.5 | pass | target 21×48 |
+| C54 | unfake content-adaptive | 54 | 24 | 14 | yes | 32.0 | pass | target 22×52 |
+| C56 | unfake content-adaptive | 56 | 25 | 14 | yes | 32.0 | pass | target 23×54 |
+| D50 | unfake dominant (whole-number block) | 51 | 23 | 11 | yes | 32.5 | pass | block 23 |
+| D54 | unfake dominant (whole-number block) | 53 | 23 | 12 | yes | 32.5 | pass | block 22 |
+| D56 | unfake dominant (whole-number block) | 55 | 24 | 11 | yes | 32.5 | pass | block 21 |
+
+**S3 — B2 round 2 base `b2-r2-base-20261007.png`**
+
+| Tile | Method | Fig h | Fig w | Colours | Outline | Foot mid x | Conform | Notes |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- |
+| A50 | area-average | 50 | 20 | 15 | yes | 32.5 | pass |  |
+| A54 | area-average | 54 | 21 | 15 | yes | 32.0 | pass |  |
+| A56 | area-average | 56 | 22 | 15 | yes | 32.5 | pass |  |
+| K50 | k-centroid (k=3) | 50 | 20 | 16 | yes | 32.5 | pass |  |
+| K54 | k-centroid (k=3) | 54 | 21 | 16 | yes | 32.0 | pass |  |
+| K56 | k-centroid (k=3) | 56 | 22 | 16 | yes | 32.5 | pass |  |
+| M50 | mode | 50 | 20 | 14 | yes | 32.5 | pass |  |
+| M54 | mode | 54 | 21 | 14 | yes | 32.0 | pass |  |
+| M56 | mode | 56 | 22 | 14 | yes | 32.5 | pass |  |
+| C50 | unfake content-adaptive | 50 | 20 | 14 | yes | 32.5 | pass | target 18×48 |
+| C54 | unfake content-adaptive | 54 | 22 | 16 | yes | 32.5 | pass | target 20×52 |
+| C56 | unfake content-adaptive | 56 | 22 | 15 | yes | 32.5 | pass | target 20×54 |
+| D50 | unfake dominant (whole-number block) | 51 | 20 | 15 | yes | 32.5 | pass | block 12 |
+| D54 | unfake dominant (whole-number block) | 55 | 22 | 16 | yes | 32.5 | pass | block 11 |
+| D56 | unfake dominant (whole-number block) | 55 | 22 | 16 | yes | 32.5 | pass | block 11 |
+
+**S4 — job `zeus-idle-south-u7-r8-full-s075-20261023-0000`**
+
+| Tile | Method | Fig h | Fig w | Colours | Outline | Foot mid x | Conform | Notes |
+| --- | --- | ---: | ---: | ---: | --- | ---: | --- | --- |
+| A50 | area-average | 50 | 32 | 15 | yes | 32.5 | pass |  |
+| A54 | area-average | 54 | 34 | 14 | yes | 32.0 | pass |  |
+| A56 | area-average | 56 | 36 | 14 | yes | 32.5 | pass |  |
+| K50 | k-centroid (k=3) | 50 | 32 | 11 | yes | 32.5 | pass |  |
+| K54 | k-centroid (k=3) | 54 | 34 | 11 | yes | 32.0 | pass |  |
+| K56 | k-centroid (k=3) | 56 | 36 | 13 | yes | 32.5 | pass |  |
+| M50 | mode | 50 | 32 | 12 | yes | 32.5 | pass |  |
+| M54 | mode | 54 | 34 | 11 | yes | 32.0 | pass |  |
+| M56 | mode | 56 | 36 | 13 | yes | 32.5 | pass |  |
+| C50 | unfake content-adaptive | 50 | 32 | 15 | yes | 32.5 | pass | target 30×48 |
+| C54 | unfake content-adaptive | 54 | 35 | 14 | yes | 32.0 | pass | target 33×52 |
+| C56 | unfake content-adaptive | 56 | 36 | 14 | yes | 32.5 | pass | target 34×54 |
+| D50 | unfake dominant (whole-number block) | 52 | 33 | 12 | yes | 32.0 | pass | block 9 |
+| D54 | unfake dominant (whole-number block) | 52 | 33 | 12 | yes | 32.0 | pass | block 9 |
+| D56 | unfake dominant (whole-number block) | 58 | 37 | 13 | yes | 32.5 | pass | block 8 |
+
+### Measured summary
+
+- Heights: methods A, K, M and C hit the requested total height in all 48 tiles. Method D, limited to whole-number blocks, landed -2 to +2 px from the request.
+- All 60 tiles pass the studio report-only conformance at scale 1; none has a colour outside the 16 Olympus entries, and all have bottom row 79 and an outline.
+- Foot midpoint is 32.0 in 20 tiles and 32.5 in 40 (odd-parity feet width).
+- Colours including outline, method A: 14–16.
+- Colours including outline, method K: 11–16.
+- Colours including outline, method M: 11–14.
+- Colours including outline, method C: 12–16.
+- Colours including outline, method D: 10–16.
+
+### Outputs and reproduction
+
+Everything lands in `<repo>/.context/studio-pipeline/sprite-downscale/` (gitignored): `cells/<row>/<tile>.png` (64×80), `keyed/<row>.png` (magenta marks transparent), `contact-1x.png`, `contact-4x.png` (whole-number nearest enlargement), `legend.md` and `results.json`. Rows of the contact sheets are S1–S4 top to bottom; columns are method × height, in the order A, K, M, C, D, each at 50, 54, 56, with the tile code drawn under every tile.
+
+```sh
+uv venv --python 3.13 tools/probes/art-edit/.venv
+uv pip install --python tools/probes/art-edit/.venv/bin/python -r tools/probes/art-edit/requirements-unfake.txt
+tools/probes/art-edit/.venv/bin/python tools/probes/art-edit/run_sprite_downscale.py
+python3 -m unittest tools/probes/art-edit/test_sprite_downscale.py
+```
+
+### Limits
+
+- Foreground keying is tolerance-based and per source; the tolerances above were set by looking at the keyed previews, and S2 keeps its ground shadow and S4 needed a high tolerance for its halo.
+- The outline rule (4-connected, darkest neighbour decides the ramp) is one reading of "darkest shade of the local ramp"; the guide also allows an outline where forms overlap, which is not drawn here.
+- Conformance cannot see readability. Silhouette and any other judgement belong to the visual review, which has not happened.
+
+## Sprite cleanup (Phase B, frame 1)
+
+Status: one static frame, no model runs, research evidence only. The independent visual review is pending, so this section records measurements and method, not a judgement. No file under `content/` and nothing in the studio store was written.
+
+**Base.** `<repo>/.context/studio-pipeline/sprite-downscale/cells/sdxl-b2-r2-20261007/M54.png` (row S3, mode downscale, 54 px), SHA-256 `a7e2f39ededc70360f81e377c73507050d1e9736315b5d64362b38d4473b20e4`. It is read only, to count changed pixels.
+
+**Method.** `sprite_cleanup_b1.py` sets every pixel by an explicit operation and copies none from the base or from any other image:
+
+1. The left half of the body (x=22..31, rows 27–78) is a character grid, one symbol per pixel, mirrored about x=32. Symbols 0–f index the 16 Olympus entries of `greek-master` in file order.
+2. Asymmetric patches follow: the viewer-left fist, the thunderbolt and the one beard shadow cluster.
+3. `add_outline` from `sprite_downscale.py` adds the 1 px exterior outline in the darkest shade of the adjacent ramp. Overlap outlines (arm and torso, beard and chest, waist) are drawn in the grid.
+
+| Defect | Handling |
+| --- | --- |
+| Face and beard | brow, two eyes and a nose in a 6×4 pixel block; the beard and hair are one white region with one 6-pixel shadow cluster |
+| Bolt | two 4-pixel down-left strokes joined by an 8-pixel horizontal jog, pale-gold core with a gold edge, outlined, held below the viewer-left fist and clear of the skirt |
+| Hands | an overlap line (darkest gold) at x=26 and x=37 from the shoulder to the fist |
+| Feet | two explicit soles, x=24–29 and x=34–39 on row 79, a 4 px gap between them |
+| Skin | the chest is two flat clusters (one body tone, one shade band); no highlights |
+| Silhouette | the beard overlaps the chest through a one-pixel diagonal line, and the waist has its own line; no second perimeter stroke |
+| Noise | every colour region is at least two pixels, which a test pins |
+
+**Measurements** (`<repo>/.context/studio-pipeline/sprite-cleanup/report.json`):
+
+| Item | Value |
+| --- | --- |
+| Output SHA-256 | `report.json` holds it |
+| Changed pixels against the base | 912 of 1050 opaque (including the transparent-to-opaque changes) |
+| Figure height including outline | 54 (rows 26–79) |
+| Figure width | 32 |
+| Sole midpoint | x=32.0: soles at x=24–29 and x=34–39 on row 79, measured between the two soles |
+| Colours | 9 of 16: `#243f63` `#526471` `#76572f` `#8fa6ad` `#b38b43` `#c7d8d4` `#ddbf70` `#f0eee0` `#f4e4ae` |
+| Conformance, report-only at scale 1 | pass; 0 pixels changed; 9 colours against the 16 limit |
+
+**Tests.** `test_sprite_cleanup_b1.py` pins the palette, binary alpha, height in range, the sole midpoint at 32 on row 79 with a two-run row 79 and a 2 px minimum gap, an exterior-only outline in the darkest ramp shades, no isolated single pixels, the face and beard rules, the chest rules, the arm and beard overlap lines, and the bolt rule. The bolt rule requires at least 60 bolt pixels in a one-run row span of at least 12, exactly one rightward jog of at least 3 px between two strokes that each run at least four rows down and left, a tip ending more than 4 px left of the start, and at least one clear pixel between the two outlines on every bolt row. With `B1_TARGET=base` the same rules run against the base tile: seven of the eleven fail there, and all eleven pass on the edit.
+
+**Outputs.** `<repo>/.context/studio-pipeline/sprite-cleanup/`: `b1.png`, `b1-4x.png`, `before-after-1x.png`, `before-after-4x.png`, `report.json`. Reproduce with `python3 tools/probes/art-edit/sprite_cleanup_b1.py` (needs `bun` for the conformance step) and `python3 -m unittest tools/probes/art-edit/test_sprite_cleanup_b1.py`.
+
+## Sprite cleanup (Phase B, frame 2: light touch)
+
+Status: one static frame, no model runs, research evidence only; the independent visual review is pending, so this section records method and measurements, not a judgement. Frame 1 (`sprite_cleanup_b1.py`, outputs `b1*.png`) was rejected because it redrew the figure as a mirrored half plus patches, replacing the base's modelling and lighting; it stays here as the record of that attempt. No file under `content/` and nothing in the studio store was written.
+
+**Base.** `<repo>/.context/studio-pipeline/sprite-downscale/cells/sdxl-b2-r2-20261007/M54.png`, SHA-256 `a7e2f39ededc70360f81e377c73507050d1e9736315b5d64362b38d4473b20e4`, 893 opaque pixels. It is read only.
+
+**Method.** `sprite_cleanup_b2.py` loads the base's own pixels and edits them where they stand, as explicit `(x, y, symbol)` triples (symbols 0–f are the 16 Olympus entries in file order). Every edit is filed under a region and must lie inside it, or the script raises. No mirroring, no regeneration from primitives, no pixel from another image, no blanket re-outline.
+
+| Region | What it holds | Pixels changed |
+| --- | --- | ---: |
+| Bolt and grip | the viewer-left bolt (pale-gold fill, a down-left stroke, a jog to the right, a down-left stroke ending in one pixel, each stroke at most 3 px thick), its 1 px darkest-pale-gold outline on new edges only, and a knuckle block over the shaft so hand pixels overlap it, with the old inner outline at x=23 recoloured to skin | 86 |
+| Feet | two separate soles on row 79 at x=26–29 and x=34–37; the hem's bottom outline between them is cut away and the hem edge above the gap re-outlined | 15 |
+| Specks | 44 isolated single pixels (no same-colour 8-neighbour), each set to a colour already beside it; the list is frozen in the script | 44 |
+| Face | unchanged apart from speck removals; the three eye-row pixels at (31,33), (32,33), (33,33) look like flecks but are features and are kept | 0 |
+
+The optional chest-skin merge was not done. The beard and hair, the crown, the robe drapery and the silhouette are the base's, apart from the listed pixels.
+
+**Measurements** (`<repo>/.context/studio-pipeline/sprite-cleanup/report-b2.json`):
+
+| Item | Value |
+| --- | --- |
+| Changed pixels against the base | 145 of 893 opaque, 16.24%, with a budget of 178 (20%); transparent↔opaque flips are counted |
+| Figure height including outline | 54 (rows 26–79) |
+| Figure width | 30 |
+| Sole midpoint | x=32.0: soles at x=26–29 and x=34–37 on row 79, measured between the soles |
+| Colours | 14 of 16 |
+| Conformance, report-only at scale 1 | pass; 0 pixels changed |
+
+**Tests.** `test_sprite_cleanup_b2.py` pins rules, not a design: at most 20% of the base's opaque pixels change; at least 80% survive and the figure is not mirror-symmetric; nothing changes outside the declared regions, and the silhouette and the kept face pixels outside them are the base's; palette-only colours; binary alpha; height 48–56; two distinct soles with a 2 px gap and their midpoint at 32 on row 79; new edges are darkest-ramp outline; no isolated single pixels except the three kept face pixels; and the bolt rule (at least 30 fill pixels over at least 12 rows, thickness at most 3, a one-pixel far tip, two down-left strokes of at least three rows with a rightward jog of at least 3 px between them, bolt pixels above and below the fist with hand pixels over the shaft between them, at least one clear pixel between the bolt's outline and the skirt, and a darkest-pale-gold outline). With `B2_TARGET=base` four of the twelve fail on the base tile (the soles, the flecks, the bolt and the bolt outline); all twelve pass on the edit.
+
+**Outputs.** `<repo>/.context/studio-pipeline/sprite-cleanup/`: `b2.png`, `b2-4x.png`, `strip-base-b1-b2-1x.png` and `strip-base-b1-b2-4x.png` (tiles `0` base, `1` frame 1, `2` frame 2), `report-b2.json`. Reproduce with `python3 tools/probes/art-edit/sprite_cleanup_b2.py` (needs `bun` for the conformance step) and `python3 -m unittest tools/probes/art-edit/test_sprite_cleanup_b2.py`.
+
+**Revision B2c (grip only).** `sprite_cleanup_b2c.py` applies five explicit grip pixels on top of B2 (the shaft entering and leaving the fist at (19,54) and (19,57), the new outline at (18,54), and skin at (20,54) and (20,57) in place of the dark divider), changing 146 of 893 opaque pixels against the base (16.35%) and keeping the shaft between them hidden; outputs `b2c.png`, `b2c-4x.png`, `strip-base-b2-b2c-1x.png`, `strip-base-b2-b2c-4x.png` (tiles `0` base, `2` B2, `3` B2c) and `report-b2c.json` in `<repo>/.context/studio-pipeline/sprite-cleanup/`.
+
+## Sprite Phase C1
+
+Status: candidates generated and downscaled; no selection made. Research evidence only. Nothing under `content/` or the canon registry was written; the studio store at `<repo>/.context/studio-pipeline/u7-creative/studio` received the request, eight jobs and one working set through the normal studio commands.
+
+**Why.** The owner rejected the hand-cleaned B1, B2 and B2c frames. Phase C generates fresh sources through the studio itself, so the Apache-2.0 Z-Image profile records truthful provenance, with no painted layout. C1 covers generation and downscaling only; hand-pixelling the face and bolt comes later.
+
+**Request.** `zeus-idle-south-u7-c1`, one `idle`/`south` sprite slot, text-to-image, batch 8, base seed 20261040 (the studio draws seeds 20261040–20261047 in order), 512×640, working set `zeus-idle-south-u7-c1-set`. It ran as a `studio session` under `nohup` with the U7 authoring config, fed from `<repo>/.context/studio-pipeline/c1/session-input.jsonl`. The studio builds the prompt itself; the only addition is the `--style-note` text (the studio's existing request option; no content file was edited). The exact prompt recorded on every job:
+
+```text
+pixel art, Zeus, Greek god, thunderbolt, full body, front view, facing the viewer, idle pose, plain flat background, limited colour palette, swept-back silver hair, long flowing white beard, aged noble face, white himation draped over one shoulder with a gold band, standing tall facing the viewer, both feet visible, thunderbolt held raised in his right hand on the viewer's left, plain flat background, no scenery
+```
+
+The negative prompt, sampler and the other settings are the profile's (euler, 8 steps, CFG 1) and are in each job record.
+
+| Job | Seed | Output SHA-256 | Duration | Keyed figure (h × w) | Bottom margin | Edges touched |
+| --- | ---: | --- | ---: | --- | ---: | --- |
+| zeus-idle-south-u7-c1-0000 | 20261040 | `db187882bdc54eba68416578e38ccb815ce2f4389837703bc8460429face0c29` | 92 s | 573 × 293 | 34 px | none |
+| zeus-idle-south-u7-c1-0001 | 20261041 | `a72907a5c4327a45a91863455a3e282308fdb56ae8c52719172b8d4704671f60` | 80 s | 609 × 366 | 19 px | none |
+| zeus-idle-south-u7-c1-0002 | 20261042 | `c77dd4a2aa1f8b3977e966890011669bd3def9baef1c71ffe4923a0ba37ea2ec` | 80 s | 567 × 316 | 36 px | none |
+| zeus-idle-south-u7-c1-0003 | 20261043 | `254f6f4f4a6989628a25799bde8fb209c0f2237f58a85b41178aaefa2c565e50` | 81 s | 581 × 295 | 31 px | none |
+| zeus-idle-south-u7-c1-0004 | 20261044 | `6c5f89afbb25b5d7f27ec132f397563a0c44895ec71fdd0f2c09a9525995918c` | 83 s | 566 × 285 | 38 px | none |
+| zeus-idle-south-u7-c1-0005 | 20261045 | `11ecec55a5d3d6101a139c437708787861186a28d87e38ce006a5d58d1447a35` | 82 s | 567 × 278 | 37 px | none |
+| zeus-idle-south-u7-c1-0006 | 20261046 | `bbc465f452f01ef5f83a83d6b699872d885c4e6eb0af971c40a00a6418abcafd` | 80 s | 578 × 296 | 33 px | none |
+| zeus-idle-south-u7-c1-0007 | 20261047 | `c9b27b551573da09c3374c03b510c52b20a5666883eb790ed81f5ecdcee8a19c` | 80 s | 588 × 291 | 26 px | none |
+
+Durations are the gaps between the job records' modification times (the records carry no timestamps), so they are accurate to a second or two.
+
+**Downscale.** `run_sprite_c1.py` keys each render at source resolution (border-connected flood from the mean corner colour, RGB tolerance 24, components under 0.1% of the largest dropped), then runs `sprite_downscale.py` with the 16-colour Olympus palette, the 1 px exterior outline and foot placement. Tiles: mode (M) and k-centroid (K) at total height 54, and mode at 50 and 56. The keyed figure box includes everything the key leaves behind, so it counts a raised bolt, a ground shadow or a prop that is not close to the key colour; it is a measurement of the box, not of the figure alone.
+
+Keying notes per render, from the measurements: the backgrounds are not all the same, with a mid-grey ground in 0001 and a brown ground in 0007. The key follows the corner mean in each case. Renders 0001 (a dark ground ellipse under the feet), 0002 (a vertical staff and a ground line) and 0003 (ground smudges beside the feet, 9 foreground runs on its lowest row) keep those extras inside the figure box.
+
+**Outputs** (`<repo>/.context/studio-pipeline/c1/`, gitignored): `cells/<job>/<tile>.png`, `keyed/<job>.png` (magenta marks transparent), `contact-1x.png` and `contact-4x.png` (a row per seed S1–S8 in job order, columns M54, K54, M50, M56), `raw-half.png` and `raw-quarter.png` (the 512×640 renders box-averaged by 2 and by 4, four per row, in job order), `results.json` (all measurements) and the session logs. Reproduce the downscale with `python3 tools/probes/art-edit/run_sprite_c1.py` once the store holds the jobs.
+
+## Sprite Phase C2
+
+C2a, a clean downscale of candidate S4 (job `zeus-idle-south-u7-c1-0003`, seed 20261043); no face or bolt work, no model runs, studio store read only. `run_sprite_c2a.py` re-keys the raw render by recorded rules (the border key, then in the lowest 3% of the first keyed box the ground-shadow colour [189, 193, 194] within 30 and its light low-chroma fringe, then the border flood again, then the largest 8-connected component with others under 500 px dropped), which removed 1202 shadow and 387 fringe pixels and left 5 specks of 6 px in total to drop. At source resolution the feet are x 179–250 and 320–387, soles on row 607, sole midpoint 284.0; the body (crown to soles) is 536 px and the box with the raised bolt is 580 px. Tiles M and K at body heights 50 and 52 (totals 54 and 56 with the bolt), placed by the midpoint between the soles, are in `<repo>/.context/studio-pipeline/c2/` with `results.json`, the before/after keyed views and a raw | old C1 M56 | new strip.
+
+C2b hand-pixels the M50 tile to a written spec (`sprite_cleanup_c2b.py`, spec as per-region lists with a removal box; any write outside its region or over its ceiling raises): the face, a new bolt and grip replacing the old prop, and the cloth folds and belt, changing 131 of 920 opaque pixels (5 face, 97 bolt and grip, 29 cloth and belt; ceilings 12, 135, 37 and 184 in total), with the feet, hem, head outline and placement frozen. Outputs `c2b.png`, `c2b-4x.png`, `strip-b2c-m50-c2b-1x.png`, `strip-b2c-m50-c2b-4x.png` (tiles `2` B2c, `50` M50, `C2` C2b) and `report-c2b.json` are in `<repo>/.context/studio-pipeline/c2/`.
+
+C2c fixes the outlines of the accepted C2b frame (`sprite_cleanup_c2c.py`, recolour only, alpha identical): rule 1 sets each exterior pixel to the darkest shade of the ramp of the form it bounds, rule 3 thins a 2 px inherited border to 1 px by setting its inner pixel to that ramp's next-darker shade, and rule 4 keeps a 1 px dark line only where forms overlap (the front form's darkest shade) and sets other interior lapis seams to the ramp's shadow tone; the art guide calls for no lit-side exception, so none is applied. Reviewer rulings (A layer order: robe, belt and arm in front of the cape; B ties and empties; C unresolved thinning; D overlap lines) are explicit pixel tables that take priority, with two small labelled tables for rule misfires (E) and neighbours the rulings imply (F, including the hand's exposed bottom-right corner at (41,59)). It changes 236 pixels against C2b (A 20, B 11, C 9, D 7, E 4, F 4, R1 91, R3 78, R4-overlap 8, R4-seam 4) and leaves the bolt, fist, grip and face feature pixels untouched; outputs `c2c.png`, `c2c-4x.png`, `strip-c2b-c2c-1x.png`, `strip-c2b-c2c-4x.png`, `diff-c2b-c2c-4x.png` (changed pixels magenta) and `report-c2c.json` are in `<repo>/.context/studio-pipeline/c2/`.
+
+## Sprite Phase C2 idle
+
+A 4-frame idle-south breathing loop from the accepted C2c frame, held at 333, 167, 333 and 167 ms (a 1000 ms loop; GIF delays 33, 17, 33, 17 cs) (`sprite_idle_c2.py`; every frame is C2c plus explicit operations). F0 is C2c exactly. F1 and F3 change only the diagonal chest fold (2 pixels and 1 pixel). F2 raises the head, hair, crown, beard, shoulders and upper chest (rows 30–45 right of x=24, without the right arm and hand from row 43; 183 pixels) by 1 px with their outlines, fills the 17 cells that leaves with the fixed pixel below, repairs 3 pixels, and holds F1's raised chest fold at its two pixels (93 changed pixels against F0). The bolt, fist, grip, forearm, upper-arm column, belt, robe, hem and feet are identical in all four frames; the soles stay at x=22–29 and 34–41 on row 79 (midpoint 32.0), the height stays 54 and every frame passes report-only conformance at scale 1. Outputs are `f0.png`–`f3.png`, `sheet.png`, `sheet-4x.png`, `idle-1x.gif`, `idle-4x.gif`, `diff-4x.png` and `report-idle.json` in `<repo>/.context/studio-pipeline/idle/`.
