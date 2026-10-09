@@ -132,7 +132,7 @@ describe("the core god profile is unchanged", () => {
         "variants",
       ].sort(),
     );
-    expect(zeus.sprite).toBe("placeholder-zeus");
+    expect(zeus.sprite).toBe("zeus-sprite");
     const withVisual = parseGodProfile({
       ...zeusJson,
       paletteFamily: "olympus",
