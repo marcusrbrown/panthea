@@ -288,6 +288,8 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
 
 **Status (2026-10-08):** built against the bare request, with a refill pass the owner added after the story run: once the request fits, each shed unit is tried once, most valuable first (memories by salience, feelings by strength, own actions newest first, events newest first), through the same re-derive path and kept only if the rebuilt request still fits. A shed prayer is never re-added. The shed counts are the net. The causal set (the amendment under Key Technical Decisions) is read once before shedding and is never shed or refilled.
 
+**Status (2026-10-08, cap stalls):** a goal-history row that no shown memory or own action backs is now a unit of the memories tier: the first one shed (its memory missed the salience cut every shown memory passed), oldest first, touching only itself, and the refill restores it in its original place after the feelings. `shed.memories` counts these rows with the memories and feelings. The goal itself is still never shed. The practice digest's offer opening points to the kept prayer's own set-terms line instead of repeating its object. `granite3.3-8b-4k` is counted at 2.75 and the default is 2.75 (the rerun measured 2.807 on an id-dense request).
+
 - [ ] **Unit 3: Wire the cap into the turn, and record it**
 
 **Goal:** `runGodTurn` applies the cap before building the context, schema and proposal; refuses to send an over-cap prompt; and records the cap figures.
