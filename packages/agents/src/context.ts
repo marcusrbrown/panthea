@@ -2110,6 +2110,15 @@ export function buildGodContext(
       ),
       remembered.practiceRefusal,
       remembered.practice.openings,
+      undefined,
+      // A prayer's own line writes its terms out whole (`answerGuidance`), so the digest need not repeat them.
+      new Set(
+        remembered.petitions
+          .filter(
+            (petition) => petition.offer !== undefined && !petition.agreed,
+          )
+          .map((petition) => String(petition.id)),
+      ),
     ),
     "What do you do?",
   ].join("\n");

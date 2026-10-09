@@ -1662,3 +1662,39 @@ describe("independent goal-history rows", () => {
     ]);
   });
 });
+
+describe("the digest does not repeat the kept prayer's offer", () => {
+  test("a request that fit only without the repeated offer sheds nothing: the kept punish prayer's offer is written out once, and the cap counts it once", () => {
+    const w = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      memories: [],
+      feelings: [],
+      prayers: 3,
+    });
+    const offer = w.remembered.practice.openings.find(
+      (opening) => opening.kind === "offer",
+    );
+    const json = JSON.stringify(offer?.intent);
+    expect(json.length).toBeGreaterThan(150);
+    // The request, had the digest repeated the object, would be this much longer; a limit 40 characters under that.
+    const repeated = chars(w) + json.length;
+    const capped = capAt(w, ratioAt(repeated - 40));
+    expect(capped.shed).toEqual({
+      events: 0,
+      actions: 0,
+      memories: 0,
+      prayers: 0,
+    });
+    expect(capped.fits).toBe(true);
+    // Once in the prompt, copyable whole, and the schema takes it.
+    expect(capped.context.prompt.split(json)).toHaveLength(2);
+    expect(
+      godIntentSchema(w.profile, capped.snapshot, capped.remembered).parse(
+        offer?.intent,
+      ).ok,
+    ).toBe(true);
+    expectAgreement(w, capped);
+  });
+});

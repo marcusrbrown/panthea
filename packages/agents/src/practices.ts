@@ -1491,6 +1491,8 @@ export function describeDigest(
   refusal?: PracticeRefusalView,
   openings: readonly Opening[] = [],
   budget = DIGEST_BUDGET_CHARS,
+  /** The prayers whose own line in the prompt already writes the offer out whole: an offer opening on one points to it instead of repeating the object, so the copyable object appears once. */
+  offeredAbove: ReadonlySet<string> = new Set(),
 ): string[] {
   // A refusal bound to an open thread is said on that thread's row; any other is a line of its own.
   const onRow =
@@ -1505,9 +1507,11 @@ export function describeDigest(
       ? []
       : [
           "- You may begin a bargain if you wish (nothing requires it); each of these is legal as written:",
-          ...openings.map(
-            (opening) =>
-              `  ${opening.label}: ${JSON.stringify(opening.intent)}`,
+          ...openings.map((opening) =>
+            opening.kind === "offer" &&
+            offeredAbove.has(String(opening.intent.prayer))
+              ? `  ${opening.label}: the "set terms" choice written out under that prayer`
+              : `  ${opening.label}: ${JSON.stringify(opening.intent)}`,
           ),
         ];
   if (
