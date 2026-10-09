@@ -90,6 +90,33 @@ describe("EditPanel", () => {
     );
   });
 
+  test.each([
+    [
+      "no-workspace",
+      "No Aseprite workspace for this edit. Use export and import below.",
+    ],
+    [
+      "editor-unavailable",
+      "No editor is configured. Use export and import below.",
+    ],
+    [
+      "launch-failed",
+      "Aseprite didn't start. Use export and import below, or try again.",
+    ],
+  ])("maps editor reason %s to plain guidance", (code, message) => {
+    const html = renderToStaticMarkup(
+      createElement(EditPanel, {
+        host,
+        edit: { id: "edit-1", status: "open", slots: ["idle/south"] },
+        editorLaunched: false,
+        editorReason: code,
+        canMutate: true,
+      }),
+    );
+    expect(html.replaceAll("&#x27;", "'")).toContain(message);
+    expect(html).not.toContain(code);
+  });
+
   test("finished edits keep their report but do not offer to reopen the editor", () => {
     const html = renderToStaticMarkup(
       createElement(EditPanel, {

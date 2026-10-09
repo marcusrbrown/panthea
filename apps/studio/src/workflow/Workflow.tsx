@@ -14,7 +14,6 @@ import { tauriHost } from "../host/tauri";
 import type {
   CandidateSummary,
   ConformHow,
-  ConformParams,
   StudioSnapshot,
   SummaryRecord,
 } from "../host/types";
@@ -23,7 +22,7 @@ import {
   editReportSignature,
   editsForReports,
   readEditReport as fetchEditReport,
-  inlineParamsAtScale,
+  parseInlineConformDraft,
   parseSlotSpecs,
   readExistingSheet,
   rerollArgs,
@@ -199,13 +198,19 @@ function QueueItem({
         )}
         {job.status === "completed" && job.raw.candidate === null && (
           <div className="conform-job">
-            <button
-              type="button"
-              disabled={!enabled || !conformSet || conformBusy}
-              onClick={() => onConform(job.id, { set: conformSet })}
-            >
-              Conform
-            </button>
+            {conformSet && (
+              <button
+                type="button"
+                disabled={!enabled || conformBusy}
+                onClick={() => onConform(job.id, { set: conformSet })}
+              >
+                Conform
+              </button>
+            )}
+            <ScaleConformForm
+              disabled={!enabled || conformBusy}
+              onConform={(params) => onConform(job.id, params)}
+            />
           </div>
         )}
       </div>
@@ -225,13 +230,13 @@ function ScaleConformForm({
   disabled,
   onConform,
 }: {
-  candidate: Extract<CandidateSummary, { status: "needs-scale" }>;
+  candidate?: Extract<CandidateSummary, { status: "needs-scale" }>;
   disabled: boolean;
   onConform: (how: ConformHow) => void;
 }) {
   const [scale, setScale] = useState("");
-  const [backgroundType, setBackgroundType] = useState<"alpha" | "key">(
-    "alpha",
+  const [backgroundType, setBackgroundType] = useState<"" | "alpha" | "key">(
+    "",
   );
   const [alphaCutoff, setAlphaCutoff] = useState("");
   const [edgeTolerance, setEdgeTolerance] = useState("");
@@ -240,57 +245,23 @@ function ScaleConformForm({
   const [rgb, setRgb] = useState("");
   const [tolerance, setTolerance] = useState("");
 
-  const scaleValue = Number(scale);
-  const alphaCutoffValue = Number(alphaCutoff);
-  const edgeToleranceValue = Number(edgeTolerance);
-  const confidenceValue = Number(minConfidence);
-  const minEdgesValue = Number(minEdges);
-  const rgbValues = rgb.split(",").map((part) => Number(part.trim()));
-  const toleranceValue = Number(tolerance);
-  const valid =
-    Number.isInteger(scaleValue) &&
-    scaleValue > 0 &&
-    Number.isInteger(alphaCutoffValue) &&
-    alphaCutoff.trim() !== "" &&
-    alphaCutoffValue >= 0 &&
-    Number.isInteger(edgeToleranceValue) &&
-    edgeTolerance.trim() !== "" &&
-    edgeToleranceValue >= 0 &&
-    Number.isFinite(confidenceValue) &&
-    minConfidence.trim() !== "" &&
-    confidenceValue >= 0 &&
-    confidenceValue <= 1 &&
-    Number.isInteger(minEdgesValue) &&
-    minEdgesValue > 0 &&
-    (backgroundType === "alpha" ||
-      (rgbValues.length === 3 &&
-        rgbValues.every(
-          (part) => Number.isInteger(part) && part >= 0 && part <= 255,
-        ) &&
-        tolerance.trim() !== "" &&
-        Number.isInteger(toleranceValue) &&
-        toleranceValue >= 0));
+  const params = parseInlineConformDraft(
+    {
+      backgroundType,
+      rgb,
+      tolerance,
+      alphaCutoff,
+      edgeTolerance,
+      minConfidence,
+      minEdges,
+      scale,
+    },
+    candidate !== undefined,
+  );
 
   const submit = () => {
-    if (disabled || !valid) return;
-    const background: ConformParams["background"] =
-      backgroundType === "alpha"
-        ? { type: "alpha" }
-        : {
-            type: "key",
-            rgb: rgbValues as [number, number, number],
-            tolerance: toleranceValue,
-          };
-    const params: ConformParams = {
-      background,
-      alphaCutoff: alphaCutoffValue,
-      grid: {
-        edgeTolerance: edgeToleranceValue,
-        minConfidence: confidenceValue,
-        minEdges: minEdgesValue,
-      },
-    };
-    onConform(inlineParamsAtScale(params, scaleValue));
+    if (disabled || !params) return;
+    onConform(params);
   };
 
   return (
@@ -301,10 +272,14 @@ function ScaleConformForm({
         submit();
       }}
     >
-      <p className="queue-note">{candidate.message}</p>
-      <h4>Inline conform settings</h4>
+      {candidate && <p className="queue-note">{candidate.message}</p>}
+      <h4>
+        {candidate ? "Inline conform settings" : "Inline conform parameters"}
+      </h4>
       <p className="muted">
-        Set the full thresholds below; the scale is added to these params.
+        {candidate
+          ? "Set every threshold and choose a scale to retry."
+          : "Set every threshold. Leave scale empty to auto-detect."}
       </p>
       <label>
         Scale
@@ -312,6 +287,7 @@ function ScaleConformForm({
           type="number"
           min={1}
           step={1}
+          required={candidate !== undefined}
           value={scale}
           onChange={(event) => setScale(event.target.value)}
         />
@@ -319,11 +295,13 @@ function ScaleConformForm({
       <label>
         Background
         <select
+          required
           value={backgroundType}
           onChange={(event) =>
-            setBackgroundType(event.target.value as "alpha" | "key")
+            setBackgroundType(event.target.value as "" | "alpha" | "key")
           }
         >
+          <option value="">Choose a background</option>
           <option value="alpha">Alpha</option>
           <option value="key">Colour key</option>
         </select>
@@ -333,6 +311,7 @@ function ScaleConformForm({
           <label>
             Key RGB
             <input
+              required
               value={rgb}
               placeholder="r, g, b"
               onChange={(event) => setRgb(event.target.value)}
@@ -342,6 +321,7 @@ function ScaleConformForm({
             Key tolerance
             <input
               type="number"
+              required
               min={0}
               step={1}
               value={tolerance}
@@ -354,7 +334,9 @@ function ScaleConformForm({
         Alpha cutoff
         <input
           type="number"
-          min={0}
+          required
+          min={1}
+          max={255}
           step={1}
           value={alphaCutoff}
           onChange={(event) => setAlphaCutoff(event.target.value)}
@@ -364,6 +346,7 @@ function ScaleConformForm({
         Grid edge tolerance
         <input
           type="number"
+          required
           min={0}
           step={1}
           value={edgeTolerance}
@@ -374,6 +357,7 @@ function ScaleConformForm({
         Grid minimum confidence
         <input
           type="number"
+          required
           min={0}
           max={1}
           step="any"
@@ -385,14 +369,15 @@ function ScaleConformForm({
         Grid minimum edges
         <input
           type="number"
+          required
           min={1}
           step={1}
           value={minEdges}
           onChange={(event) => setMinEdges(event.target.value)}
         />
       </label>
-      <button type="submit" disabled={disabled || !valid}>
-        Run with scale
+      <button type="submit" disabled={disabled || !params}>
+        {candidate ? "Run with scale" : "Conform with params"}
       </button>
     </form>
   );
@@ -1052,7 +1037,9 @@ export function WorkflowView({
                       </select>
                     </label>
                   ) : (
-                    <p className="muted">No conform set configured.</p>
+                    <p className="muted">
+                      Conform needs either a config set or explicit parameters.
+                    </p>
                   )}
                 </div>
               )}

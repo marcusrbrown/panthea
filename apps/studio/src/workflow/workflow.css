@@ -386,6 +386,53 @@
   gap: 6px;
   margin-top: 8px;
 }
+.conform-job {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+.scale-conform-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: var(--paper-raised);
+}
+.scale-conform-form h4,
+.scale-conform-form > p,
+.scale-conform-form > button {
+  grid-column: 1 / -1;
+}
+.scale-conform-form h4 {
+  margin: 0;
+  font-size: 0.76rem;
+}
+.scale-conform-form > p {
+  padding: 0;
+  line-height: 1.4;
+}
+.scale-conform-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+.scale-conform-form input,
+.scale-conform-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: var(--ink);
+  background: var(--paper);
+  font-size: 0.76rem;
+}
+.scale-conform-form > button {
+  justify-self: start;
+}
 .queue-actions button,
 .candidate-actions button {
   min-height: 28px;

@@ -67,9 +67,91 @@ export function conformJob(
 
 export function inlineParamsAtScale(
   params: ConformParams,
-  scale: number,
+  scale: number | undefined,
 ): ConformHow {
-  return { params: { ...params, scale } };
+  return { params: scale === undefined ? params : { ...params, scale } };
+}
+
+export interface InlineConformDraft {
+  readonly backgroundType: "" | "alpha" | "key";
+  readonly rgb: string;
+  readonly tolerance: string;
+  readonly alphaCutoff: string;
+  readonly edgeTolerance: string;
+  readonly minConfidence: string;
+  readonly minEdges: string;
+  readonly scale: string;
+}
+
+export function parseInlineConformDraft(
+  draft: InlineConformDraft,
+  scaleRequired = false,
+): ConformHow | undefined {
+  const alphaCutoff = Number(draft.alphaCutoff);
+  const edgeTolerance = Number(draft.edgeTolerance);
+  const minConfidence = Number(draft.minConfidence);
+  const minEdges = Number(draft.minEdges);
+  const scale = draft.scale.trim() === "" ? undefined : Number(draft.scale);
+
+  if (
+    !draft.alphaCutoff.trim() ||
+    !Number.isInteger(alphaCutoff) ||
+    alphaCutoff < 1 ||
+    alphaCutoff > 255 ||
+    !draft.edgeTolerance.trim() ||
+    !Number.isInteger(edgeTolerance) ||
+    edgeTolerance < 0 ||
+    !draft.minConfidence.trim() ||
+    !Number.isFinite(minConfidence) ||
+    minConfidence < 0 ||
+    minConfidence > 1 ||
+    !draft.minEdges.trim() ||
+    !Number.isInteger(minEdges) ||
+    minEdges <= 0 ||
+    (scaleRequired && scale === undefined) ||
+    (scale !== undefined && (!Number.isInteger(scale) || scale <= 0))
+  ) {
+    return undefined;
+  }
+
+  let background: ConformParams["background"];
+  if (draft.backgroundType === "alpha") {
+    background = { type: "alpha" };
+  } else if (draft.backgroundType === "key") {
+    const rgb = draft.rgb.split(",").map((part) => Number(part.trim()));
+    const tolerance = Number(draft.tolerance);
+    if (
+      rgb.length !== 3 ||
+      rgb.some(
+        (part, index) =>
+          !draft.rgb.split(",")[index]?.trim() ||
+          !Number.isInteger(part) ||
+          part < 0 ||
+          part > 255,
+      ) ||
+      !draft.tolerance.trim() ||
+      !Number.isInteger(tolerance) ||
+      tolerance < 0
+    ) {
+      return undefined;
+    }
+    background = {
+      type: "key",
+      rgb: rgb as [number, number, number],
+      tolerance,
+    };
+  } else {
+    return undefined;
+  }
+
+  return inlineParamsAtScale(
+    {
+      background,
+      alphaCutoff,
+      grid: { edgeTolerance, minConfidence, minEdges },
+    },
+    scale,
+  );
 }
 
 export function editsForReports(

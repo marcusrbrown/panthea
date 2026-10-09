@@ -180,10 +180,20 @@ describe("WorkflowView controls", () => {
 
   test("succeeded un-conformed jobs explain when no conform set exists", () => {
     const html = render(
-      stateFor({ id: "j-ready", status: "succeeded", candidate: null }),
+      stateFor(
+        { id: "j-ready", status: "succeeded", candidate: null },
+        { status: { conformSets: [] } },
+      ),
     );
-    expect(html).toContain("No conform set configured");
-    expect(html).toContain("Conform");
+    expect(html).toContain(
+      "Conform needs either a config set or explicit parameters.",
+    );
+    expect(html).toContain("Inline conform parameters");
+    expect(html).toMatch(
+      /<button type="submit" disabled="">Conform with params<\/button>/,
+    );
+    expect(html).not.toMatch(/<button[^>]*>Conform<\/button>/);
+    expect(html).not.toContain("No conform set configured");
   });
 
   test("read-only mode keeps Resolve and existing View sheet enabled", () => {

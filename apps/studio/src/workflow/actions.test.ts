@@ -6,6 +6,8 @@ import {
   conformJob,
   editReportSignature,
   editsForReports,
+  inlineParamsAtScale,
+  parseInlineConformDraft,
   parseSlotSpecs,
   readEditReport,
   readExistingSheet,
@@ -21,6 +23,71 @@ const configure = (
 };
 
 describe("workflow host actions", () => {
+  test("blank scale is omitted from inline conform params", () => {
+    const params: ConformParams = {
+      background: { type: "alpha" },
+      alphaCutoff: 128,
+      grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
+    };
+    expect(inlineParamsAtScale(params, undefined)).toEqual({ params });
+  });
+
+  test("filled scale is included in inline conform params", () => {
+    const params: ConformParams = {
+      background: { type: "alpha" },
+      alphaCutoff: 128,
+      grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
+    };
+    expect(inlineParamsAtScale(params, 8)).toEqual({
+      params: { ...params, scale: 8 },
+    });
+  });
+
+  test("inline params require every threshold and an explicit background", () => {
+    const draft = {
+      backgroundType: "alpha" as const,
+      rgb: "",
+      tolerance: "",
+      alphaCutoff: "128",
+      edgeTolerance: "8",
+      minConfidence: "0.6",
+      minEdges: "20",
+      scale: "",
+    };
+    expect(parseInlineConformDraft(draft)).toEqual({
+      params: {
+        background: { type: "alpha" },
+        alphaCutoff: 128,
+        grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
+      },
+    });
+    expect(
+      parseInlineConformDraft({ ...draft, backgroundType: "" }),
+    ).toBeUndefined();
+    for (const key of [
+      "alphaCutoff",
+      "edgeTolerance",
+      "minConfidence",
+      "minEdges",
+    ] as const) {
+      expect(
+        parseInlineConformDraft({ ...draft, [key]: "" }),
+        `${key} is required`,
+      ).toBeUndefined();
+    }
+    expect(
+      parseInlineConformDraft({ ...draft, scale: "" }, true),
+    ).toBeUndefined();
+    expect(parseInlineConformDraft({ ...draft, scale: "8" }, true)).toEqual({
+      params: {
+        background: { type: "alpha" },
+        alphaCutoff: 128,
+        grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
+        scale: 8,
+      },
+    });
+  });
+
   test("read-only mode reads an existing sheet without trying to create a set", async () => {
     const { host, transport } = configure((payload) => {
       expect(payload?.op).toBe("sheet");

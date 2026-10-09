@@ -3,6 +3,19 @@ import type { StudioHost } from "../host/client";
 import type { EditReport, SummaryRecord } from "../host/types";
 import { recordText } from "./model";
 
+function editorReasonCopy(reason: string | undefined) {
+  switch (reason) {
+    case "no-workspace":
+      return "No Aseprite workspace for this edit. Use export and import below.";
+    case "editor-unavailable":
+      return "No editor is configured. Use export and import below.";
+    case "launch-failed":
+      return "Aseprite didn't start. Use export and import below, or try again.";
+    default:
+      return "Aseprite didn't open. Export the sheets and bring the edited files back here.";
+  }
+}
+
 export function EditPanel({
   host,
   edit,
@@ -110,10 +123,7 @@ export function EditPanel({
       {isOpen && editorLaunched === false ? (
         <div className="editor-fallback">
           <strong>Editor unavailable</strong>
-          <p>
-            {editorReason ??
-              "Aseprite did not open. Export the sheets and bring the edited files back here."}
-          </p>
+          <p>{editorReasonCopy(editorReason)}</p>
           <button
             type="button"
             disabled={!enabled}
