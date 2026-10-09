@@ -72,6 +72,12 @@ export type {
   AssetOpResult,
 } from "./publish";
 export {
+  type EditFrameChange,
+  type EditReport,
+  type EditReportFailure,
+  type EditReportFrame,
+  type EditReportSlot,
+  editReport,
   reportOnly,
   type SheetSlot,
   type SheetSummary,

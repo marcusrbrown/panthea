@@ -492,6 +492,7 @@ describe("a session", () => {
       "source-resolve",
       "source-bytes",
       "source-keys",
+      "edit-report",
     ];
 
     for (const op of ops) {

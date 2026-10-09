@@ -7,7 +7,7 @@ import {
   type HostProblem,
   STUDIO_OPS,
 } from "./client";
-import type { StudioSnapshot } from "./types";
+import type { EditReport, StudioSnapshot } from "./types";
 
 const running: StudioSnapshot = { host: { state: "running" } };
 
@@ -245,6 +245,65 @@ describe("edit and config commands", () => {
       { editId: "e1", finish: false },
       { editId: "e1", finish: true },
     ]);
+  });
+
+  test("editReport asks edit-report for the id alone and parses the reply", async () => {
+    const reply = {
+      editId: "e1",
+      workingSetId: "w",
+      state: "open",
+      sheetHash: "a".repeat(64),
+      metadataHash: "b".repeat(64),
+      slots: [
+        {
+          slot: "idle/south",
+          diffAgainst: "recorded",
+          frames: [
+            {
+              index: 0,
+              report: "pass",
+              failedChecks: [],
+              change: "unchanged",
+              pixelsChanged: 0,
+              diff: [],
+            },
+          ],
+          addedFrames: [],
+          removedFrames: [],
+        },
+      ],
+    };
+    const transport = fakeTransport({
+      studio_call: callsTo({ "edit-report": () => reply }),
+    });
+    const host = createStudioHost(transport);
+
+    expect(await host.editReport("e1")).toEqual(reply as unknown as EditReport);
+    expect(transport.calls[0]?.args).toEqual({
+      op: "edit-report",
+      args: { id: "e1" },
+    });
+
+    transport.answer(
+      "studio_call",
+      callsTo({ "edit-report": () => ({ editId: 5 }) }),
+    );
+    await expect(host.editReport("e1")).rejects.toMatchObject({
+      code: "malformed-reply",
+    });
+  });
+
+  test("an edit-report refusal keeps its code", async () => {
+    for (const code of ["not-found", "wrong-state", "corrupt-blob"]) {
+      const transport = fakeTransport({
+        studio_call: () => {
+          throw hostError(code, "no");
+        },
+      });
+      await expect(
+        createStudioHost(transport).editReport("e1"),
+      ).rejects.toMatchObject({ code, retryable: false });
+    }
   });
 
   test("config_status and config_choose parse their replies", async () => {

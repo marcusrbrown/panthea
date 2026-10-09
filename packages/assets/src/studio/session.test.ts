@@ -606,6 +606,7 @@ describe("public surface", () => {
       "createEditorAdapter",
       "createPreviewSource",
       "decodePng",
+      "editReport",
       "fsWatcher",
       "isPreviewSlug",
       "isPreviewSourceKind",

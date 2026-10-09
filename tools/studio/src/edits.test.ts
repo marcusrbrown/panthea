@@ -332,6 +332,115 @@ describe("editing with files and no editor", () => {
   });
 });
 
+describe("saves imported by the watcher", () => {
+  test("each save the watcher imports reports its changed pixels against the version before it, and the first against the base", async () => {
+    const { rig, config, over } = pickedSet();
+    const calls: string[] = [];
+    let next = sheetOf(CELL, [{ slot: "idle/south", frames: four(rig) }]);
+    const studio = new Studio(
+      config,
+      depsFor(capture(), {
+        ...over,
+        createEditor: (session) => ({
+          ...fakeEditor(session, calls),
+          // The editor's save reaches the session the way the real adapter's does: through the SDK import.
+          refresh: async (id, content, mode) => {
+            calls.push(`${mode} ${id}`);
+            return session.importEdit(id, next.png, next.json, content);
+          },
+        }),
+      }),
+      "session",
+    );
+    try {
+      await execute(studio, "open", {
+        id: "e1",
+        workingSetId: "w",
+        slots: ["idle/south"],
+      });
+      const file = join(rig.root, "edits", "e1", "workspace.aseprite");
+      const imports = () => calls.filter((c) => c === "import e1").length;
+      type Frame = {
+        index: number;
+        change: string;
+        pixelsChanged: number | null;
+        diff: unknown[] | null;
+      };
+      const frames = async (): Promise<{
+        frames: Frame[];
+        addedFrames: number[];
+      }> => {
+        const outcome = await execute(studio, "edit-report", { id: "e1" });
+        if (!outcome.ok) throw new Error(JSON.stringify(outcome));
+        return (
+          outcome.result as {
+            slots: { frames: Frame[]; addedFrames: number[] }[];
+          }
+        ).slots[0] as { frames: Frame[]; addedFrames: number[] };
+      };
+
+      const none = await execute(studio, "edit-report", { id: "e1" });
+      expect(none).toMatchObject({ ok: false, error: { code: "wrong-state" } });
+
+      writeFileSync(file, "workspace-v2");
+      await waitFor(() => imports() === 1);
+      const first = await frames();
+      expect(first.addedFrames).toEqual([1, 2, 3]);
+      expect(first.frames[0]?.change).not.toBe("added");
+      expect(first.frames.slice(1).map((f) => f.pixelsChanged)).toEqual([
+        null,
+        null,
+        null,
+      ]);
+
+      next = sheetOf(CELL, [
+        {
+          slot: "idle/south",
+          frames: [
+            ...four(rig).slice(0, 2),
+            paintFigure(rig.content, CELL, 9),
+            ...four(rig).slice(3),
+          ],
+        },
+      ]);
+      writeFileSync(file, "workspace-v3");
+      await waitFor(() => imports() === 2);
+      const second = await frames();
+      expect(second.addedFrames).toEqual([]);
+      expect(second.frames.map((f) => f.change)).toEqual([
+        "unchanged",
+        "unchanged",
+        "changed",
+        "unchanged",
+      ]);
+      expect(second.frames[2]?.pixelsChanged).toBeGreaterThan(0);
+      expect(second.frames[2]?.diff).toHaveLength(
+        second.frames[2]?.pixelsChanged as number,
+      );
+
+      // The same pixels, retimed: a save that changes no pixel.
+      next = sheetOf(CELL, [
+        {
+          slot: "idle/south",
+          frames: [
+            ...four(rig).slice(0, 2),
+            paintFigure(rig.content, CELL, 9),
+            ...four(rig).slice(3),
+          ],
+          durations: [100, 100, 100, 100],
+        },
+      ]);
+      writeFileSync(file, "workspace-v4");
+      await waitFor(() => imports() === 3);
+      const same = await frames();
+      expect(same.frames.map((f) => f.pixelsChanged)).toEqual([0, 0, 0, 0]);
+      expect(same.frames.every((f) => f.change === "unchanged")).toBe(true);
+    } finally {
+      await studio.teardown();
+    }
+  });
+});
+
 describe("opening an edit in the editor", () => {
   test("builds the workspace, answers with its public metadata, and imports a changed workspace once by content hash until the edit is finished", async () => {
     const { rig, config, over } = pickedSet();

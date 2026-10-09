@@ -385,3 +385,202 @@ export function parseEditBrought(value: unknown): Parsed<EditBrought> {
     changed: value.changed,
   });
 }
+
+// --- The latest save of an edit ------------------------------------------------
+
+export type FrameChange = "unchanged" | "changed" | "added" | "unavailable";
+
+/** One pixel that differs, as `#rrggbbaa` (a transparent pixel is `#00000000`). */
+export interface PixelChange {
+  readonly x: number;
+  readonly y: number;
+  readonly before: string;
+  readonly after: string;
+}
+
+export interface EditReportFrame {
+  readonly index: number;
+  /** The stored report-only verdict of the frame as drawn. */
+  readonly report: "pass" | "fail";
+  readonly failedChecks: readonly string[];
+  readonly change: FrameChange;
+  /** Null for an added frame and when no base was recorded. */
+  readonly pixelsChanged: number | null;
+  readonly diff: readonly PixelChange[] | null;
+}
+
+export interface EditReportSlot {
+  readonly slot: string;
+  readonly diffAgainst: "recorded" | "unavailable";
+  readonly frames: readonly EditReportFrame[];
+  /** Frames this save has beyond the version it is measured against. */
+  readonly addedFrames: readonly number[];
+  /** Frames that version had beyond this save. */
+  readonly removedFrames: readonly number[];
+}
+
+export interface EditReport {
+  readonly editId: string;
+  readonly workingSetId: string;
+  readonly state: "open" | "finished";
+  readonly sheetHash: string;
+  readonly metadataHash: string;
+  readonly slots: readonly EditReportSlot[];
+}
+
+const SHA256 = /^[0-9a-f]{64}$/;
+const COLOUR = /^#[0-9a-f]{8}$/;
+
+function parsePixel(value: unknown, path: string): Parsed<PixelChange> {
+  if (!isObject(value)) return bad(path, "not an object");
+  if (!isCount(value.x) || !isCount(value.y))
+    return bad(path, "not a position");
+  if (!isText(value.before) || !COLOUR.test(value.before))
+    return bad(`${path}.before`, "not a colour");
+  if (!isText(value.after) || !COLOUR.test(value.after))
+    return bad(`${path}.after`, "not a colour");
+  return good({
+    x: value.x,
+    y: value.y,
+    before: value.before,
+    after: value.after,
+  });
+}
+
+const FRAME_CHANGES: readonly FrameChange[] = [
+  "unchanged",
+  "changed",
+  "added",
+  "unavailable",
+];
+
+function parseReportFrame(
+  value: unknown,
+  path: string,
+  index: number,
+): Parsed<EditReportFrame> {
+  if (!isObject(value)) return bad(path, "not an object");
+  if (value.index !== index) return bad(`${path}.index`, "out of order");
+  if (value.report !== "pass" && value.report !== "fail")
+    return bad(`${path}.report`, "not pass or fail");
+  if (!Array.isArray(value.failedChecks) || !value.failedChecks.every(isText))
+    return bad(`${path}.failedChecks`, "not a list of text");
+  if (value.report === "pass" && value.failedChecks.length > 0)
+    return bad(`${path}.failedChecks`, "a passing frame has failed checks");
+  const change = FRAME_CHANGES.find((c) => c === value.change);
+  if (change === undefined) return bad(`${path}.change`, "not a known change");
+
+  if (change === "added" || change === "unavailable") {
+    if (value.pixelsChanged !== null || value.diff !== null)
+      return bad(path, `a ${change} frame has no diff`);
+    return good({
+      index,
+      report: value.report,
+      failedChecks: value.failedChecks as readonly string[],
+      change,
+      pixelsChanged: null,
+      diff: null,
+    });
+  }
+  if (!isCount(value.pixelsChanged))
+    return bad(`${path}.pixelsChanged`, "not a count");
+  if (!Array.isArray(value.diff)) return bad(`${path}.diff`, "not a list");
+  if (value.diff.length !== value.pixelsChanged)
+    return bad(`${path}.diff`, "does not match the count");
+  if ((change === "unchanged") !== (value.pixelsChanged === 0))
+    return bad(`${path}.change`, "does not match the count");
+  const diff: PixelChange[] = [];
+  for (let i = 0; i < value.diff.length; i += 1) {
+    const pixel = parsePixel(value.diff[i], `${path}.diff[${i}]`);
+    if (!pixel.ok) return pixel;
+    diff.push(pixel.value);
+  }
+  return good({
+    index,
+    report: value.report,
+    failedChecks: value.failedChecks as readonly string[],
+    change,
+    pixelsChanged: value.pixelsChanged,
+    diff,
+  });
+}
+
+function parseReportSlot(value: unknown, path: string): Parsed<EditReportSlot> {
+  if (!isObject(value)) return bad(path, "not an object");
+  if (!isText(value.slot) || value.slot === "")
+    return bad(`${path}.slot`, "not text");
+  if (value.diffAgainst !== "recorded" && value.diffAgainst !== "unavailable")
+    return bad(`${path}.diffAgainst`, "not recorded or unavailable");
+  if (!Array.isArray(value.frames) || value.frames.length === 0)
+    return bad(`${path}.frames`, "not a list of frames");
+  const frames: EditReportFrame[] = [];
+  for (let i = 0; i < value.frames.length; i += 1) {
+    const frame = parseReportFrame(value.frames[i], `${path}.frames[${i}]`, i);
+    if (!frame.ok) return frame;
+    if (
+      (frame.value.change === "unavailable") !==
+      (value.diffAgainst === "unavailable")
+    )
+      return bad(`${path}.frames[${i}].change`, "does not match diffAgainst");
+    frames.push(frame.value);
+  }
+  const counts = (field: unknown, at: string): Parsed<readonly number[]> => {
+    if (!Array.isArray(field) || !field.every(isCount))
+      return bad(at, "not a list of frame numbers");
+    for (let i = 1; i < field.length; i += 1)
+      if ((field[i] as number) <= (field[i - 1] as number))
+        return bad(at, "not in ascending order");
+    return good(field as readonly number[]);
+  };
+  const added = counts(value.addedFrames, `${path}.addedFrames`);
+  if (!added.ok) return added;
+  const removed = counts(value.removedFrames, `${path}.removedFrames`);
+  if (!removed.ok) return removed;
+  const addedNow = frames
+    .filter((f) => f.change === "added")
+    .map((f) => f.index);
+  if (JSON.stringify(addedNow) !== JSON.stringify(added.value))
+    return bad(`${path}.addedFrames`, "not the added frames");
+  if (removed.value.some((n) => n < frames.length))
+    return bad(`${path}.removedFrames`, "names a frame the save has");
+  if (value.diffAgainst === "unavailable" && removed.value.length > 0)
+    return bad(
+      `${path}.removedFrames`,
+      "nothing to remove from an unknown base",
+    );
+  return good({
+    slot: value.slot,
+    diffAgainst: value.diffAgainst,
+    frames,
+    addedFrames: added.value,
+    removedFrames: removed.value,
+  });
+}
+
+export function parseEditReport(value: unknown): Parsed<EditReport> {
+  if (!isObject(value)) return bad("report", "not an object");
+  if (!isSlug(value.editId)) return bad("report.editId", "not an id");
+  if (!isSlug(value.workingSetId))
+    return bad("report.workingSetId", "not an id");
+  if (value.state !== "open" && value.state !== "finished")
+    return bad("report.state", "not open or finished");
+  if (!isText(value.sheetHash) || !SHA256.test(value.sheetHash))
+    return bad("report.sheetHash", "not a hash");
+  if (!isText(value.metadataHash) || !SHA256.test(value.metadataHash))
+    return bad("report.metadataHash", "not a hash");
+  if (!Array.isArray(value.slots)) return bad("report.slots", "not a list");
+  const slots: EditReportSlot[] = [];
+  for (let i = 0; i < value.slots.length; i += 1) {
+    const slot = parseReportSlot(value.slots[i], `report.slots[${i}]`);
+    if (!slot.ok) return slot;
+    slots.push(slot.value);
+  }
+  return good({
+    editId: value.editId,
+    workingSetId: value.workingSetId,
+    state: value.state,
+    sheetHash: value.sheetHash,
+    metadataHash: value.metadataHash,
+    slots,
+  });
+}

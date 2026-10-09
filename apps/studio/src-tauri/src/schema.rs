@@ -35,6 +35,9 @@ pub const OPS: &[OpSpec] = &[
     spec("list", &["kind"], Read),
     spec("sheet", &["workingSetId"], Read),
     spec("report", &["workingSetId", "slot"], Read),
+    // The latest save of an edit: stored report-only results and the changed
+    // pixels against the version before it. By id; it reads without the lock.
+    spec("edit-report", &["id"], Read),
     spec(
         "resolve",
         &[
@@ -178,6 +181,7 @@ mod tests {
                 "list",
                 "sheet",
                 "report",
+                "edit-report",
                 "resolve",
                 "source-list",
                 "source-resolve",
@@ -198,6 +202,21 @@ mod tests {
                 "publish",
             ]
         );
+    }
+
+    #[test]
+    fn edit_report_is_a_read_that_takes_one_edit_id_and_nothing_else() {
+        let row = lookup("edit-report").unwrap();
+        assert_eq!(row.args, ["id"]);
+        assert_eq!(row.class, OpClass::Read);
+        assert!(check("edit-report", &json!({ "id": "e1" })).is_ok());
+        for stray in ["path", "dir", "png", "workingSetId", "slot", "toString"] {
+            assert_eq!(
+                check("edit-report", &json!({ stray: "x" })),
+                Err(Refusal::UnknownArgument(stray.into())),
+                "{stray}"
+            );
+        }
     }
 
     #[test]
@@ -380,6 +399,7 @@ mod tests {
             "list",
             "sheet",
             "report",
+            "edit-report",
             "resolve",
             "source-list",
             "source-resolve",

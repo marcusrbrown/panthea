@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type EditReport,
   parseCommandError,
   parseConfigChoice,
   parseConfigStatus,
   parseEditExport,
   parseEditOpened,
+  parseEditReport,
   parseHostStatus,
   parseSnapshot,
 } from "./types";
@@ -347,5 +349,266 @@ describe("config and edit replies", () => {
       },
     });
     expect(parseEditExport({ editId: "e1", files: [1] }).ok).toBe(false);
+  });
+});
+
+describe("the edit report", () => {
+  const H = "a".repeat(64);
+  const px = { x: 4, y: 4, before: "#546471ff", after: "#596471ff" };
+  const frame = (over: Record<string, unknown> = {}) => ({
+    index: 0,
+    report: "pass",
+    failedChecks: [],
+    change: "unchanged",
+    pixelsChanged: 0,
+    diff: [],
+    ...over,
+  });
+  const slot = (over: Record<string, unknown> = {}) => ({
+    slot: "idle/south",
+    diffAgainst: "recorded",
+    frames: [
+      frame(),
+      frame({ index: 1, change: "changed", pixelsChanged: 1, diff: [px] }),
+      frame({
+        index: 2,
+        report: "fail",
+        failedChecks: ["grid", "palette"],
+        change: "added",
+        pixelsChanged: null,
+        diff: null,
+      }),
+    ],
+    addedFrames: [2],
+    removedFrames: [3, 4],
+    ...over,
+  });
+  const report = (over: Record<string, unknown> = {}) => ({
+    editId: "e1",
+    workingSetId: "zeus-set",
+    state: "open",
+    sheetHash: H,
+    metadataHash: "b".repeat(64),
+    slots: [slot()],
+    ...over,
+  });
+
+  test("a report with changed, unchanged and added frames, failed checks and removed frames parses as it is", () => {
+    expect(parseEditReport(report())).toEqual({
+      ok: true,
+      value: report() as unknown as EditReport,
+    });
+    expect(parseEditReport(report({ state: "finished" })).ok).toBe(true);
+  });
+
+  test("a save with no recorded base says unavailable for every frame and nothing is added or removed", () => {
+    const unavailable = slot({
+      diffAgainst: "unavailable",
+      frames: [
+        frame({ change: "unavailable", pixelsChanged: null, diff: null }),
+      ],
+      addedFrames: [],
+      removedFrames: [],
+    });
+    expect(parseEditReport(report({ slots: [unavailable] })).ok).toBe(true);
+  });
+
+  const bad: [string, (r: ReturnType<typeof report>) => unknown][] = [
+    ["not an object", () => 7],
+    ["null", () => null],
+    ["an unknown state", (r) => ({ ...r, state: "discarded" })],
+    ["a bad edit id", (r) => ({ ...r, editId: "../x" })],
+    ["a bad working set id", (r) => ({ ...r, workingSetId: "" })],
+    ["a bad sheet hash", (r) => ({ ...r, sheetHash: "x" })],
+    ["a bad metadata hash", (r) => ({ ...r, metadataHash: H.toUpperCase() })],
+    ["slots that are not a list", (r) => ({ ...r, slots: {} })],
+    ["a slot with no name", (r) => ({ ...r, slots: [slot({ slot: "" })] })],
+    [
+      "an unknown diffAgainst",
+      (r) => ({ ...r, slots: [slot({ diffAgainst: "base" })] }),
+    ],
+    [
+      "frames out of order",
+      (r) => ({
+        ...r,
+        slots: [slot({ frames: [frame({ index: 1 }), frame({ index: 0 })] })],
+      }),
+    ],
+    [
+      "an unknown report status",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [frame({ report: "maybe" })],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "a passing frame with failed checks",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [frame({ failedChecks: ["grid"] })],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "failed checks that are not text",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [frame({ report: "fail", failedChecks: [1] })],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "an unchanged frame that counts changed pixels",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [frame({ pixelsChanged: 1, diff: [px] })],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "a changed frame whose count is not its diff",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [
+              frame({ change: "changed", pixelsChanged: 2, diff: [px] }),
+            ],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "a changed frame with no changed pixels",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [frame({ change: "changed", pixelsChanged: 0, diff: [] })],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "an added frame that carries a diff",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [frame({ change: "added", pixelsChanged: 0, diff: [] })],
+            addedFrames: [0],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "a pixel with a malformed colour",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [
+              frame({
+                change: "changed",
+                pixelsChanged: 1,
+                diff: [{ ...px, after: "red" }],
+              }),
+            ],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "a pixel at a negative position",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [
+              frame({
+                change: "changed",
+                pixelsChanged: 1,
+                diff: [{ ...px, x: -1 }],
+              }),
+            ],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+    [
+      "added frames that are not the added frames",
+      (r) => ({ ...r, slots: [slot({ addedFrames: [0] })] }),
+    ],
+    [
+      "removed frames inside the current frames",
+      (r) => ({ ...r, slots: [slot({ removedFrames: [1] })] }),
+    ],
+    [
+      "removed frames out of order",
+      (r) => ({ ...r, slots: [slot({ removedFrames: [4, 3] })] }),
+    ],
+    [
+      "an unavailable slot that has a recorded frame",
+      (r) => ({ ...r, slots: [slot({ diffAgainst: "unavailable" })] }),
+    ],
+    [
+      "a recorded slot with an unavailable frame",
+      (r) => ({
+        ...r,
+        slots: [
+          slot({
+            frames: [
+              frame({ change: "unavailable", pixelsChanged: null, diff: null }),
+            ],
+            addedFrames: [],
+            removedFrames: [],
+          }),
+        ],
+      }),
+    ],
+  ];
+  for (const [name, make] of bad)
+    test(`a report with ${name} is refused`, () => {
+      const parsed = parseEditReport(make(report()));
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) expect(parsed.message.length).toBeGreaterThan(0);
+    });
+
+  test("a refusal names where it failed and never echoes a value", () => {
+    const parsed = parseEditReport(
+      report({ slots: [slot({ slot: "" }), { secret: "/Users/x/secret" }] }),
+    );
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.message).not.toContain("secret");
   });
 });

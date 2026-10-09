@@ -11,6 +11,7 @@ import {
   type EditBrought,
   type EditExport,
   type EditOpened,
+  type EditReport,
   type Parsed,
   parseCommandError,
   parseConfigChoice,
@@ -18,6 +19,7 @@ import {
   parseEditBrought,
   parseEditExport,
   parseEditOpened,
+  parseEditReport,
   parseSnapshot,
   type StudioSnapshot,
 } from "./types";
@@ -38,6 +40,7 @@ export const STUDIO_OPS = [
   "list",
   "sheet",
   "report",
+  "edit-report",
   "resolve",
   "source-list",
   "source-resolve",
@@ -112,6 +115,8 @@ export interface StudioHost {
   ): Promise<EditOpened>;
   editExport(editId: string): Promise<EditExport>;
   editImport(editId: string, finish?: boolean): Promise<EditBrought>;
+  /** The latest save of an open or finished edit; refuses with not-found or wrong-state. */
+  editReport(editId: string): Promise<EditReport>;
   configStatus(): Promise<ConfigStatus>;
   configChoose(): Promise<ConfigChoice>;
 }
@@ -242,6 +247,15 @@ export function createStudioHost(transport: HostTransport): StudioHost {
       return parsed(
         await invoke("edit_import", { editId, finish }),
         parseEditBrought,
+      );
+    },
+    async editReport(editId) {
+      return parsed(
+        await invoke("studio_call", {
+          op: "edit-report",
+          args: { id: editId },
+        }),
+        parseEditReport,
       );
     },
     async configStatus() {

@@ -13,6 +13,7 @@ import {
   paintFigure,
   queuedJob,
   runSlots,
+  sheetOf,
   spriteSet,
   workingSet,
 } from "../../../packages/assets/src/studio/_test-fixtures";
@@ -29,7 +30,7 @@ import {
   tempRoot,
   waitFor,
 } from "./_testkit";
-import { execute, opNames, opSpec, readArgs } from "./commands";
+import { execute, opNames, opSpec, READ_ONLY, readArgs } from "./commands";
 import type { StudioConfig } from "./config";
 import { exitOf } from "./format";
 import { Studio } from "./host";
@@ -123,6 +124,7 @@ describe("argument checking", () => {
       "source-resolve",
       "source-bytes",
       "source-keys",
+      "edit-report",
     ]) {
       expect(opSpec(op), op).toBeDefined();
       expect(opNames(), op).toContain(op);
@@ -809,3 +811,198 @@ void runtimeRig;
 void waitFor;
 void writeFileSync;
 void Studio;
+
+describe("edit-report", () => {
+  const cell = { w: 64, h: 80 };
+  const treeOf = (root: string) => {
+    const out: Record<string, string> = {};
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (!name.startsWith("session.lock"))
+          out[relative(root, path)] = readFileSync(path).toString("base64");
+      }
+    };
+    walk(root);
+    return out;
+  };
+
+  /** A finished edit e1 and an open edit e2 on the same slot, both owned by a session in this process. */
+  function twoEdits() {
+    const rig = assetRig();
+    const { frames } = spriteSet(rig);
+    rig.session.openEdit("e2", "w", ["idle/south"], rig.content);
+    return { rig, frames };
+  }
+
+  test("a finished edit answers while another session holds the lock, and reads without writing", async () => {
+    const { rig } = twoEdits();
+    const before = treeOf(rig.root);
+
+    const { outcome } = await run({ studioRoot: rig.root }, "edit-report", {
+      id: "e1",
+    });
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        editId: "e1",
+        workingSetId: "w",
+        state: "finished",
+        slots: [
+          {
+            slot: "idle/south",
+            diffAgainst: "recorded",
+            addedFrames: [1, 2, 3],
+            removedFrames: [],
+          },
+        ],
+      },
+    });
+    expect(openStudioSession(rig.root).kind).toBe("busy");
+    expect(treeOf(rig.root)).toEqual(before);
+    rig.session.close();
+  });
+
+  test("a second save of a re-edit shows the pixels that changed since the edit it started from, and nothing for the frames it left alone", async () => {
+    const { rig, frames } = twoEdits();
+    const edited = [
+      frames[0],
+      frames[1],
+      paintFigure(rig.content, cell, 7),
+      frames[3],
+    ] as NonNullable<(typeof frames)[number]>[];
+    const sheet = sheetOf(cell, [{ slot: "idle/south", frames: edited }]);
+    expect(
+      rig.session.importEdit("e2", sheet.png, sheet.json, rig.content),
+    ).toEqual({ ok: true, changed: true });
+
+    const { outcome } = await run({ studioRoot: rig.root }, "edit-report", {
+      id: "e2",
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    const slot = (
+      outcome.result as {
+        state: string;
+        slots: {
+          frames: {
+            index: number;
+            change: string;
+            pixelsChanged: number;
+            diff: unknown[];
+          }[];
+          removedFrames: number[];
+        }[];
+      }
+    ).slots[0];
+    expect((outcome.result as { state: string }).state).toBe("open");
+    expect(slot?.frames.map((f) => f.change)).toEqual([
+      "unchanged",
+      "unchanged",
+      "changed",
+      "unchanged",
+    ]);
+    expect(slot?.frames[2]?.pixelsChanged).toBeGreaterThan(0);
+    expect(slot?.frames[2]?.diff).toHaveLength(
+      slot?.frames[2]?.pixelsChanged as number,
+    );
+    expect(slot?.frames[0]?.pixelsChanged).toBe(0);
+    expect(slot?.removedFrames).toEqual([]);
+    rig.session.close();
+  });
+
+  test("an unknown edit, an edit with no save, a discarded edit and a bad id are refused, each without a write", async () => {
+    const { rig } = twoEdits();
+    const config: StudioConfig = { studioRoot: rig.root };
+    const unsaved = (await run(config, "edit-report", { id: "e2" })).outcome;
+    rig.session.discardEdit("e2");
+    rig.session.openEdit("e3", "w", ["idle/south"], rig.content);
+    const sheet = sheetOf(cell, [
+      { slot: "idle/south", frames: [paintFigure(rig.content, cell, 9)] },
+    ]);
+    rig.session.importEdit("e3", sheet.png, sheet.json, rig.content);
+    rig.session.discardEdit("e3");
+    const before = treeOf(rig.root);
+
+    const results = {
+      unknown: (await run(config, "edit-report", { id: "nope" })).outcome,
+      unsaved,
+      discarded: (await run(config, "edit-report", { id: "e3" })).outcome,
+      path: (await run(config, "edit-report", { id: "../../etc" })).outcome,
+    };
+
+    expect(codeOf(results.unknown)).toBe("not-found");
+    expect(codeOf(results.unsaved)).toBe("wrong-state");
+    expect(codeOf(results.discarded)).toBe("wrong-state");
+    expect(codeOf(results.path)).toBe("not-found");
+    for (const outcome of Object.values(results))
+      expect(exitOf(outcome)).toBe(1);
+    expect(treeOf(rig.root)).toEqual(before);
+    rig.session.close();
+  });
+
+  test("it takes an id and nothing else, and needs a configured root", async () => {
+    const config: StudioConfig = { studioRoot: tempRoot() };
+    for (const args of [
+      {},
+      { id: "" },
+      { id: 3 },
+      { id: "e1", extra: 1 },
+      { id: "e1", path: "/tmp/x" },
+      [],
+      null,
+    ]) {
+      const { outcome } = await run(config, "edit-report", args);
+      expect(codeOf(outcome), JSON.stringify(args)).toBe("invalid-arguments");
+    }
+    const none = await run({}, "edit-report", { id: "e1" });
+    expect(none.outcome).toMatchObject({
+      ok: false,
+      error: { code: "missing-config", field: "studioRoot" },
+    });
+    expect(exitOf(none.outcome)).toBe(64);
+  });
+
+  test("it is a lock-free read: listed read-only, and still answered while the session is shutting down", async () => {
+    expect(READ_ONLY.has("edit-report")).toBe(true);
+    const { rig } = twoEdits();
+    const studio = new Studio(
+      { studioRoot: rig.root },
+      depsFor(capture()),
+      "session",
+    );
+    await studio.teardown();
+    expect(studio.stopping).toBe(true);
+
+    const read = await execute(studio, "edit-report", { id: "e1" });
+    const write = await execute(studio, "remove", { jobId: "zeus-idle-0000" });
+
+    expect(read.ok).toBe(true);
+    expect(write).toMatchObject({
+      ok: false,
+      error: { code: "shutting-down" },
+    });
+    rig.session.close();
+  });
+
+  test("a stored frame that is gone is a typed refusal that prints no pixels", async () => {
+    const { rig } = twoEdits();
+    rig.session.close();
+    const hash = readStudioStatus(rig.root).edits.find((e) => e.id === "e1")
+      ?.preview?.slots["idle/south"]?.frames[0]?.hash as string;
+    writeFileSync(join(rig.root, "blobs", `${hash}.png`), "SECRET-PIXELS");
+
+    const { outcome } = await run({ studioRoot: rig.root }, "edit-report", {
+      id: "e1",
+    });
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: { code: "corrupt-blob" },
+    });
+    expect(JSON.stringify(outcome)).not.toContain("SECRET-PIXELS");
+  });
+});

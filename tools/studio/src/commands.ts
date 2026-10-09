@@ -10,6 +10,7 @@ import {
   type AssetOpResult,
   type CommandResult,
   type EditResult,
+  editReport,
   type FinishStep,
   isPreviewSlug,
   isPreviewSourceKind,
@@ -536,6 +537,19 @@ const OPS: Record<string, OpDef> = {
         a.workingSetId as string,
         a.slot as string,
       );
+    },
+  },
+  "edit-report": {
+    // The latest save of an edit: each frame's stored report-only result and
+    // its changed pixels against the version the save was measured against.
+    spec: str("id", true),
+    run: (studio, a) => {
+      const root = studio.root;
+      if (root === undefined) return studio.missing("studioRoot");
+      const result = editReport(root, a.id as string);
+      if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+      const { ok: _ok, ...reply } = result;
+      return done(j(reply));
     },
   },
   derive: { spec: {}, run: () => unsupported() },
@@ -1180,6 +1194,7 @@ export const READ_ONLY = new Set([
   "list",
   "sheet",
   "report",
+  "edit-report",
   "resolve",
   "source-list",
   "source-resolve",

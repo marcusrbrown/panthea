@@ -59,6 +59,13 @@ export interface EditEvidence {
 
 export interface PreviewSlot {
   readonly frames: readonly FrameRef[];
+  /**
+   * The frames this save is measured against: the save it replaced, or the
+   * frames the edit opened with. Absent on a record written before this was
+   * kept, and when neither could be named. The blobs are never deleted, so the
+   * hashes stay readable.
+   */
+  readonly against?: readonly FrameRef[];
   readonly pivot: Point | null;
   readonly reports: readonly {
     readonly report: ConformanceReport;
@@ -561,12 +568,7 @@ export function startSheet(args: {
       return bad(`slot ${slot} has neither a pick nor authored frames`);
     base[slot] = slotBasis;
     const authored = set.frames[slot];
-    const refs: readonly FrameRef[] = authored?.frames ?? [
-      {
-        hash: (set.picks[slot] as { imageHash: Sha256 }).imageHash,
-        durationMs: args.placeholderMs(slot),
-      },
-    ];
+    const refs = baseFrameRefs(set, slot, args.placeholderMs(slot)) ?? [];
     for (const ref of refs) {
       const bytes = args.readBlob(ref.hash);
       if (bytes === undefined)
@@ -608,6 +610,23 @@ export function startSheet(args: {
 }
 
 /**
+ * The frames an edit of `slot` starts from: the hand-finished frames, or else
+ * the picked image as one frame. Undefined when the slot has neither.
+ */
+export function baseFrameRefs(
+  set: WorkingSetRecord,
+  slot: string,
+  pickMs: number,
+): readonly FrameRef[] | undefined {
+  const authored = set.frames[slot];
+  if (authored !== undefined) return authored.frames;
+  const pick = set.picks[slot];
+  return pick === undefined
+    ? undefined
+    : [{ hash: pick.imageHash, durationMs: pickMs }];
+}
+
+/**
  * Crops every frame, reports on it as it is against the slot's palette, and
  * proposes a conformed version beside it. Hand pixels are only ever stored as
  * drawn; the proposal and the report are separate.
@@ -619,6 +638,8 @@ export function buildPreview(args: {
   readonly edit: Pick<EditRecord, "slots" | "cell" | "evidence">;
   readonly kind: "sprite" | "portrait";
   readonly content: StudioContent;
+  /** Per slot, the frames this save is measured against; a slot with none records none. */
+  readonly against?: Readonly<Record<string, readonly FrameRef[]>>;
 }): Checked<{
   readonly preview: EditPreview;
   readonly blobs: readonly Uint8Array[];
@@ -678,7 +699,14 @@ export function buildPreview(args: {
       reports.push({ report: result.report, proposalHash, diff: result.diff });
       timing.push({ frame, durationMs, bounds });
     }
-    slots[tag.name] = { frames, pivot, reports, timing };
+    const against = args.against?.[tag.name];
+    slots[tag.name] = {
+      frames,
+      ...(against === undefined ? {} : { against }),
+      pivot,
+      reports,
+      timing,
+    };
   }
   return {
     ok: true,
@@ -811,12 +839,20 @@ function parsePreviewSlot(
   return parseStrictRecord(
     value,
     path,
-    ["frames", "pivot", "reports", "timing"],
+    ["frames", "against", "pivot", "reports", "timing"],
     (record) => {
       const frames = parseFrameRefs(record.frames, `${path}.frames`);
       if (!frames.ok) return frames;
       if (frames.value.length === 0)
         return fail(`${path}.frames`, "expected at least one frame");
+      let against: readonly FrameRef[] | undefined;
+      if (record.against !== undefined) {
+        const parsedAgainst = parseFrameRefs(record.against, `${path}.against`);
+        if (!parsedAgainst.ok) return parsedAgainst;
+        if (parsedAgainst.value.length === 0)
+          return fail(`${path}.against`, "expected at least one frame");
+        against = parsedAgainst.value;
+      }
       let pivot: Point | null = null;
       if (record.pivot !== null) {
         const parsed = parsePoint(record.pivot, `${path}.pivot`);
@@ -929,6 +965,7 @@ function parsePreviewSlot(
           );
       return ok({
         frames: frames.value,
+        ...(against === undefined ? {} : { against }),
         pivot,
         reports: reports.value,
         timing: timing.value,
