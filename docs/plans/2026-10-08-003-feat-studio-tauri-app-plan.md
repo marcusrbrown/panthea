@@ -1,7 +1,7 @@
 ---
 title: "feat: Packaged Tauri studio app"
 type: feat
-status: active
+status: completed
 date: 2026-10-08
 origin: docs/brainstorms/2026-10-03-asset-studio-requirements.md
 ---
@@ -335,7 +335,7 @@ sequenceDiagram
 
 **Verification:** `bun run check` passes. An independent design review of the packaged window happens before the owner sees it.
 
-- [ ] **U6: Packaged evidence, headroom and parity**
+- [x] **U6: Packaged evidence, headroom and parity**
 
 **Goal:** Prove the packaged studio works end to end, and measure headroom.
 
