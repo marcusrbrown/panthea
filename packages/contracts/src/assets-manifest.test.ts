@@ -369,6 +369,25 @@ describe("asset manifests: sprites", () => {
     },
     /durationMs/,
   );
+  it("takes a held idle at 3-6 fps: 333/167/333/167 ms parses, 165 and 335 ms do not", () => {
+    const timed = (durations: number[]) => {
+      const value = sprite();
+      durations.forEach((ms, index) => {
+        value.animations[0].frames[index].durationMs = ms;
+      });
+      return parseAssetManifest(value, vocab);
+    };
+    expect(timed([333, 167, 333, 167]).ok).toBe(true);
+    expect(timed([166, 334, 166, 334]).ok).toBe(true);
+    for (const bad of [165, 335]) {
+      const result = timed([333, bad, 333, 167]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.path).toContain("animations[0].frames[1].durationMs");
+        expect(result.message).toContain("expected 166-334 ms");
+      }
+    }
+  });
   rejects(
     "a frame outside the atlas",
     sprite,

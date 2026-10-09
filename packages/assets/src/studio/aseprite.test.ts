@@ -413,7 +413,7 @@ describe("running the editor", () => {
       expect(params).toMatchObject({
         cellw: "64",
         cellh: "80",
-        durations: "167",
+        durations: "334",
         tags: "idle/south:1:1",
         pivots: "",
       });
