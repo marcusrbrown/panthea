@@ -18,6 +18,7 @@ import {
   type EditCommandResult,
   type EditResult,
 } from "./edit-session";
+import type { FinishStep } from "./export-import";
 import type { PackInput } from "./packing";
 import {
   type ApproveOptions,
@@ -94,12 +95,16 @@ export interface StudioSession {
     json: string,
     content: StudioContent,
   ): EditResult;
-  /** Imports the final sheet and puts its frames into the working set with one hand-edit step each. */
+  /**
+   * Imports the final sheet and puts its frames into the working set with one edit step each: a hand edit unless
+   * `step` says the sheet was made by a script, which then must say what ran.
+   */
   finishEdit(
     id: string,
     png: Uint8Array,
     json: string,
     content: StudioContent,
+    step?: FinishStep,
   ): EditResult;
   /** Ends an edit and leaves the working set exactly as it was. */
   discardEdit(id: string): EditCommandResult;

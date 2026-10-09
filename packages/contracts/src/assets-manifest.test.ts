@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import canonPortrait from "../../../content/greek/assets/registry/manifests/7cbaf7aa67a604b70b9c721dd0b31123d984c1e3034f10cba70c84e277c09c2d.json";
 import vocabularyJson from "../../../content/greek/assets/vocabulary.json";
 import {
   type AssetVocabulary,
@@ -618,6 +619,56 @@ describe("provenance", () => {
       }).ok,
     ).toBe(true);
   });
+
+  it("takes a hand step, a script step and the canon portrait's old-form steps", () => {
+    const withSteps = (handEdits: unknown[]) => ({ ...generated(), handEdits });
+    const hash = H("e");
+    const parsed = parseProvenance(
+      withSteps([
+        { description: "hand edit e1", hash },
+        {
+          description:
+            "scripted outline recolour (tools/probes/art-edit/sprite_cleanup_c2c.py)",
+          method: "script",
+          hash,
+        },
+        { description: "redrew the hands", method: "hand" },
+      ]),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.handEdits.map((s) => s.method)).toEqual([
+      undefined,
+      "script",
+      "hand",
+    ]);
+    expect("method" in (parsed.value.handEdits[0] ?? {})).toBe(false);
+
+    const canon = parseAssetManifest(canonPortrait, vocab);
+    expect(canon.ok).toBe(true);
+    if (!canon.ok) return;
+    expect(canon.value.provenance.handEdits.length).toBeGreaterThan(0);
+    expect(canon.value.provenance.handEdits.some((s) => "method" in s)).toBe(
+      false,
+    );
+  });
+
+  for (const [label, step, path] of [
+    [
+      "an empty description",
+      { description: "", method: "script" },
+      /description/,
+    ],
+    ["a missing description", { method: "script" }, /description/],
+    ["an unknown method", { description: "x", method: "magic" }, /method/],
+    ["a non-string method", { description: "x", method: 1 }, /method/],
+  ] as const) {
+    it(`rejects a hand-edit step with ${label}`, () => {
+      const result = parseProvenance({ ...generated(), handEdits: [step] });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(`${result.path} ${result.message}`).toMatch(path);
+    });
+  }
 
   provenanceRejects(
     "an unknown method",

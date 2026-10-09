@@ -99,6 +99,58 @@ export interface EditRecord {
   };
   readonly status: "open" | "finished" | "discarded";
   readonly preview: EditPreview | null;
+  /** How the edit was finished, when that is not the plain hand edit the studio would otherwise name. */
+  readonly step?: FinishStep;
+}
+
+/**
+ * Says how a finished edit is recorded in provenance. A hand edit may carry its own description; a script edit
+ * must, because its description is the only record of what ran.
+ */
+export type FinishStep =
+  | { readonly method: "hand"; readonly description?: string }
+  | { readonly method: "script"; readonly description: string };
+
+/** Checks a step that came from outside the SDK: a known method, and a non-empty description for a script. */
+export function checkFinishStep(
+  step: unknown,
+): Checked<FinishStep | undefined> {
+  if (step === undefined) return { ok: true, value: undefined };
+  if (!isRecord(step)) return bad("the finish step must be an object");
+  if (
+    Object.keys(step).some((key) => key !== "method" && key !== "description")
+  )
+    return bad("the finish step takes only a method and a description");
+  const { method, description } = step;
+  if (method !== "hand" && method !== "script")
+    return bad('the finish method must be "hand" or "script"');
+  if (
+    description !== undefined &&
+    (typeof description !== "string" || description === "")
+  )
+    return bad("the finish description must be a non-empty string");
+  if (method === "script" && description === undefined)
+    return bad("a scripted finish needs a description of what ran");
+  return {
+    ok: true,
+    value:
+      method === "script"
+        ? { method, description: description as string }
+        : description === undefined
+          ? { method }
+          : { method, description },
+  };
+}
+
+/** The provenance step an edit becomes: the plain "hand edit <id>" unless it was finished with its own step. */
+export function handStepOf(edit: Pick<EditRecord, "id" | "step">): {
+  readonly description: string;
+  readonly method?: "script";
+} {
+  const step = edit.step;
+  if (step?.method === "script")
+    return { description: step.description, method: "script" };
+  return { description: step?.description ?? `hand edit ${edit.id}` };
 }
 
 export type Checked<T> =
@@ -671,7 +723,7 @@ export function applyFinish(args: {
       pivot: made.pivot,
       handEdits: [
         ...(set.frames[slot]?.handEdits ?? []),
-        { description: `hand edit ${edit.id}`, hash: preview.sheetHash },
+        { ...handStepOf(edit), hash: preview.sheetHash },
       ],
     };
   }
@@ -901,6 +953,7 @@ export function parseEditRecord(input: unknown): ParseResult<EditRecord> {
       "baseSignature",
       "status",
       "preview",
+      "step",
     ],
     (record) => {
       if (record.schemaVersion !== 1)
@@ -1035,6 +1088,12 @@ export function parseEditRecord(input: unknown): ParseResult<EditRecord> {
         if (!parsed.ok) return parsed;
         preview = parsed.value;
       }
+      let step: FinishStep | undefined;
+      if (record.step !== undefined) {
+        const checked = checkFinishStep(record.step);
+        if (!checked.ok) return fail("edit.step", checked.message);
+        step = checked.value;
+      }
       return ok({
         schemaVersion: 1,
         id: id.value,
@@ -1047,6 +1106,7 @@ export function parseEditRecord(input: unknown): ParseResult<EditRecord> {
         baseSignature: baseSignature.value,
         status: status.value,
         preview,
+        ...(step === undefined ? {} : { step }),
       });
     },
   );

@@ -2025,6 +2025,112 @@ describe("finishing an edit", () => {
     session.close();
   });
 
+  test("a scripted finish records a script step with its description on every slot and on the edit; a named hand finish keeps the hand form", () => {
+    const scripted = opened();
+    const final = full();
+    const script = {
+      method: "script",
+      description:
+        "scripted idle loop (tools/probes/art-edit/sprite_idle_c2.py)",
+    } as const;
+
+    expect(
+      scripted.session.finishEdit("e1", final.png, final.json, content, script),
+    ).toEqual({ ok: true, changed: true });
+
+    const sheetHash = sha256Hex(final.png);
+    const step = {
+      description: script.description,
+      method: "script",
+      hash: sheetHash,
+    } as const;
+    expect(setOf(scripted.root)?.frames["idle/south"]?.handEdits).toEqual([
+      step,
+    ]);
+    expect(setOf(scripted.root)?.frames["idle/north"]?.handEdits).toEqual([
+      step,
+    ]);
+    expect(editOf(scripted.root, "e1")?.step).toEqual(script);
+    scripted.session.close();
+
+    const named = opened();
+    const again = full();
+    expect(
+      named.session.finishEdit("e1", again.png, again.json, content, {
+        method: "hand",
+        description: "redrew the left hand",
+      }),
+    ).toEqual({ ok: true, changed: true });
+    expect(setOf(named.root)?.frames["idle/south"]?.handEdits).toEqual([
+      { description: "redrew the left hand", hash: sha256Hex(again.png) },
+    ]);
+    expect(editOf(named.root, "e1")?.step).toEqual({
+      method: "hand",
+      description: "redrew the left hand",
+    });
+    named.session.close();
+  });
+
+  test("a plain finish records no step on the edit and no method on the hand edit", () => {
+    const { root, session } = opened();
+    const final = full();
+    session.finishEdit("e1", final.png, final.json, content);
+    expect(editOf(root, "e1")?.step).toBeUndefined();
+    const step = setOf(root)?.frames["idle/south"]?.handEdits[0];
+    expect(step).toEqual({
+      description: "hand edit e1",
+      hash: sha256Hex(final.png),
+    });
+    expect(step && "method" in step).toBe(false);
+    session.close();
+  });
+
+  test("a scripted finish without a description or with an unknown method is refused with nothing written", () => {
+    const { root, session } = opened();
+    const final = full();
+    for (const bad of [
+      { method: "script" },
+      { method: "script", description: "" },
+      { method: "magic", description: "x" },
+    ]) {
+      expect(
+        session.finishEdit("e1", final.png, final.json, content, bad as never),
+      ).toMatchObject({ ok: false, reason: "invalid-params" });
+    }
+    expect(editOf(root, "e1")?.status).toBe("open");
+    expect(setOf(root)?.status).toBe("open");
+    session.close();
+  });
+
+  test("a retry after a failed finished mark must repeat the same step", () => {
+    const { root, session } = opened();
+    const final = full();
+    const script = { method: "script", description: "scripted a" } as const;
+    chmodSync(join(root, "edits"), 0o500);
+    try {
+      expect(
+        session.finishEdit("e1", final.png, final.json, content, script),
+      ).toMatchObject({ ok: false, reason: "write-failed" });
+    } finally {
+      chmodSync(join(root, "edits"), 0o700);
+    }
+
+    expect(
+      session.finishEdit("e1", final.png, final.json, content),
+    ).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(
+      session.finishEdit("e1", final.png, final.json, content, {
+        ...script,
+        description: "scripted b",
+      }),
+    ).toMatchObject({ ok: false, reason: "wrong-state" });
+    expect(
+      session.finishEdit("e1", final.png, final.json, content, script),
+    ).toEqual({ ok: true, changed: true });
+    expect(editOf(root, "e1")?.step).toEqual(script);
+    session.close();
+  });
+
   test("a preview of the same content is reused and finishing needs no second import", () => {
     const { root, session } = opened();
     const final = full();

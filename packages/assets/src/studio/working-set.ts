@@ -219,18 +219,38 @@ export function parseHandEdits(
   path: string,
 ): ParseResult<readonly HandEditStep[]> {
   return parseArray(value, path, (item, itemPath) =>
-    parseStrictRecord(item, itemPath, ["description", "hash"], (record) => {
-      const description = parseString(
-        record.description,
-        `${itemPath}.description`,
-      );
-      if (!description.ok) return description;
-      if (record.hash === undefined)
-        return ok({ description: description.value });
-      const hash = parseSha256(record.hash, `${itemPath}.hash`);
-      if (!hash.ok) return hash;
-      return ok({ description: description.value, hash: hash.value });
-    }),
+    parseStrictRecord(
+      item,
+      itemPath,
+      ["description", "hash", "method"],
+      (record) => {
+        const description = parseString(
+          record.description,
+          `${itemPath}.description`,
+        );
+        if (!description.ok) return description;
+        let method: HandEditStep["method"];
+        if (record.method !== undefined) {
+          const parsed = parseEnum(record.method, `${itemPath}.method`, [
+            "hand",
+            "script",
+          ] as const);
+          if (!parsed.ok) return parsed;
+          method = parsed.value;
+        }
+        let hash: Sha256 | undefined;
+        if (record.hash !== undefined) {
+          const parsed = parseSha256(record.hash, `${itemPath}.hash`);
+          if (!parsed.ok) return parsed;
+          hash = parsed.value;
+        }
+        return ok({
+          description: description.value,
+          ...(hash === undefined ? {} : { hash }),
+          ...(method === undefined ? {} : { method }),
+        });
+      },
+    ),
   );
 }
 

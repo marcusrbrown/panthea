@@ -10,6 +10,7 @@ import {
   type AssetOpResult,
   type CommandResult,
   type EditResult,
+  type FinishStep,
   newRequestRecord,
   type PackInput,
   type RequestInput,
@@ -206,6 +207,26 @@ function readEditArgs(a: Args): EditArgs | undefined | Outcome {
       cue: a.editCue as string,
     },
   };
+}
+
+/** The finish step the flags describe: none for the default hand edit, a script step only with its description. */
+function readStep(a: Args): FinishStep | undefined | Outcome {
+  if (a.method === undefined && a.description === undefined) return undefined;
+  const method = a.method ?? "hand";
+  if (method !== "hand" && method !== "script")
+    return refuse("invalid-arguments", '--method must be "hand" or "script"');
+  if (a.description !== undefined && a.description === "")
+    return refuse("invalid-arguments", "--description must not be empty");
+  if (method === "script")
+    return a.description === undefined
+      ? refuse(
+          "invalid-arguments",
+          "--method script needs a --description of what ran",
+        )
+      : { method, description: a.description as string };
+  return a.description === undefined
+    ? { method }
+    : { method, description: a.description as string };
 }
 
 function readFiles(
@@ -737,7 +758,13 @@ const OPS: Record<string, OpDef> = {
     run: async (studio, a) => editBring(studio, a, "import"),
   },
   finish: {
-    spec: { ...str("id", true), ...str("png"), ...str("json") },
+    spec: {
+      ...str("id", true),
+      ...str("png"),
+      ...str("json"),
+      ...str("method"),
+      ...str("description"),
+    },
     run: async (studio, a) => editBring(studio, a, "finish"),
   },
   discard: {
@@ -960,12 +987,25 @@ async function editBring(
   if (isOutcome(content)) return content;
   const files = readFiles(a.png, a.json);
   if (isOutcome(files)) return files;
+  const step = readStep(a);
+  if (isOutcome(step)) return step;
+  if (step !== undefined && files === undefined)
+    return refuse(
+      "invalid-arguments",
+      "--method and --description describe a sheet brought back with --png and --json",
+    );
   let result: EditResult | { ok: false; reason: string; message: string };
   if (files !== undefined)
     result =
       mode === "import"
         ? session.importEdit(a.id as string, files.png, files.json, content)
-        : session.finishEdit(a.id as string, files.png, files.json, content);
+        : session.finishEdit(
+            a.id as string,
+            files.png,
+            files.json,
+            content,
+            step,
+          );
   else {
     const editor = studio.editorFor(session);
     if (isOutcome(editor)) return editor;
