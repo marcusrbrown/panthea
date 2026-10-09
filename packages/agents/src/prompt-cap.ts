@@ -137,7 +137,7 @@ function rederive(input: CapInput, remembered: Remembered): Remembered {
 export interface CausalSet {
   /** Memory ids: the newest memory, and the evidence behind the demand opening shown first. */
   readonly memories: ReadonlySet<EventId>;
-  /** Prayer ids: the one prayer the god can answer, beyond those a live practice names. */
+  /** Prayer ids: the one prayer the god can answer, beyond those a live practice names; empty when a thread awaits its answer. */
   readonly prayers: ReadonlySet<EventId>;
 }
 
@@ -148,7 +148,8 @@ export interface CausalSet {
  * - the memory (or the prayer, for harm a prayer told of) that the demand opening shown first rests on, only
  *   that one and not every cause available;
  * - one prayer with its choices: the prayer the first offer opening names, else the first prayer shown with an
- *   offer, else the newest prayer with any answer.
+ *   offer, else the newest prayer with any answer; none when a thread awaits the god's answer, which is then
+ *   its answer slot.
  * It is read from the unshed world once. Shedding re-derives the practice options from survivors, and what
  * that derives later is never added here.
  */
@@ -198,10 +199,15 @@ export function causalSet(input: CapInput): CausalSet {
         (state.petitions.get(b.id)?.sequence ?? 0) -
           (state.petitions.get(a.id)?.sequence ?? 0) || (a.id < b.id ? -1 : 1),
     )[0]?.id;
+  // The answer slot is one thread or one prayer: a thread awaiting the god's answer is its answer opportunity, and
+  // the digest shows it whole, so no prayer is kept for answering. A prayer a live practice names stays protected.
+  const awaitsAnswer = remembered.threads.some(
+    (thread) => thread.standing === "awaiting",
+  );
   const keep = [named, offered, answerable].find(
     (id): id is EventId => id !== undefined && shownPrayer.has(id as EventId),
   );
-  if (keep !== undefined) prayers.add(keep);
+  if (keep !== undefined && !awaitsAnswer) prayers.add(keep);
   return { memories, prayers };
 }
 

@@ -195,7 +195,9 @@ interface WorldOptions {
   readonly events?: number;
   readonly actions?: number;
   /** How many of the oldest prayers a live practice holds: 3 is two open offers and an accepted one (a boon owed), 1 is one open offer. */
-  readonly live?: 1 | 3;
+  readonly live?: 0 | 1 | 3;
+  /** Hera has demanded of Zeus over what he told her: a thread awaits his answer, which leaves the digest no openings. */
+  readonly awaited?: boolean;
   /** Every memory is of the same kind of loss, about the goal's target, with a line of the same length. */
   readonly uniform?: boolean;
   /** The characters of the legend each recent event carries; 0 for none. */
@@ -227,6 +229,7 @@ function busyZeus(options: WorldOptions = {}) {
     eventText = 0,
     actionText = 0,
     mixedPrayers = false,
+    awaited = false,
   } = options;
   const run = new WorldRun();
   const people = [...run.state.actors.values()]
@@ -311,6 +314,25 @@ function busyZeus(options: WorldOptions = {}) {
         thread: accepted.id,
       });
     }
+  }
+  if (awaited) {
+    const heraCause = run.accused("hera", "zeus", {
+      agent: "hera",
+      target: "zeus",
+    });
+    run.tick({
+      actor: "hera",
+      kind: "practice",
+      move: "demand",
+      counterparty: "zeus",
+      cause: heraCause,
+      term: {
+        kind: "tell-legend",
+        party: "zeus",
+        place: "altar",
+        deadlineTicks: 100,
+      },
+    });
   }
   const accusedBy = accusers.map((accuser) => ({
     ...accuser,
@@ -1682,5 +1704,112 @@ describe("the digest does not repeat the kept prayer's offer", () => {
       ).ok,
     ).toBe(true);
     expectAgreement(w, capped);
+  });
+});
+
+describe("the causal set: one answer slot, a thread or a prayer", () => {
+  const sizes = (w: World, prayers: ReadonlySet<EventId>) => {
+    const input = {
+      profile: w.profile,
+      state: w.state,
+      actorId: id("zeus"),
+      snapshot: w.snapshot,
+      remembered: w.remembered,
+      ratio: 0.5,
+    };
+    return shedToCap(input, {
+      memories: causalSet(input).memories,
+      prayers,
+    });
+  };
+  const setOf = (w: World) =>
+    causalSet({
+      profile: w.profile,
+      state: w.state,
+      actorId: id("zeus"),
+      snapshot: w.snapshot,
+      remembered: w.remembered,
+      ratio: 0.5,
+    });
+  const SHAPE = {
+    live: 0,
+    prayers: 4,
+    events: 0,
+    actions: 0,
+    feelings: [],
+    memories: [],
+    newest: 6,
+    awaited: true,
+  } as const;
+
+  test("the fixture: a thread awaits Zeus, no live practice holds a prayer, and the digest has no opening", () => {
+    const w = busyZeus(SHAPE);
+    expect(w.remembered.threads.map((t) => t.standing)).toEqual(["awaiting"]);
+    expect(w.remembered.practice.openings).toEqual([]);
+    expect(w.protectedIds).toEqual([]);
+    expect(w.remembered.petitions.length).toBeGreaterThan(1);
+    expect(
+      buildGodContext(w.profile, w.snapshot, w.remembered).prompt,
+    ).toContain("AWAITING YOUR ANSWER");
+  });
+
+  test("with a thread awaiting his answer no prayer is protected as the answerable prayer", () => {
+    const w = busyZeus(SHAPE);
+    expect([...setOf(w).prayers]).toEqual([]);
+    const capped = capAt(w, 0.5);
+    expect(capped.remembered.petitions).toEqual([]);
+    expectAgreement(w, capped);
+  });
+
+  test("Zeus's S15 shape: over the cap only because a prayer is protected, the prayer sheds, the awaiting row and the newest memory stay, and the turn fits", () => {
+    const w = busyZeus(SHAPE);
+    const newest = [...w.remembered.petitions].sort(
+      (a, b) =>
+        (w.state.petitions.get(b.id)?.sequence ?? 0) -
+        (w.state.petitions.get(a.id)?.sequence ?? 0),
+    )[0] as World["remembered"]["petitions"][number];
+    // What the rule before this one kept: the newest prayer the god can answer.
+    const before = sizes(w, new Set([newest.id]));
+    expect(before.remembered.petitions.map((p) => p.id)).toEqual([newest.id]);
+    const limit = requestChars(before.context) - 40;
+    const capped = capAt(w, ratioAt(limit));
+    expect(fitsCap(before.context, ratioAt(limit))).toBe(false);
+    expect(capped.fits).toBe(true);
+    expect(capped.remembered.petitions).toEqual([]);
+    expect(capped.remembered.threads).toEqual(w.remembered.threads);
+    expect(capped.context.prompt).toContain("AWAITING YOUR ANSWER");
+    expect(capped.context.prompt).toContain('"move":"accept"');
+    expect(capped.remembered.memories.map((m) => String(m.id))).toContain(
+      "evt-m-newest",
+    );
+    expectAgreement(w, capped);
+  });
+
+  test("with no thread awaiting, the answerable prayer is protected as it was", () => {
+    const w = busyZeus({ ...SHAPE, awaited: false });
+    expect(w.remembered.threads).toEqual([]);
+    const set = setOf(w);
+    expect(set.prayers.size).toBe(1);
+    const capped = capAt(w, 0.5);
+    expect(capped.remembered.petitions.map((p) => p.id)).toEqual([
+      ...set.prayers,
+    ]);
+    expectAgreement(w, capped);
+  });
+
+  test("a prayer a live practice holds or a boon is owed on stays protected whether or not a thread awaits", () => {
+    for (const live of [1, 3] as const) {
+      const w = busyZeus({ ...SHAPE, live, prayers: 6 });
+      expect(w.remembered.threads.some((t) => t.standing === "awaiting")).toBe(
+        true,
+      );
+      expect(w.protectedIds).toHaveLength(live);
+      expect([...setOf(w).prayers]).toEqual([]);
+      const capped = capAt(w, 0.5);
+      expect(capped.remembered.petitions.map((p) => p.id).sort()).toEqual(
+        [...w.protectedIds].sort(),
+      );
+      expectAgreement(w, capped);
+    }
   });
 });
