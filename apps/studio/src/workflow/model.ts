@@ -1,4 +1,5 @@
 import type {
+  CandidateSummary,
   EditReport,
   HostStatus,
   StudioSnapshot,
@@ -29,6 +30,7 @@ export interface WorkflowState {
   readonly host: HostStatus;
   readonly configured: boolean;
   readonly lockOwner?: number;
+  readonly status?: Readonly<Record<string, unknown>> | null;
   readonly requests: readonly SummaryRecord[];
   readonly jobs: readonly QueueJob[];
   readonly candidates: readonly SummaryRecord[];
@@ -38,6 +40,7 @@ export interface WorkflowState {
   readonly assets: readonly SummaryRecord[];
   readonly errors: Readonly<Record<string, { code: string; message?: string }>>;
   readonly tombstones: Readonly<Record<string, "cancelled" | "removed">>;
+  readonly restartPending: boolean;
   readonly selectedAssetId?: string;
   readonly sheet?: unknown;
   readonly resolution?: unknown;
@@ -55,7 +58,11 @@ export type WorkflowAction =
   | { readonly type: "refusal"; readonly message: string }
   | { readonly type: "sheet"; readonly value: unknown }
   | { readonly type: "select-asset"; readonly assetId: string }
-  | { readonly type: "edit-report"; readonly report: EditReport };
+  | { readonly type: "edit-report"; readonly report: EditReport }
+  | {
+      readonly type: "candidate-conformed";
+      readonly candidate: CandidateSummary;
+    };
 
 const object = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null
@@ -107,6 +114,7 @@ export function initialWorkflowState(): WorkflowState {
   return {
     host: { state: "starting" },
     configured: false,
+    restartPending: false,
     requests: [],
     jobs: [],
     candidates: [],
@@ -146,9 +154,14 @@ export function workflowReducer(
         ...state,
         host: snapshot.host,
         configured: snapshot.host.state !== "not-configured",
+        status: snapshot.status === undefined ? state.status : snapshot.status,
         ...(pid === undefined ? { lockOwner: undefined } : { lockOwner: pid }),
         requests: snapshot.requests ?? [],
         jobs,
+        restartPending:
+          state.restartPending &&
+          jobs.some((job) => job.status === "queued") &&
+          !jobs.some((job) => job.status === "running"),
         candidates: snapshot.candidates ?? [],
         edits: snapshot.edits ?? [],
         workingSets: snapshot.workingSets ?? [],
@@ -177,19 +190,26 @@ export function workflowReducer(
     case "job-cancelled":
       return {
         ...state,
+        restartPending: state.jobs.some(
+          (job) => job.id !== action.jobId && job.status === "queued",
+        ),
         tombstones: { ...state.tombstones, [action.jobId]: "cancelled" },
         jobs: state.jobs.map((job) =>
           job.id === action.jobId ? { ...job, status: "cancelled" } : job,
         ),
       };
-    case "job-removed":
+    case "job-removed": {
+      const jobs = state.jobs.map((job) =>
+        job.id === action.jobId ? { ...job, status: "removed" as const } : job,
+      );
       return {
         ...state,
         tombstones: { ...state.tombstones, [action.jobId]: "removed" },
-        jobs: state.jobs.map((job) =>
-          job.id === action.jobId ? { ...job, status: "removed" } : job,
-        ),
+        jobs,
+        restartPending:
+          state.restartPending && jobs.some((job) => job.status === "queued"),
       };
+    }
     case "resolution":
       return { ...state, resolution: action.value, refusal: undefined };
     case "refusal":
@@ -206,6 +226,24 @@ export function workflowReducer(
           [action.report.editId]: action.report,
         },
       };
+    case "candidate-conformed": {
+      const candidate = action.candidate as SummaryRecord;
+      return {
+        ...state,
+        candidates: [
+          ...state.candidates.filter((item) => item.id !== candidate.id),
+          candidate,
+        ],
+        jobs: state.jobs.map((job) =>
+          job.id === candidate.id
+            ? {
+                ...job,
+                raw: { ...job.raw, candidate: action.candidate.status },
+              }
+            : job,
+        ),
+      };
+    }
   }
 }
 

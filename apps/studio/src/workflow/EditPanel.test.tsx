@@ -90,6 +90,21 @@ describe("EditPanel", () => {
     );
   });
 
+  test("finished edits keep their report but do not offer to reopen the editor", () => {
+    const html = renderToStaticMarkup(
+      createElement(EditPanel, {
+        host,
+        edit: { id: "edit-1", status: "finished", slots: ["idle/south"] },
+        report: { ...report, state: "finished" },
+        editorLaunched: true,
+        canMutate: true,
+      }),
+    );
+    expect(html).toContain("Saved version");
+    expect(html).not.toContain("Open editor again");
+    expect(html).not.toContain("Finish and keep");
+  });
+
   test("added and removed frames are named separately from pixel diffs", () => {
     const slot = report.slots[0];
     if (!slot) throw new Error("Edit report fixture needs one slot.");

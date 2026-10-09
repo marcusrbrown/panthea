@@ -8,9 +8,27 @@ import {
   useRef,
   useState,
 } from "react";
+
 import type { StudioHost } from "../host/client";
 import { tauriHost } from "../host/tauri";
-import type { StudioSnapshot, SummaryRecord } from "../host/types";
+import type {
+  CandidateSummary,
+  ConformHow,
+  ConformParams,
+  StudioSnapshot,
+  SummaryRecord,
+} from "../host/types";
+import {
+  conformJob,
+  editReportSignature,
+  editsForReports,
+  readEditReport as fetchEditReport,
+  inlineParamsAtScale,
+  parseSlotSpecs,
+  readExistingSheet,
+  rerollArgs,
+  slotHint,
+} from "./actions";
 import { CandidatePixels } from "./CandidatePixelCell";
 import { EditPanel } from "./EditPanel";
 import {
@@ -43,12 +61,7 @@ const text = (value: unknown, fallback = "") =>
 const recordState = (record: SummaryRecord) =>
   recordText(record, "state") ?? recordText(record, "status");
 const candidateChangeCount = (candidate: SummaryRecord) => {
-  const metrics = recordObject(candidate, "metrics");
-  const count =
-    recordValue(candidate, "pixelsMoved") ??
-    recordValue(candidate, "pixelsChanged") ??
-    metrics.pixelsMoved ??
-    metrics.pixelsChanged;
+  const count = recordValue(candidate, "pixelsChanged");
   return typeof count === "number" && Number.isFinite(count)
     ? count
     : Number.POSITIVE_INFINITY;
@@ -70,24 +83,6 @@ const slug = (value: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-
-function slotSpecs(source: string): Record<string, string>[] {
-  return source
-    .split("\n")
-    .map((row) => row.trim())
-    .filter(Boolean)
-    .map((row) => {
-      const [state, direction, ability, expression] = row
-        .split("/")
-        .map((part) => part.trim());
-      return {
-        ...(state ? { state } : {}),
-        ...(direction ? { direction } : {}),
-        ...(ability ? { ability } : {}),
-        ...(expression ? { expression } : {}),
-      };
-    });
-}
 
 function detailText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -113,6 +108,10 @@ function QueueItem({
   onRemove,
   onAbort,
   onRetry,
+  conformSet,
+  onConform,
+  candidate,
+  conformBusy,
 }: {
   job: QueueJob;
   state: WorkflowState;
@@ -120,10 +119,15 @@ function QueueItem({
   onRemove: (id: string) => void;
   onAbort: (id: string) => void;
   onRetry: (job: QueueJob) => void;
+  conformSet: string;
+  onConform: (jobId: string, how: ConformHow) => void;
+  candidate?: SummaryRecord;
+  conformBusy: boolean;
 }) {
+  const candidateSummary = candidate as CandidateSummary | undefined;
   const restartRemoval =
     state.lockOwner === undefined &&
-    state.host.state === "restarting" &&
+    (state.restartPending || state.host.state === "restarting") &&
     (job.status === "queued" || job.status === "aborting");
   const enabled = (canMutate(state) || restartRemoval) && !busy;
   const canRemove = job.status === "queued" || job.status === "aborting";
@@ -142,7 +146,9 @@ function QueueItem({
         {job.id}
         {job.requestId ? ` · ${job.requestId}` : ""}
       </small>
-      {job.status === "aborting" && (
+      {(job.status === "aborting" ||
+        (state.restartPending &&
+          (job.status === "cancelled" || job.status === "queued"))) && (
         <p className="queue-note">
           Stopping and restarting the image server (about 37 seconds).
         </p>
@@ -191,8 +197,204 @@ function QueueItem({
             Retry
           </button>
         )}
+        {job.status === "completed" && job.raw.candidate === null && (
+          <div className="conform-job">
+            <button
+              type="button"
+              disabled={!enabled || !conformSet || conformBusy}
+              onClick={() => onConform(job.id, { set: conformSet })}
+            >
+              Conform
+            </button>
+          </div>
+        )}
       </div>
+      {candidateSummary?.status === "needs-scale" && (
+        <ScaleConformForm
+          candidate={candidateSummary}
+          disabled={!enabled || conformBusy}
+          onConform={(params) => onConform(job.id, params)}
+        />
+      )}
     </li>
+  );
+}
+
+function ScaleConformForm({
+  candidate,
+  disabled,
+  onConform,
+}: {
+  candidate: Extract<CandidateSummary, { status: "needs-scale" }>;
+  disabled: boolean;
+  onConform: (how: ConformHow) => void;
+}) {
+  const [scale, setScale] = useState("");
+  const [backgroundType, setBackgroundType] = useState<"alpha" | "key">(
+    "alpha",
+  );
+  const [alphaCutoff, setAlphaCutoff] = useState("");
+  const [edgeTolerance, setEdgeTolerance] = useState("");
+  const [minConfidence, setMinConfidence] = useState("");
+  const [minEdges, setMinEdges] = useState("");
+  const [rgb, setRgb] = useState("");
+  const [tolerance, setTolerance] = useState("");
+
+  const scaleValue = Number(scale);
+  const alphaCutoffValue = Number(alphaCutoff);
+  const edgeToleranceValue = Number(edgeTolerance);
+  const confidenceValue = Number(minConfidence);
+  const minEdgesValue = Number(minEdges);
+  const rgbValues = rgb.split(",").map((part) => Number(part.trim()));
+  const toleranceValue = Number(tolerance);
+  const valid =
+    Number.isInteger(scaleValue) &&
+    scaleValue > 0 &&
+    Number.isInteger(alphaCutoffValue) &&
+    alphaCutoff.trim() !== "" &&
+    alphaCutoffValue >= 0 &&
+    Number.isInteger(edgeToleranceValue) &&
+    edgeTolerance.trim() !== "" &&
+    edgeToleranceValue >= 0 &&
+    Number.isFinite(confidenceValue) &&
+    minConfidence.trim() !== "" &&
+    confidenceValue >= 0 &&
+    confidenceValue <= 1 &&
+    Number.isInteger(minEdgesValue) &&
+    minEdgesValue > 0 &&
+    (backgroundType === "alpha" ||
+      (rgbValues.length === 3 &&
+        rgbValues.every(
+          (part) => Number.isInteger(part) && part >= 0 && part <= 255,
+        ) &&
+        tolerance.trim() !== "" &&
+        Number.isInteger(toleranceValue) &&
+        toleranceValue >= 0));
+
+  const submit = () => {
+    if (disabled || !valid) return;
+    const background: ConformParams["background"] =
+      backgroundType === "alpha"
+        ? { type: "alpha" }
+        : {
+            type: "key",
+            rgb: rgbValues as [number, number, number],
+            tolerance: toleranceValue,
+          };
+    const params: ConformParams = {
+      background,
+      alphaCutoff: alphaCutoffValue,
+      grid: {
+        edgeTolerance: edgeToleranceValue,
+        minConfidence: confidenceValue,
+        minEdges: minEdgesValue,
+      },
+    };
+    onConform(inlineParamsAtScale(params, scaleValue));
+  };
+
+  return (
+    <form
+      className="scale-conform-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        submit();
+      }}
+    >
+      <p className="queue-note">{candidate.message}</p>
+      <h4>Inline conform settings</h4>
+      <p className="muted">
+        Set the full thresholds below; the scale is added to these params.
+      </p>
+      <label>
+        Scale
+        <input
+          type="number"
+          min={1}
+          step={1}
+          value={scale}
+          onChange={(event) => setScale(event.target.value)}
+        />
+      </label>
+      <label>
+        Background
+        <select
+          value={backgroundType}
+          onChange={(event) =>
+            setBackgroundType(event.target.value as "alpha" | "key")
+          }
+        >
+          <option value="alpha">Alpha</option>
+          <option value="key">Colour key</option>
+        </select>
+      </label>
+      {backgroundType === "key" && (
+        <>
+          <label>
+            Key RGB
+            <input
+              value={rgb}
+              placeholder="r, g, b"
+              onChange={(event) => setRgb(event.target.value)}
+            />
+          </label>
+          <label>
+            Key tolerance
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={tolerance}
+              onChange={(event) => setTolerance(event.target.value)}
+            />
+          </label>
+        </>
+      )}
+      <label>
+        Alpha cutoff
+        <input
+          type="number"
+          min={0}
+          step={1}
+          value={alphaCutoff}
+          onChange={(event) => setAlphaCutoff(event.target.value)}
+        />
+      </label>
+      <label>
+        Grid edge tolerance
+        <input
+          type="number"
+          min={0}
+          step={1}
+          value={edgeTolerance}
+          onChange={(event) => setEdgeTolerance(event.target.value)}
+        />
+      </label>
+      <label>
+        Grid minimum confidence
+        <input
+          type="number"
+          min={0}
+          max={1}
+          step="any"
+          value={minConfidence}
+          onChange={(event) => setMinConfidence(event.target.value)}
+        />
+      </label>
+      <label>
+        Grid minimum edges
+        <input
+          type="number"
+          min={1}
+          step={1}
+          value={minEdges}
+          onChange={(event) => setMinEdges(event.target.value)}
+        />
+      </label>
+      <button type="submit" disabled={disabled || !valid}>
+        Run with scale
+      </button>
+    </form>
   );
 }
 
@@ -212,9 +414,15 @@ export function WorkflowView({
   const [resolvedArgs, setResolvedArgs] = useState<Record<string, unknown>>();
   const [workingSetId, setWorkingSetId] = useState("");
   const [assetId, setAssetId] = useState("");
-  const [styleTag, setStyleTag] = useState("greek-master");
+  const [styleTag, setStyleTag] = useState("");
   const [exception, setException] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [conformBusy, setConformBusy] = useState<Record<string, boolean>>({});
+  const [conformSet, setConformSet] = useState("");
+  const [fetchedStatus, setFetchedStatus] = useState<
+    Record<string, unknown> | undefined
+  >();
   const [queueBusy, setQueueBusy] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState("");
   const [refusalDetails, setRefusalDetails] = useState("");
@@ -241,6 +449,10 @@ export function WorkflowView({
   const sortedCandidates = [...state.candidates].sort(
     (left, right) => candidateChangeCount(left) - candidateChangeCount(right),
   );
+  const statusData = state.status ?? fetchedStatus;
+  const conformSets = entries(object(statusData).conformSets).filter(
+    (set): set is string => typeof set === "string",
+  );
   const requestIdForSet = selectedSet
     ? (recordText(selectedSet, "sheetRequestId") ??
       recordText(selectedSet, "requestId"))
@@ -258,7 +470,28 @@ export function WorkflowView({
       : sheetCandidates.length;
   const mutationsEnabled = canMutate(state) && !busy;
   const readsEnabled =
-    state.configured && state.host.state === "running" && !busy;
+    state.configured &&
+    (state.host.state === "running" || state.host.state === "read-only") &&
+    !busy;
+
+  useEffect(() => {
+    if (
+      !readsEnabled ||
+      (state.status !== undefined && state.status !== null) ||
+      fetchedStatus
+    )
+      return;
+    let live = true;
+    void host
+      .call("status")
+      .then((value) => {
+        if (live) setFetchedStatus(object(value));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [fetchedStatus, host, readsEnabled, state.status]);
 
   const call = async (
     op: Parameters<StudioHost["call"]>[0],
@@ -298,7 +531,7 @@ export function WorkflowView({
   const formArgs = () => {
     const id =
       requestId || `${slug(subject)}-${crypto.randomUUID().slice(0, 8)}`;
-    const parsedSlots = slotSpecs(slots);
+    const parsedSlots = parseSlotSpecs(slots, kind);
     if (!slug(subject) || parsedSlots.length === 0)
       throw new Error("Enter a subject and at least one slot.");
     const args: Record<string, unknown> = {
@@ -376,14 +609,24 @@ export function WorkflowView({
     } else dispatch?.({ type: "job-abort-failed", jobId });
   };
   const retry = (job: QueueJob) => {
-    if (job.requestId)
-      void call(
-        "reroll",
-        { requestId: job.requestId, perSlot: 1 },
-        false,
-        false,
-        true,
-      );
+    const args = rerollArgs(job);
+    if (args) void call("reroll", args, false, false, true);
+  };
+
+  const runConform = async (jobId: string, how: ConformHow) => {
+    if (!mutationsEnabled) return;
+    setConformBusy((previous) => ({ ...previous, [jobId]: true }));
+    setMessage("");
+    try {
+      const candidate = await conformJob(host, jobId, how);
+      dispatch?.({ type: "candidate-conformed", candidate });
+      if (candidate.status === "done")
+        setMessage(`Candidate ${candidate.id} is ready for review.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConformBusy((previous) => ({ ...previous, [jobId]: false }));
+    }
   };
 
   const loadSheet = async (request: SummaryRecord) => {
@@ -406,7 +649,8 @@ export function WorkflowView({
         });
         if (setup === undefined) return;
       }
-      const sheet = await host.call("sheet", { workingSetId: targetId });
+      const sheet = await readExistingSheet(host, targetId, readsEnabled);
+      if (sheet === undefined) return;
       dispatchSheet(sheet);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -429,11 +673,6 @@ export function WorkflowView({
       slot,
     });
   };
-  const rejectCandidate = async (candidate: SummaryRecord) => {
-    const why = window.prompt("Reason for rejecting this candidate")?.trim();
-    if (why) await call("reject", { id: candidate.id, reason: why });
-  };
-
   const [localAssetId, setLocalAssetId] = useState<string | undefined>(
     state.selectedAssetId,
   );
@@ -466,23 +705,16 @@ export function WorkflowView({
     state.edits.find((edit) => edit.id === activeEditId) ??
     state.edits.find((edit) => recordState(edit) === "open") ??
     openedEdit;
-  const editSignature = state.edits
-    .filter((edit) => recordState(edit) !== "discarded")
-    .map(
-      (edit) =>
-        `${edit.id}:${recordText(edit, "previewSheetHash") ?? "base"}:${recordState(edit) ?? "open"}`,
-    )
-    .join("|");
-  const reportableEdits = useMemo(
-    () => state.edits.filter((edit) => recordState(edit) !== "discarded"),
-    [state.edits],
-  );
+  const reportableEdits = editsForReports(state.edits, activeEdit?.id);
+  const editSignature = editReportSignature(reportableEdits);
+  const reportableEditsRef = useRef(reportableEdits);
+  reportableEditsRef.current = reportableEdits;
   const canReopenEdit = canMutate(state);
 
   useEffect(() => {
-    if (!dispatch || !editSignature) return;
+    if (!dispatch || !editSignature || !readsEnabled) return;
     let live = true;
-    for (const edit of reportableEdits) {
+    for (const edit of reportableEditsRef.current) {
       if (
         recordState(edit) === "open" &&
         canReopenEdit &&
@@ -518,10 +750,9 @@ export function WorkflowView({
             });
         }
       }
-      void host
-        .editReport(edit.id)
+      void fetchEditReport(host, edit.id)
         .then((report) => {
-          if (live) dispatch({ type: "edit-report", report });
+          if (live && report) dispatch({ type: "edit-report", report });
         })
         .catch((error: unknown) => {
           if (live)
@@ -531,7 +762,7 @@ export function WorkflowView({
     return () => {
       live = false;
     };
-  }, [canReopenEdit, dispatch, editSignature, host, reportableEdits]);
+  }, [canReopenEdit, dispatch, editSignature, host, readsEnabled]);
   const makeWorkingSet = async (request: SummaryRecord) => loadSheet(request);
   const pack = async () => {
     if (!selectedSet || !assetId.trim() || !styleTag.trim()) return;
@@ -556,15 +787,15 @@ export function WorkflowView({
     await call("publish", { id: activeAsset.id, confirm: activeRevision });
   };
   const rejectAsset = async () => {
-    if (!activeAsset) return;
-    const reason = window.prompt("Reason for rejecting this asset")?.trim();
-    if (reason) await call("reject", { id: activeAsset.id, reason });
+    if (!activeAsset || !rejectReason.trim()) return;
+    await call("reject", { id: activeAsset.id, reason: rejectReason.trim() });
+    setRejectReason("");
   };
 
   const readEditReport = async (editId: string) => {
     try {
-      const report = await host.editReport(editId);
-      dispatch?.({ type: "edit-report", report });
+      const report = await fetchEditReport(host, editId);
+      if (report) dispatch?.({ type: "edit-report", report });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -575,7 +806,12 @@ export function WorkflowView({
     const setId = recordText(activeAsset, "workingSetId") ?? selectedSet?.id;
     if (!setId) return;
     const existingEdit =
-      state.edits.find((entry) => entry.id === activeEditId) ?? activeEdit;
+      state.edits.find(
+        (entry) => entry.id === activeEditId && recordState(entry) === "open",
+      ) ??
+      (activeEdit && recordState(activeEdit) === "open"
+        ? activeEdit
+        : undefined);
     const currentSet =
       state.workingSets.find((entry) => entry.id === setId) ?? selectedSet;
     const required = currentSet
@@ -624,8 +860,9 @@ export function WorkflowView({
     state.lockOwner === undefined
       ? undefined
       : `Locked by another studio session (pid ${state.lockOwner})`;
-  const restartMessage =
-    state.host.state === "restarting"
+  const restartMessage = state.restartPending
+    ? "Image server restarting after abort (about 37 seconds). Queued jobs can still be removed."
+    : state.host.state === "restarting"
       ? `Image server restarting, attempt ${state.host.attempt} of ${state.host.maxAttempts}. Jobs can still be removed.`
       : undefined;
 
@@ -718,10 +955,7 @@ export function WorkflowView({
                   </select>
                 </label>
                 <label>
-                  Slots{" "}
-                  <span className="field-hint">
-                    one state/direction per line
-                  </span>
+                  Slots <span className="field-hint">{slotHint(kind)}</span>
                   <textarea
                     rows={2}
                     value={slots}
@@ -797,6 +1031,31 @@ export function WorkflowView({
                 <h3>Queue</h3>
                 <span>{state.jobs.length} jobs</span>
               </div>
+              {state.jobs.some(
+                (job) =>
+                  job.status === "completed" && job.raw.candidate === null,
+              ) && (
+                <div className="conform-set-control">
+                  {conformSets.length > 0 ? (
+                    <label>
+                      Conform set
+                      <select
+                        value={conformSet}
+                        onChange={(event) => setConformSet(event.target.value)}
+                      >
+                        <option value="">Choose a set</option>
+                        {conformSets.map((set) => (
+                          <option key={set} value={set}>
+                            {set}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <p className="muted">No conform set configured.</p>
+                  )}
+                </div>
+              )}
               {state.jobs.length === 0 ? (
                 <p className="empty-state">Queue is empty</p>
               ) : (
@@ -810,6 +1069,12 @@ export function WorkflowView({
                       onRemove={(id) => void remove(id)}
                       onAbort={(id) => void abort(id)}
                       onRetry={retry}
+                      conformSet={conformSet}
+                      onConform={(jobId, how) => void runConform(jobId, how)}
+                      candidate={state.candidates.find(
+                        (candidate) => candidate.id === job.id,
+                      )}
+                      conformBusy={conformBusy[job.id] === true}
                     />
                   ))}
                 </ol>
@@ -847,12 +1112,14 @@ export function WorkflowView({
                       <button
                         type="button"
                         disabled={
-                          !state.workingSets.some(
+                          !readsEnabled ||
+                          (!state.workingSets.some(
                             (set) =>
                               recordText(set, "sheetRequestId") ===
                                 request.id ||
                               recordText(set, "requestId") === request.id,
-                          ) && !mutationsEnabled
+                          ) &&
+                            !mutationsEnabled)
                         }
                         onClick={() => void makeWorkingSet(request)}
                       >
@@ -900,7 +1167,6 @@ export function WorkflowView({
                         recordText(candidate, "slot") ??
                           recordText(candidate, "slotKey"),
                       )}
-                      onReject={() => void rejectCandidate(candidate)}
                     />
                   ))
                 )}
@@ -1057,9 +1323,18 @@ export function WorkflowView({
                           >
                             Approve with exception
                           </button>
+                          <label>
+                            Rejection reason
+                            <input
+                              value={rejectReason}
+                              onChange={(event) =>
+                                setRejectReason(event.target.value)
+                              }
+                            />
+                          </label>
                           <button
                             type="button"
-                            disabled={!mutationsEnabled}
+                            disabled={!mutationsEnabled || !rejectReason.trim()}
                             onClick={() => void rejectAsset()}
                           >
                             Reject
@@ -1163,7 +1438,6 @@ function CandidateRow({
   showPixels,
   enabled,
   onPick,
-  onReject,
   canPick,
 }: {
   host: StudioHost;
@@ -1171,31 +1445,22 @@ function CandidateRow({
   showPixels: boolean;
   enabled: boolean;
   onPick: () => void;
-  onReject: () => void;
   canPick: boolean;
 }) {
+  const candidateStatus = recordText(candidate, "status");
+  const needsScale = candidateStatus === "needs-scale";
   const report = recordObject(candidate, "report");
-  const metrics = recordObject(candidate, "metrics");
-  const reportStatus =
-    text(report.status) ??
-    recordText(candidate, "reportStatus") ??
-    "not reported";
-  const checks = entries(report.failedChecks ?? report.checks)
+  const reportStatus = needsScale
+    ? undefined
+    : report.status === "pass" || report.status === "fail"
+      ? report.status
+      : undefined;
+  const checks = entries(report.failedChecks)
     .map((check) => text(check))
     .filter(Boolean) as string[];
-  const pixels =
-    recordValue(candidate, "pixelsMoved") ??
-    recordValue(candidate, "pixelsChanged") ??
-    metrics.pixelsMoved ??
-    metrics.pixelsChanged;
-  const scale =
-    recordValue(candidate, "detectedScale") ??
-    metrics.detectedScale ??
-    recordValue(candidate, "scale");
-  const merged =
-    recordValue(candidate, "coloursMerged") ??
-    metrics.coloursMerged ??
-    metrics.colorsMerged;
+  const pixels = recordValue(candidate, "pixelsChanged");
+  const scale = recordValue(candidate, "scale");
+  const merged = recordValue(candidate, "coloursMerged");
   return (
     <article className="candidate-row">
       <div className="candidate-title">
@@ -1206,11 +1471,18 @@ function CandidateRow({
             {recordText(candidate, "status") ?? "candidate"}
           </small>
         </div>
-        <span className={`state-label state-${reportStatus}`}>
-          {reportStatus}
-        </span>
+        {reportStatus && (
+          <span className={`state-label state-${reportStatus}`}>
+            {reportStatus}
+          </span>
+        )}
       </div>
-      {showPixels && <CandidatePixels host={host} candidateId={candidate.id} />}
+      {needsScale && (
+        <p className="queue-note">{recordText(candidate, "message")}</p>
+      )}
+      {showPixels && !needsScale && (
+        <CandidatePixels host={host} candidateId={candidate.id} />
+      )}
       <dl>
         <div>
           <dt>Scale</dt>
@@ -1221,7 +1493,7 @@ function CandidateRow({
           <dd>{merged === undefined ? "not reported" : detailText(merged)}</dd>
         </div>
         <div>
-          <dt>Pixels moved</dt>
+          <dt>Pixels changed</dt>
           <dd>{pixels === undefined ? "not reported" : detailText(pixels)}</dd>
         </div>
       </dl>
@@ -1235,9 +1507,6 @@ function CandidateRow({
       <div className="candidate-actions">
         <button type="button" disabled={!enabled || !canPick} onClick={onPick}>
           Pick
-        </button>
-        <button type="button" disabled={!enabled} onClick={onReject}>
-          Reject
         </button>
       </div>
     </article>

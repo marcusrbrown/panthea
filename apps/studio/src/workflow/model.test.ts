@@ -23,7 +23,7 @@ describe("workflowReducer", () => {
       type: "snapshot",
       snapshot: snapshot([{ id: "j1", status: "queued" }], {
         host: { state: "read-only", lockHolder: 418 },
-        status: { counts: { jobs: 1 } },
+        status: { counts: { jobs: 1 }, conformSets: ["standard"] },
         requests: [{ id: "r1", subject: "zeus" }],
         candidates: [{ id: "c1", requestId: "r1" }],
         edits: [{ id: "e1", status: "open" }],
@@ -38,6 +38,7 @@ describe("workflowReducer", () => {
     expect(loaded.workingSets).toHaveLength(1);
     expect(loaded.assets).toHaveLength(1);
     expect(loaded.lockOwner).toBe(418);
+    expect(loaded.status?.conformSets).toEqual(["standard"]);
   });
 
   test("only a read-only host is another session's lock: this app's own lock, a free root and a restart are not", () => {
@@ -72,7 +73,7 @@ describe("workflowReducer", () => {
     expect(freed.lockOwner).toBeUndefined();
   });
 
-  test("AE6 cancellation then restart preserves the remaining queue order", () => {
+  test("AE6 cancellation remains marked until the next queued job starts", () => {
     let state = workflowReducer(initialWorkflowState(), {
       type: "snapshot",
       snapshot: snapshot([
@@ -81,7 +82,6 @@ describe("workflowReducer", () => {
         { id: "j3", requestId: "r1", slotKey: "hurt/south", status: "queued" },
       ]),
     });
-    state = workflowReducer(state, { type: "job-aborting", jobId: "j1" });
     state = workflowReducer(state, { type: "job-removed", jobId: "j2" });
     state = workflowReducer(state, { type: "job-cancelled", jobId: "j1" });
     expect(state.jobs.map((job) => job.status)).toEqual([
@@ -89,6 +89,39 @@ describe("workflowReducer", () => {
       "removed",
       "queued",
     ]);
+    expect(state.restartPending).toBe(true);
+    state = workflowReducer(state, {
+      type: "snapshot",
+      snapshot: snapshot(
+        [
+          {
+            id: "j1",
+            requestId: "r1",
+            slotKey: "idle/south",
+            status: "cancelled",
+          },
+          {
+            id: "j2",
+            requestId: "r1",
+            slotKey: "walk/south",
+            status: "cancelled",
+          },
+          {
+            id: "j3",
+            requestId: "r1",
+            slotKey: "hurt/south",
+            status: "queued",
+          },
+        ],
+        { host: { state: "running" } },
+      ),
+    });
+    expect(state.jobs.map((job) => job.status)).toEqual([
+      "cancelled",
+      "removed",
+      "queued",
+    ]);
+    expect(state.restartPending).toBe(true);
     state = workflowReducer(state, {
       type: "snapshot",
       snapshot: snapshot(
@@ -112,14 +145,11 @@ describe("workflowReducer", () => {
             status: "running",
           },
         ],
-        { host: { state: "restarting", attempt: 1, maxAttempts: 3 } },
+        { host: { state: "running" } },
       ),
     });
-    expect(state.jobs.map((job) => job.status)).toEqual([
-      "cancelled",
-      "removed",
-      "running",
-    ]);
+    expect(state.jobs[2]?.status).toBe("running");
+    expect(state.restartPending).toBe(false);
   });
 
   test("late output cannot turn a cancelled job into a completed job", () => {
@@ -183,5 +213,34 @@ describe("workflowReducer", () => {
     state = workflowReducer(state, { type: "job-aborting", jobId: "j1" });
     state = workflowReducer(state, { type: "job-abort-failed", jobId: "j1" });
     expect(state.jobs[0]?.status).toBe("running");
+  });
+
+  test("a needs-scale conform result attaches to its succeeded job", () => {
+    const state = workflowReducer(
+      workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot([
+          { id: "j1", status: "succeeded", candidate: null },
+        ]),
+      }),
+      {
+        type: "candidate-conformed",
+        candidate: {
+          status: "needs-scale",
+          id: "j1",
+          requestId: "r1",
+          slotKey: "idle/south",
+          ordinal: 0,
+          input: { hash: "a".repeat(64), width: 64, height: 80 },
+          message: "Choose scale.",
+          report: null,
+          scale: null,
+          coloursMerged: null,
+          pixelsChanged: null,
+        },
+      },
+    );
+    expect(state.candidates[0]?.status).toBe("needs-scale");
+    expect(state.jobs[0]?.raw.candidate).toBe("needs-scale");
   });
 });

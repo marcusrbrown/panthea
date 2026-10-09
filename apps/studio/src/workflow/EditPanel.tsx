@@ -28,6 +28,8 @@ export function EditPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const editId = report?.editId ?? edit.id;
+  const editState = recordText(edit, "state") ?? recordText(edit, "status");
+  const isOpen = editState === undefined || editState === "open";
   const enabled = canMutate && !busy;
 
   const finish = async () => {
@@ -105,7 +107,7 @@ export function EditPanel({
           </p>
         </div>
       </div>
-      {editorLaunched === false ? (
+      {isOpen && editorLaunched === false ? (
         <div className="editor-fallback">
           <strong>Editor unavailable</strong>
           <p>
@@ -127,7 +129,7 @@ export function EditPanel({
             Import edited sheets
           </button>
         </div>
-      ) : (
+      ) : isOpen ? (
         <div className="editor-ready">
           <p>
             {editorLaunched
@@ -138,7 +140,7 @@ export function EditPanel({
             {editorLaunched ? "Open editor again" : "Open in Aseprite"}
           </button>
         </div>
-      )}
+      ) : null}
       {durationsMs.length > 0 && (
         <p className="frame-timing">
           Frame timing:{" "}
@@ -221,34 +223,38 @@ export function EditPanel({
           ))}
         </div>
       )}
-      <label className="edit-confirm">
-        <input
-          type="checkbox"
-          checked={confirmed}
-          disabled={!canMutate}
-          onChange={(event) => setConfirmed(event.target.checked)}
-        />
-        {editorLaunched === false && !report
-          ? "I confirm importing this version to review."
-          : "I reviewed this pixel diff before changing the draft."}
-      </label>
-      <div className="edit-actions">
-        <button
-          type="button"
-          className="primary"
-          disabled={!enabled || !confirmed || !report}
-          onClick={() => void finish()}
-        >
-          Finish and keep
-        </button>
-        <button
-          type="button"
-          disabled={!enabled || !confirmed}
-          onClick={() => void discard()}
-        >
-          Discard edit
-        </button>
-      </div>
+      {isOpen && (
+        <>
+          <label className="edit-confirm">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              disabled={!canMutate}
+              onChange={(event) => setConfirmed(event.target.checked)}
+            />
+            {editorLaunched === false && !report
+              ? "I confirm importing this version to review."
+              : "I reviewed this pixel diff before changing the draft."}
+          </label>
+          <div className="edit-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={!enabled || !confirmed || !report}
+              onClick={() => void finish()}
+            >
+              Finish and keep
+            </button>
+            <button
+              type="button"
+              disabled={!enabled || !confirmed}
+              onClick={() => void discard()}
+            >
+              Discard edit
+            </button>
+          </div>
+        </>
+      )}
       {error && (
         <p className="gate-reason" role="alert">
           {error}

@@ -89,20 +89,36 @@ describe("WorkflowView controls", () => {
     expect(html).not.toContain("Failed");
   });
 
-  test("candidate checks and metrics render in ascending pixel-change order", () => {
+  test("candidate checks and host metrics render in ascending pixel-change order", () => {
     const candidateState = stateFor(undefined, {
       candidates: [
         {
           id: "candidate-more-change",
-          slot: "walk/south",
+          status: "done",
+          requestId: "r1",
+          slotKey: "walk/south",
+          ordinal: 0,
+          input: { hash: "a".repeat(64), width: 64, height: 80 },
+          imageHash: "b".repeat(64),
+          proposalHash: "c".repeat(64),
           report: { status: "fail", failedChecks: ["palette-limit"] },
-          metrics: { pixelsMoved: 14, detectedScale: 2, coloursMerged: 1 },
+          scale: 2,
+          coloursMerged: 1,
+          pixelsChanged: 14,
         },
         {
           id: "candidate-less-change",
-          slot: "idle/south",
+          status: "done",
+          requestId: "r1",
+          slotKey: "idle/south",
+          ordinal: 0,
+          input: { hash: "d".repeat(64), width: 64, height: 80 },
+          imageHash: "e".repeat(64),
+          proposalHash: "f".repeat(64),
           report: { status: "pass", failedChecks: [] },
-          metrics: { pixelsMoved: 3, detectedScale: 1, coloursMerged: 0 },
+          scale: 1,
+          coloursMerged: 0,
+          pixelsChanged: 3,
         },
       ],
     });
@@ -116,8 +132,116 @@ describe("WorkflowView controls", () => {
       html.indexOf("candidate-more-change"),
     );
     expect(html).toContain("palette-limit");
-    expect(html).toContain("Pixels moved");
+    expect(html).toContain("Pixels changed");
     expect(html).toContain("14");
+    expect(html).toContain("Scale");
+    expect(html).toContain("Colours merged");
+  });
+
+  test("needs-scale candidates show their message without a report pill", () => {
+    const html = render(
+      workflowReducer(
+        stateFor(undefined, {
+          candidates: [
+            {
+              id: "j-needs-scale",
+              status: "needs-scale",
+              requestId: "r1",
+              slotKey: "idle/south",
+              ordinal: 0,
+              input: { hash: "a".repeat(64), width: 64, height: 80 },
+              message: "Choose an integer scale.",
+              report: null,
+              scale: null,
+              coloursMerged: null,
+              pixelsChanged: null,
+            },
+          ],
+        }),
+        { type: "sheet", value: { candidateCount: 1 } },
+      ),
+    );
+    expect(html).toContain("Choose an integer scale.");
+    expect(html).not.toContain('class="state-label state-not reported"');
+    expect(html).not.toContain(">not reported</span>");
+  });
+
+  test("succeeded un-conformed jobs offer Conform and the configured sets", () => {
+    const html = render(
+      stateFor(
+        { id: "j-ready", status: "succeeded", candidate: null },
+        { status: { conformSets: ["standard", "pixel-art"] } },
+      ),
+    );
+    expect(html).toContain("Conform");
+    expect(html).toContain("standard");
+    expect(html).toContain("pixel-art");
+  });
+
+  test("succeeded un-conformed jobs explain when no conform set exists", () => {
+    const html = render(
+      stateFor({ id: "j-ready", status: "succeeded", candidate: null }),
+    );
+    expect(html).toContain("No conform set configured");
+    expect(html).toContain("Conform");
+  });
+
+  test("read-only mode keeps Resolve and existing View sheet enabled", () => {
+    const html = render(
+      stateFor(undefined, {
+        host: { state: "read-only", lockHolder: 913 },
+        requests: [{ id: "r1", subject: "zeus" }],
+        workingSets: [{ id: "w1", requestId: "r1", status: "open" }],
+      }),
+    );
+    expect(html).toMatch(/<button type="submit">Resolve request<\/button>/);
+    expect(html).toMatch(/<button type="button">View sheet<\/button>/);
+  });
+
+  test("asset rejection has a required inline reason and candidates have no Reject", () => {
+    const html = render(
+      stateFor(undefined, {
+        assets: [
+          {
+            id: "asset-1",
+            assetId: "zeus-idle",
+            state: "draft",
+            manifestRevision: "rev-8",
+            report: { status: "pass", failedChecks: [] },
+          },
+        ],
+        candidates: [
+          {
+            id: "c1",
+            status: "done",
+            requestId: "r1",
+            slotKey: "idle/south",
+            ordinal: 0,
+            input: { hash: "a".repeat(64), width: 64, height: 80 },
+            imageHash: "b".repeat(64),
+            proposalHash: "c".repeat(64),
+            report: { status: "pass", failedChecks: [] },
+            scale: 1,
+            coloursMerged: 0,
+            pixelsChanged: 0,
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("Rejection reason");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Reject<\/button>/);
+    expect(html).not.toContain("Reject candidate");
+    expect(html).not.toContain("window.prompt");
+  });
+
+  test("pack starts with an empty style tag and stays disabled", () => {
+    const html = render(
+      stateFor(undefined, {
+        workingSets: [{ id: "w1", requestId: "r1", status: "open" }],
+      }),
+    );
+    expect(html).not.toContain("greek-master");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Pack draft<\/button>/);
   });
 
   test("a loaded sheet shows pixel-cell loading and a compact sheet summary", () => {
@@ -128,9 +252,17 @@ describe("WorkflowView controls", () => {
         candidates: [
           {
             id: "c1",
+            status: "done",
             requestId: "r1",
-            slot: "idle/south",
-            metrics: { pixelsMoved: 1 },
+            slotKey: "idle/south",
+            ordinal: 0,
+            input: { hash: "a".repeat(64), width: 64, height: 80 },
+            imageHash: "b".repeat(64),
+            proposalHash: "c".repeat(64),
+            report: { status: "pass", failedChecks: [] },
+            scale: 1,
+            coloursMerged: 0,
+            pixelsChanged: 1,
           },
         ],
       }),
@@ -230,6 +362,28 @@ describe("WorkflowView controls", () => {
     ]) {
       expect(render(stateFor(job))).not.toContain("Retry");
     }
+  });
+
+  test("an unconfigured snapshot offers config setup without opening an edit", () => {
+    const state = workflowReducer(initialWorkflowState(), {
+      type: "snapshot",
+      snapshot: {
+        host: { state: "not-configured" },
+        assets: [
+          {
+            id: "a1",
+            assetId: "zeus-idle",
+            state: "draft",
+            workingSetId: "w1",
+          },
+        ],
+        edits: [{ id: "e1", status: "open", workingSetId: "w1" }],
+      },
+    });
+    const html = render(state);
+    expect(html).toContain("Choose config file");
+    expect(html).not.toContain("Edit draft");
+    expect(html).not.toContain("Export sheets");
   });
 });
 
