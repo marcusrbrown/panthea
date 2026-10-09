@@ -80,6 +80,9 @@ pub const OPS: &[OpSpec] = &[
     spec("reroll", &["requestId", "perSlot"], Long),
     spec("abort", &["jobId"], Long),
     spec("remove", &["jobId"], Write),
+    // Working sets. Both take ids only; the session decides what a set holds.
+    spec("set-create", &["id", "requestId"], Write),
+    spec("set-replace-sheet", &["workingSetId", "requestId"], Write),
     // Candidates, edits and final records.
     spec("pick", &["workingSetId", "candidateId", "slot"], Write),
     spec("reject", &["id", "reason"], Write),
@@ -183,6 +186,8 @@ mod tests {
                 "reroll",
                 "abort",
                 "remove",
+                "set-create",
+                "set-replace-sheet",
                 "pick",
                 "reject",
                 "discard",
@@ -193,6 +198,26 @@ mod tests {
                 "publish",
             ]
         );
+    }
+
+    #[test]
+    fn the_working_set_ops_take_ids_only_and_never_a_place() {
+        assert_eq!(lookup("set-create").unwrap().args, ["id", "requestId"]);
+        assert_eq!(
+            lookup("set-replace-sheet").unwrap().args,
+            ["workingSetId", "requestId"]
+        );
+        for op in ["set-create", "set-replace-sheet"] {
+            assert_eq!(lookup(op).unwrap().class, OpClass::Write, "{op}");
+            for arg in lookup(op).unwrap().args {
+                assert!(!PATHISH.contains(arg), "{op} takes {arg}");
+            }
+            assert_eq!(
+                check(op, &json!({ "path": "/tmp/x" })),
+                Err(Refusal::UnknownArgument("path".into())),
+                "{op}"
+            );
+        }
     }
 
     #[test]
@@ -224,8 +249,6 @@ mod tests {
             "import",
             "export",
             "conform",
-            "set-create",
-            "set-replace-sheet",
             "source-bytes",
             "session",
         ] {
@@ -366,6 +389,8 @@ mod tests {
         }
         for op in [
             "remove",
+            "set-create",
+            "set-replace-sheet",
             "pick",
             "reject",
             "discard",

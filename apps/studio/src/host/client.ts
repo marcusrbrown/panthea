@@ -46,6 +46,8 @@ export const STUDIO_OPS = [
   "reroll",
   "abort",
   "remove",
+  "set-create",
+  "set-replace-sheet",
   "pick",
   "reject",
   "discard",

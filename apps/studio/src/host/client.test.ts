@@ -87,6 +87,33 @@ describe("calls", () => {
     expect(error).toMatchObject({ code: "unknown", retryable: false });
   });
 
+  test("the working-set ops carry their ids exactly and nothing else", async () => {
+    const transport = fakeTransport({
+      studio_call: callsTo({
+        "set-create": (args) => ({ id: args.id, state: "open" }),
+        "set-replace-sheet": (args) => ({
+          workingSetId: args.workingSetId,
+          sheetRequestId: args.requestId,
+        }),
+      }),
+    });
+    const host = createStudioHost(transport);
+
+    await host.call("set-create", { id: "zeus-set", requestId: "zeus-idle" });
+    await host.call("set-replace-sheet", {
+      workingSetId: "zeus-set",
+      requestId: "zeus-idle-2",
+    });
+
+    expect(transport.to("studio_call").map((call) => call.args)).toEqual([
+      { op: "set-create", args: { id: "zeus-set", requestId: "zeus-idle" } },
+      {
+        op: "set-replace-sheet",
+        args: { workingSetId: "zeus-set", requestId: "zeus-idle-2" },
+      },
+    ]);
+  });
+
   test("the typed op list is the Rust schema table, in the same order", async () => {
     const text = await Bun.file(
       join(import.meta.dir, "..", "..", "src-tauri", "src", "schema.rs"),
