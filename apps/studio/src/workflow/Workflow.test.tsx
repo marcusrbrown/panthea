@@ -374,6 +374,36 @@ describe("WorkflowView controls", () => {
     }
   });
 
+  test("workflow labels and controls share the same field classes", () => {
+    const html = render(
+      stateFor(
+        { id: "j-ready", status: "succeeded", candidate: null },
+        {
+          status: { conformSets: ["u5-standard"] },
+          workingSets: [{ id: "w1", status: "open" }],
+          assets: [{ id: "a1", assetId: "zeus", state: "draft" }],
+        },
+      ),
+    );
+    const fields = html.match(/<(?:input|select|textarea)\b[^>]*>/g) ?? [];
+    const labels = html.match(/<label\b[^>]*>/g) ?? [];
+
+    expect(html).toContain("Conform set");
+    expect(html).toContain("Working set");
+    expect(html).toContain("Kind");
+    expect(html).toContain("Background");
+    expect(html).toContain("Rejection reason");
+    expect(fields.length).toBeGreaterThan(0);
+    for (const field of fields) {
+      if (!field.includes('type="checkbox"')) {
+        expect(field).toContain('class="workflow-control"');
+      }
+    }
+    for (const label of labels) {
+      expect(label).toContain("workflow-field");
+    }
+  });
+
   test("an unconfigured snapshot offers config setup without opening an edit", () => {
     const state = workflowReducer(initialWorkflowState(), {
       type: "snapshot",

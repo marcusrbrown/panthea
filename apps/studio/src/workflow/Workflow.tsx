@@ -281,10 +281,11 @@ function ScaleConformForm({
           ? "Set every threshold and choose a scale to retry."
           : "Set every threshold. Leave scale empty to auto-detect."}
       </p>
-      <label>
+      <label className="workflow-field">
         Scale
         <input
           type="number"
+          className="workflow-control"
           min={1}
           step={1}
           required={candidate !== undefined}
@@ -292,9 +293,10 @@ function ScaleConformForm({
           onChange={(event) => setScale(event.target.value)}
         />
       </label>
-      <label>
+      <label className="workflow-field">
         Background
         <select
+          className="workflow-control"
           required
           value={backgroundType}
           onChange={(event) =>
@@ -308,19 +310,21 @@ function ScaleConformForm({
       </label>
       {backgroundType === "key" && (
         <>
-          <label>
+          <label className="workflow-field">
             Key RGB
             <input
+              className="workflow-control"
               required
               value={rgb}
               placeholder="r, g, b"
               onChange={(event) => setRgb(event.target.value)}
             />
           </label>
-          <label>
+          <label className="workflow-field">
             Key tolerance
             <input
               type="number"
+              className="workflow-control"
               required
               min={0}
               step={1}
@@ -330,10 +334,11 @@ function ScaleConformForm({
           </label>
         </>
       )}
-      <label>
+      <label className="workflow-field">
         Alpha cutoff
         <input
           type="number"
+          className="workflow-control"
           required
           min={1}
           max={255}
@@ -342,10 +347,11 @@ function ScaleConformForm({
           onChange={(event) => setAlphaCutoff(event.target.value)}
         />
       </label>
-      <label>
+      <label className="workflow-field">
         Grid edge tolerance
         <input
           type="number"
+          className="workflow-control"
           required
           min={0}
           step={1}
@@ -353,10 +359,11 @@ function ScaleConformForm({
           onChange={(event) => setEdgeTolerance(event.target.value)}
         />
       </label>
-      <label>
+      <label className="workflow-field">
         Grid minimum confidence
         <input
           type="number"
+          className="workflow-control"
           required
           min={0}
           max={1}
@@ -365,10 +372,11 @@ function ScaleConformForm({
           onChange={(event) => setMinConfidence(event.target.value)}
         />
       </label>
-      <label>
+      <label className="workflow-field">
         Grid minimum edges
         <input
           type="number"
+          className="workflow-control"
           required
           min={1}
           step={1}
@@ -912,9 +920,10 @@ export function WorkflowView({
                 className="request-form"
                 onSubmit={(event) => void resolveRequest(event)}
               >
-                <label>
+                <label className="workflow-field">
                   Subject
                   <input
+                    className="workflow-control"
                     value={subject}
                     onChange={(event) => {
                       setSubject(event.target.value);
@@ -924,9 +933,10 @@ export function WorkflowView({
                     }}
                   />
                 </label>
-                <label>
+                <label className="workflow-field">
                   Kind
                   <select
+                    className="workflow-control"
                     value={kind}
                     onChange={(event) => {
                       setKind(event.target.value as "sprite" | "portrait");
@@ -939,9 +949,10 @@ export function WorkflowView({
                     <option value="portrait">Portrait</option>
                   </select>
                 </label>
-                <label>
+                <label className="workflow-field">
                   Slots <span className="field-hint">{slotHint(kind)}</span>
                   <textarea
+                    className="workflow-control"
                     rows={2}
                     value={slots}
                     onChange={(event) => {
@@ -952,10 +963,11 @@ export function WorkflowView({
                     }}
                   />
                 </label>
-                <label>
+                <label className="workflow-field">
                   Batch
                   <input
                     type="number"
+                    className="workflow-control"
                     min={1}
                     step={1}
                     value={batch}
@@ -967,9 +979,10 @@ export function WorkflowView({
                     }}
                   />
                 </label>
-                <label>
+                <label className="workflow-field">
                   Style note <span className="field-hint">optional</span>
                   <textarea
+                    className="workflow-control"
                     rows={2}
                     value={styleNote}
                     onChange={(event) => {
@@ -1022,9 +1035,10 @@ export function WorkflowView({
               ) && (
                 <div className="conform-set-control">
                   {conformSets.length > 0 ? (
-                    <label>
+                    <label className="workflow-field working-set-select">
                       Conform set
                       <select
+                        className="workflow-control"
                         value={conformSet}
                         onChange={(event) => setConformSet(event.target.value)}
                       >
@@ -1159,9 +1173,10 @@ export function WorkflowView({
                 )}
               </div>
               {state.workingSets.length > 0 && (
-                <label className="working-set-select">
+                <label className="workflow-field working-set-select">
                   Working set
                   <select
+                    className="workflow-control"
                     value={selectedSet?.id ?? ""}
                     onChange={(event) => setWorkingSetId(event.target.value)}
                   >
@@ -1179,16 +1194,18 @@ export function WorkflowView({
                   <p>
                     Only selected frames in an open working set can be packed.
                   </p>
-                  <label>
+                  <label className="workflow-field">
                     Asset ID
                     <input
+                      className="workflow-control"
                       value={assetId}
                       onChange={(event) => setAssetId(event.target.value)}
                     />
                   </label>
-                  <label>
+                  <label className="workflow-field">
                     Style tag
                     <input
+                      className="workflow-control"
                       value={styleTag}
                       onChange={(event) => setStyleTag(event.target.value)}
                     />
@@ -1223,9 +1240,10 @@ export function WorkflowView({
                 </p>
               ) : (
                 <>
-                  <label className="asset-select">
+                  <label className="asset-select workflow-field">
                     Record
                     <select
+                      className="workflow-control"
                       value={activeAsset?.id ?? ""}
                       onChange={(event) => {
                         setLocalAssetId(event.target.value);
@@ -1281,9 +1299,10 @@ export function WorkflowView({
                           >
                             Edit draft
                           </button>
-                          <label>
+                          <label className="workflow-field">
                             Exception reason{" "}
                             <input
+                              className="workflow-control"
                               value={exception}
                               onChange={(event) =>
                                 setException(event.target.value)
@@ -1310,9 +1329,10 @@ export function WorkflowView({
                           >
                             Approve with exception
                           </button>
-                          <label>
+                          <label className="workflow-field">
                             Rejection reason
                             <input
+                              className="workflow-control"
                               value={rejectReason}
                               onChange={(event) =>
                                 setRejectReason(event.target.value)

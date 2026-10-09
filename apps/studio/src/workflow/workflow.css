@@ -210,10 +210,7 @@
   align-items: end;
   gap: 10px 12px;
 }
-.request-form label,
-.pack-form label,
-.asset-actions label,
-.asset-select {
+.studio-workspace .workflow-field {
   display: grid;
   gap: 5px;
   color: var(--ink-soft);
@@ -228,12 +225,7 @@
 .request-form button {
   justify-self: start;
 }
-.request-form input,
-.request-form select,
-.request-form textarea,
-.pack-form input,
-.asset-actions input,
-.asset-select select {
+.studio-workspace .workflow-control {
   width: 100%;
   min-width: 0;
   padding: 7px 8px;
@@ -411,24 +403,6 @@
 .scale-conform-form > p {
   padding: 0;
   line-height: 1.4;
-}
-.scale-conform-form label {
-  display: grid;
-  gap: 4px;
-  color: var(--ink-soft);
-  font-size: 0.68rem;
-  font-weight: 650;
-}
-.scale-conform-form input,
-.scale-conform-form select {
-  width: 100%;
-  min-width: 0;
-  padding: 6px 7px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--ink);
-  background: var(--paper);
-  font-size: 0.76rem;
 }
 .scale-conform-form > button {
   justify-self: start;
@@ -656,21 +630,7 @@
   image-rendering: pixelated;
 }
 .working-set-select {
-  display: grid;
-  gap: 5px;
   margin-top: 14px;
-  color: var(--ink-soft);
-  font-size: 0.73rem;
-  font-weight: 650;
-}
-.working-set-select select {
-  width: 100%;
-  padding: 7px 8px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  color: var(--ink);
-  background: var(--paper-raised);
-  font: inherit;
 }
 .edit-panel {
   margin-top: 18px;
