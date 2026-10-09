@@ -1,6 +1,7 @@
 ---
 title: Generated art needs an independent reviewer from another model family
 date: 2026-10-08
+last_updated: 2026-10-08
 category: workflow-issues
 module: assets
 problem_type: workflow_issue
@@ -28,6 +29,8 @@ The owner rejected Zeus art twice after it had passed review. The reviewer came 
   - a diff map for each frame;
   - guard rectangles for the eyes and the mouth lines, and the count of changes inside each.
 - **The reviewer checks every claim against the stored frames.** In the Zeus cleanup, the review found that a "~40% halo" share was really 26%, that 30 pixels in the mouth region had changed rather than the 3 claimed, and that 4 shading pixels had been changed wrongly. The script was fixed, and the cleanup was redone from the generated frames.
+- **For targeted fixes, the reviewer writes the pixel spec and budgets.** The author applies the spec as data, and the script refuses writes outside it or over budget. The reviewer also rules on cases the author's rules can't settle. The Zeus sprite route doc has a worked example.
+- **Independent review is not the owner's verdict.** The reviewer accepted a light-touch sprite cleanup (B2c) that the owner then rejected. Review filters what reaches the owner. It does not replace the owner's look.
 - **The orchestrator re-checks the final diff itself** before the owner sees it, for example by confirming that the revision changed exactly the pixels the reviewer listed.
 - **Tell delegates to execute.** Twice, a brief that named the downstream reviewer made the delegate write a dispatch prompt for that reviewer instead of doing the work. State "do this yourself; review is arranged separately".
 
@@ -59,5 +62,6 @@ The accepted Zeus cleanup, r10c, met every assertion: 396 pixels changed, 0 in t
 ## Related
 
 - [Consistent portrait expressions from one masked base](../best-practices/portrait-expressions-from-one-masked-base-2026-10-08.md).
+- [Local 64x80 god sprites: palette downscale at any ratio](../best-practices/god-sprite-local-generation-open-research-2026-10-08.md): reviewer-written specs applied under budgets.
 - [End-to-end scenario with positive controls](../best-practices/end-to-end-scenario-with-positive-controls-2026-09-28.md): use an independent check that is able to fail.
 - [Saved pixel previews scaled size but not offset](../logic-errors/saved-pixel-previews-scaled-size-but-not-offset-2026-10-05.md): checking pixels is separate from visual review.
