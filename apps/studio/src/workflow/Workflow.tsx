@@ -149,7 +149,7 @@ function QueueItem({
         (state.restartPending &&
           (job.status === "cancelled" || job.status === "queued"))) && (
         <p className="queue-note">
-          Stopping and restarting the image server (about 37 seconds).
+          Restarting the image server. The next job reloads the model.
         </p>
       )}
       {state.host.state === "restarting" && job.status === "queued" && (
@@ -854,7 +854,7 @@ export function WorkflowView({
       ? undefined
       : `Locked by another studio session (pid ${state.lockOwner})`;
   const restartMessage = state.restartPending
-    ? "Image server restarting after abort (about 37 seconds). Queued jobs can still be removed."
+    ? "Image server restarting after abort. Queued jobs can still be removed."
     : state.host.state === "restarting"
       ? `Image server restarting, attempt ${state.host.attempt} of ${state.host.maxAttempts}. Jobs can still be removed.`
       : undefined;
