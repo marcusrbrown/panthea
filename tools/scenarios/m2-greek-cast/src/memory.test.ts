@@ -739,6 +739,23 @@ test("the limit is 'more than 10%': 9.9% passes, 10.5% fails, and a falling foot
   expect(falling.withinLimit).toBe(true);
 });
 
+test("exactly +10% passes: the limit is decided on the means, not on a percentage that float error moves to 10.000000000000009", () => {
+  // Fro Bot's shape: 10-second samples, catch-up at minute 23, 100 MiB before minute 49 and 110 MiB from it.
+  const samples = footprints(60, (minute) => (minute < 49 ? 100 : 110));
+  const growth = judged(samples, settleAt(23));
+  expect(growth.firstHalfMeanBytes).toBe(100 * MIB);
+  expect(growth.secondHalfMeanBytes).toBe(110 * MIB);
+  expect(growth.withinLimit).toBe(true);
+  // The percentage is for display, and it is what float error moves.
+  expect(growth.growthPercent).toBeCloseTo(10, 9);
+  // A byte over the boundary fails.
+  const over = judged(
+    footprints(60, (minute) => (minute < 49 ? 100 : 110.0001)),
+    settleAt(23),
+  );
+  expect(over.withinLimit).toBe(false);
+});
+
 test("a burst in the first fifteen minutes after the catch-up is not in the settled span", () => {
   // 300 MiB in the 15 minutes after the catch-up, 100 MiB after: judged on the 100.
   const samples = footprints(60, (minute) =>

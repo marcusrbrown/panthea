@@ -933,6 +933,19 @@ test("positive control: a sidecar whose physical footprint grows over 10% across
   expect(failing(bad.rows)).toEqual([MEMORY_ROW]);
 });
 
+test("the memory row passes exactly +10% across the settled span, and prints it", () => {
+  const MIB = 1_048_576;
+  const exact = sidecarMemory(
+    () => 500_000_000,
+    (at) => (at < 216 * MINUTE ? 100 * MIB : 110 * MIB),
+  );
+  const { rows } = analyzeUnattended(runData({ memory: exact }));
+  const row = rowOf(rows, MEMORY_ROW);
+  expect(row.ok).toBe(true);
+  expect(row.measured).toContain("+10.00%");
+  expect(failing(rows)).toEqual([]);
+});
+
 test("a settled span under the floor is not judgeable and fails the row, saying so", () => {
   // Cut at minute 215: the settled span is 202 to 215, 13 minutes, under the 20-minute floor.
   const short = analyzeUnattended(

@@ -253,9 +253,9 @@ export type SidecarTrend =
 export type SettledGrowth =
   | {
       readonly judgeable: true;
-      /** The second half's mean footprint over the first half's, in percent. Negative when falling. */
+      /** The second half's mean footprint over the first half's, in percent, for display. Negative when falling. */
       readonly growthPercent: number;
-      /** True when {@link growthPercent} is not above {@link MAX_SETTLED_GROWTH_PERCENT}. */
+      /** True when the second half's mean is not above the first's by more than {@link MAX_SETTLED_GROWTH_PERCENT}. Decided on the means themselves, not on {@link growthPercent}, which float error moves off the boundary. */
       readonly withinLimit: boolean;
       readonly firstHalfMeanBytes: number;
       readonly secondHalfMeanBytes: number;
@@ -457,7 +457,10 @@ function settledGrowth(
   return {
     judgeable: true,
     growthPercent,
-    withinLimit: growthPercent <= MAX_SETTLED_GROWTH_PERCENT,
+    // Exact at the boundary: 100 to 110 gives 11000 against 11000, where the percentage reads 10.000000000000009.
+    withinLimit:
+      secondHalfMeanBytes * 100 <=
+      firstHalfMeanBytes * (100 + MAX_SETTLED_GROWTH_PERCENT),
     firstHalfMeanBytes,
     secondHalfMeanBytes,
     settledFromMs,
