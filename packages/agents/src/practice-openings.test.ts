@@ -26,7 +26,7 @@ import {
   rememberedBy,
 } from "./context";
 import { buildModelProposal } from "./observation";
-import { PRACTICES_HEADING } from "./practices";
+import { describeDigest, PRACTICES_HEADING } from "./practices";
 import {
   actorAt,
   godProfile,
@@ -627,13 +627,81 @@ test("where mortals are with the god, the demand asks the other god to tell a le
   ).toBe(120);
 });
 
+test("the digest does not repeat the offer a prayer's own line writes out: the offer appears whole once, under the prayer, and the opening points to it", () => {
+  const run = new Run();
+  run.state = actorAt(run.state, "zeus", "altar");
+  const petition = run.prays("farmer", "zeus");
+  const { context, remembered, schema } = run.view("zeus");
+  const [opening] = remembered.practice.openings;
+  expect(opening).toMatchObject({
+    kind: "offer",
+    intent: { prayer: petition },
+  });
+  const json = JSON.stringify(opening?.intent);
+  // Copyable whole, once: in the prayer's choices.
+  expect(context.prompt.split(json)).toHaveLength(2);
+  expect(prayersOf(context.prompt).join("\n")).toContain(json);
+  const digest = digestOf(context.prompt).join("\n");
+  expect(digest).not.toContain(json);
+  expect(digest).not.toContain('"move":"offer"');
+  // The opening is still there, and says where its object is.
+  expect(digest).toContain("You may begin a bargain");
+  expect(digest).toContain(`set terms on farmer's prayer [${petition}]`);
+  expect(digest).toContain("under that prayer");
+  // W04: the object the prayer line writes out parses against the god's own schema and builds into a proposal.
+  const [offered] = intentsIn(prayersOf(context.prompt));
+  expect(offered).toEqual(opening?.intent);
+  legalAsWritten(run, "zeus", offered as Record<string, unknown>);
+  expect(schema.parse(offered).ok).toBe(true);
+});
+
+test("a demand opening is still written out whole in the digest: nothing else shows it, and an offer beside it points to its prayer", () => {
+  const run = new Run();
+  run.state = actorAt(run.state, "zeus", "altar");
+  const petition = run.prays("farmer", "zeus");
+  const cause = run.accused("zeus", "hera", { agent: "zeus", target: "hera" });
+  const { context, remembered } = run.view("zeus");
+  const [demand, offer] = remembered.practice.openings;
+  expect(demand).toMatchObject({ kind: "demand", intent: { cause } });
+  expect(offer).toMatchObject({ kind: "offer", intent: { prayer: petition } });
+  const digest = digestOf(context.prompt).join("\n");
+  expect(digest).toContain(JSON.stringify(demand?.intent));
+  expect(digest).not.toContain(JSON.stringify(offer?.intent));
+  const [opening] = intentsIn(digestOf(context.prompt));
+  legalAsWritten(run, "zeus", opening as Record<string, unknown>);
+});
+
+test("an offer whose prayer the prompt does not write out is still written out whole in the digest", () => {
+  const openings = [
+    {
+      kind: "offer" as const,
+      label: "set terms on farmer's prayer [evt-1-1]",
+      intent: { action: "practice", move: "offer", prayer: "evt-1-1" },
+    },
+  ];
+  const alone = describeDigest([], undefined, openings).join("\n");
+  expect(alone).toContain(
+    '{"action":"practice","move":"offer","prayer":"evt-1-1"}',
+  );
+  const pointed = describeDigest(
+    [],
+    undefined,
+    openings,
+    undefined,
+    new Set(["evt-1-1"]),
+  ).join("\n");
+  expect(pointed).not.toContain('"move":"offer"');
+  expect(pointed).toContain("set terms on farmer's prayer [evt-1-1]");
+});
+
 test("a prayer's terms are an opening when the god has no grievance, and only the prayers it can hear: Hera is shown none of Zeus's", () => {
   const run = new Run();
   run.state = actorAt(run.state, "zeus", "altar");
   const petition = run.prays("farmer", "zeus");
   const zeus = digestOf(run.view("zeus").context.prompt);
   expect(zeus.join("\n")).toContain(`farmer's prayer [${petition}]`);
-  const [opening] = intentsIn(zeus);
+  // The prayer's own line writes the terms out; the opening points to them.
+  const [opening] = intentsIn(prayersOf(run.view("zeus").context.prompt));
   expect(opening).toMatchObject({ move: "offer", prayer: petition });
   legalAsWritten(run, "zeus", opening as Record<string, unknown>);
   const hera = run.view("hera");

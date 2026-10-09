@@ -195,7 +195,9 @@ interface WorldOptions {
   readonly events?: number;
   readonly actions?: number;
   /** How many of the oldest prayers a live practice holds: 3 is two open offers and an accepted one (a boon owed), 1 is one open offer. */
-  readonly live?: 1 | 3;
+  readonly live?: 0 | 1 | 3;
+  /** Hera has demanded of Zeus over what he told her: a thread awaits his answer, which leaves the digest no openings. */
+  readonly awaited?: boolean;
   /** Every memory is of the same kind of loss, about the goal's target, with a line of the same length. */
   readonly uniform?: boolean;
   /** The characters of the legend each recent event carries; 0 for none. */
@@ -206,6 +208,8 @@ interface WorldOptions {
   readonly accusers?: readonly { teller: string; salience: number }[];
   /** A witnessed memory newer than every other, of this salience. */
   readonly newest?: number;
+  /** Memories about the goal's target, older and less salient than the shown ones, so no shown memory backs their goal-history rows. */
+  readonly independent?: number;
   /** Prayers after the live ones alternate between a help prayer and a (longer) punish prayer, the first of them a help prayer. */
   readonly mixedPrayers?: boolean;
 }
@@ -221,9 +225,11 @@ function busyZeus(options: WorldOptions = {}) {
     uniform = false,
     accusers = [],
     newest,
+    independent = 0,
     eventText = 0,
     actionText = 0,
     mixedPrayers = false,
+    awaited = false,
   } = options;
   const run = new WorldRun();
   const people = [...run.state.actors.values()]
@@ -309,6 +315,25 @@ function busyZeus(options: WorldOptions = {}) {
       });
     }
   }
+  if (awaited) {
+    const heraCause = run.accused("hera", "zeus", {
+      agent: "hera",
+      target: "zeus",
+    });
+    run.tick({
+      actor: "hera",
+      kind: "practice",
+      move: "demand",
+      counterparty: "zeus",
+      cause: heraCause,
+      term: {
+        kind: "tell-legend",
+        party: "zeus",
+        place: "altar",
+        deadlineTicks: 100,
+      },
+    });
+  }
   const accusedBy = accusers.map((accuser) => ({
     ...accuser,
     cause: run.accused(
@@ -318,6 +343,20 @@ function busyZeus(options: WorldOptions = {}) {
       accuser.salience,
     ),
   }));
+  for (let i = 0; i < independent; i += 1) {
+    run.apply({
+      id: `evt-m-ind-${i}`,
+      sequence: 400 + i,
+      kind: "memory-recorded",
+      memoryKind: "witnessed",
+      entityId: "zeus",
+      sourceEventId: `evt-7-ind${i}`,
+      eventKind: "theft",
+      subjects: ["woodcutter", "farmer"],
+      salience: 1,
+      consequence: { effect: "harm", agent: "woodcutter", target: "farmer" },
+    });
+  }
   for (const salience of memories) {
     const subject =
       uniform || salience === 2 || salience === 5 ? "farmer" : people[salience];
@@ -1009,7 +1048,7 @@ describe("fitToCap: goal-history rows the shown memories and actions do not back
     const middle = Math.floor(rows.length / 2);
     const outsideMemory: GoalHistoryEntry = {
       kind: "memory",
-      sequence: 0,
+      sequence: -2,
       memory: {
         ...memory,
         id: "evt-m-outside" as typeof memory.id,
@@ -1018,7 +1057,7 @@ describe("fitToCap: goal-history rows the shown memories and actions do not back
     };
     const outsideAction: GoalHistoryEntry = {
       kind: "action",
-      sequence: 0,
+      sequence: -1,
       event: { ...action, id: "evt-8-outside" as typeof action.id },
     };
     const goalHistory = [
@@ -1063,7 +1102,7 @@ describe("fitToCap: goal-history rows the shown memories and actions do not back
     ).toBeGreaterThan(1);
   });
 
-  test("Fro Bot's case: restoring a memory or an action keeps the independent rows, and the result fits", () => {
+  test("restoring a memory or an action keeps every independent row the request holds, never adds one on its own, and the result fits", () => {
     const { world: w, outside } = fixture();
     let restored = 0;
     for (let ratio = loosestPrayerRatio(w); ratio >= 1.5; ratio -= 0.01) {
@@ -1074,8 +1113,11 @@ describe("fitToCap: goal-history rows the shown memories and actions do not back
         capped.remembered.memories.length > gross.remembered.memories.length ||
         capped.remembered.ownActions.length >
           gross.remembered.ownActions.length;
+      // A row the shed kept is never lost to a restore.
       for (const entry of outside) {
-        expect(capped.remembered.goalHistory).toContain(entry);
+        if (gross.remembered.goalHistory.includes(entry)) {
+          expect(capped.remembered.goalHistory).toContain(entry);
+        }
       }
       expect(capped.fits).toBe(true);
       expect(fitsCap(capped.context, ratio)).toBe(true);
@@ -1086,10 +1128,11 @@ describe("fitToCap: goal-history rows the shown memories and actions do not back
     expect(restored).toBeGreaterThan(0);
   });
 
-  test("shedding a unit removes only the goal-history rows that unit backs", () => {
+  test("shedding a unit removes the goal-history rows that unit backs and no other, and an independent row goes before any shown memory", () => {
     const { world: w, outside } = fixture();
     const rows = w.remembered.goalHistory;
     let shedSome = 0;
+    let shedRows = 0;
     for (let ratio = 3.2; ratio >= 1.5; ratio -= 0.02) {
       const gross = shedAt(w, ratio);
       if (!gross.fits) break;
@@ -1103,18 +1146,28 @@ describe("fitToCap: goal-history rows the shown memories and actions do not back
           .filter((a) => !gross.remembered.ownActions.includes(a))
           .map((a) => a.id),
       );
-      const expected = rows.filter((entry) =>
-        entry.kind === "memory"
-          ? !goneMemories.has(entry.memory.id)
-          : !goneActions.has(entry.event.id),
-      );
-      expect(gross.remembered.goalHistory).toEqual(expected);
-      for (const entry of outside) {
-        expect(gross.remembered.goalHistory).toContain(entry);
+      // The rows a shed unit backed are out, and every other row is either held or one of the independent ones.
+      const kept = gross.remembered.goalHistory;
+      for (const entry of rows) {
+        const unitGone =
+          entry.kind === "memory"
+            ? goneMemories.has(entry.memory.id)
+            : goneActions.has(entry.event.id);
+        if (unitGone) expect(kept).not.toContain(entry);
+        if (!outside.includes(entry) && !unitGone) {
+          expect(kept).toContain(entry);
+        }
       }
+      expect(kept).toEqual(rows.filter((entry) => kept.includes(entry)));
+      // Independent rows go oldest first, and none is left once a shown memory has gone.
+      const left = outside.filter((entry) => kept.includes(entry));
+      if (left.length > 0) expect(left).toEqual(outside.slice(-left.length));
+      if (goneMemories.size > 0) expect(left).toEqual([]);
+      if (left.length < outside.length) shedRows += 1;
       if (goneMemories.size + goneActions.size > 0) shedSome += 1;
     }
     expect(shedSome).toBeGreaterThan(0);
+    expect(shedRows).toBeGreaterThan(0);
   });
 
   test("a restored unit brings back only its own rows, and every row is in its original order, at every ratio", () => {
@@ -1128,11 +1181,11 @@ describe("fitToCap: goal-history rows the shown memories and actions do not back
       const kept = capped.remembered.goalHistory;
       // The history is the original with some rows out, never reordered or added to.
       expect(kept).toEqual(rows.filter((entry) => kept.includes(entry)));
+      // A row a shown unit backs is shown exactly when its unit is.
       for (const entry of rows) {
-        const shown = backed(entry, w.remembered)
-          ? backed(entry, capped.remembered)
-          : true;
-        expect(kept.includes(entry)).toBe(shown);
+        if (backed(entry, w.remembered)) {
+          expect(kept.includes(entry)).toBe(backed(entry, capped.remembered));
+        }
       }
       checked += 1;
     }
@@ -1448,5 +1501,315 @@ describe("the causal set: the floor plus the set over the cap", () => {
     const floor = requestChars(capAt(floorOnly, 0.5).context);
     expect(floor).toBeLessThan(exact - 1);
     expect(capAt(floorOnly, ratioAt(exact - 1)).fits).toBe(true);
+  });
+});
+
+// --- Goal-history rows that no shown unit backs ---------------------------------------------------
+//
+// `rememberedBy` takes the goal's history from every memory and own action about the goal's target since the goal
+// was set, not only from the shown ones, so a row may rest on a memory or action the prompt does not show. Such a
+// row (96 characters on Zeus's turns at ticks 6463-7029 of the 2026-10-08 rerun) sheds with nothing. It is the
+// lowest-valued unit of the memories tier, so it goes before the least salient shown memory.
+
+type History = World["remembered"]["goalHistory"][number];
+
+/** A goal-history row that none of `remembered`'s shown memories or own actions backs. */
+const isIndependent = (
+  entry: History,
+  remembered: World["remembered"],
+): boolean =>
+  entry.kind === "memory"
+    ? !remembered.memories.some((m) => m.id === entry.memory.id)
+    : !remembered.ownActions.some((e) => e.id === entry.event.id);
+
+const independentOf = (remembered: World["remembered"]) =>
+  remembered.goalHistory.filter((entry) => isIndependent(entry, remembered));
+
+describe("independent goal-history rows", () => {
+  const world = (options: Partial<WorldOptions> = {}) =>
+    busyZeus({
+      live: 1,
+      independent: 1,
+      events: 0,
+      actions: 0,
+      feelings: [],
+      ...options,
+    });
+
+  test("the fixture holds a row that no shown memory backs, older than the rows that shown memories back", () => {
+    const w = world();
+    expect(w.remembered.memories).toHaveLength(6);
+    const independent = independentOf(w.remembered);
+    expect(independent).toHaveLength(1);
+    expect(w.remembered.goalHistory[0]).toBe(independent[0]);
+    expect(w.remembered.goalHistory).toHaveLength(3);
+  });
+
+  test("the shed takes the independent row first in the memories tier, before the least salient shown memory, and touches nothing else", () => {
+    const w = world();
+    const full = chars(w);
+    const one = shedAt(w, ratioAt(full - 1));
+    expect(one.shed).toEqual({
+      events: 0,
+      actions: 0,
+      memories: 1,
+      prayers: 0,
+    });
+    // Exact survivors: every shown memory, and every row but the independent one, in their order.
+    expect(one.remembered.memories).toEqual(w.remembered.memories);
+    expect(one.remembered.goalHistory).toEqual(
+      w.remembered.goalHistory.slice(1),
+    );
+    expect(one.remembered.goal).toEqual(w.remembered.goal);
+    expect(shownText(one)).toContain(
+      'Your goal: "Keep watch over the farmer."',
+    );
+    expect(shownText(one)).not.toContain("evt-7-ind0");
+    expectAgreement(w, one);
+    // One unit more: now the least salient shown memory goes, with the row it backs, if it has one.
+    const rowless = chars({
+      ...w,
+      snapshot: one.snapshot,
+      remembered: one.remembered,
+    });
+    const two = shedAt(w, ratioAt(rowless - 1));
+    expect(two.shed.memories).toBe(2);
+    expect(two.remembered.memories.map((m) => m.salience)).toEqual([
+      2, 3, 4, 5, 6,
+    ]);
+    expectAgreement(w, two);
+  });
+
+  test("Zeus's tick-6463 shape: at the floor and the causal set, 40 characters over because of the independent row; capped, it fits, and the row went before anything protected", () => {
+    const w = world({ mixedPrayers: true });
+    // The floor the cap reaches: every shown unit shed that may be.
+    const floor = capAt(w, 0.5);
+    expect(floor.remembered.goalHistory).toEqual(
+      floor.remembered.goalHistory.filter(
+        (e) => !isIndependent(e, floor.remembered),
+      ),
+    );
+    // The same floor with the independent row put back: what the cap measured before the row could be shed.
+    const withRow = {
+      ...floor.remembered,
+      goalHistory: w.remembered.goalHistory.filter(
+        (e) =>
+          isIndependent(e, w.remembered) ||
+          floor.remembered.goalHistory.includes(e),
+      ),
+    };
+    const heavy = requestChars(
+      buildGodContext(w.profile, floor.snapshot, withRow),
+    );
+    const light = requestChars(floor.context);
+    expect(heavy - light).toBeGreaterThanOrEqual(40);
+    const capped = capAt(w, ratioAt(heavy - 40));
+    expect(capped.fits).toBe(true);
+    expect(independentOf(capped.remembered)).toEqual([]);
+    // What is protected is all there: the goal, the causal set, the prayer a live practice names.
+    expect(capped.remembered.goal).toEqual(w.remembered.goal);
+    const set = causalSet({
+      profile: w.profile,
+      state: w.state,
+      actorId: id("zeus"),
+      snapshot: w.snapshot,
+      remembered: w.remembered,
+      ratio: 0.5,
+    });
+    const kept = new Set(capped.remembered.memories.map((m) => m.id));
+    for (const memory of set.memories) expect(kept.has(memory)).toBe(true);
+    const prayers = new Set(capped.remembered.petitions.map((p) => p.id));
+    for (const prayer of [...set.prayers, ...w.protectedIds]) {
+      expect(prayers.has(prayer)).toBe(true);
+    }
+    expectAgreement(w, capped);
+    // Positive control: with the row unsheddable the same limit does not fit.
+    const stuck = buildGodContext(w.profile, floor.snapshot, withRow);
+    expect(fitsCap(stuck, ratioAt(heavy - 40))).toBe(false);
+  });
+
+  test("the refill restores a shed independent row in its original place, and only after what is worth more", () => {
+    const w = world();
+    let restored = 0;
+    for (let size = chars(w) - 1; size > chars(w) - 1200; size -= 1) {
+      const ratio = ratioAt(size);
+      const gross = shedAt(w, ratio);
+      const net = capAt(w, ratio);
+      const grossRows = independentOf(gross.remembered);
+      const netRows = independentOf(net.remembered);
+      if (grossRows.length === 0 && netRows.length === 1) {
+        restored += 1;
+        // Original place: first, ahead of every row a shown memory backs.
+        expect(net.remembered.goalHistory[0]).toBe(w.remembered.goalHistory[0]);
+        expect(net.remembered.goalHistory).toEqual(
+          w.remembered.goalHistory.filter((e) =>
+            net.remembered.goalHistory.includes(e),
+          ),
+        );
+        expect(net.fits).toBe(true);
+        expect(net.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
+        expectAgreement(w, net);
+        // Everything worth more that was shed is back first: no shown memory the shed took is still out.
+        expect(net.remembered.memories.length).toBeGreaterThanOrEqual(
+          gross.remembered.memories.length,
+        );
+      }
+      // A row is restored only into a request that fits; never invented.
+      expect(netRows.length).toBeLessThanOrEqual(1);
+    }
+    expect(restored).toBeGreaterThan(0);
+  });
+
+  test("a god whose rows are all backed sheds the same units as before: no independent row, no change", () => {
+    const w = busyZeus({ live: 1, events: 0, actions: 0, feelings: [] });
+    expect(independentOf(w.remembered)).toEqual([]);
+    const one = shedAt(w, ratioAt(chars(w) - 1));
+    expect(one.shed.memories).toBe(1);
+    expect(one.remembered.memories.map((m) => m.salience)).toEqual([
+      2, 3, 4, 5, 6,
+    ]);
+  });
+});
+
+describe("the digest does not repeat the kept prayer's offer", () => {
+  test("a request that fit only without the repeated offer sheds nothing: the kept punish prayer's offer is written out once, and the cap counts it once", () => {
+    const w = busyZeus({
+      live: 1,
+      events: 0,
+      actions: 0,
+      memories: [],
+      feelings: [],
+      prayers: 3,
+    });
+    const offer = w.remembered.practice.openings.find(
+      (opening) => opening.kind === "offer",
+    );
+    const json = JSON.stringify(offer?.intent);
+    expect(json.length).toBeGreaterThan(150);
+    // The request, had the digest repeated the object, would be this much longer; a limit 40 characters under that.
+    const repeated = chars(w) + json.length;
+    const capped = capAt(w, ratioAt(repeated - 40));
+    expect(capped.shed).toEqual({
+      events: 0,
+      actions: 0,
+      memories: 0,
+      prayers: 0,
+    });
+    expect(capped.fits).toBe(true);
+    // Once in the prompt, copyable whole, and the schema takes it.
+    expect(capped.context.prompt.split(json)).toHaveLength(2);
+    expect(
+      godIntentSchema(w.profile, capped.snapshot, capped.remembered).parse(
+        offer?.intent,
+      ).ok,
+    ).toBe(true);
+    expectAgreement(w, capped);
+  });
+});
+
+describe("the causal set: one answer slot, a thread or a prayer", () => {
+  const sizes = (w: World, prayers: ReadonlySet<EventId>) => {
+    const input = {
+      profile: w.profile,
+      state: w.state,
+      actorId: id("zeus"),
+      snapshot: w.snapshot,
+      remembered: w.remembered,
+      ratio: 0.5,
+    };
+    return shedToCap(input, {
+      memories: causalSet(input).memories,
+      prayers,
+    });
+  };
+  const setOf = (w: World) =>
+    causalSet({
+      profile: w.profile,
+      state: w.state,
+      actorId: id("zeus"),
+      snapshot: w.snapshot,
+      remembered: w.remembered,
+      ratio: 0.5,
+    });
+  const SHAPE = {
+    live: 0,
+    prayers: 4,
+    events: 0,
+    actions: 0,
+    feelings: [],
+    memories: [],
+    newest: 6,
+    awaited: true,
+  } as const;
+
+  test("the fixture: a thread awaits Zeus, no live practice holds a prayer, and the digest has no opening", () => {
+    const w = busyZeus(SHAPE);
+    expect(w.remembered.threads.map((t) => t.standing)).toEqual(["awaiting"]);
+    expect(w.remembered.practice.openings).toEqual([]);
+    expect(w.protectedIds).toEqual([]);
+    expect(w.remembered.petitions.length).toBeGreaterThan(1);
+    expect(
+      buildGodContext(w.profile, w.snapshot, w.remembered).prompt,
+    ).toContain("AWAITING YOUR ANSWER");
+  });
+
+  test("with a thread awaiting his answer no prayer is protected as the answerable prayer", () => {
+    const w = busyZeus(SHAPE);
+    expect([...setOf(w).prayers]).toEqual([]);
+    const capped = capAt(w, 0.5);
+    expect(capped.remembered.petitions).toEqual([]);
+    expectAgreement(w, capped);
+  });
+
+  test("Zeus's S15 shape: over the cap only because a prayer is protected, the prayer sheds, the awaiting row and the newest memory stay, and the turn fits", () => {
+    const w = busyZeus(SHAPE);
+    const newest = [...w.remembered.petitions].sort(
+      (a, b) =>
+        (w.state.petitions.get(b.id)?.sequence ?? 0) -
+        (w.state.petitions.get(a.id)?.sequence ?? 0),
+    )[0] as World["remembered"]["petitions"][number];
+    // What the rule before this one kept: the newest prayer the god can answer.
+    const before = sizes(w, new Set([newest.id]));
+    expect(before.remembered.petitions.map((p) => p.id)).toEqual([newest.id]);
+    const limit = requestChars(before.context) - 40;
+    const capped = capAt(w, ratioAt(limit));
+    expect(fitsCap(before.context, ratioAt(limit))).toBe(false);
+    expect(capped.fits).toBe(true);
+    expect(capped.remembered.petitions).toEqual([]);
+    expect(capped.remembered.threads).toEqual(w.remembered.threads);
+    expect(capped.context.prompt).toContain("AWAITING YOUR ANSWER");
+    expect(capped.context.prompt).toContain('"move":"accept"');
+    expect(capped.remembered.memories.map((m) => String(m.id))).toContain(
+      "evt-m-newest",
+    );
+    expectAgreement(w, capped);
+  });
+
+  test("with no thread awaiting, the answerable prayer is protected as it was", () => {
+    const w = busyZeus({ ...SHAPE, awaited: false });
+    expect(w.remembered.threads).toEqual([]);
+    const set = setOf(w);
+    expect(set.prayers.size).toBe(1);
+    const capped = capAt(w, 0.5);
+    expect(capped.remembered.petitions.map((p) => p.id)).toEqual([
+      ...set.prayers,
+    ]);
+    expectAgreement(w, capped);
+  });
+
+  test("a prayer a live practice holds or a boon is owed on stays protected whether or not a thread awaits", () => {
+    for (const live of [1, 3] as const) {
+      const w = busyZeus({ ...SHAPE, live, prayers: 6 });
+      expect(w.remembered.threads.some((t) => t.standing === "awaiting")).toBe(
+        true,
+      );
+      expect(w.protectedIds).toHaveLength(live);
+      expect([...setOf(w).prayers]).toEqual([]);
+      const capped = capAt(w, 0.5);
+      expect(capped.remembered.petitions.map((p) => p.id).sort()).toEqual(
+        [...w.protectedIds].sort(),
+      );
+      expectAgreement(w, capped);
+    }
   });
 });

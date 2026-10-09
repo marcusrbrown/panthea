@@ -137,7 +137,7 @@ function rederive(input: CapInput, remembered: Remembered): Remembered {
 export interface CausalSet {
   /** Memory ids: the newest memory, and the evidence behind the demand opening shown first. */
   readonly memories: ReadonlySet<EventId>;
-  /** Prayer ids: the one prayer the god can answer, beyond those a live practice names. */
+  /** Prayer ids: the one prayer the god can answer, beyond those a live practice names; empty when a thread awaits its answer. */
   readonly prayers: ReadonlySet<EventId>;
 }
 
@@ -148,7 +148,8 @@ export interface CausalSet {
  * - the memory (or the prayer, for harm a prayer told of) that the demand opening shown first rests on, only
  *   that one and not every cause available;
  * - one prayer with its choices: the prayer the first offer opening names, else the first prayer shown with an
- *   offer, else the newest prayer with any answer.
+ *   offer, else the newest prayer with any answer; none when a thread awaits the god's answer, which is then
+ *   its answer slot.
  * It is read from the unshed world once. Shedding re-derives the practice options from survivors, and what
  * that derives later is never added here.
  */
@@ -198,10 +199,15 @@ export function causalSet(input: CapInput): CausalSet {
         (state.petitions.get(b.id)?.sequence ?? 0) -
           (state.petitions.get(a.id)?.sequence ?? 0) || (a.id < b.id ? -1 : 1),
     )[0]?.id;
+  // The answer slot is one thread or one prayer: a thread awaiting the god's answer is its answer opportunity, and
+  // the digest shows it whole, so no prayer is kept for answering. A prayer a live practice names stays protected.
+  const awaitsAnswer = remembered.threads.some(
+    (thread) => thread.standing === "awaiting",
+  );
   const keep = [named, offered, answerable].find(
     (id): id is EventId => id !== undefined && shownPrayer.has(id as EventId),
   );
-  if (keep !== undefined) prayers.add(keep);
+  if (keep !== undefined && !awaitsAnswer) prayers.add(keep);
   return { memories, prayers };
 }
 
@@ -231,14 +237,43 @@ function withoutAction({ snapshot, remembered }: Pair): Pair | undefined {
 }
 
 /**
- * Tier 3: the least salient memory outside the causal set (the oldest among equals), with its goal-history row,
- * and everything derived from it; once none is left, the weakest feeling.
+ * Whether no shown unit backs a goal-history row. `rememberedBy` builds the history from every memory and own
+ * action about the goal's target since the goal was set, so a row may tell of a memory outside the shown ones
+ * (those missed the salience cut) or of an action outside the five shown. Rows that a shown unit backs go with it.
+ */
+function isIndependent(
+  entry: GoalHistoryEntry,
+  remembered: Remembered,
+): boolean {
+  return entry.kind === "memory"
+    ? !remembered.memories.some((memory) => memory.id === entry.memory.id)
+    : !remembered.ownActions.some((event) => event.id === entry.event.id);
+}
+
+/**
+ * Tier 3: first the oldest goal-history row that no shown memory or own action backs, then the least salient
+ * memory outside the causal set (the oldest among equals), with its goal-history row and everything derived from
+ * it, then the weakest feeling. An independent row is the lowest-valued unit of the tier: its memory missed the
+ * salience cut that every shown memory passed, and the row is cited nowhere and feeds no schema entry. Shedding it
+ * touches only that row; the goal itself is never shed.
  */
 function withoutMemory(
   { snapshot, remembered }: Pair,
   input: CapInput,
   causal: CausalSet,
 ): Pair | undefined {
+  const row = remembered.goalHistory
+    .filter((entry) => isIndependent(entry, remembered))
+    .sort((a, b) => a.sequence - b.sequence)[0];
+  if (row !== undefined) {
+    return {
+      snapshot,
+      remembered: {
+        ...remembered,
+        goalHistory: remembered.goalHistory.filter((entry) => entry !== row),
+      },
+    };
+  }
   const gone = remembered.memories
     .filter((memory) => !causal.memories.has(memory.id))
     .sort((a, b) => a.salience - b.salience || a.recordedAt - b.recordedAt)[0];
@@ -332,7 +367,7 @@ export function shedToCap(
 
 // --- Refilling -----------------------------------------------------------------------------------
 
-/** A shed unit that may come back, and how to put it back into a pair. */
+/** A shed unit that may come back, and how to put it back into a pair. `memories` also counts goal-history rows and feelings. */
 interface Candidate {
   readonly tier: "memories" | "actions" | "events";
   readonly add: (pair: Pair) => Pair;
@@ -413,6 +448,28 @@ function refillCandidates(
         }),
       }),
     );
+  // A goal-history row no shown unit backed, newest first: the lowest-valued unit of the tier, so after the feelings.
+  // It returns to its place among the rows the request holds, in the order they had.
+  const rows = was.goalHistory
+    .filter(
+      (entry) => isIndependent(entry, was) && !now.goalHistory.includes(entry),
+    )
+    .sort((a, b) => b.sequence - a.sequence)
+    .map(
+      (row): Candidate => ({
+        tier: "memories",
+        add: ({ snapshot, remembered }) => ({
+          snapshot,
+          remembered: {
+            ...remembered,
+            goalHistory: was.goalHistory.filter(
+              (entry) =>
+                entry === row || remembered.goalHistory.includes(entry),
+            ),
+          },
+        }),
+      }),
+    );
   const actions = was.ownActions
     .filter((action) => !haveActions.has(action))
     .reverse()
@@ -457,7 +514,7 @@ function refillCandidates(
         }),
       }),
     );
-  return [...memories, ...feelings, ...actions, ...events];
+  return [...memories, ...feelings, ...rows, ...actions, ...events];
 }
 
 /**
