@@ -436,7 +436,7 @@ test("a scripted answer on a thread that is not the god's is not a valid intent:
 
 // --- The cap on the whole prompt ------------------------------------------------------------------
 
-/** A router on granite3.3-8b-4k (2.85 characters a token) that records what the turn asks of it. */
+/** A router on granite3.3-8b-4k (2.75 characters a token) that records what the turn asks of it. */
 function capped(stub: Stub) {
   const config = parseRoutingConfig({
     endpoints: [
@@ -540,13 +540,13 @@ test("a turn under the cap sends the whole request unreduced, with the router's 
   if (turn?.kind !== "wait") return;
   expect(turn.request.cap).toEqual({
     estimatedTokens: expect.any(Number),
-    ratio: 2.85,
+    ratio: 2.75,
     shed: { events: 0, actions: 0, memories: 0, prayers: 0 },
   });
   expect(turn.request.cap.estimatedTokens).toBeLessThanOrEqual(
     PROMPT_TOKEN_CAP,
   );
-  expect(calls.route).toEqual([{ maxChars: 8550 }]);
+  expect(calls.route).toEqual([{ maxChars: 8250 }]);
   expect(sent(stub, 0)).toBe(turn.request.prompt);
 });
 
@@ -618,7 +618,7 @@ test("when the protected floor alone is over the cap, the turn reads the plan, n
   expect(turn.request.exhaustedReason).toBe("prompt-over-cap");
   expect(turn.request.route).toMatchObject({ kind: "exhausted", steps: [] });
   expect(turn.request.cap.estimatedTokens).toBeGreaterThan(PROMPT_TOKEN_CAP);
-  expect(turn.request.cap.ratio).toBe(2.85);
+  expect(turn.request.cap.ratio).toBe(2.75);
   // Everything sheddable was shed first.
   expect(turn.request.cap.shed.prayers).toBeGreaterThan(0);
   expect(calls.plan).toBe(1);
@@ -636,7 +636,7 @@ test("a retry after an invalid reply never passes the limit: the whole prompt, a
   expect(turn?.kind).toBe("wait");
   expect(stub.seen).toHaveLength(2);
   const limit = calls.route[0]?.maxChars as number;
-  expect(limit).toBe(8550);
+  expect(limit).toBe(8250);
   expect(sent(stub, 1).length).toBeLessThanOrEqual(limit);
   // The first send is the bare request; the retry is that, whole, and a note only if the wording fits after it.
   expect(sent(stub, 1).startsWith(sent(stub, 0))).toBe(true);

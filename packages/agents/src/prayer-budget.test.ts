@@ -26,7 +26,7 @@ import {
 } from "./context";
 import { buildModelProposal } from "./observation";
 import { PRAYERS_BUDGET_CHARS, PROMPT_TOKEN_CAP } from "./practices";
-import { type Capped, fitsCap, fitToCap } from "./prompt-cap";
+import { type Capped, fitsCap, fitToCap, MODEL_RATIOS } from "./prompt-cap";
 import type { RouteContext } from "./router";
 import {
   allGodProfiles,
@@ -38,7 +38,7 @@ import {
 const id = toEntityId;
 
 /** Characters a token takes on granite3.3-8b-4k, the model the cap is sized for. */
-const GRANITE_RATIO = 2.85;
+const GRANITE_RATIO = MODEL_RATIOS["granite3.3-8b-4k"] as number;
 
 /** The prayers section of a prompt: the heading and the dashed or indented lines under it. */
 function prayersSection(prompt: string): string {

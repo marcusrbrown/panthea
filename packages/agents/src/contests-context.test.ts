@@ -33,7 +33,7 @@ import {
   CONTESTS_HEADING,
   PROMPT_TOKEN_CAP,
 } from "./practices";
-import { fitsCap, fitToCap } from "./prompt-cap";
+import { fitsCap, fitToCap, MODEL_RATIOS } from "./prompt-cap";
 import type { RouteContext } from "./router";
 import {
   allGodProfiles,
@@ -45,7 +45,7 @@ import {
 const id = toEntityId;
 
 /** Characters a token takes on granite3.3-8b-4k, the model the cap is sized for. */
-const GRANITE_RATIO = 2.85;
+const GRANITE_RATIO = MODEL_RATIOS["granite3.3-8b-4k"] as number;
 
 class Run {
   state: WorldState;

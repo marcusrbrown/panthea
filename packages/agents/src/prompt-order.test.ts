@@ -389,7 +389,7 @@ test("every god's request, shed to the cap, stays inside 3,000 tokens at the gra
       actorId: id(profile.id),
       snapshot,
       remembered: rememberedBy(world.state, id(profile.id), recent),
-      ratio: 2.85,
+      ratio: 2.75,
     });
     expect([profile.id, capped.fits]).toEqual([profile.id, true]);
     expect(capped.estimatedTokens).toBeLessThanOrEqual(PROMPT_TOKEN_CAP);
