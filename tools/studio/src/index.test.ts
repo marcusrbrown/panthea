@@ -555,6 +555,7 @@ describe("a session", () => {
       "edit-report",
       "candidate-frames",
       "candidate-bytes",
+      "edit-workspace",
     ];
 
     for (const op of ops) {

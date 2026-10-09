@@ -395,6 +395,8 @@ export class Studio {
     const content = this.content;
     const pollMs = this.config.editor?.editPollMs;
     if (!session || !editor || !content || pollMs === undefined) return;
+    // One watch per edit: a second request for the same edit keeps the first.
+    if (this.watches.has(editId)) return;
     const file = workspaceFile(session, editId);
     const watch: Watch = {
       baseline: workspaceHash ?? "",

@@ -2,9 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { openStudioSession, readStudioStatus } from "@panthea/assets/studio";
+import {
+  newRequestRecord,
+  openStudioSession,
+  readStudioStatus,
+} from "@panthea/assets/studio";
 import { paletteFixture } from "../../../packages/assets/src/fixtures";
 import {
+  type AssetRig,
   doneCandidate,
   finishSheet,
   keyframe,
@@ -13,10 +18,13 @@ import {
   olympusMovedPaletteFiles,
   PROVISIONAL_TEST_PARAMS,
   paintFigure,
+  pngOf,
   queuedJob,
   runSlots,
   sheetOf,
   spriteSet,
+  succeedWithImage,
+  upscale,
   workingSet,
 } from "../../../packages/assets/src/studio/_test-fixtures";
 import { readLog } from "../../../packages/assets/src/studio/_test-runtime";
@@ -55,6 +63,8 @@ describe("argument checking", () => {
       ["reroll", { requestId: "r", perSlot: "4" }],
       ["reroll", { requestId: "r", perSlot: 1.5 }],
       ["reroll", { requestId: "r", perSlot: -1 }],
+      ["reroll", { requestId: "r", perSlot: 1, slotKey: "" }],
+      ["reroll", { requestId: "r", perSlot: 1, slotKey: 3 }],
       ["generate", { id: "r", subject: "zeus", kind: "sprite" }],
       ["pick", { workingSetId: "w" }],
     ];
@@ -129,6 +139,7 @@ describe("argument checking", () => {
       "edit-report",
       "candidate-frames",
       "candidate-bytes",
+      "edit-workspace",
     ]) {
       expect(opSpec(op), op).toBeDefined();
       expect(opNames(), op).toContain(op);
@@ -577,7 +588,14 @@ describe("conform, sets, picks and rejection through the session", () => {
 
     expect(conformed.outcome).toMatchObject({
       ok: true,
-      result: { id: jobId, status: "done", report: "pass" },
+      result: {
+        id: jobId,
+        status: "done",
+        report: { status: "pass", failedChecks: [] },
+        scale: expect.any(Number),
+        coloursMerged: expect.any(Number),
+        pixelsChanged: expect.any(Number),
+      },
     });
     expect(opened.outcome.ok && picked.outcome.ok).toBe(true);
     expect(
@@ -1173,5 +1191,145 @@ describe("candidate-frames and candidate-bytes", () => {
 
     expect(frames.ok && bytes.ok).toBe(true);
     rig.session.close();
+  });
+});
+
+describe("what the app needs to conform a job", () => {
+  const over = (rig: AssetRig) => ({
+    loadContent: () => ({ ok: true as const, content: rig.content }),
+  });
+
+  test("status lists the names of the configured conform sets and nothing of their settings", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      conform: {
+        standard: PROVISIONAL_TEST_PARAMS,
+        "scale-4": PROVISIONAL_TEST_PARAMS,
+      },
+    };
+
+    const { outcome } = await run(config, "status", {});
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: { conformSets: ["scale-4", "standard"] },
+    });
+    expect(JSON.stringify(outcome)).not.toContain("alphaCutoff");
+    const none = await run({ studioRoot: rig.root }, "status", {});
+    expect(none.outcome).toMatchObject({
+      ok: true,
+      result: { conformSets: [] },
+    });
+  });
+
+  test("list jobs says which succeeded jobs have a candidate, and list candidates carries the real summary", async () => {
+    const rig = assetRig();
+    const ids = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+      { state: "idle", direction: "north" },
+    ]);
+    // A third job that succeeded but was never conformed.
+    const second = runSlots(rig, "zeus-walk", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    rig.session.store.putCandidate(needsScaleCandidate(second[0] as string));
+    rig.session.close();
+    const config: StudioConfig = { studioRoot: rig.root };
+
+    const jobs = await run(config, "list", { kind: "jobs" });
+    const candidates = await run(config, "list", { kind: "candidates" });
+
+    expect(jobs.outcome.ok && jobs.outcome.result).toEqual(
+      expect.arrayContaining(
+        ids.map((id) => expect.objectContaining({ id, candidate: "done" })),
+      ),
+    );
+    expect(jobs.outcome.ok && jobs.outcome.result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: second[0], candidate: "needs-scale" }),
+      ]),
+    );
+    expect(candidates.outcome.ok && candidates.outcome.result).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: ids[0],
+          report: { status: "pass", failedChecks: [] },
+          scale: 8,
+        }),
+      ]),
+    );
+  });
+
+  test("a succeeded job that was never conformed reads candidate null, and conforming it with a named set makes it done", async () => {
+    const rig = assetRig();
+    const built = newRequestRecord(
+      rig.content,
+      {
+        id: "zeus-idle",
+        subject: "zeus",
+        kind: "sprite",
+        slots: [{ state: "idle", direction: "south" }],
+        batch: 1,
+        seed: 100,
+      },
+      () => 0,
+    );
+    if (!built.ok) throw new Error("request");
+    const submitted = rig.session.submitRequest(built.value.record);
+    if (!submitted.ok) throw new Error("submit");
+    const [jobId] = submitted.jobIds;
+    succeedWithImage(
+      rig.session,
+      jobId as string,
+      pngOf(upscale(paintFigure(rig.content, { w: 64, h: 80 }, 0), 8)),
+      { w: 512, h: 640 },
+      rig.engine,
+    );
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+      conform: { standard: PROVISIONAL_TEST_PARAMS },
+    };
+
+    const before = await run(config, "list", { kind: "jobs" });
+    const conformed = await run(
+      config,
+      "conform",
+      { jobId, set: "standard" },
+      over(rig),
+    );
+    const after = await run(config, "list", { kind: "jobs" });
+
+    expect(before.outcome.ok && before.outcome.result).toEqual([
+      expect.objectContaining({
+        id: jobId,
+        status: "succeeded",
+        candidate: null,
+      }),
+    ]);
+    expect(conformed.outcome.ok).toBe(true);
+    expect(after.outcome.ok && after.outcome.result).toEqual([
+      expect.objectContaining({ id: jobId, candidate: "done" }),
+    ]);
+  });
+
+  test("conform takes a set name or inline params and nothing that names a file", async () => {
+    const config: StudioConfig = { studioRoot: tempRoot() };
+    for (const args of [
+      { jobId: "j", set: "s", path: "/tmp/x.json" },
+      { jobId: "j", file: "/tmp/x.json" },
+      { jobId: "j", set: "s", params: {} },
+      { jobId: "j" },
+      { set: "s" },
+    ]) {
+      const { outcome } = await run(config, "conform", args);
+      expect(codeOf(outcome), JSON.stringify(args)).toBe("invalid-arguments");
+    }
+    expect(
+      (await run(config, "conform", { jobId: "j", set: "missing" })).outcome,
+    ).toMatchObject({ ok: false, error: { code: "invalid-config" } });
   });
 });

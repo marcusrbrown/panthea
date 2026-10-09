@@ -777,6 +777,37 @@ describe("request submission", () => {
     session.close();
   });
 
+  test("a reroll of one slot enqueues only that slot's jobs and continues the sequence; an unknown slot writes nothing", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.submitRequest(faces("zeus-faces", 5000));
+    const slot = readStudioStatus(root).jobs[8]?.source.slotKey as string;
+
+    const result = session.reroll("zeus-faces", 2, slot);
+
+    expect(result.ok && result.jobIds).toEqual([
+      "zeus-faces-0024",
+      "zeus-faces-0025",
+    ]);
+    const status = readStudioStatus(root);
+    expect(status.jobs).toHaveLength(26);
+    const added = status.jobs.filter((r) => r.source.ordinal >= 24);
+    expect(added.map((r) => [r.source.slotKey, r.job.request.seed])).toEqual([
+      [slot, 5024],
+      [slot, 5025],
+    ]);
+    expect(status.requests[0]?.nextOrdinal).toBe(26);
+
+    const before = snapshot(root);
+    expect(session.reroll("zeus-faces", 1, "expression/nobody")).toMatchObject({
+      ok: false,
+      reason: "invalid-request",
+      enqueued: [],
+    });
+    expect(snapshot(root)).toEqual(before);
+    session.close();
+  });
+
   test("duplicate, unknown, empty and overflowing requests are refused before any write", () => {
     const root = tempRoot();
     const session = openOrFail(root);

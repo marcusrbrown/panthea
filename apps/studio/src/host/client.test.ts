@@ -355,6 +355,68 @@ describe("edit and config commands", () => {
     }
   });
 
+  test("conform sends the job and a set name, or inline params, and parses the candidate it returns", async () => {
+    const candidate = {
+      id: "zeus-idle-0000",
+      requestId: "zeus-idle",
+      slotKey: "idle/south",
+      ordinal: 0,
+      input: { hash: "a".repeat(64), width: 512, height: 640 },
+      status: "done",
+      imageHash: "b".repeat(64),
+      proposalHash: "b".repeat(64),
+      report: { status: "pass", failedChecks: [] },
+      scale: 8,
+      coloursMerged: 2,
+      pixelsChanged: 7,
+    };
+    const transport = fakeTransport({
+      studio_call: callsTo({ conform: () => candidate }),
+    });
+    const host = createStudioHost(transport);
+    const params = {
+      background: { type: "alpha" as const },
+      alphaCutoff: 128,
+      grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
+      scale: 8,
+    };
+
+    expect(await host.conform("zeus-idle-0000", { set: "standard" })).toEqual(
+      candidate as never,
+    );
+    await host.conform("zeus-idle-0000", { params });
+
+    expect(transport.calls.map((c) => c.args)).toEqual([
+      { op: "conform", args: { jobId: "zeus-idle-0000", set: "standard" } },
+      { op: "conform", args: { jobId: "zeus-idle-0000", params } },
+    ]);
+  });
+
+  test("conform rejects a reply that is not a candidate summary, and keeps a refusal's code", async () => {
+    const odd = fakeTransport({
+      studio_call: callsTo({ conform: () => ({ id: "x", report: "pass" }) }),
+    });
+    await expect(
+      createStudioHost(odd).conform("x", { set: "standard" }),
+    ).rejects.toMatchObject({ code: "malformed-reply" });
+
+    for (const code of [
+      "not-found",
+      "wrong-state",
+      "root-locked",
+      "invalid-config",
+    ]) {
+      const refused = fakeTransport({
+        studio_call: () => {
+          throw hostError(code, "no");
+        },
+      });
+      await expect(
+        createStudioHost(refused).conform("x", { set: "standard" }),
+      ).rejects.toMatchObject({ code });
+    }
+  });
+
   test("an edit-report refusal keeps its code", async () => {
     for (const code of ["not-found", "wrong-state", "corrupt-blob"]) {
       const transport = fakeTransport({

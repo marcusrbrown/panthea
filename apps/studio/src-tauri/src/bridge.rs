@@ -288,8 +288,10 @@ pub enum LaunchFailure {
     Failed,
 }
 
-/// `edit_open`: opens the edit in the session, then launches the editor on the
-/// workspace file the session reports. The reply never carries that file's path;
+/// `edit_open`: opens the edit in the session (or, when it already exists,
+/// asks the session for its workspace again), then launches the editor on the
+/// workspace file the session reports. Calling it twice for one edit relaunches
+/// the editor and never errors. The reply never carries that file's path;
 /// it says whether the editor launched so the webview can offer the
 /// export-and-import fallback when it did not.
 pub async fn edit_open(
@@ -304,8 +306,19 @@ pub async fn edit_open(
     if !configured {
         return Err(CommandError::not_configured());
     }
-    let args = json!({ "id": edit_id, "workingSetId": working_set_id, "slots": slots });
-    let result = mux.request("open", args, OpClass::Write).await;
+    // An edit that already exists is relaunched, never opened a second time:
+    // the session answers `edit-workspace` for it, and only a missing edit falls
+    // through to `open`. Any other refusal is the answer.
+    let existing = mux
+        .request("edit-workspace", json!({ "id": edit_id }), OpClass::Write)
+        .await;
+    let result = match existing {
+        Err(MuxError::Refused { ref code, .. }) if code == "not-found" => {
+            let args = json!({ "id": edit_id, "workingSetId": working_set_id, "slots": slots });
+            mux.request("open", args, OpClass::Write).await
+        }
+        other => other,
+    };
     dirty.mark();
     let mut reply = result?;
     let workspace = reply
@@ -1052,10 +1065,19 @@ mod tests {
         }))
     }
 
+    /// A session on which the edit does not exist yet: asking for its workspace
+    /// finds nothing, and `open` creates it.
+    fn fresh_edit(op: &str, args: &Value) -> Reply {
+        match op {
+            "edit-workspace" => Reply::Refuse("not-found", "no edit e1"),
+            _ => opened_reply(op, args),
+        }
+    }
+
     #[test]
     fn opening_an_edit_launches_the_editor_on_the_reported_file_and_never_returns_the_path() {
         runtime().block_on(async {
-            let (mux, sidecar, dirty) = attached(opened_reply);
+            let (mux, sidecar, dirty) = attached(fresh_edit);
             let launched = RefCell::new(Vec::<PathBuf>::new());
 
             let reply = edit_open(
@@ -1079,10 +1101,13 @@ mod tests {
             );
             assert_eq!(
                 sidecar.seen(),
-                vec![(
-                    "open".to_string(),
-                    json!({ "id": "e1", "workingSetId": "w", "slots": ["idle/south"] })
-                )]
+                vec![
+                    ("edit-workspace".to_string(), json!({ "id": "e1" })),
+                    (
+                        "open".to_string(),
+                        json!({ "id": "e1", "workingSetId": "w", "slots": ["idle/south"] })
+                    )
+                ]
             );
             assert_eq!(reply["editId"], "e1");
             assert_eq!(reply["workspace"]["size"], json!({ "w": 64, "h": 80 }));
@@ -1097,7 +1122,7 @@ mod tests {
     #[test]
     fn with_no_editor_the_edit_is_still_open_and_the_reply_says_the_editor_did_not_launch() {
         runtime().block_on(async {
-            let (mux, _sidecar, dirty) = attached(opened_reply);
+            let (mux, _sidecar, dirty) = attached(fresh_edit);
 
             let reply = edit_open(&mux, true, &dirty, "e1", "w", vec![], |_| {
                 Err(LaunchFailure::NoEditor)
@@ -1117,7 +1142,7 @@ mod tests {
     #[test]
     fn an_editor_that_will_not_start_is_reported_as_a_launch_failure() {
         runtime().block_on(async {
-            let (mux, _sidecar, dirty) = attached(opened_reply);
+            let (mux, _sidecar, dirty) = attached(fresh_edit);
             let reply = edit_open(&mux, true, &dirty, "e1", "w", vec![], |_| {
                 Err(LaunchFailure::Failed)
             })
@@ -1146,6 +1171,151 @@ mod tests {
 
             assert_eq!(error.code, "wrong-state");
             assert!(!*launched.borrow());
+        });
+    }
+
+    #[test]
+    fn an_edit_that_is_already_open_relaunches_the_editor_without_opening_it_again() {
+        runtime().block_on(async {
+            let (mux, sidecar, dirty) = attached(opened_reply);
+            let launched = RefCell::new(Vec::<PathBuf>::new());
+
+            let reply = edit_open(
+                &mux,
+                true,
+                &dirty,
+                "e1",
+                "w",
+                vec!["idle/south".into()],
+                |path| {
+                    launched.borrow_mut().push(path.to_path_buf());
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                sidecar.seen(),
+                vec![("edit-workspace".to_string(), json!({ "id": "e1" }))],
+                "an existing edit is never opened a second time"
+            );
+            assert_eq!(
+                *launched.borrow(),
+                vec![PathBuf::from("/studio/edits/e1/workspace.aseprite")]
+            );
+            assert_eq!(reply["editId"], "e1");
+            assert_eq!(reply["slots"], json!(["idle/south"]));
+            assert_eq!(reply["editor"], json!({ "launched": true }));
+            let text = reply.to_string();
+            assert!(!text.contains("/studio"), "{text}");
+            assert!(!text.contains("workspacePath"), "{text}");
+            assert!(dirty_after(&dirty));
+        });
+    }
+
+    #[test]
+    fn opening_the_same_edit_twice_launches_twice_and_never_errors() {
+        runtime().block_on(async {
+            let (mux, sidecar, dirty) = attached(opened_reply);
+            let launches = RefCell::new(0u32);
+
+            for _ in 0..2 {
+                let reply = edit_open(&mux, true, &dirty, "e1", "w", vec![], |_| {
+                    *launches.borrow_mut() += 1;
+                    Ok(())
+                })
+                .await
+                .unwrap();
+                assert_eq!(reply["editor"], json!({ "launched": true }));
+            }
+
+            assert_eq!(*launches.borrow(), 2);
+            assert_eq!(sidecar.count("open"), 0);
+            assert_eq!(sidecar.count("edit-workspace"), 2);
+        });
+    }
+
+    #[test]
+    fn an_existing_edit_with_no_workspace_file_says_the_editor_did_not_launch_so_the_files_path_is_offered(
+    ) {
+        runtime().block_on(async {
+            let (mux, sidecar, dirty) = attached(|op, _| match op {
+                "edit-workspace" => Reply::Ok(json!({
+                    "editId": "e1",
+                    "slots": ["idle/south"],
+                    "workspace": { "size": { "w": 64, "h": 80 }, "durationsMs": [167], "tags": [] },
+                    "workspacePath": null
+                })),
+                _ => Reply::Refuse("unexpected", "only edit-workspace is asked"),
+            });
+            let launched = RefCell::new(false);
+
+            let reply = edit_open(&mux, true, &dirty, "e1", "w", vec![], |_| {
+                *launched.borrow_mut() = true;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+            assert!(!*launched.borrow());
+            assert_eq!(
+                reply["editor"],
+                json!({ "launched": false, "reason": "no-workspace" })
+            );
+            assert_eq!(reply["workspace"]["size"], json!({ "w": 64, "h": 80 }));
+            assert_eq!(sidecar.count("open"), 0);
+        });
+    }
+
+    #[test]
+    fn a_new_edit_opened_with_no_editor_configured_replies_without_a_workspace() {
+        runtime().block_on(async {
+            let (mux, _sidecar, dirty) = attached(|op, _| match op {
+                "edit-workspace" => Reply::Refuse("not-found", "no edit e1"),
+                _ => Reply::Ok(json!({
+                    "editId": "e1",
+                    "slots": ["idle/south"],
+                    "workspace": { "size": { "w": 64, "h": 80 }, "durationsMs": [167], "tags": [] },
+                    "workspacePath": null
+                })),
+            });
+            let launched = RefCell::new(false);
+
+            let reply = edit_open(&mux, true, &dirty, "e1", "w", vec![], |_| {
+                *launched.borrow_mut() = true;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+            assert!(!*launched.borrow());
+            assert_eq!(
+                reply["editor"],
+                json!({ "launched": false, "reason": "no-workspace" })
+            );
+        });
+    }
+
+    #[test]
+    fn only_a_missing_edit_falls_through_to_open_and_every_other_refusal_is_passed_on_untouched() {
+        runtime().block_on(async {
+            for (code, retryable) in [("wrong-state", false), ("root-locked", false)] {
+                let (mux, sidecar, dirty) = attached(move |_, _| Reply::Refuse(code, "no"));
+                let launched = RefCell::new(false);
+
+                let error = edit_open(&mux, true, &dirty, "e1", "w", vec![], |_| {
+                    *launched.borrow_mut() = true;
+                    Ok(())
+                })
+                .await
+                .unwrap_err();
+
+                assert_eq!(error.code, code);
+                assert_eq!(error.retryable, retryable);
+                assert_eq!(sidecar.count("open"), 0, "{code}");
+                assert!(!*launched.borrow(), "{code}");
+            }
         });
     }
 

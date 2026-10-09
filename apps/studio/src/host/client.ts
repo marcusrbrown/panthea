@@ -6,15 +6,18 @@
 
 import {
   type CandidateFrames,
+  type CandidateSummary,
   type CommandError,
   type ConfigChoice,
   type ConfigStatus,
+  type ConformHow,
   type EditBrought,
   type EditExport,
   type EditOpened,
   type EditReport,
   type Parsed,
   parseCandidateFrames,
+  parseCandidateSummary,
   parseCommandError,
   parseConfigChoice,
   parseConfigStatus,
@@ -54,6 +57,7 @@ export const STUDIO_OPS = [
   "remove",
   "set-create",
   "set-replace-sheet",
+  "conform",
   "pick",
   "reject",
   "discard",
@@ -123,6 +127,8 @@ export interface StudioHost {
   ): Promise<EditOpened>;
   editExport(editId: string): Promise<EditExport>;
   editImport(editId: string, finish?: boolean): Promise<EditBrought>;
+  /** Conforms one succeeded job into a candidate, by a named set from the config or with inline settings. Refuses with not-found, wrong-state, invalid-config or root-locked. */
+  conform(jobId: string, how: ConformHow): Promise<CandidateSummary>;
   /** The metadata of a candidate's stored frames; its pixels come from `previewBytes`. Refuses with not-found, wrong-state or corrupt-blob. */
   candidateFrames(candidateId: string): Promise<CandidateFrames>;
   /** The latest save of an open or finished edit; refuses with not-found or wrong-state. */
@@ -257,6 +263,15 @@ export function createStudioHost(transport: HostTransport): StudioHost {
       return parsed(
         await invoke("edit_import", { editId, finish }),
         parseEditBrought,
+      );
+    },
+    async conform(jobId, how) {
+      return parsed(
+        await invoke("studio_call", {
+          op: "conform",
+          args: { jobId, ...how },
+        }),
+        parseCandidateSummary,
       );
     },
     async candidateFrames(candidateId) {

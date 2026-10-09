@@ -11,6 +11,7 @@ import {
   type CandidateFrames,
   type CommandResult,
   candidateFrames,
+  type EditRecord,
   type EditResult,
   editReport,
   type FinishStep,
@@ -23,6 +24,7 @@ import {
   resolveEdit,
   type StudioAssetRecord,
   type StudioContent,
+  type StudioSession,
   sheet,
   slotConformance,
   summarizeSheet,
@@ -30,6 +32,7 @@ import {
 import { parseConformParams } from "./config";
 import {
   assetSummary,
+  type CandidateKinds,
   candidateSummary,
   done,
   editSummary,
@@ -492,6 +495,45 @@ function candidateReply(studio: Studio, a: Args, withBytes: boolean): Outcome {
   });
 }
 
+/**
+ * What an edit's workspace holds, from the edit's own record: the frames of the
+ * latest save, or else the frames it opened with, one tag per slot (1-based,
+ * as the editor reports them) and the strip they make.
+ */
+function workspaceOf(edit: EditRecord): Json {
+  const durationsMs: number[] = [];
+  const tags: Json[] = [];
+  for (const slot of edit.slots) {
+    const frames =
+      edit.preview?.slots[slot]?.frames ?? edit.baseSignature[slot]?.frames;
+    const from = durationsMs.length + 1;
+    for (const frame of frames ?? []) durationsMs.push(frame.durationMs);
+    tags.push({ name: slot, from, to: durationsMs.length });
+  }
+  return {
+    size: { w: edit.cell.w * durationsMs.length, h: edit.cell.h },
+    durationsMs,
+    tags,
+  };
+}
+
+/** The reply for an edit that exists: its slots, its workspace, and where the workspace file is (null when there is none). */
+function editReply(
+  session: StudioSession,
+  id: string,
+  workspacePath: string | undefined,
+): Outcome {
+  const found = session.store.readEdit(id);
+  if (found.kind !== "found")
+    return refuse("wrong-state", `edit ${id} cannot be read`);
+  return done({
+    editId: id,
+    slots: [...found.value.slots],
+    workspace: workspaceOf(found.value),
+    workspacePath: workspacePath ?? null,
+  });
+}
+
 const LIST_KINDS = [
   "requests",
   "jobs",
@@ -514,6 +556,7 @@ const OPS: Record<string, OpDef> = {
               Json
             >),
             rootLock: studio.rootLock(status),
+            conformSets: Object.keys(studio.config.conform ?? {}).sort(),
           });
     },
   },
@@ -526,8 +569,12 @@ const OPS: Record<string, OpDef> = {
       switch (a.kind) {
         case "requests":
           return done(status.requests.map(requestSummary));
-        case "jobs":
-          return done(status.jobs.map(jobSummary));
+        case "jobs": {
+          const kinds: CandidateKinds = new Map(
+            status.candidates.map((c) => [c.id, c.result.status] as const),
+          );
+          return done(status.jobs.map((record) => jobSummary(record, kinds)));
+        }
         case "candidates":
           return done(status.candidates.map(candidateSummary));
         case "working-sets":
@@ -779,13 +826,21 @@ const OPS: Record<string, OpDef> = {
     },
   },
   reroll: {
-    spec: { ...str("requestId", true), perSlot: { t: "int", req: true } },
+    spec: {
+      ...str("requestId", true),
+      perSlot: { t: "int", req: true },
+      ...str("slotKey"),
+    },
     run: async (studio, a) => {
       const session = studio.owner();
       if (isOutcome(session)) return session;
       const runtime = studio.runtimeFor(session);
       if (isOutcome(runtime)) return runtime;
-      const ack = session.reroll(a.requestId as string, a.perSlot as number);
+      const ack = session.reroll(
+        a.requestId as string,
+        a.perSlot as number,
+        a.slotKey as string | undefined,
+      );
       if (!ack.ok)
         return refuse(ack.reason, safeMessage(ack.message), {
           requestId: a.requestId as string,
@@ -919,8 +974,6 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
-      const editor = studio.editorFor(session);
-      if (isOutcome(editor)) return editor;
       const slots = a.slots;
       if (!Array.isArray(slots) || slots.some((s) => typeof s !== "string"))
         return refuse(
@@ -934,6 +987,12 @@ const OPS: Record<string, OpDef> = {
         content,
       );
       if (!opened.ok) return refuse(opened.reason, safeMessage(opened.message));
+      // No editor configured: the edit still exists, with its sheet and
+      // metadata, so the files path (export, edit by hand, import) works.
+      if (studio.config.editor === undefined)
+        return editReply(session, a.id as string, undefined);
+      const editor = studio.editorFor(session);
+      if (isOutcome(editor)) return editor;
       const built = await editor.openWorkspace(a.id as string);
       if (!built.ok)
         return refuse(built.reason, safeMessage(built.message), {
@@ -958,6 +1017,43 @@ const OPS: Record<string, OpDef> = {
         // A path the native host launches the editor on; the host strips it before anything reaches the webview.
         ...(workspacePath === undefined ? {} : { workspacePath }),
       });
+    },
+  },
+  // An edit that is already open: names its workspace file again, rebuilding
+  // it only if it is gone, and makes sure the session is watching it. The path
+  // reaches the native host only, which strips it before the webview.
+  "edit-workspace": {
+    spec: str("id", true),
+    run: async (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const id = a.id as string;
+      const found = isPreviewSlug(id)
+        ? session.store.readEdit(id)
+        : ({ kind: "missing" } as const);
+      if (found.kind === "missing") return refuse("not-found", `no edit ${id}`);
+      if (found.kind === "invalid")
+        return refuse("wrong-state", `edit ${id} is invalid`);
+      if (found.value.status !== "open")
+        return refuse(
+          "wrong-state",
+          `edit ${id} is ${found.value.status}, not open`,
+        );
+      if (studio.config.editor === undefined)
+        return editReply(session, id, undefined);
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const editor = studio.editorFor(session);
+      if (isOutcome(editor)) return editor;
+      if (studio.workspaceHash(id) === undefined) {
+        const built = await editor.openWorkspace(id);
+        if (!built.ok)
+          return refuse(built.reason, safeMessage(built.message), {
+            editId: id,
+          });
+      }
+      studio.watchEdit(id, studio.workspaceHash(id));
+      return editReply(session, id, studio.workspacePath(id));
     },
   },
   import: {

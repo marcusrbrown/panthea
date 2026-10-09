@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type CandidateSummary,
   type EditReport,
   parseCandidateFrames,
+  parseCandidateSummary,
   parseCommandError,
   parseConfigChoice,
   parseConfigStatus,
@@ -724,6 +726,97 @@ describe("a candidate's frames", () => {
   for (const [name, value] of bad)
     test(`a reply with ${name} is refused`, () => {
       const parsed = parseCandidateFrames(value);
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) expect(parsed.message.length).toBeGreaterThan(0);
+    });
+});
+
+describe("a candidate summary", () => {
+  const H = "c".repeat(64);
+  const done = (over: Record<string, unknown> = {}) => ({
+    id: "zeus-idle-0003",
+    requestId: "zeus-idle",
+    slotKey: "idle/south",
+    ordinal: 3,
+    input: { hash: H, width: 512, height: 640 },
+    status: "done",
+    imageHash: H,
+    proposalHash: H,
+    report: { status: "fail", failedChecks: ["silhouette"] },
+    scale: 8,
+    coloursMerged: 829,
+    pixelsChanged: 5120,
+    ...over,
+  });
+  const stuck = (over: Record<string, unknown> = {}) => ({
+    id: "stuck",
+    requestId: "zeus-idle",
+    slotKey: "idle/south",
+    ordinal: 1,
+    input: { hash: H, width: 512, height: 640 },
+    status: "needs-scale",
+    message: "the grid is ambiguous; supply a scale",
+    report: null,
+    scale: null,
+    coloursMerged: null,
+    pixelsChanged: null,
+    ...over,
+  });
+
+  test("a conformed candidate parses as it is, with its report, failed checks and measurements", () => {
+    expect(parseCandidateSummary(done())).toEqual({
+      ok: true,
+      value: done() as unknown as CandidateSummary,
+    });
+    expect(
+      parseCandidateSummary(
+        done({ report: { status: "pass", failedChecks: [] } }),
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("a candidate that needs a scale carries its message and null for every measurement", () => {
+    expect(parseCandidateSummary(stuck())).toEqual({
+      ok: true,
+      value: stuck() as unknown as CandidateSummary,
+    });
+  });
+
+  const bad: [string, unknown][] = [
+    ["not an object", 7],
+    ["a report that is a bare string", done({ report: "fail" })],
+    [
+      "a report with an unknown status",
+      done({ report: { status: "maybe", failedChecks: [] } }),
+    ],
+    [
+      "a passing report with failed checks",
+      done({ report: { status: "pass", failedChecks: ["grid"] } }),
+    ],
+    [
+      "failed checks that are not text",
+      done({ report: { status: "fail", failedChecks: [1] } }),
+    ],
+    ["a missing scale", done({ scale: undefined })],
+    ["a fractional scale", done({ scale: 1.5 })],
+    ["a zero scale", done({ scale: 0 })],
+    ["a negative colours-merged count", done({ coloursMerged: -1 })],
+    ["a text pixel count", done({ pixelsChanged: "5120" })],
+    ["a bad image hash", done({ imageHash: "x" })],
+    ["a bad request id", done({ requestId: "../x" })],
+    ["an unknown status", done({ status: "weird" })],
+    ["a needs-scale candidate with an image", stuck({ imageHash: H })],
+    [
+      "a needs-scale candidate with a report",
+      stuck({ report: { status: "fail", failedChecks: [] } }),
+    ],
+    ["a needs-scale candidate with a scale", stuck({ scale: 8 })],
+    ["a needs-scale candidate with no message", stuck({ message: undefined })],
+    ["a needs-scale candidate with an empty message", stuck({ message: "" })],
+  ];
+  for (const [name, value] of bad)
+    test(`a summary with ${name} is refused`, () => {
+      const parsed = parseCandidateSummary(value);
       expect(parsed.ok).toBe(false);
       if (!parsed.ok) expect(parsed.message.length).toBeGreaterThan(0);
     });

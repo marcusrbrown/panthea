@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { JobRecord, StudioAssetRecord } from "@panthea/assets/studio";
+import { parseCandidateSummary } from "../../../apps/studio/src/host/types";
+import {
+  doneCandidate,
+  needsScaleCandidate,
+} from "../../../packages/assets/src/studio/_test-fixtures";
 import {
   assetSummary,
+  candidateSummary,
   done,
   exitOf,
   jobSummary,
@@ -325,5 +331,111 @@ describe("status summaries", () => {
       expect(ownerOf({ endedAt: "u" }, () => true).open).toBe(false);
       expect(ownerOf({ endedAt: "u" }, () => false).open).toBe(false);
     });
+  });
+});
+
+describe("candidate summaries", () => {
+  test("a conformed candidate names its report, failed checks, scale, colours merged and pixels changed", () => {
+    const summary = candidateSummary(
+      doneCandidate("c1", { pixelsChanged: 12 }),
+    );
+
+    expect(summary).toMatchObject({
+      id: "c1",
+      status: "done",
+      report: { status: "pass", failedChecks: [] },
+      scale: 8,
+      coloursMerged: 0,
+      pixelsChanged: 12,
+    });
+    expect(Object.keys(summary as object)).toEqual(
+      expect.arrayContaining([
+        "id",
+        "requestId",
+        "slotKey",
+        "ordinal",
+        "input",
+        "imageHash",
+        "proposalHash",
+      ]),
+    );
+  });
+
+  test("a failing report lists the names of the checks that failed and none of their messages", () => {
+    const summary = candidateSummary(
+      doneCandidate("c2", { pass: false, pixelsChanged: 3 }),
+    );
+
+    expect(summary).toMatchObject({
+      report: { status: "fail", failedChecks: ["palette"] },
+    });
+    expect(JSON.stringify(summary)).not.toContain("off palette");
+  });
+
+  test("a candidate that needs a scale carries the message and null for every measurement", () => {
+    const summary = candidateSummary(needsScaleCandidate("stuck"));
+
+    expect(summary).toMatchObject({
+      id: "stuck",
+      status: "needs-scale",
+      message: "the grid is ambiguous; supply a scale",
+      report: null,
+      scale: null,
+      coloursMerged: null,
+      pixelsChanged: null,
+    });
+    expect(summary).not.toHaveProperty("imageHash");
+  });
+});
+
+describe("the app's reading of a candidate summary", () => {
+  test("accepts exactly what candidateSummary prints, for a pass, a fail and a candidate that needs a scale", () => {
+    for (const record of [
+      doneCandidate("c1", { pixelsChanged: 4 }),
+      doneCandidate("c2", { pass: false }),
+      needsScaleCandidate("c3"),
+    ]) {
+      const printed = JSON.parse(JSON.stringify(candidateSummary(record)));
+      const parsed = parseCandidateSummary(printed);
+      expect(parsed.ok, record.id).toBe(true);
+      if (parsed.ok) expect(parsed.value).toEqual(printed);
+    }
+  });
+});
+
+describe("job summaries and their candidates", () => {
+  const succeeded: JobRecord = {
+    schemaVersion: 1,
+    source,
+    job: {
+      schemaVersion: 1,
+      id: "j1",
+      request,
+      provider,
+      status: "succeeded",
+      outputs: [{ medium: "image", hash, width: 512, height: 640 }],
+    } as unknown as JobRecord["job"],
+  };
+  const queued: JobRecord = {
+    schemaVersion: 1,
+    source,
+    job: { schemaVersion: 1, id: "j2", request, provider, status: "queued" },
+  };
+
+  test("a succeeded job says whether it has a candidate and which kind; without the map the summary is unchanged", () => {
+    expect(jobSummary(succeeded)).not.toHaveProperty("candidate");
+    expect(jobSummary(succeeded, new Map())).toMatchObject({ candidate: null });
+    expect(jobSummary(succeeded, new Map([["j1", "done"]]))).toMatchObject({
+      candidate: "done",
+    });
+    expect(
+      jobSummary(succeeded, new Map([["j1", "needs-scale"]])),
+    ).toMatchObject({ candidate: "needs-scale" });
+  });
+
+  test("a job that has not succeeded carries no candidate field, whatever the map holds", () => {
+    expect(jobSummary(queued, new Map([["j2", "done"]]))).not.toHaveProperty(
+      "candidate",
+    );
   });
 });

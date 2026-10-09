@@ -83,12 +83,15 @@ pub const OPS: &[OpSpec] = &[
         ],
         Long,
     ),
-    spec("reroll", &["requestId", "perSlot"], Long),
+    spec("reroll", &["requestId", "perSlot", "slotKey"], Long),
     spec("abort", &["jobId"], Long),
     spec("remove", &["jobId"], Write),
     // Working sets. Both take ids only; the session decides what a set holds.
     spec("set-create", &["id", "requestId"], Write),
     spec("set-replace-sheet", &["workingSetId", "requestId"], Write),
+    // Conforms one succeeded job into a candidate: by a named set from the
+    // config, or with inline parameters. The same session call the CLI makes.
+    spec("conform", &["jobId", "set", "params"], Write),
     // Candidates, edits and final records.
     spec("pick", &["workingSetId", "candidateId", "slot"], Write),
     spec("reject", &["id", "reason"], Write),
@@ -196,6 +199,7 @@ mod tests {
                 "remove",
                 "set-create",
                 "set-replace-sheet",
+                "conform",
                 "pick",
                 "reject",
                 "discard",
@@ -226,6 +230,38 @@ mod tests {
             check("candidate-bytes", &json!({ "candidateId": "a" })),
             Err(Refusal::UnknownOp)
         );
+    }
+
+    #[test]
+    fn conform_is_a_write_that_takes_a_job_and_a_set_name_or_inline_params_and_never_a_place() {
+        let row = lookup("conform").unwrap();
+        assert_eq!(row.args, ["jobId", "set", "params"]);
+        assert_eq!(row.class, OpClass::Write);
+        for arg in row.args {
+            assert!(!PATHISH.contains(arg), "conform takes {arg}");
+        }
+        assert!(check("conform", &json!({ "jobId": "j", "set": "standard" })).is_ok());
+        assert!(check("conform", &json!({ "jobId": "j", "params": {} })).is_ok());
+        for stray in ["path", "file", "png", "dir", "toString"] {
+            assert_eq!(
+                check("conform", &json!({ stray: "x" })),
+                Err(Refusal::UnknownArgument(stray.into())),
+                "{stray}"
+            );
+        }
+    }
+
+    #[test]
+    fn reroll_takes_an_optional_slot_key_beside_the_request_and_the_count() {
+        let row = lookup("reroll").unwrap();
+        assert_eq!(row.args, ["requestId", "perSlot", "slotKey"]);
+        assert_eq!(row.class, OpClass::Long);
+        assert!(check("reroll", &json!({ "requestId": "r", "perSlot": 1 })).is_ok());
+        assert!(check(
+            "reroll",
+            &json!({ "requestId": "r", "perSlot": 1, "slotKey": "idle/south" })
+        )
+        .is_ok());
     }
 
     #[test]
@@ -289,9 +325,9 @@ mod tests {
         for op in [
             "derive",
             "open",
+            "edit-workspace",
             "import",
             "export",
-            "conform",
             "source-bytes",
             "session",
         ] {

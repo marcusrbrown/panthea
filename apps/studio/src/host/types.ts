@@ -654,3 +654,156 @@ export function parseCandidateFrames(value: unknown): Parsed<CandidateFrames> {
     frames,
   });
 }
+
+// --- A candidate summary and how to conform a job -------------------------------
+
+/** What `conform` and `list candidates` print for one candidate. */
+export type CandidateSummary =
+  | {
+      readonly status: "done";
+      readonly id: string;
+      readonly requestId: string;
+      readonly slotKey: string;
+      readonly ordinal: number;
+      readonly input: {
+        readonly hash: string;
+        readonly width: number;
+        readonly height: number;
+      };
+      readonly imageHash: string;
+      readonly proposalHash: string;
+      readonly report: {
+        readonly status: "pass" | "fail";
+        readonly failedChecks: readonly string[];
+      };
+      /** The resize factor the conformance used. */
+      readonly scale: number;
+      readonly coloursMerged: number;
+      readonly pixelsChanged: number;
+    }
+  | {
+      readonly status: "needs-scale";
+      readonly id: string;
+      readonly requestId: string;
+      readonly slotKey: string;
+      readonly ordinal: number;
+      readonly input: {
+        readonly hash: string;
+        readonly width: number;
+        readonly height: number;
+      };
+      readonly message: string;
+      readonly report: null;
+      readonly scale: null;
+      readonly coloursMerged: null;
+      readonly pixelsChanged: null;
+    };
+
+/** The settings of one conformance run: the same object a named set in the config holds. */
+export interface ConformParams {
+  readonly background:
+    | { readonly type: "alpha" }
+    | {
+        readonly type: "key";
+        readonly rgb: readonly [number, number, number];
+        readonly tolerance: number;
+      };
+  readonly alphaCutoff: number;
+  readonly grid: {
+    readonly edgeTolerance: number;
+    readonly minConfidence: number;
+    readonly minEdges: number;
+  };
+  readonly scale?: number;
+}
+
+/** A named set from the config, or the settings themselves; never a file. */
+export type ConformHow =
+  | { readonly set: string }
+  | { readonly params: ConformParams };
+
+const NULL_MEASUREMENTS = ["report", "scale", "coloursMerged", "pixelsChanged"];
+
+export function parseCandidateSummary(
+  value: unknown,
+): Parsed<CandidateSummary> {
+  if (!isObject(value)) return bad("candidate", "not an object");
+  if (!isSlug(value.id)) return bad("candidate.id", "not an id");
+  if (!isSlug(value.requestId)) return bad("candidate.requestId", "not an id");
+  if (!isText(value.slotKey) || value.slotKey === "")
+    return bad("candidate.slotKey", "not text");
+  if (!isCount(value.ordinal)) return bad("candidate.ordinal", "not a count");
+  const input = value.input;
+  if (
+    !isObject(input) ||
+    !isText(input.hash) ||
+    !SHA256.test(input.hash) ||
+    !isCount(input.width) ||
+    !isCount(input.height)
+  )
+    return bad("candidate.input", "not a hash and a size");
+  const head = {
+    id: value.id,
+    requestId: value.requestId,
+    slotKey: value.slotKey,
+    ordinal: value.ordinal,
+    input: { hash: input.hash, width: input.width, height: input.height },
+  };
+
+  if (value.status === "needs-scale") {
+    if (!isText(value.message) || value.message === "")
+      return bad("candidate.message", "not text");
+    for (const key of NULL_MEASUREMENTS)
+      if (value[key] !== null)
+        return bad(
+          `candidate.${key}`,
+          "a candidate that needs a scale has none",
+        );
+    if (value.imageHash !== undefined || value.proposalHash !== undefined)
+      return bad("candidate", "a candidate that needs a scale has no image");
+    return good({
+      ...head,
+      status: "needs-scale",
+      message: value.message,
+      report: null,
+      scale: null,
+      coloursMerged: null,
+      pixelsChanged: null,
+    });
+  }
+  if (value.status !== "done") return bad("candidate.status", "not known");
+  if (!isText(value.imageHash) || !SHA256.test(value.imageHash))
+    return bad("candidate.imageHash", "not a hash");
+  if (!isText(value.proposalHash) || !SHA256.test(value.proposalHash))
+    return bad("candidate.proposalHash", "not a hash");
+  const report = value.report;
+  if (!isObject(report)) return bad("candidate.report", "not an object");
+  if (report.status !== "pass" && report.status !== "fail")
+    return bad("candidate.report.status", "not pass or fail");
+  if (!Array.isArray(report.failedChecks) || !report.failedChecks.every(isText))
+    return bad("candidate.report.failedChecks", "not a list of text");
+  if (report.status === "pass" && report.failedChecks.length > 0)
+    return bad(
+      "candidate.report.failedChecks",
+      "a passing report has failures",
+    );
+  if (!isCount(value.scale) || value.scale < 1)
+    return bad("candidate.scale", "not a positive whole number");
+  if (!isCount(value.coloursMerged))
+    return bad("candidate.coloursMerged", "not a count");
+  if (!isCount(value.pixelsChanged))
+    return bad("candidate.pixelsChanged", "not a count");
+  return good({
+    ...head,
+    status: "done",
+    imageHash: value.imageHash,
+    proposalHash: value.proposalHash,
+    report: {
+      status: report.status,
+      failedChecks: report.failedChecks as readonly string[],
+    },
+    scale: value.scale,
+    coloursMerged: value.coloursMerged,
+    pixelsChanged: value.pixelsChanged,
+  });
+}
