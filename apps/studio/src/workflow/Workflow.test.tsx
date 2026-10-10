@@ -157,6 +157,43 @@ describe("Generate", () => {
   });
 });
 
+describe("a notice from outside the view", () => {
+  test("a refused config choice is visible in the notice area", () => {
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: stateFor(),
+        host,
+        notice: "the config file is not JSON",
+      }),
+    );
+
+    expect(html).toMatch(
+      /<p class="notice" role="status">the config file is not JSON<\/p>/,
+    );
+  });
+});
+
+describe("a refused first config choice", () => {
+  test("is visible on the setup screen, where no other notice shows", () => {
+    const state = workflowReducer(initialWorkflowState(), {
+      type: "snapshot",
+      snapshot: { host: { state: "not-configured" } },
+    });
+
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state,
+        host,
+        onConfigChoose: () => {},
+        notice: "the config file is not JSON",
+      }),
+    );
+
+    expect(html).toContain("Choose a studio config");
+    expect(html).toContain("the config file is not JSON");
+  });
+});
+
 describe("WorkflowView controls", () => {
   test("field-to-card gaps use the workflow row rhythm", () => {
     const css = readFileSync(

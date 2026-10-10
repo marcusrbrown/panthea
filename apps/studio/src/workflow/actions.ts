@@ -147,6 +147,80 @@ export function reopenWorkingSetEdit(
   return host.editOpen(target.editId, target.workingSetId, target.slots);
 }
 
+export function detailText(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+/** The window state a guarded action reads and writes. */
+export interface GuardUi {
+  /** Whether the window may run this action now (configured, unlocked, running). */
+  readonly allowed: () => boolean;
+  readonly setBusy: (busy: boolean) => void;
+  readonly setMessage: (message: string) => void;
+  readonly setRefusalDetails: (details: string) => void;
+}
+
+/**
+ * The one place a host action's refusal is handled: the window shows the
+ * refusal's message and details, and the pending state always ends. A blocking
+ * action holds the window busy while it runs; a non-blocking one does not.
+ * Answers `undefined` when the action was refused or was not allowed to run.
+ */
+export async function guardedAction<T>(
+  ui: GuardUi,
+  options: { readonly label: string; readonly nonBlocking?: boolean },
+  act: () => Promise<T>,
+): Promise<T | undefined> {
+  if (!ui.allowed()) return undefined;
+  if (!options.nonBlocking) ui.setBusy(true);
+  ui.setMessage("");
+  ui.setRefusalDetails("");
+  try {
+    const result = await act();
+    ui.setMessage(`${options.label} complete`);
+    return result;
+  } catch (error) {
+    ui.setMessage(error instanceof Error ? error.message : String(error));
+    const detail =
+      typeof error === "object" && error !== null
+        ? (error as { detail?: unknown }).detail
+        : undefined;
+    if (detail !== undefined) ui.setRefusalDetails(detailText(detail));
+    return undefined;
+  } finally {
+    if (!options.nonBlocking) ui.setBusy(false);
+  }
+}
+
+/** The click handler behind a candidate's Pick button. */
+export async function pickCandidateGuarded(
+  host: StudioHost,
+  ui: GuardUi,
+  workingSetId: string,
+  candidate: SummaryRecord,
+): Promise<unknown> {
+  const slot =
+    recordText(candidate, "slot") ?? recordText(candidate, "slotKey");
+  if (!slot) return undefined;
+  return guardedAction(ui, { label: "pick" }, () =>
+    host.call("pick", { workingSetId, candidateId: candidate.id, slot }),
+  );
+}
+
+/** The click handler behind Pack draft. */
+export function packWorkingSetGuarded(
+  host: StudioHost,
+  ui: GuardUi,
+  args: PackDraftArgs,
+): Promise<unknown> {
+  return guardedAction(ui, { label: "pack" }, () => packWorkingSet(host, args));
+}
+
 /** The action behind the candidate's Pick button. */
 export function pickCandidateForSet(
   host: StudioHost,
@@ -587,5 +661,26 @@ export async function finishReviewedEdit(
     if (error instanceof HostError && error.code === "stale-review")
       return { kind: "stale", message: STALE_REVIEW_MESSAGE };
     throw error;
+  }
+}
+
+/**
+ * Picks a config through the host. A refusal (a file that is not a usable
+ * config) is shown through `onNotice`; a new pick clears the last notice. The
+ * host's snapshot describes the launch that follows a good pick.
+ */
+export async function chooseConfigGuarded(
+  host: StudioHost,
+  hooks: {
+    readonly onConfigured: () => void;
+    readonly onNotice: (message: string) => void;
+  },
+): Promise<void> {
+  hooks.onNotice("");
+  try {
+    const result = await host.configChoose();
+    if (!result.cancelled && result.configured) hooks.onConfigured();
+  } catch (error) {
+    hooks.onNotice(error instanceof Error ? error.message : String(error));
   }
 }

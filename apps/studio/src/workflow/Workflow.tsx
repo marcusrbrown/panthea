@@ -20,8 +20,10 @@ import type {
 import {
   approvalArgsForAsset,
   buildPackArgs,
+  chooseConfigGuarded,
   conformJob,
   createLatest,
+  detailText,
   type EditorSession,
   editableSlotsForSet,
   editOpenTarget,
@@ -29,13 +31,15 @@ import {
   editReportSignature,
   editsForReports,
   readEditReport as fetchEditReport,
+  type GuardUi,
+  guardedAction,
   openWorkingSetEdit,
   packNeedsOriginalWork,
   packNeedsStillFrameMs,
-  packWorkingSet,
+  packWorkingSetGuarded,
   parseInlineConformDraft,
   parseSlotSpecs,
-  pickCandidateForSet,
+  pickCandidateGuarded,
   readExistingSheet,
   reopenEditor,
   reopenWorkingSetEdit,
@@ -68,6 +72,8 @@ export interface WorkflowViewProps {
   readonly state: WorkflowState;
   readonly host: StudioHost;
   readonly onConfigChoose?: () => void;
+  /** A message from outside the view, such as a refused config choice. */
+  readonly notice?: string;
   readonly dispatch?: Dispatch<WorkflowAction>;
   readonly renderPreview?: (selection?: PreviewSelection) => ReactNode;
 }
@@ -99,15 +105,6 @@ const slug = (value: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-
-function detailText(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
 
 function canMutate(state: WorkflowState) {
   return (
@@ -412,6 +409,7 @@ export function WorkflowView({
   state,
   host,
   onConfigChoose,
+  notice,
   dispatch,
   renderPreview,
 }: WorkflowViewProps) {
@@ -516,40 +514,35 @@ export function WorkflowView({
     };
   }, [fetchedStatus, host, readsEnabled, state.status]);
 
+  // One guard for every host action the window runs: refusals are shown with
+  // their details and the pending state always ends (see `guardedAction`).
+  const guardUi = (allowed: () => boolean): GuardUi => ({
+    allowed,
+    setBusy,
+    setMessage,
+    setRefusalDetails,
+  });
+  const mayMutate = () => canMutate(state);
   const call = async (
     op: Parameters<StudioHost["call"]>[0],
     args: Record<string, unknown>,
     readOnly = false,
     allowRestarting = false,
     nonBlocking = false,
-  ) => {
-    if (
-      !(readOnly
-        ? readsEnabled
-        : canMutate(state) ||
-          (allowRestarting &&
-            state.configured &&
-            state.lockOwner === undefined &&
-            state.host.state === "restarting"))
-    )
-      return undefined;
-    if (!nonBlocking) setBusy(true);
-    setMessage("");
-    setRefusalDetails("");
-    try {
-      const result = await host.call(op, args);
-      setMessage(`${op} complete`);
-      return result;
-    } catch (error) {
-      const errorRecord = object(error);
-      const detail = errorRecord.detail;
-      setMessage(error instanceof Error ? error.message : String(error));
-      if (detail !== undefined) setRefusalDetails(detailText(detail));
-      return undefined;
-    } finally {
-      if (!nonBlocking) setBusy(false);
-    }
-  };
+  ) =>
+    guardedAction(
+      guardUi(() =>
+        readOnly
+          ? readsEnabled
+          : canMutate(state) ||
+            (allowRestarting &&
+              state.configured &&
+              state.lockOwner === undefined &&
+              state.host.state === "restarting"),
+      ),
+      { label: op, nonBlocking },
+      () => host.call(op, args),
+    );
 
   const formArgs = () => {
     const id =
@@ -706,8 +699,12 @@ export function WorkflowView({
 
   const pickCandidate = async (candidate: SummaryRecord) => {
     if (!selectedSet) return;
-    const result = pickCandidateForSet(host, selectedSet.id, candidate);
-    if (result) await result;
+    await pickCandidateGuarded(
+      host,
+      guardUi(mayMutate),
+      selectedSet.id,
+      candidate,
+    );
   };
   const [localAssetId, setLocalAssetId] = useState<string | undefined>(
     state.selectedAssetId,
@@ -799,7 +796,7 @@ export function WorkflowView({
   const makeWorkingSet = async (request: SummaryRecord) => loadSheet(request);
   const pack = async () => {
     if (!packArgs) return;
-    await packWorkingSet(host, packArgs);
+    await packWorkingSetGuarded(host, guardUi(mayMutate), packArgs);
   };
   const approve = async (withException: boolean) => {
     if (!activeAsset) return;
@@ -954,6 +951,12 @@ export function WorkflowView({
           )}
         </div>
       </header>
+
+      {notice && (
+        <p className="notice" role="status">
+          {notice}
+        </p>
+      )}
 
       {!state.configured || state.host.state === "not-configured" ? (
         <section className="setup-panel" aria-labelledby="setup-title">
@@ -1746,16 +1749,12 @@ export function WorkflowApp({
     };
   }, [host, initialSnapshot]);
 
-  const chooseConfig = async () => {
-    try {
-      const result = await host.configChoose();
-      if (!result.cancelled && result.configured) {
-        dispatch({ type: "configured", configured: true });
-      }
-    } catch {
-      // The host snapshot is authoritative and will describe a failed launch.
-    }
-  };
+  const [configNotice, setConfigNotice] = useState("");
+  const chooseConfig = () =>
+    chooseConfigGuarded(host, {
+      onConfigured: () => dispatch({ type: "configured", configured: true }),
+      onNotice: setConfigNotice,
+    });
 
   return (
     <WorkflowView
@@ -1763,6 +1762,7 @@ export function WorkflowApp({
       host={host}
       dispatch={dispatch}
       onConfigChoose={() => void chooseConfig()}
+      notice={configNotice}
       renderPreview={renderPreview}
     />
   );

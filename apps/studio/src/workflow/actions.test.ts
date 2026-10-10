@@ -1,20 +1,25 @@
 import { describe, expect, test } from "bun:test";
 
 import { fakeTransport, hostError } from "../host/_testkit";
-import { createStudioHost } from "../host/client";
+import { createStudioHost, HostError } from "../host/client";
 import type { ConformParams } from "../host/types";
 import * as workflowActions from "./actions";
 import {
   buildPackArgs,
+  chooseConfigGuarded,
   conformJob,
   createLatest,
   editReportSignature,
   editsForReports,
   finishOutcomeMessage,
   finishReviewedEdit,
+  type GuardUi,
+  guardedAction,
   inlineParamsAtScale,
+  packWorkingSetGuarded,
   parseInlineConformDraft,
   parseSlotSpecs,
+  pickCandidateGuarded,
   readEditReport,
   readExistingSheet,
   reopenEditor,
@@ -832,5 +837,205 @@ describe("finishing the version that was reviewed", () => {
     );
 
     expect(outcome).toEqual({ kind: "cancelled" });
+  });
+});
+
+/** What the window's state setters would record, with the order they were called in. */
+function recordingUi(allowed = true) {
+  const log: string[] = [];
+  const ui: GuardUi = {
+    allowed: () => allowed,
+    setBusy: (busy) => log.push(`busy ${busy}`),
+    setMessage: (message) => log.push(`message ${message}`),
+    setRefusalDetails: (details) => log.push(`details ${details}`),
+  };
+  return { ui, log };
+}
+
+describe("the window's refusal and pending handling", () => {
+  test("a refusal's message and details are shown and the pending state ends", async () => {
+    const { ui, log } = recordingUi();
+
+    const result = await guardedAction(ui, { label: "pack" }, async () => {
+      throw new HostError({
+        code: "wrong-state",
+        message: "working set w is not complete",
+        retryable: false,
+        detail: { slot: "idle/south" },
+      });
+    });
+
+    expect(result).toBeUndefined();
+    expect(log).toEqual([
+      "busy true",
+      "message ",
+      "details ",
+      "message working set w is not complete",
+      expect.stringContaining("details "),
+      "busy false",
+    ]);
+    expect(log.find((line) => line.startsWith("details {"))).toContain(
+      "idle/south",
+    );
+  });
+
+  test("a success says so and ends the pending state; a non-blocking action never sets it", async () => {
+    const blocking = recordingUi();
+    const quiet = recordingUi();
+
+    expect(
+      await guardedAction(blocking.ui, { label: "pick" }, async () => 7),
+    ).toBe(7);
+    await guardedAction(
+      quiet.ui,
+      { label: "generate", nonBlocking: true },
+      async () => 1,
+    );
+
+    expect(blocking.log).toContain("message pick complete");
+    expect(blocking.log.at(-1)).toBe("busy false");
+    expect(quiet.log.some((line) => line.startsWith("busy"))).toBe(false);
+  });
+
+  test("an action the window is not allowed to run does nothing", async () => {
+    const { ui, log } = recordingUi(false);
+    let ran = false;
+
+    const result = await guardedAction(ui, { label: "pack" }, async () => {
+      ran = true;
+    });
+
+    expect(result).toBeUndefined();
+    expect(ran).toBe(false);
+    expect(log).toEqual([]);
+  });
+
+  test("Pack draft on an incomplete set shows the host's refusal and clears pending", async () => {
+    const transport = fakeTransport({
+      studio_call: () => {
+        throw hostError("wrong-state", "working set w is not complete");
+      },
+    });
+    const { ui, log } = recordingUi();
+
+    const result = await packWorkingSetGuarded(
+      createStudioHost(transport),
+      ui,
+      {
+        id: "record-zeus-1",
+        workingSetId: "w",
+        assetId: "zeus",
+        styleTag: "u5",
+      },
+    );
+
+    expect(result).toBeUndefined();
+    expect(transport.calls[0]?.args).toMatchObject({
+      op: "pack",
+      args: { id: "record-zeus-1", workingSetId: "w" },
+    });
+    expect(log).toContain("message working set w is not complete");
+    expect(log.at(0)).toBe("busy true");
+    expect(log.at(-1)).toBe("busy false");
+  });
+
+  test("Pick on a refused candidate shows the host's refusal and clears pending", async () => {
+    const transport = fakeTransport({
+      studio_call: () => {
+        throw hostError("wrong-state", "candidate c1 needs a conformance pass");
+      },
+    });
+    const { ui, log } = recordingUi();
+
+    const result = await pickCandidateGuarded(
+      createStudioHost(transport),
+      ui,
+      "w",
+      { id: "c1", slotKey: "idle/south" },
+    );
+
+    expect(result).toBeUndefined();
+    expect(transport.calls[0]?.args).toEqual({
+      op: "pick",
+      args: { workingSetId: "w", candidateId: "c1", slot: "idle/south" },
+    });
+    expect(log).toContain("message candidate c1 needs a conformance pass");
+    expect(log.at(-1)).toBe("busy false");
+  });
+
+  test("a candidate with no slot is not sent and shows nothing", async () => {
+    const transport = fakeTransport();
+    const { ui, log } = recordingUi();
+
+    await pickCandidateGuarded(createStudioHost(transport), ui, "w", {
+      id: "c1",
+    });
+
+    expect(transport.calls).toEqual([]);
+    expect(log).toEqual([]);
+  });
+
+  test("a successful Pack draft reports it", async () => {
+    const transport = fakeTransport({ studio_call: () => ({ id: "r" }) });
+    const { ui, log } = recordingUi();
+
+    await packWorkingSetGuarded(createStudioHost(transport), ui, {
+      id: "record-zeus-1",
+      workingSetId: "w",
+      assetId: "zeus",
+      styleTag: "u5",
+    });
+
+    expect(log).toContain("message pack complete");
+    expect(log.at(-1)).toBe("busy false");
+  });
+});
+
+describe("choosing a config", () => {
+  test("a refused config is shown to the owner, not swallowed", async () => {
+    const transport = fakeTransport({
+      config_choose: () => {
+        throw hostError("invalid-config", "the config file is not JSON");
+      },
+    });
+    const shown: string[] = [];
+    let configured = 0;
+
+    await chooseConfigGuarded(createStudioHost(transport), {
+      onConfigured: () => {
+        configured += 1;
+      },
+      onNotice: (message) => shown.push(message),
+    });
+
+    expect(shown).toEqual(["", "the config file is not JSON"]);
+    expect(configured).toBe(0);
+  });
+
+  test("a chosen config is reported and clears the notice; a cancelled pick changes nothing", async () => {
+    const chosen = fakeTransport({
+      config_choose: () => ({
+        cancelled: false,
+        configured: true,
+        state: "starting",
+      }),
+    });
+    const cancelled = fakeTransport({
+      config_choose: () => ({ cancelled: true }),
+    });
+    const shown: string[] = [];
+    let configured = 0;
+    const hooks = {
+      onConfigured: () => {
+        configured += 1;
+      },
+      onNotice: (message: string) => shown.push(message),
+    };
+
+    await chooseConfigGuarded(createStudioHost(chosen), hooks);
+    await chooseConfigGuarded(createStudioHost(cancelled), hooks);
+
+    expect(configured).toBe(1);
+    expect(shown).toEqual(["", ""]);
   });
 });
