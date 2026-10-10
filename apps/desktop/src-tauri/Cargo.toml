@@ -40,6 +40,9 @@ tokio = { version = "1", default-features = false, features = ["time"] }
 # own docs advise this over its `v1` convenience mode) and keeps the Apple
 # store as an instance, never as a process-global default.
 keyring-core = "1"
+# Integrity check for the bundled canon registry (canon.rs): file bytes must
+# hash to their file name. Already in the lock via other crates.
+sha2 = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }

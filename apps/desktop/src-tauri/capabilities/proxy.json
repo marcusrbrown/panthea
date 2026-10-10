@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "proxy",
-  "description": "Grants the main window only the sidecar-proxy commands (subscribing to the frame stream, relaying a presentation receipt) and the model-settings commands (read and save settings; set, delete, and check an endpoint key). No command returns a key value. No shell, filesystem, network, or other plugin permission is granted.",
+  "description": "Grants the main window only the sidecar-proxy commands (subscribing to the frame stream, relaying a presentation receipt), the model-settings commands (read and save settings; set, delete, and check an endpoint key), and the two read-only canon commands (the verified registry text, and a verified atlas by sha256). No command returns a key value or takes a path. No shell, filesystem, network, or other plugin permission is granted.",
   "windows": ["main"],
   "permissions": [
     "allow-subscribe-world",
@@ -10,6 +10,8 @@
     "allow-save-model-settings",
     "allow-set-endpoint-key",
     "allow-delete-endpoint-key",
-    "allow-endpoint-key-status"
+    "allow-endpoint-key-status",
+    "allow-canon-registry",
+    "allow-canon-atlas"
   ]
 }
