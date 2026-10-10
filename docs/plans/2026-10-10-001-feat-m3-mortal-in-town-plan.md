@@ -172,6 +172,11 @@ The client is a read-only observer, and nobody can take part (see origin: Proble
   - **The intent schema is closed.** Each verb accepts only its declared fields. Any other field, including actor, source, observation, epoch overrides or `expectedRevisions`, gets a 400 (W05).
   - **Text bound.** Text is limited to 280 characters at intake. The same bound applies to god and mortal speech text before it becomes an event (R3, W05).
   - **Intake requires control.** An act is refused as `control-lapsed` unless the mortal's control is player and the epoch matches. The commit checks again (R16).
+  - **Lifecycle intents have their own preconditions** and carry no epoch:
+    - `create` needs no active player mortal.
+    - `take-control` needs the active player mortal to be under routine control. It returns the new epoch in the next frame.
+    - `release` and `retire` need player control and the current epoch.
+    - `pause` and `resume` need no mortal.
   - The service sets the actor from the world's one player mortal, sets `source: player`, and builds the observation and pins, the way `GodTurnRunner` does.
   - `POST /proposals` refuses both `player` and `routine`.
   - All of this is recorded in an ADR-0008 superseding note.
@@ -232,7 +237,7 @@ The client is a read-only observer, and nobody can take part (see origin: Proble
 - **Pause in game.** A new shell command relays pause and resume. The tray keeps its own (owner, 2026-10-10).
 - **Store.** `user_version` goes to 7. M2 worlds are not migrated (greenfield).
   - The new return-summary table joins `HASHED_TABLES` in `packages/persistence/src/archive.ts`, with export and import.
-  - Archive import refuses journal rows with source `player` or `routine` (O01; ADR-0008 treats archives as untrusted bytes).
+  - Archive export and import keep every journal row, including `player` rows, pending or consumed, because they are the world's recorded inputs (O01). The source restriction applies only to live `/proposals` intake. A pending player act in an imported archive is refused as `control-lapsed` by the startup release, like any act pending at a restart. A consumed act keeps its outcome, so a retried `proposalId` returns it.
 
 ## Open Questions
 
@@ -303,7 +308,7 @@ sequenceDiagram
 - Add perception rules for the new events.
 - Add the frame fields `playerActs`, `requests` and `returnSummary`.
 - Give the return summary its own single-row table, separate from `catch_up_summary`, and add it to `HASHED_TABLES`, export and import.
-- Make archive import refuse journal rows with source `player` or `routine`.
+- Archive export and import keep `player` journal rows, pending and consumed.
 - Bump `user_version` to 7.
 
 **Patterns to follow:** existing event and codec round-trips, and `CatchUpSummary`.
@@ -313,7 +318,7 @@ sequenceDiagram
 - Error path: a malformed `mortal-entered` (missing trade or spawn) is refused by the parser.
 - Edge case: a store at `user_version` 6 is refused with the existing mismatch error.
 - Integration: an archive with control state, a request ledger and a return summary round-trips through export and import, and the content hash matches. Changing the summary row changes the hash.
-- Error path (O01): archive import refuses a journal row with source `player` and one with source `routine`.
+- Integration (O01): create a mortal, commit one player act and leave a second pending, then export and import into a fresh store. The import succeeds. The committed act keeps its outcome, and a retried `proposalId` returns it. After the first start the pending act is refused as `control-lapsed` by the startup release.
 
 **Verification:** contracts, codec and archive tests pass, and the typecheck is clean.
 
@@ -509,6 +514,7 @@ sequenceDiagram
 - Edge case (R3, W05): speech text of 280 characters is accepted at intake, and 281 characters is refused.
 - Error path (R16): an act sent after `control-released` is refused as `control-lapsed`.
 - Error path: a disallowed spawn returns 400 with a reason code. Creation during catch-up returns a retryable refusal.
+- Edge case (M01, R16): `create` succeeds with no epoch when no player mortal is active, and is refused while one is. `take-control` succeeds from routine control, and the next frame carries the new epoch. An ordinary act sent before `take-control` is refused as `control-lapsed`.
 - Edge case: a second act while one is pending is refused. A retried `proposalId` returns the original result.
 - Integration: with a binding `maxProposalsPerTick` filled by gods and the director, the player's act still commits that tick.
 - Integration: kill the service while the player holds control, restart it, and confirm `control-released` (`session-ended`) is the first input of the first tick after start and that the routine runs through catch-up.
@@ -646,7 +652,7 @@ Causes are staged, and each step runs a step subset. The scenario runs with no n
 | The prompt overflows when a request is protected | Units 5 and 9 measure the busiest prompt; the request replaces, rather than adds to, the answer-slot prayer |
 | Frame size grows with the ledger and `playerActs` | Bounded lists; measure once both exist |
 | The new webview capability widens the attack surface | Intents only, with a closed schema and a 280-character text bound. The token stays in the shell, and the service sets the actor and source |
-| Archives or rendered text carry forged player rows or markup | Archive import refuses `player` and `routine` journal rows (O01). The client renders text nodes only (U05) |
+| Rendered text carries markup | The client renders text nodes only (U05) |
 | M2 worlds stop opening | Accepted. Greenfield, no migration |
 
 ## Documentation / Operational Notes
