@@ -497,6 +497,20 @@ The owner chose to:
 
 The rating sheet is unfilled. M2 does not exit on this run.
 
+Status (2026-10-10, fourth hour): the hour was rerun on granite3.3-8b-4k from `main` at `f65a1b0`. That build includes the withdraw-only thread fix (#195) and ADR-0005's p95 ≤ 105 queue-wait target (#194). Evidence is in `tools/scenarios/m2-greek-cast/unattended/2026-10-10T15-16-26/`. Spotlight indexing was off, and load stayed at 1.1–2.3. The run went through every phase in 60.0 running minutes. It exited 0, and all 24 threshold rows passed.
+
+- **Queue wait:** p95 per god was athena 102, hades 96, hephaestus 93, hera 96, hermes 92, poseidon 94 and zeus 96, against 105.
+- **Quiet stretch:** the longest was 139 ticks (athena), against 300. Athena had the hour's only over-cap turn.
+- **Latency:** median 9.8 s, p95 12.7 s.
+- **Prompts:** none was cut, and the busiest was 2,920 real tokens. There were no empty responses.
+- **Recovery:** 15 ticks.
+- **Catch-up:** 60.1 minutes applied and 30.1 discarded, with no provider request inside it.
+- **Gods:** activity, influence and repetition held for all seven. Perception, goal and petition privacy held.
+- **Memory:** −1.36% across the settled span.
+- **Rebuild and import:** rebuild equals live (201,878 events in 480 ms), and the archive imports.
+
+Athena's 102 sits 3 under the limit on a machine quieter than the third hour's, which is the load ADR-0005's amendment assumes. The rating sheet is open. M2 exits only on the owner's rating.
+
 ## System-Wide Impact
 
 - **Interaction graph:** the only production path exercised in a new way is the router meeting a failing endpoint mid-run, which is existing behaviour. Everything new lives in `tools/scenarios`. `apps/simulation` and the packages are unchanged unless the run finds a defect. A defect is fixed in a separate PR with a test.
