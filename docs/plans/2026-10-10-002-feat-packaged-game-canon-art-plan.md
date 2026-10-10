@@ -240,7 +240,7 @@ flowchart TB
 
 U1, U3 and U4 are independent and may run in parallel lanes with separate worktrees. New behavior is test-first.
 
-- [ ] **U1: Browser-safe resolve and placeholder pixels**
+- [x] **U1: Browser-safe resolve and placeholder pixels**
 
 **Goal:** the webview can resolve a sprite id and draw the same placeholder as the studio.
 
@@ -266,7 +266,7 @@ U1, U3 and U4 are independent and may run in parallel lanes with separate worktr
 
 **Verification:** studio, CLI and validator tests pass unchanged.
 
-- [ ] **U2: Shared renderer package**
+- [x] **U2: Shared renderer package**
 
 **Goal:** one pixel-exact core used by the studio and, from U5, the game.
 
@@ -293,7 +293,7 @@ U1, U3 and U4 are independent and may run in parallel lanes with separate worktr
 
 **Verification:** the studio behaves the same, and the `bun.lock` diff is the workspace entry.
 
-- [ ] **U3: Sprite id in world state**
+- [x] **U3: Sprite id in world state**
 
 **Goal:** every actor carries its sprite id to the client in the frame.
 
@@ -321,7 +321,7 @@ U1, U3 and U4 are independent and may run in parallel lanes with separate worktr
 
 **Verification:** simulation, world and content tests pass, and existing scenarios still decode.
 
-- [ ] **U4: Native canon loader**
+- [x] **U4: Native canon loader**
 
 **Goal:** the shell verifies the bundled registry and serves it to the webview through two named commands.
 
