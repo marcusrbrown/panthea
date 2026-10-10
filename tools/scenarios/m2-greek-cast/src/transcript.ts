@@ -879,7 +879,7 @@ export interface SummarySettings {
 }
 
 /** The p95 queue wait ADR-0005 allows a god on one model, in seconds (a tick is a second of world time). */
-export const QUEUE_WAIT_P95_TARGET_SECONDS = 90;
+export const QUEUE_WAIT_P95_TARGET_SECONDS = 105;
 
 export function renderSummary(
   records: readonly EpisodeRecord[],

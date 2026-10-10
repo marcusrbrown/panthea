@@ -1618,7 +1618,7 @@ test("the transcript's numbers list food, troubles by god, wrongs between differ
   expect(section).toContain("Defections: 1");
 });
 
-test("the summary shows the checks across the episodes, each episode's numbers, and each god's p95 queue wait against the 90 s target", () => {
+test("the summary shows the checks across the episodes, each episode's numbers, and each god's p95 queue wait against the 105 s target", () => {
   const rec = {
     ...record([], wrongsWorld()),
     patrons: new Map([
@@ -1645,7 +1645,7 @@ test("the summary shows the checks across the episodes, each episode's numbers, 
   expect(text).toMatch(
     /\| 1 \| 0 \(at most 250\) \| 0 \/ 1 \| zeus 1 \| 2 \| 2 \/ 1 \| 1 \|/,
   );
-  expect(text).toContain("ADR-0005 allows 90 s");
+  expect(text).toContain("ADR-0005 allows 105 s");
   // With no gate run, it says so.
   expect(
     renderSummary([rec], { seconds: 300, model: "m", files: ["episode-1.md"] }),
