@@ -52,8 +52,8 @@ pub struct Lifecycle<C = ChildHandle> {
     /// Set once the supervisor gives up after `MAX_RESTARTS` attempts.
     pub exhausted: bool,
     pub restarts: u32,
-    /// Consecutive good polls the current launch has answered; reset by every
-    /// new launch. `HEALTHY_POLLS` of them forgive the earlier crashes.
+    /// Good polls the current launch has answered; reset by every new launch.
+    /// A failed poll does not reset it. `HEALTHY_POLLS` of them forgive the earlier crashes.
     pub healthy_polls: u32,
     /// The last snapshot sent to the webview, for change detection.
     pub last_sent: Option<serde_json::Value>,
@@ -230,7 +230,7 @@ pub fn attach_child<C>(lifecycle: &mut Lifecycle<C>, launch_id: u64, child: C) -
 }
 
 /// Counts one good poll answered by `launch_id`. A launch that has answered
-/// `HEALTHY_POLLS` polls in a row has stayed up, not just answered once: only
+/// `HEALTHY_POLLS` polls has stayed up, not just answered once: only
 /// then are the crashes before it forgotten, so a long-lived app is not retired
 /// by three crashes days apart, and a launch that answers once and dies is not
 /// restarted forever. A no-op for a stale launch.
