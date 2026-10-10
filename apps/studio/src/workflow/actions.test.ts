@@ -32,6 +32,15 @@ const configure = (
   return { host: createStudioHost(transport), transport };
 };
 
+const packNeedsStillFrameMs = (
+  workflowActions as unknown as {
+    packNeedsStillFrameMs?: (set: Record<string, unknown>) => boolean;
+  }
+).packNeedsStillFrameMs;
+const buildPackArgsWithStillFrame = buildPackArgs as unknown as (
+  input: Record<string, unknown>,
+) => { readonly stillFrameMs?: number } | undefined;
+
 describe("workflow host actions", () => {
   test("blank scale is omitted from inline conform params", () => {
     const params: ConformParams = {
@@ -182,6 +191,88 @@ describe("workflow host actions", () => {
       licence: "MIT",
       attribution: "Hand-edited in Aseprite",
     });
+  });
+
+  test("picked portrait slots require a still-frame time", () => {
+    expect(packNeedsStillFrameMs).toBeFunction();
+    if (!packNeedsStillFrameMs) return;
+
+    expect(
+      packNeedsStillFrameMs({
+        id: "faces",
+        kind: "portrait",
+        required: ["neutral"],
+        picks: { neutral: { candidateId: "neutral-candidate" } },
+        authored: {},
+      }),
+    ).toBe(true);
+    expect(
+      packNeedsStillFrameMs({
+        id: "faces-edited",
+        kind: "portrait",
+        required: ["neutral"],
+        picks: { neutral: { candidateId: "neutral-candidate" } },
+        authored: { neutral: { editId: "e1", frames: 1 } },
+      }),
+    ).toBe(false);
+    expect(
+      packNeedsStillFrameMs({
+        id: "sprite",
+        kind: "sprite",
+        required: ["idle/south"],
+        picks: { "idle/south": { candidateId: "sprite-candidate" } },
+        authored: {},
+      }),
+    ).toBe(false);
+  });
+
+  test("picked portrait pack args are refused without a still-frame time", () => {
+    const input = {
+      selectedSet: {
+        id: "faces",
+        kind: "portrait",
+        required: ["neutral"],
+        picks: { neutral: { candidateId: "neutral-candidate" } },
+        authored: {},
+      },
+      assets: [],
+      assetId: "zeus-face",
+      styleTag: "u5-test",
+      footprintWidth: "",
+      footprintHeight: "",
+      originalWorkLicence: "",
+      originalWorkAttribution: "",
+      stillFrameMs: "",
+    };
+
+    expect(buildPackArgsWithStillFrame(input)).toBeUndefined();
+  });
+
+  test("picked portrait pack args include a positive integer still-frame time", () => {
+    const input = {
+      selectedSet: {
+        id: "faces",
+        kind: "portrait",
+        required: ["neutral"],
+        picks: { neutral: { candidateId: "neutral-candidate" } },
+        authored: {},
+      },
+      assets: [],
+      assetId: "zeus-face",
+      styleTag: "u5-test",
+      footprintWidth: "",
+      footprintHeight: "",
+      originalWorkLicence: "",
+      originalWorkAttribution: "",
+      stillFrameMs: "500",
+    };
+
+    expect(buildPackArgsWithStillFrame(input)).toMatchObject({
+      stillFrameMs: 500,
+    });
+    expect(
+      buildPackArgsWithStillFrame({ ...input, stillFrameMs: "1.5" }),
+    ).toBeUndefined();
   });
 
   test("inline params require every threshold and an explicit background", () => {

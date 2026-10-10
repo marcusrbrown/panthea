@@ -649,6 +649,17 @@
   margin-top: 14px;
   margin-bottom: 10px;
 }
+.working-set-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+.working-set-actions .muted {
+  margin: 0;
+  font-size: 0.68rem;
+}
 .edit-panel {
   margin-top: 18px;
   padding: 13px;

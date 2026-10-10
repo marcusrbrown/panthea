@@ -23,13 +23,18 @@ import {
   conformJob,
   createLatest,
   type EditorSession,
+  editableSlotsForSet,
   editorSessionOf,
   editReportSignature,
   editsForReports,
   readEditReport as fetchEditReport,
+  openWorkingSetEdit,
   packNeedsOriginalWork,
+  packNeedsStillFrameMs,
+  packWorkingSet,
   parseInlineConformDraft,
   parseSlotSpecs,
+  pickCandidateForSet,
   readExistingSheet,
   reopenEditor,
   rerollArgs,
@@ -420,6 +425,7 @@ export function WorkflowView({
   const [styleTag, setStyleTag] = useState("");
   const [footprintWidth, setFootprintWidth] = useState("");
   const [footprintHeight, setFootprintHeight] = useState("");
+  const [stillFrameMs, setStillFrameMs] = useState("");
   const [originalWorkLicence, setOriginalWorkLicence] = useState("");
   const [originalWorkAttribution, setOriginalWorkAttribution] = useState("");
   const [exception, setException] = useState("");
@@ -463,6 +469,7 @@ export function WorkflowView({
         styleTag,
         footprintWidth,
         footprintHeight,
+        stillFrameMs,
         originalWorkLicence,
         originalWorkAttribution,
       })
@@ -672,6 +679,7 @@ export function WorkflowView({
     );
     const targetId = existing?.id ?? `set-${slug(requestKey)}`;
     setWorkingSetId(targetId);
+    setStillFrameMs("");
     workingSetIdRef.current = targetId;
     if (!existing && !canMutate(state)) return;
     await sheetFlow({
@@ -696,14 +704,8 @@ export function WorkflowView({
 
   const pickCandidate = async (candidate: SummaryRecord) => {
     if (!selectedSet) return;
-    const slot =
-      recordText(candidate, "slot") ?? recordText(candidate, "slotKey");
-    if (!slot) return;
-    await call("pick", {
-      workingSetId: selectedSet.id,
-      candidateId: candidate.id,
-      slot,
-    });
+    const result = pickCandidateForSet(host, selectedSet.id, candidate);
+    if (result) await result;
   };
   const [localAssetId, setLocalAssetId] = useState<string | undefined>(
     state.selectedAssetId,
@@ -750,7 +752,10 @@ export function WorkflowView({
 
   const activeEdit =
     state.edits.find((edit) => edit.id === activeEditId) ??
-    state.edits.find((edit) => recordState(edit) === "open") ??
+    (openedEdit?.id === activeEditId ? openedEdit : undefined) ??
+    (activeEditId
+      ? undefined
+      : state.edits.find((edit) => recordState(edit) === "open")) ??
     openedEdit;
   const reportableEdits = editsForReports(state.edits, activeEdit?.id);
   const editSignature = editReportSignature(reportableEdits);
@@ -792,7 +797,7 @@ export function WorkflowView({
   const makeWorkingSet = async (request: SummaryRecord) => loadSheet(request);
   const pack = async () => {
     if (!packArgs) return;
-    await call("pack", { ...packArgs });
+    await packWorkingSet(host, packArgs);
   };
   const approve = async (withException: boolean) => {
     if (!activeAsset) return;
@@ -823,37 +828,56 @@ export function WorkflowView({
     }
   };
 
-  const openEdit = async () => {
-    if (!activeAsset || !canMutate(state)) return;
-    const setId = recordText(activeAsset, "workingSetId") ?? selectedSet?.id;
-    if (!setId) return;
+  const openEdit = async (requestedSet?: SummaryRecord) => {
+    if (!canMutate(state)) return;
+    const assetSetId = activeAsset
+      ? recordText(activeAsset, "workingSetId")
+      : undefined;
+    const currentSet =
+      requestedSet ??
+      (assetSetId
+        ? state.workingSets.find((entry) => entry.id === assetSetId)
+        : undefined) ??
+      selectedSet;
+    if (!currentSet) return;
+    const slots = editableSlotsForSet(currentSet);
+    if (slots.length === 0) {
+      setMessage("Pick a candidate before opening this set in the editor.");
+      return;
+    }
     const existingEdit =
       state.edits.find(
-        (entry) => entry.id === activeEditId && recordState(entry) === "open",
+        (entry) =>
+          recordText(entry, "workingSetId") === currentSet.id &&
+          recordState(entry) === "open",
       ) ??
-      (activeEdit && recordState(activeEdit) === "open"
+      (activeEdit &&
+      recordText(activeEdit, "workingSetId") === currentSet.id &&
+      recordState(activeEdit) === "open"
         ? activeEdit
         : undefined);
-    const currentSet =
-      state.workingSets.find((entry) => entry.id === setId) ?? selectedSet;
-    const required = currentSet
-      ? entries(recordValue(currentSet, "required")).filter(
-          (slot): slot is string => typeof slot === "string",
-        )
-      : [];
-    const picks = currentSet ? recordObject(currentSet, "picks") : {};
-    const slots = required.length > 0 ? required : Object.keys(picks);
+    const existingSlots = existingEdit
+      ? recordValue(existingEdit, "slots")
+      : undefined;
+    const requestedSlots = Array.isArray(existingSlots)
+      ? existingSlots.filter((slot): slot is string => typeof slot === "string")
+      : slots;
     const editId =
       existingEdit?.id ??
-      `edit-${slug(activeAsset.id)}-${crypto.randomUUID().slice(0, 6)}`;
+      `edit-${slug(currentSet.id)}-${crypto.randomUUID().slice(0, 6)}`;
     setBusy(true);
     setMessage("");
     try {
-      const opened = await host.editOpen(editId, setId, slots);
+      const opened = await openWorkingSetEdit(
+        host,
+        currentSet,
+        editId,
+        requestedSlots,
+      );
       reopenedEdits.current.add(opened.editId);
       const rawEdit: SummaryRecord = {
         id: opened.editId,
-        workingSetId: setId,
+        workingSetId: currentSet.id,
         slots: opened.slots,
         status: "open",
         previewSheetHash: null,
@@ -1214,7 +1238,10 @@ export function WorkflowView({
                   <select
                     className="workflow-control"
                     value={selectedSet?.id ?? ""}
-                    onChange={(event) => setWorkingSetId(event.target.value)}
+                    onChange={(event) => {
+                      setWorkingSetId(event.target.value);
+                      setStillFrameMs("");
+                    }}
                   >
                     {state.workingSets.map((set) => (
                       <option key={set.id} value={set.id}>
@@ -1223,6 +1250,25 @@ export function WorkflowView({
                     ))}
                   </select>
                 </label>
+              )}
+              {selectedSet && (
+                <div className="working-set-actions">
+                  <button
+                    type="button"
+                    disabled={
+                      !mutationsEnabled ||
+                      editableSlotsForSet(selectedSet).length === 0
+                    }
+                    onClick={() => void openEdit(selectedSet)}
+                  >
+                    Open editor
+                  </button>
+                  {editableSlotsForSet(selectedSet).length === 0 && (
+                    <p className="muted">
+                      Pick a candidate before opening this set in the editor.
+                    </p>
+                  )}
+                </div>
               )}
               {selectedSet && (
                 <div className="pack-form">
@@ -1281,6 +1327,22 @@ export function WorkflowView({
                         />
                       </label>
                     </div>
+                  )}
+                  {packNeedsStillFrameMs(selectedSet) && (
+                    <label className="workflow-field">
+                      Still-frame time (ms)
+                      <input
+                        className="workflow-control"
+                        type="number"
+                        min={1}
+                        step={1}
+                        required
+                        value={stillFrameMs}
+                        onChange={(event) =>
+                          setStillFrameMs(event.target.value)
+                        }
+                      />
+                    </label>
                   )}
                   {originalWorkRequired && (
                     <div className="original-work-fields">

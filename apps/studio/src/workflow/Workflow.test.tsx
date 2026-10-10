@@ -414,6 +414,7 @@ describe("WorkflowView controls", () => {
     expect(html).toContain("Footprint height");
     expect(html).toContain("Original-work licence");
     expect(html).toContain("Author / method description");
+    expect(html).not.toContain("Still-frame time (ms)");
     expect(html).toMatch(
       /Author \/ method description <span class="field-hint">optional<\/span>/,
     );
@@ -430,6 +431,51 @@ describe("WorkflowView controls", () => {
     expect(html).not.toContain("Footprint height");
     expect(html).not.toContain("Original-work licence");
     expect(html).not.toContain("Author / method description");
+  });
+
+  test("a picked portrait working set exposes its still-frame time field", () => {
+    const html = render(
+      stateFor(undefined, {
+        workingSets: [
+          {
+            id: "faces",
+            kind: "portrait",
+            required: ["neutral", "angry"],
+            picks: {
+              neutral: { candidateId: "neutral-candidate" },
+              angry: { candidateId: "angry-candidate" },
+            },
+            authored: {},
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("Still-frame time (ms)");
+    expect(html).toContain('type="number"');
+    expect(html).toContain('min="1"');
+  });
+
+  test("a selected working set without a packed draft exposes Open editor", () => {
+    const html = render(
+      stateFor(undefined, {
+        workingSets: [
+          {
+            id: "fresh-sprite",
+            kind: "sprite",
+            required: ["idle/south"],
+            picks: {
+              "idle/south": { candidateId: "idle-candidate" },
+            },
+            authored: {},
+          },
+        ],
+        assets: [],
+      }),
+    );
+
+    expect(html).toContain("Open editor");
+    expect(html).toContain("fresh-sprite");
   });
 
   test("changing configuration remains reachable while connected or unavailable", () => {

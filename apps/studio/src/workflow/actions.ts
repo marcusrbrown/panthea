@@ -3,6 +3,8 @@ import type {
   CandidateSummary,
   ConformHow,
   ConformParams,
+  EditBrought,
+  EditExport,
   EditOpened,
   EditReport,
   SummaryRecord,
@@ -58,6 +60,7 @@ export interface PackDraftInput {
   readonly footprintHeight: string;
   readonly originalWorkLicence: string;
   readonly originalWorkAttribution: string;
+  readonly stillFrameMs?: string;
 }
 
 export interface PackDraftArgs {
@@ -66,6 +69,7 @@ export interface PackDraftArgs {
   readonly assetId: string;
   readonly styleTag: string;
   readonly footprint?: { readonly w: number; readonly h: number };
+  readonly stillFrameMs?: number;
   readonly originalWork?: {
     readonly licence: string;
     readonly attribution?: string;
@@ -81,6 +85,77 @@ const slug = (value: string) =>
 
 export function packNeedsOriginalWork(selectedSet: SummaryRecord): boolean {
   return Object.keys(recordObject(selectedSet, "authored")).length > 0;
+}
+
+/** Picked portrait candidates are still frames; authored expressions already carry their own timing. */
+export function packNeedsStillFrameMs(selectedSet: SummaryRecord): boolean {
+  if (recordText(selectedSet, "kind") !== "portrait") return false;
+  const picks = recordObject(selectedSet, "picks");
+  const authored = recordObject(selectedSet, "authored");
+  return Object.keys(picks).some((slot) => !Object.hasOwn(authored, slot));
+}
+
+/** The slots that currently have a picked or authored image to open in Aseprite. */
+export function editableSlotsForSet(workingSet: SummaryRecord): string[] {
+  const rawRequired = recordValue(workingSet, "required");
+  const required = Array.isArray(rawRequired)
+    ? rawRequired.filter((slot): slot is string => typeof slot === "string")
+    : [];
+  const available = new Set([
+    ...Object.keys(recordObject(workingSet, "picks")),
+    ...Object.keys(recordObject(workingSet, "authored")),
+    ...Object.keys(recordObject(workingSet, "frames")),
+  ]);
+  const slots = required.length > 0 ? required : [...available];
+  return slots.filter((slot) => available.has(slot));
+}
+
+/** The action behind the candidate's Pick button. */
+export function pickCandidateForSet(
+  host: StudioHost,
+  workingSetId: string,
+  candidate: SummaryRecord,
+): Promise<unknown> | undefined {
+  const slot =
+    recordText(candidate, "slot") ?? recordText(candidate, "slotKey");
+  if (!slot) return undefined;
+  return host.call("pick", {
+    workingSetId,
+    candidateId: candidate.id,
+    slot,
+  });
+}
+
+/** The action behind Open editor for a set or Edit draft for one of its records. */
+export function openWorkingSetEdit(
+  host: StudioHost,
+  workingSet: SummaryRecord,
+  editId: string,
+  requestedSlots = editableSlotsForSet(workingSet),
+): Promise<EditOpened> {
+  return host.editOpen(editId, workingSet.id, requestedSlots);
+}
+
+export function exportEditFallback(
+  host: StudioHost,
+  editId: string,
+): Promise<EditExport> {
+  return host.editExport(editId);
+}
+
+export function importEditFallback(
+  host: StudioHost,
+  editId: string,
+): Promise<EditBrought> {
+  return host.editImport(editId, false);
+}
+
+/** The action behind Pack draft; arguments are built from the visible form first. */
+export function packWorkingSet(
+  host: StudioHost,
+  args: PackDraftArgs,
+): Promise<unknown> {
+  return host.call("pack", { ...args });
 }
 
 export function buildPackArgs(
@@ -126,6 +201,19 @@ export function buildPackArgs(
     };
   }
 
+  let stillFrameMs: PackDraftArgs["stillFrameMs"];
+  if (packNeedsStillFrameMs(input.selectedSet)) {
+    const value = Number(input.stillFrameMs);
+    if (
+      input.stillFrameMs === undefined ||
+      input.stillFrameMs.trim() === "" ||
+      !Number.isSafeInteger(value) ||
+      value < 1
+    )
+      return undefined;
+    stillFrameMs = value;
+  }
+
   const nextRecordId = (base: string) => {
     const existing = new Set(input.assets.map((asset) => asset.id));
     let revision = 1;
@@ -142,6 +230,7 @@ export function buildPackArgs(
     styleTag,
     ...(footprint === undefined ? {} : { footprint }),
     ...(originalWork === undefined ? {} : { originalWork }),
+    ...(stillFrameMs === undefined ? {} : { stillFrameMs }),
   };
 }
 

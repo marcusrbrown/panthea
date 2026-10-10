@@ -1,7 +1,12 @@
 import { useState } from "react";
 import type { StudioHost } from "../host/client";
 import type { EditReport, SummaryRecord } from "../host/types";
-import { finishOutcomeMessage, finishReviewedEdit } from "./actions";
+import {
+  exportEditFallback,
+  finishOutcomeMessage,
+  finishReviewedEdit,
+  importEditFallback,
+} from "./actions";
 import { recordText } from "./model";
 
 function editorReasonCopy(reason: string | undefined) {
@@ -96,7 +101,7 @@ export function EditPanel({
     setBusy(true);
     setError("");
     try {
-      const result = await host.editExport(editId);
+      const result = await exportEditFallback(host, editId);
       if (!result.cancelled) onChange?.(`Exported ${result.files.join(", ")}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -110,7 +115,7 @@ export function EditPanel({
     setBusy(true);
     setError("");
     try {
-      const result = await host.editImport(editId, false);
+      const result = await importEditFallback(host, editId);
       if (!result.cancelled)
         onChange?.(
           "Imported edit. Review the report-only result and pixel diff before finishing.",
