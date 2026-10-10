@@ -15,6 +15,7 @@
       "!**/node_modules",
       "!docs",
       "!content/greek/assets/registry",
+      "!apps/client/src/assets/fixtures",
       "!tools/probes/sandbox/src/fixtures/quickjs",
       "!tools/probes/sandbox/src/fixtures/lua",
       "!tools/probes/sandbox/results",

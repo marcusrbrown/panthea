@@ -25,7 +25,7 @@ export interface CanvasMetrics {
 
 export function canvasMetrics(
   size: LogicalSize,
-  zoom: Zoom,
+  zoom: number,
   devicePixelRatio: number,
 ): CanvasMetrics {
   const ratio =
@@ -73,7 +73,8 @@ export interface PixelBuffer {
 }
 
 export interface PreviewView {
-  readonly zoom: Zoom;
+  /** A whole number: the studio offers `Zoom`, the game any integer that fits (down to 1x). */
+  readonly zoom: number;
   readonly camera: Point;
   readonly metrics: CanvasMetrics;
 }

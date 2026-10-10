@@ -15,7 +15,9 @@
       "version": "0.1.0",
       "dependencies": {
         "@panthea/agents": "workspace:*",
+        "@panthea/assets": "workspace:*",
         "@panthea/contracts": "workspace:*",
+        "@panthea/renderer": "workspace:*",
         "@panthea/world": "workspace:*",
         "@tauri-apps/api": "2.12.1",
         "react": "19.3.0",

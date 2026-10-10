@@ -7,6 +7,7 @@
 
 import {
   Color,
+  Group,
   LinearSRGBColorSpace,
   Mesh,
   NearestFilter,
@@ -29,6 +30,17 @@ import {
 } from "./view";
 
 export const DEFAULT_BACKGROUND = [38, 42, 52] as const;
+
+/** A render backend that also holds a group of plain meshes in the same scene and pixel space as the sprite layer. */
+export interface GpuBackend extends RenderBackend {
+  /**
+   * Meshes the sprite layer does not draw (ground, bars, rings), in the same
+   * world space as the layer's sprites: x right, y up, z the depth key. The
+   * owner adds and removes children and disposes their geometry and
+   * materials; the backend only draws them and removes the group on dispose.
+   */
+  readonly decor: Group;
+}
 
 export interface GpuBackendOptions {
   /** The fixed render-target size; the scene is drawn at 1x into it. */
@@ -54,7 +66,7 @@ function flipRows(buffer: PixelBuffer): PixelBuffer {
 export function createGpuBackend(
   canvas: HTMLCanvasElement,
   options: GpuBackendOptions,
-): RenderBackend {
+): GpuBackend {
   const { width: logicalWidth, height: logicalHeight } = options.logicalSize;
   const renderer = new WebGPURenderer({
     canvas,
@@ -74,6 +86,8 @@ export function createGpuBackend(
     LinearSRGBColorSpace,
   );
   const layer = createSceneLayer(scene);
+  const decor = new Group();
+  scene.add(decor);
   const camera = new OrthographicCamera(
     0,
     logicalWidth,
@@ -126,6 +140,7 @@ export function createGpuBackend(
 
   return {
     layer,
+    decor,
     get name() {
       return isWebGL() ? "webgl2" : "webgpu";
     },
@@ -201,6 +216,7 @@ export function createGpuBackend(
     dispose() {
       if (disposed) return;
       disposed = true;
+      scene.remove(decor);
       layer.dispose();
       target.dispose();
       blitMaterial.dispose();

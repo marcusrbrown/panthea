@@ -79,7 +79,8 @@ export type InstanceArt =
   | {
       readonly source: "placeholder";
       readonly reason: PlaceholderReason;
-      readonly uri: string;
+      /** Absent for a pixel-only placeholder, which has no logical URI. */
+      readonly uri?: string;
       readonly placeholder: PlaceholderSize;
     }
   | { readonly source: "diamond" };
