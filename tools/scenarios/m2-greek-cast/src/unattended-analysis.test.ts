@@ -14,6 +14,7 @@ import {
 import type { UnattendedResult } from "./unattended";
 import { exitCodeOf, phasePlan } from "./unattended";
 import {
+  actEventOf,
   analyzeUnattended,
   exhaustionReason,
   gateOutcomeOf,
@@ -1403,4 +1404,84 @@ test("the rating sheet's director episodes cite the director's own event, and th
     expect(ids.has(moment.id)).toBe(true);
     expect(moment.text).toContain(`[${moment.id}]`);
   }
+});
+
+/** `scene` with a `journey-ended` ahead of each legend, on the legend's correlation, as the world logs a god's journey a new act interrupts. */
+function withInterruptedJourneys(scene: Scene): Scene {
+  const events = scene.events.flatMap((event) => {
+    if (
+      event.kind !== "legend-recorded" ||
+      !String(event.correlationId).startsWith("obs-")
+    ) {
+      return [event];
+    }
+    return [
+      {
+        ...event,
+        id: `${String(event.id)}-journey`,
+        sequence: Number(event.sequence) - 1,
+        kind: "journey-ended",
+        journeyEventId: "evt-0-journey",
+        ending: "replaced",
+      },
+      event,
+    ];
+  });
+  return { ...scene, events };
+}
+
+test("the rating sheet's god episodes cite the act's own event when the act interrupted a journey: journey-ended comes first on the correlation", () => {
+  const interrupted = withDivinityCosts(
+    withInterruptedJourneys(healthyScene()),
+  );
+  const analysis = analyzeUnattended(runData({ scene: interrupted }));
+  const gods = analysis.moments.gods;
+  expect(gods.length).toBeGreaterThan(0);
+  const byId = new Map(interrupted.events.map((e) => [String(e.id), e]));
+  for (const moment of gods) {
+    expect(byId.get(moment.id)?.kind).toBe("legend-recorded");
+  }
+});
+
+test("an act's own event is the one its kind produces, whatever the world logged ahead of it: the divinity cost, a journey ending, or both", () => {
+  const at = (kind: string, extra: Record<string, unknown> = {}) =>
+    ({ id: `evt-${kind}`, kind, entityId: "zeus", ...extra }) as never;
+  const cost = at("resource-consumed", {
+    resource: "divinity",
+    entityId: "zeus",
+  });
+  const journey = at("journey-ended");
+  const cites = (kind: string, ...caused: unknown[]): string =>
+    actEventOf("zeus", kind, caused as never).id;
+  expect(cites("bless", cost, journey, at("blessing-granted"))).toBe(
+    "evt-blessing-granted",
+  );
+  expect(cites("strike", journey, cost, at("mortal-struck"))).toBe(
+    "evt-mortal-struck",
+  );
+  expect(cites("strike", cost, at("building-damaged"))).toBe(
+    "evt-building-damaged",
+  );
+  expect(cites("strike", cost, at("building-ignited"))).toBe(
+    "evt-building-ignited",
+  );
+  expect(cites("legend", journey, at("legend-recorded"))).toBe(
+    "evt-legend-recorded",
+  );
+  expect(cites("report", journey, at("report-told"))).toBe("evt-report-told");
+  expect(cites("refuse", journey, at("petition-refused"))).toBe(
+    "evt-petition-refused",
+  );
+  expect(cites("practice", journey, at("practice-opened"))).toBe(
+    "evt-practice-opened",
+  );
+  expect(cites("practice", journey, at("contest-opened"))).toBe(
+    "evt-contest-opened",
+  );
+  // A kind the map does not know falls back past the bookkeeping to the first event left.
+  expect(cites("claim", journey, cost, at("entity-moved"))).toBe(
+    "evt-entity-moved",
+  );
+  // With nothing but bookkeeping, the first event.
+  expect(cites("claim", journey, cost)).toBe("evt-journey-ended");
 });

@@ -329,24 +329,48 @@ export function isDirectorEvent(event: StoredEvent): boolean {
 
 const minutes = (ms: number): string => (ms / 60_000).toFixed(1);
 
+/** The events a god's proposal of each kind produces as its own act; a bless and a strike also log a cost, and any act can log a journey ending, ahead of it. */
+const ACT_EVENT_KINDS: Readonly<Record<string, readonly string[]>> = {
+  travel: ["journey-started"],
+  strike: ["mortal-struck", "building-damaged", "building-ignited"],
+  legend: ["legend-recorded"],
+  report: ["report-told"],
+  bless: ["blessing-granted"],
+  refuse: ["petition-refused"],
+  practice: [
+    "practice-opened",
+    "practice-moved",
+    "practice-ended",
+    "contest-opened",
+  ],
+  goal: ["goal-set", "goal-ended"],
+};
+
 /**
- * The event that is a god act itself, among the events its proposal caused. A bless and a strike commit the divinity
- * they cost first (a `resource-consumed` of the god's), so the first event on the correlation is the bill, not the act.
- * An act with only a cost has no event of its own and falls back on the first.
+ * The event that is a god act itself, among the events its proposal caused. The world logs bookkeeping ahead of it on
+ * the same correlation: the divinity a bless or strike costs (a `resource-consumed` of the god's), and the
+ * `journey-ended` of a journey the act interrupted. So the first event is not the act; the act is the event its
+ * proposal kind produces. A kind the map does not know falls back on the first event that is not bookkeeping, and an
+ * act with nothing but bookkeeping on the first event.
  */
 export function actEventOf(
   god: string,
+  proposalKind: string,
   caused: readonly StoredEvent[],
 ): StoredEvent {
-  const own = caused.find(
+  const produced = ACT_EVENT_KINDS[proposalKind] ?? [];
+  const own = caused.find((e) => produced.includes(String(e.kind)));
+  if (own !== undefined) return own;
+  const unbooked = caused.find(
     (e) =>
+      e.kind !== "journey-ended" &&
       !(
         e.kind === "resource-consumed" &&
         e.entityId === god &&
         e.resource === DIVINE_CAPACITY_RESOURCE
       ),
   );
-  return own ?? (caused[0] as StoredEvent);
+  return unbooked ?? (caused[0] as StoredEvent);
 }
 
 function pickSpread<T>(items: readonly T[], count: number): T[] {
@@ -912,7 +936,12 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
           .map(({ proposal, caused }) => {
             // Ordered by when the act began, but cited by the act's own event.
             const first = caused[0] as StoredEvent;
-            return { god, proposal, first, act: actEventOf(god, caused) };
+            return {
+              god,
+              proposal,
+              first,
+              act: actEventOf(god, proposal.kind, caused),
+            };
           }),
       )
       .sort((a, b) => Number(a.first.sequence) - Number(b.first.sequence)),
