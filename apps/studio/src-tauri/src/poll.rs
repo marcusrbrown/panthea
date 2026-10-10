@@ -12,7 +12,7 @@
 //! An editor save imported by the session's watcher leaves the counts alone, so
 //! `status` also carries each open edit's saved-sheet hash (`openEdits`): the
 //! save changes the status and the next tick re-reads, instead of waiting for
-//! the net (measured at 2-8 s). `source-keys` answers
+//! the net (measured at 2.7-7.5 s). `source-keys` answers
 //! from memory in well under a millisecond, so it is read every tick.
 
 use std::sync::atomic::{AtomicBool, Ordering};
