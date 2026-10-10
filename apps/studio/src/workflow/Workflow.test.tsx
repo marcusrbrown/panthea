@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
 import { fakeTransport } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
+import { approvalArgsForAsset } from "./actions";
 import { initialWorkflowState, workflowReducer } from "./model";
 import { WorkflowView } from "./Workflow";
 
@@ -79,6 +81,55 @@ describe("the preview selection", () => {
     expect(selectionFor(assets, "approved-b")).toEqual([
       { source: "approved", id: "approved-b" },
     ]);
+  });
+
+  test("switching portrait records requests the selected draft portrait", () => {
+    const assets = [
+      {
+        ...draft("draft-face-a", "draft"),
+        assetId: "zeus-face-a",
+        workingSetId: "set-face-a",
+        report: { status: "pass", failedChecks: [] },
+      },
+      {
+        ...draft("draft-face-b", "draft"),
+        assetId: "zeus-face-b",
+        workingSetId: "set-face-b",
+        report: { status: "pass", failedChecks: [] },
+      },
+    ];
+    const seen: unknown[] = [];
+    const state = workflowReducer(
+      stateFor(undefined, {
+        assets,
+        workingSets: [
+          { id: "set-face-a", kind: "portrait" },
+          { id: "set-face-b", kind: "portrait" },
+        ],
+      }),
+      { type: "select-asset", assetId: "draft-face-b" },
+    );
+    renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state,
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+    const selected = state.assets.find((asset) => asset.id === "draft-face-b");
+    if (!selected) throw new Error("selected portrait record is missing");
+    const approvalTarget = approvalArgsForAsset(selected);
+    if (!approvalTarget)
+      throw new Error("selected portrait has no approval revision");
+
+    expect(seen).toEqual([
+      { source: "draft", id: "draft-face-b", kind: "portrait" },
+    ]);
+    expect((seen[0] as { id: string }).id).toBe(approvalTarget.id);
+    expect(approvalTarget.confirm).toBe("rev-draft-face-b");
   });
 
   test("a canon record is asked for by its asset id, the id canon is listed under", () => {
@@ -345,6 +396,59 @@ describe("WorkflowView controls", () => {
     );
     expect(html).not.toContain("greek-master");
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Pack draft<\/button>/);
+  });
+
+  test("sprite packing asks for a footprint and original-work details when hand-edited", () => {
+    const html = render(
+      stateFor(undefined, {
+        workingSets: [
+          {
+            id: "w-sprite",
+            kind: "sprite",
+            authored: { "idle/south": { editId: "e1", frames: 4 } },
+          },
+        ],
+      }),
+    );
+    expect(html).toContain("Footprint width");
+    expect(html).toContain("Footprint height");
+    expect(html).toContain("Original-work licence");
+    expect(html).toContain("Author / method description");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Pack draft<\/button>/);
+  });
+
+  test("portrait packing omits the sprite footprint and original-work fields without hand edits", () => {
+    const html = render(
+      stateFor(undefined, {
+        workingSets: [{ id: "w-portrait", kind: "portrait", authored: {} }],
+      }),
+    );
+    expect(html).not.toContain("Footprint width");
+    expect(html).not.toContain("Footprint height");
+    expect(html).not.toContain("Original-work licence");
+    expect(html).not.toContain("Author / method description");
+  });
+
+  test("changing configuration remains reachable while connected or unavailable", () => {
+    for (const hostState of [
+      { state: "running" as const },
+      { state: "unavailable" as const, attempt: 3, maxAttempts: 3 },
+    ]) {
+      const state = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: { host: hostState, status: { owner: null } },
+      });
+      const html = renderToStaticMarkup(
+        createElement(WorkflowView, {
+          state,
+          host,
+          onConfigChoose: () => {},
+        }),
+      );
+      expect(html).toContain("Change config");
+      if (hostState.state === "unavailable")
+        expect(html).toMatch(/class="primary"[^>]*>Change config/);
+    }
   });
 
   test("a loaded sheet shows pixel-cell loading and a compact sheet summary", () => {

@@ -101,6 +101,11 @@
   color: var(--ink-soft);
   font-size: 0.78rem;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .host-dot {
   width: 9px;
   height: 9px;
@@ -523,6 +528,16 @@
   margin-top: 0;
   padding-top: 13px;
   border-top: 1px solid var(--line);
+}
+.pack-form .footprint-fields,
+.pack-form .original-work-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.pack-form .original-work-fields {
+  grid-template-columns: minmax(0, 1fr);
 }
 .pack-form h3,
 .pack-form p {

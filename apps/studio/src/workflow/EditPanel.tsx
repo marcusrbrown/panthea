@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { StudioHost } from "../host/client";
 import type { EditReport, SummaryRecord } from "../host/types";
-import { finishReviewedEdit } from "./actions";
+import { finishOutcomeMessage, finishReviewedEdit } from "./actions";
 import { recordText } from "./model";
 
 function editorReasonCopy(reason: string | undefined) {
@@ -65,7 +65,8 @@ export function EditPanel({
         setConfirmed(false);
         onStale?.();
       } else {
-        onChange?.("Edit finished. The reviewed pixels were kept.");
+        const message = finishOutcomeMessage(outcome);
+        if (message) onChange?.(message);
         setConfirmed(false);
       }
     } catch (caught) {

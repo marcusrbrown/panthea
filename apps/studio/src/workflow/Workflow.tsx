@@ -18,6 +18,8 @@ import type {
   SummaryRecord,
 } from "../host/types";
 import {
+  approvalArgsForAsset,
+  buildPackArgs,
   conformJob,
   createLatest,
   type EditorSession,
@@ -25,6 +27,7 @@ import {
   editReportSignature,
   editsForReports,
   readEditReport as fetchEditReport,
+  packNeedsOriginalWork,
   parseInlineConformDraft,
   parseSlotSpecs,
   readExistingSheet,
@@ -51,6 +54,7 @@ import "./workflow.css";
 export interface PreviewSelection {
   readonly source: "canon" | "draft" | "approved";
   readonly id: string;
+  readonly kind?: "sprite" | "portrait";
 }
 
 export interface WorkflowViewProps {
@@ -414,6 +418,10 @@ export function WorkflowView({
   const [workingSetId, setWorkingSetId] = useState("");
   const [assetId, setAssetId] = useState("");
   const [styleTag, setStyleTag] = useState("");
+  const [footprintWidth, setFootprintWidth] = useState("");
+  const [footprintHeight, setFootprintHeight] = useState("");
+  const [originalWorkLicence, setOriginalWorkLicence] = useState("");
+  const [originalWorkAttribution, setOriginalWorkAttribution] = useState("");
   const [exception, setException] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -445,6 +453,20 @@ export function WorkflowView({
   const conformSets = entries(object(statusData).conformSets).filter(
     (set): set is string => typeof set === "string",
   );
+  const originalWorkRequired =
+    selectedSet !== undefined && packNeedsOriginalWork(selectedSet);
+  const packArgs = selectedSet
+    ? buildPackArgs({
+        selectedSet,
+        assets: state.assets,
+        assetId,
+        styleTag,
+        footprintWidth,
+        footprintHeight,
+        originalWorkLicence,
+        originalWorkAttribution,
+      })
+    : undefined;
   const requestIdForSet = selectedSet
     ? (recordText(selectedSet, "sheetRequestId") ??
       recordText(selectedSet, "requestId"))
@@ -699,6 +721,14 @@ export function WorkflowView({
   const activeAssetState = activeAsset
     ? recordText(activeAsset, "state")
     : undefined;
+  const assetWorkingSet = activeAsset
+    ? state.workingSets.find(
+        (set) => set.id === recordText(activeAsset, "workingSetId"),
+      )
+    : undefined;
+  const activeAssetKind =
+    (activeAsset ? recordText(activeAsset, "kind") : undefined) ??
+    (assetWorkingSet ? recordText(assetWorkingSet, "kind") : undefined);
   // The preview source keys drafts and approved records by record id and canon
   // by asset id; asking for the asset id of a draft would draw another record.
   const activePreview: PreviewSelection | undefined = activeAsset
@@ -709,6 +739,14 @@ export function WorkflowView({
           id: recordText(activeAsset, "assetId") ?? activeAsset.id,
         }
     : undefined;
+  const activePreviewWithKind: PreviewSelection | undefined =
+    activePreview &&
+    (activeAssetKind === "portrait" || activeAssetKind === "sprite")
+      ? {
+          ...activePreview,
+          kind: activeAssetKind as "portrait" | "sprite",
+        }
+      : activePreview;
 
   const activeEdit =
     state.edits.find((edit) => edit.id === activeEditId) ??
@@ -753,26 +791,22 @@ export function WorkflowView({
   }, [canReopenEdit, dispatch, editSignature, host, readsEnabled]);
   const makeWorkingSet = async (request: SummaryRecord) => loadSheet(request);
   const pack = async () => {
-    if (!selectedSet || !assetId.trim() || !styleTag.trim()) return;
-    await call("pack", {
-      id: `record-${slug(assetId)}`,
-      workingSetId: selectedSet.id,
-      assetId: slug(assetId),
-      styleTag: slug(styleTag),
-    });
+    if (!packArgs) return;
+    await call("pack", { ...packArgs });
   };
   const approve = async (withException: boolean) => {
-    if (!activeAsset || !activeRevision) return;
-    const args: Record<string, unknown> = {
-      id: activeAsset.id,
-      confirm: activeRevision,
-    };
+    if (!activeAsset) return;
+    const target = approvalArgsForAsset(activeAsset);
+    if (!target) return;
+    const args: Record<string, unknown> = { ...target };
     if (withException) args.exception = { reason: exception.trim() };
     await call(withException ? "approve-with-exception" : "approve", args);
   };
   const publish = async () => {
-    if (!activeAsset || !activeRevision) return;
-    await call("publish", { id: activeAsset.id, confirm: activeRevision });
+    if (!activeAsset) return;
+    const target = approvalArgsForAsset(activeAsset);
+    if (!target) return;
+    await call("publish", target);
   };
   const rejectAsset = async () => {
     if (!activeAsset || !rejectReason.trim()) return;
@@ -855,9 +889,22 @@ export function WorkflowView({
           <p className="eyebrow">Panthea / asset desk</p>
           <h1>Studio workflow</h1>
         </div>
-        <div className="host-indicator" aria-live="polite">
-          <span className={`host-dot host-${state.host.state}`} />
-          {hostLabel(state.host)}
+        <div className="header-actions">
+          <div className="host-indicator" aria-live="polite">
+            <span className={`host-dot host-${state.host.state}`} />
+            {hostLabel(state.host)}
+          </div>
+          {onConfigChoose && (
+            <button
+              type="button"
+              className={
+                state.host.state === "unavailable" ? "primary" : undefined
+              }
+              onClick={onConfigChoose}
+            >
+              Change config
+            </button>
+          )}
         </div>
       </header>
 
@@ -1187,6 +1234,8 @@ export function WorkflowView({
                     Asset ID
                     <input
                       className="workflow-control"
+                      required
+                      maxLength={128}
                       value={assetId}
                       onChange={(event) => setAssetId(event.target.value)}
                     />
@@ -1195,15 +1244,74 @@ export function WorkflowView({
                     Style tag
                     <input
                       className="workflow-control"
+                      required
+                      maxLength={128}
                       value={styleTag}
                       onChange={(event) => setStyleTag(event.target.value)}
                     />
                   </label>
+                  {recordText(selectedSet, "kind") === "sprite" && (
+                    <div className="footprint-fields">
+                      <label className="workflow-field">
+                        Footprint width
+                        <input
+                          className="workflow-control"
+                          type="number"
+                          min={1}
+                          step={1}
+                          required
+                          value={footprintWidth}
+                          onChange={(event) =>
+                            setFootprintWidth(event.target.value)
+                          }
+                        />
+                      </label>
+                      <label className="workflow-field">
+                        Footprint height
+                        <input
+                          className="workflow-control"
+                          type="number"
+                          min={1}
+                          step={1}
+                          required
+                          value={footprintHeight}
+                          onChange={(event) =>
+                            setFootprintHeight(event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
+                  {originalWorkRequired && (
+                    <div className="original-work-fields">
+                      <label className="workflow-field">
+                        Original-work licence
+                        <input
+                          className="workflow-control"
+                          required
+                          value={originalWorkLicence}
+                          onChange={(event) =>
+                            setOriginalWorkLicence(event.target.value)
+                          }
+                        />
+                      </label>
+                      <label className="workflow-field">
+                        Author / method description
+                        <textarea
+                          className="workflow-control"
+                          rows={2}
+                          required
+                          value={originalWorkAttribution}
+                          onChange={(event) =>
+                            setOriginalWorkAttribution(event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+                  )}
                   <button
                     type="button"
-                    disabled={
-                      !mutationsEnabled || !assetId.trim() || !styleTag.trim()
-                    }
+                    disabled={!mutationsEnabled || packArgs === undefined}
                     onClick={() => void pack()}
                   >
                     Pack draft
@@ -1372,8 +1480,8 @@ export function WorkflowView({
                   <h3>Isometric preview</h3>
                   <span>integer zoom · nearest pixels</span>
                 </div>
-                {activePreview && renderPreview ? (
-                  renderPreview(activePreview)
+                {activePreviewWithKind && renderPreview ? (
+                  renderPreview(activePreviewWithKind)
                 ) : (
                   <p className="muted">
                     Select a draft or approved record to preview it.

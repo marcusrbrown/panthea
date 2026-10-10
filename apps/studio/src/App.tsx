@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+
 import { type CheckResult, runChecks } from "./check/run";
 import { harnessItems, type OcclusionPair, pickIn } from "./harness/layout";
 import { usePreview } from "./harness/usePreview";
@@ -6,6 +7,7 @@ import { inTauri } from "./host/tauri";
 import { ZOOMS, type Zoom } from "./renderer/preview";
 import type { ListingEntry, Selection, SourceKind } from "./source/port";
 import { SOURCE_KINDS } from "./source/port";
+import { routePreviewSelection } from "./workflow/actions";
 import { type PreviewSelection, WorkflowApp } from "./workflow/Workflow";
 
 type CheckState =
@@ -85,16 +87,28 @@ function PreviewHarness({
 }) {
   const selectionSource = selection?.source;
   const selectionId = selection?.id;
+  const selectionKind = selection?.kind;
   const params = useMemo(() => {
     const base = readParams();
-    return selectionSource === undefined || selectionId === undefined
-      ? base
-      : {
-          ...base,
-          source: selectionSource,
-          subject: `${selectionSource}:${selectionId}`,
-        };
-  }, [selectionSource, selectionId]);
+    if (
+      selectionSource === undefined ||
+      selectionId === undefined ||
+      selectionKind === undefined
+    )
+      return base;
+    const route = routePreviewSelection({
+      source: selectionSource,
+      id: selectionId,
+      kind: selectionKind,
+    });
+    return {
+      ...base,
+      source: route.source as SourceKind,
+      ...(route.subjectKey === undefined
+        ? { portrait: route.portraitKey }
+        : { subject: route.subjectKey }),
+    };
+  }, [selectionSource, selectionId, selectionKind]);
   const container = useRef<HTMLDivElement | null>(null);
   const handle = usePreview(container, params);
   const { preview, source, listing } = handle;
@@ -110,10 +124,21 @@ function PreviewHarness({
   const [occlusion, setOcclusion] = useState<OcclusionPair>(params.occlusion);
   const [check, setCheck] = useState<CheckState>({ status: "idle" });
   useEffect(() => {
-    if (selectionSource === undefined || selectionId === undefined) return;
+    if (
+      selectionSource === undefined ||
+      selectionId === undefined ||
+      selectionKind === undefined
+    )
+      return;
+    const route = routePreviewSelection({
+      source: selectionSource,
+      id: selectionId,
+      kind: selectionKind,
+    });
     setSourceKind(selectionSource);
-    setSubjectKey(`${selectionSource}:${selectionId}`);
-  }, [selectionSource, selectionId]);
+    if (route.subjectKey !== undefined) setSubjectKey(route.subjectKey);
+    if (route.portraitKey !== undefined) setPortraitKey(route.portraitKey);
+  }, [selectionSource, selectionId, selectionKind]);
 
   const entries = listing?.entries ?? [];
   const sprites = entries.filter(

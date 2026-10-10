@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
+
 import { fakeTransport, hostError } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
 import type { ConformParams } from "../host/types";
+import * as workflowActions from "./actions";
 import {
+  buildPackArgs,
   conformJob,
   createLatest,
   editReportSignature,
   editsForReports,
+  finishOutcomeMessage,
   finishReviewedEdit,
   inlineParamsAtScale,
   parseInlineConformDraft,
@@ -46,6 +50,76 @@ describe("workflow host actions", () => {
     };
     expect(inlineParamsAtScale(params, 8)).toEqual({
       params: { ...params, scale: 8 },
+    });
+  });
+
+  test("a selected portrait record routes to the preview portrait key", () => {
+    const routePreviewSelection = (
+      workflowActions as unknown as {
+        routePreviewSelection?: (selection: {
+          source: "draft" | "approved" | "canon";
+          id: string;
+          kind: "portrait" | "sprite";
+        }) => Record<string, string | undefined>;
+      }
+    ).routePreviewSelection;
+    expect(routePreviewSelection).toBeFunction();
+    if (!routePreviewSelection) return;
+    expect(
+      routePreviewSelection({
+        source: "draft",
+        id: "face-b",
+        kind: "portrait",
+      }),
+    ).toEqual({ source: "draft", portraitKey: "draft:face-b" });
+  });
+
+  test("pack arguments reject style tags beyond the manifest slug limit", () => {
+    expect(
+      buildPackArgs({
+        selectedSet: { id: "w", kind: "sprite", authored: {} },
+        assets: [],
+        assetId: "zeus",
+        styleTag: "a".repeat(129),
+        footprintWidth: "1",
+        footprintHeight: "1",
+        originalWorkLicence: "",
+        originalWorkAttribution: "",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("pack arguments reject a generated record id beyond the record slug limit", () => {
+    expect(
+      buildPackArgs({
+        selectedSet: { id: "w", kind: "portrait", authored: {} },
+        assets: [],
+        assetId: "a".repeat(120),
+        styleTag: "u5-test",
+        footprintWidth: "",
+        footprintHeight: "",
+        originalWorkLicence: "",
+        originalWorkAttribution: "",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("unedited sets do not add original-work metadata", () => {
+    const args = buildPackArgs({
+      selectedSet: { id: "w", kind: "portrait", authored: {} },
+      assets: [],
+      assetId: "zeus-face",
+      styleTag: "u5-test",
+      footprintWidth: "",
+      footprintHeight: "",
+      originalWorkLicence: "",
+      originalWorkAttribution: "",
+    });
+    expect(args).toEqual({
+      id: "record-zeus-face-1",
+      workingSetId: "w",
+      assetId: "zeus-face",
+      styleTag: "u5-test",
     });
   });
 
@@ -469,6 +543,13 @@ describe("late replies to loading a sheet", () => {
 });
 
 describe("finishing the version that was reviewed", () => {
+  test("a cancelled import is not reported as a successful finish", () => {
+    expect(finishOutcomeMessage({ kind: "cancelled" })).toBeUndefined();
+    expect(finishOutcomeMessage({ kind: "finished" })).toBe(
+      "Edit finished. The reviewed pixels were kept.",
+    );
+  });
+
   const report = {
     editId: "e1",
     workingSetId: "w1",
@@ -546,5 +627,20 @@ describe("finishing the version that was reviewed", () => {
       "edit_import",
     ]);
     expect(transport.calls[0]?.args).toEqual({ editId: "e1", finish: true });
+  });
+
+  test("cancelling the fallback file picker leaves the edit open", async () => {
+    const transport = fakeTransport({
+      edit_import: () => ({ cancelled: true }),
+    });
+
+    const outcome = await finishReviewedEdit(
+      createStudioHost(transport),
+      "e1",
+      report,
+      false,
+    );
+
+    expect(outcome).toEqual({ kind: "cancelled" });
   });
 });

@@ -7,7 +7,7 @@ import type {
   EditReport,
   SummaryRecord,
 } from "../host/types";
-import { recordText, recordValue } from "./model";
+import { recordObject, recordText, recordValue } from "./model";
 
 export function parseSlotSpecs(
   source: string,
@@ -47,6 +47,119 @@ export function rerollArgs(job: {
     perSlot: 1,
     ...(job.slotKey === undefined ? {} : { slotKey: job.slotKey }),
   };
+}
+
+export interface PackDraftInput {
+  readonly selectedSet: SummaryRecord;
+  readonly assets: readonly { readonly id: string }[];
+  readonly assetId: string;
+  readonly styleTag: string;
+  readonly footprintWidth: string;
+  readonly footprintHeight: string;
+  readonly originalWorkLicence: string;
+  readonly originalWorkAttribution: string;
+}
+
+export interface PackDraftArgs {
+  readonly id: string;
+  readonly workingSetId: string;
+  readonly assetId: string;
+  readonly styleTag: string;
+  readonly footprint?: { readonly w: number; readonly h: number };
+  readonly originalWork?: {
+    readonly licence: string;
+    readonly attribution: string;
+  };
+}
+
+const slug = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+export function packNeedsOriginalWork(selectedSet: SummaryRecord): boolean {
+  return Object.keys(recordObject(selectedSet, "authored")).length > 0;
+}
+
+export function buildPackArgs(
+  input: PackDraftInput,
+): PackDraftArgs | undefined {
+  const assetId = slug(input.assetId);
+  const styleTag = slug(input.styleTag);
+  if (
+    assetId === "" ||
+    assetId.length > 128 ||
+    styleTag === "" ||
+    styleTag.length > 128
+  )
+    return undefined;
+
+  const kind = recordText(input.selectedSet, "kind");
+  if (kind !== "sprite" && kind !== "portrait") return undefined;
+
+  let footprint: PackDraftArgs["footprint"];
+  if (kind === "sprite") {
+    const w = Number(input.footprintWidth);
+    const h = Number(input.footprintHeight);
+    if (
+      input.footprintWidth.trim() === "" ||
+      input.footprintHeight.trim() === "" ||
+      !Number.isInteger(w) ||
+      !Number.isInteger(h) ||
+      w < 1 ||
+      h < 1
+    )
+      return undefined;
+    footprint = { w, h };
+  }
+
+  let originalWork: PackDraftArgs["originalWork"];
+  if (packNeedsOriginalWork(input.selectedSet)) {
+    const licence = input.originalWorkLicence.trim();
+    const attribution = input.originalWorkAttribution.trim();
+    if (licence === "" || attribution === "") return undefined;
+    originalWork = { licence, attribution };
+  }
+
+  const nextRecordId = (base: string) => {
+    const existing = new Set(input.assets.map((asset) => asset.id));
+    let revision = 1;
+    while (existing.has(`record-${base}-${revision}`)) revision += 1;
+    return `record-${base}-${revision}`;
+  };
+  const id = nextRecordId(assetId);
+  if (id.length > 128) return undefined;
+
+  return {
+    id,
+    workingSetId: input.selectedSet.id,
+    assetId,
+    styleTag,
+    ...(footprint === undefined ? {} : { footprint }),
+    ...(originalWork === undefined ? {} : { originalWork }),
+  };
+}
+
+export function routePreviewSelection(selection: {
+  readonly source: "canon" | "draft" | "approved";
+  readonly id: string;
+  readonly kind: "portrait" | "sprite";
+}): Record<string, string> {
+  const key = `${selection.source}:${selection.id}`;
+  return selection.kind === "portrait"
+    ? { source: selection.source, portraitKey: key }
+    : { source: selection.source, subjectKey: key };
+}
+
+export function approvalArgsForAsset(
+  asset: SummaryRecord,
+): { readonly id: string; readonly confirm: string } | undefined {
+  const revision = recordText(asset, "manifestRevision");
+  return revision === undefined
+    ? undefined
+    : { id: asset.id, confirm: revision };
 }
 
 export function readExistingSheet(
@@ -309,7 +422,16 @@ export const STALE_REVIEW_MESSAGE =
 
 export type FinishOutcome =
   | { readonly kind: "finished" }
+  | { readonly kind: "cancelled" }
   | { readonly kind: "stale"; readonly message: string };
+
+export function finishOutcomeMessage(
+  outcome: FinishOutcome,
+): string | undefined {
+  return outcome.kind === "finished"
+    ? "Edit finished. The reviewed pixels were kept."
+    : undefined;
+}
 
 /**
  * Finishes an edit with the version the owner reviewed. With the editor, the
@@ -326,8 +448,11 @@ export async function finishReviewedEdit(
   editorLaunched: boolean | undefined,
 ): Promise<FinishOutcome> {
   try {
-    if (editorLaunched === false) await host.editImport(editId, true);
-    else await host.call("finish", { id: editId, reviewed: report.sheetHash });
+    if (editorLaunched === false) {
+      const imported = await host.editImport(editId, true);
+      if (imported.cancelled) return { kind: "cancelled" };
+    } else
+      await host.call("finish", { id: editId, reviewed: report.sheetHash });
     return { kind: "finished" };
   } catch (error) {
     if (error instanceof HostError && error.code === "stale-review")
