@@ -107,6 +107,23 @@ function goalTargetFact(
 }
 
 /**
+ * The shown prayer a strike on `target` answers: one whose offender or listed building it is, and the prayer a boon is
+ * owed on before any other. A strike that answers no shown prayer answers none, and names none. The world answers every
+ * open prayer the strike fits; the proposal names this one, and the world judges the claim.
+ */
+function prayerStruckFor(
+  remembered: Remembered,
+  target: EntityId,
+): Remembered["petitions"][number] | undefined {
+  const listing = remembered.petitions.filter(
+    (candidate) =>
+      candidate.strikeMortal?.target === target ||
+      candidate.strikeBuildings?.includes(target),
+  );
+  return listing.find((candidate) => candidate.agreed === true) ?? listing[0];
+}
+
+/**
  * Builds the observation and proposal for `intent`, made by `actorId` from
  * `snapshot`. `intent` must come from `godIntentSchema`'s parse, which is the
  * only thing that checks the action and strike power; this builder re-checks
@@ -204,11 +221,7 @@ export function buildModelProposal(
         // Not a building here: the mortal a shown prayer asks the god to punish, or a building it lists. The world takes a
         // strike wherever the target is (and the building's status is rechecked at commit), so nothing pins the target's
         // place or its revision (a routine moves a mortal every tick); the prayer is the fact, and only the god is pinned.
-        const prayer = remembered.petitions.find(
-          (candidate) =>
-            candidate.strikeMortal?.target === intent.target ||
-            candidate.strikeBuildings?.includes(intent.target),
-        );
+        const prayer = prayerStruckFor(remembered, intent.target);
         if (prayer === undefined) {
           return refuse(
             `${intent.target} is not a building in the snapshot, or the offender or a listed building of a prayer shown`,
@@ -222,10 +235,14 @@ export function buildModelProposal(
           kind: "strike",
           target: intent.target,
           power: intent.power,
+          petition: prayer.id,
         };
         break;
       }
       factsRead.push(`building:${target.id}.status`);
+      // A building here that a shown prayer also lists is struck as the answer to it.
+      const answered = prayerStruckFor(remembered, target.id);
+      if (answered !== undefined) factsRead.push(`petition:${answered.id}`);
       expectedRevisions.push(selfPin, locationPin, {
         entityId: target.id,
         revision: target.revision,
@@ -236,6 +253,7 @@ export function buildModelProposal(
         kind: "strike",
         target: target.id,
         power: intent.power,
+        ...(answered === undefined ? {} : { petition: answered.id }),
       };
       break;
     }

@@ -368,7 +368,7 @@ export function buildWorldNotes(record: EpisodeRecord): WorldNote[] {
       case "mortal-struck":
         note(
           e,
-          `${e.actor} struck ${e.entityId}${e.resource === undefined ? ", who carried nothing" : ` and took ${e.amount} ${e.resource}`} [${e.id}]`,
+          `${e.actor} struck ${e.entityId}${e.resource === undefined ? ", who carried nothing" : ` and took ${e.amount} ${e.resource}`}${e.petitionId === undefined ? "" : `, answering the prayer [${e.petitionId}]`} [${e.id}]`,
         );
         break;
       case "petition-refused":

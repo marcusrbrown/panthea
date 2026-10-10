@@ -2935,3 +2935,197 @@ test("the struck mortal always knows who struck it, whatever the strike's salien
     decode(JSON.parse(JSON.stringify(encode(remembered.world.state)))),
   ).toEqual(remembered.world.state);
 });
+
+// --- A strike names the prayer it answers ---------------------------------------------------------
+
+/** The rejections a god's proposal would draw against `world`'s state as it is, committing nothing. */
+function rejections(world: World, raw: Record<string, unknown>) {
+  const submitted = submitProposal({
+    schemaVersion: 1,
+    targets: [],
+    expectedRevisions: [],
+    source: "model",
+    observationId: `obs-try-${world.log.length}-${Math.random()}`,
+    ...raw,
+  });
+  if (!submitted.ok) throw new Error(submitted.rejection.message);
+  const ran = runTick(world.state, world.prng, [submitted.proposal]);
+  return { rejected: ran.rejected, events: ran.events };
+}
+
+test("a strike that names the prayer it answers carries it on the building-damaged event, and that prayer is the one it answers", () => {
+  const world = new World();
+  const opened = petition(world, "farmer", "zeus", theftBy("woodcutter"));
+  const ran = godActs(world, {
+    actor: "zeus",
+    kind: "strike",
+    target: "woodshed",
+    power: 1,
+    petition: opened.id,
+  });
+  expect(ran.rejected).toEqual([]);
+  const struck = ofKind(ran.events, "building-damaged")[0];
+  expect(struck?.petitionId).toBe(opened.id);
+  expect(ofKind(ran.events, "petition-answered")[0]).toMatchObject({
+    petitionId: opened.id,
+    answeredBy: struck?.id,
+  });
+});
+
+test("a strike that names its prayer and lights the building names it on the ignition's cause", () => {
+  const world = new World();
+  const opened = petition(world, "farmer", "zeus", theftBy("woodcutter"));
+  const ran = godActs(world, {
+    actor: "zeus",
+    kind: "strike",
+    target: "woodshed",
+    power: 3,
+    petition: opened.id,
+  });
+  expect(ran.rejected).toEqual([]);
+  const fire = ofKind(ran.events, "building-ignited")[0];
+  expect(JSON.parse(JSON.stringify(fire?.cause))).toEqual({
+    kind: "strike",
+    actor: "zeus",
+    petitionId: opened.id,
+  });
+  expect(ofKind(ran.events, "petition-answered")[0]?.answeredBy).toBe(fire?.id);
+});
+
+test("a strike on a mortal that names the prayer asking for its punishment carries it on the mortal-struck event", () => {
+  const world = quarrel();
+  grudges(world, "doris", "lykos");
+  world.until(() => opened(world, "doris") !== undefined);
+  const prayer = opened(world, "doris");
+  const ran = godActs(world, {
+    actor: "poseidon",
+    kind: "strike",
+    target: "lykos",
+    power: 1,
+    petition: prayer?.id,
+  });
+  expect(ran.rejected).toEqual([]);
+  const harm = ofKind(ran.events, "mortal-struck")[0];
+  expect(harm?.petitionId).toBe(prayer?.id);
+  expect(ofKind(ran.events, "petition-answered")[0]?.answeredBy).toBe(harm?.id);
+});
+
+test("a strike that names no prayer names none, whether or not it answers one", () => {
+  const world = new World();
+  petition(world, "farmer", "zeus", theftBy("woodcutter"));
+  const answering = godActs(world, {
+    actor: "zeus",
+    kind: "strike",
+    target: "woodshed",
+    power: 1,
+  });
+  expect(ofKind(answering.events, "petition-answered")).toHaveLength(1);
+  expect(
+    "petitionId" in (ofKind(answering.events, "building-damaged")[0] ?? {}),
+  ).toBe(false);
+  const free = godActs(world, {
+    actor: "hera",
+    kind: "strike",
+    target: "the-tavern",
+    power: 3,
+  });
+  const fire = ofKind(free.events, "building-ignited")[0];
+  expect(JSON.parse(JSON.stringify(fire?.cause))).toEqual({
+    kind: "strike",
+    actor: "hera",
+  });
+});
+
+test("a strike that names a prayer the world cannot tie to it is refused with a reason, and no strike lands: unknown, another god's, closed, lapsed, a help prayer, or about another target", () => {
+  const world = new World();
+  const opened = petition(world, "farmer", "zeus", theftBy("woodcutter"));
+  const strike = (extra: Record<string, unknown>) => ({
+    actor: "zeus",
+    kind: "strike",
+    target: "woodshed",
+    power: 1,
+    ...extra,
+  });
+  const refused = (
+    raw: Record<string, unknown>,
+    from: World = world,
+  ): string => {
+    const tried = rejections(from, raw);
+    expect(tried.rejected.map((r) => r.reason)).toEqual(["malformed"]);
+    // The world may lapse a prayer on that tick, but no strike lands.
+    expect(
+      tried.events.filter((e) =>
+        ["mortal-struck", "building-damaged", "building-ignited"].includes(
+          e.kind,
+        ),
+      ),
+    ).toEqual([]);
+    return tried.rejected[0]?.message ?? "";
+  };
+  // Control: the right prayer is taken.
+  expect(rejections(world, strike({ petition: opened.id })).rejected).toEqual(
+    [],
+  );
+  expect(refused(strike({ petition: "evt-99-missing" }))).toContain(
+    "evt-99-missing",
+  );
+  // Addressed to Zeus, not Hera.
+  expect(
+    refused({ ...strike({ petition: opened.id }), actor: "hera" }),
+  ).toContain(opened.id);
+  // About the woodcutter and his shed, not the tavern or a bystander.
+  expect(
+    refused(strike({ target: "the-tavern", petition: opened.id })),
+  ).toContain("the-tavern");
+  expect(refused(strike({ target: "drifter", petition: opened.id }))).toContain(
+    "drifter",
+  );
+  // Past its answer window.
+  const late = new World(world.state, ["farmer", "woodcutter", "drifter"]);
+  late.state = {
+    ...late.state,
+    tick:
+      opened.tick +
+      petitionBalanceOf(late.state.rules, "answerWindowTicks") +
+      1,
+  };
+  expect(refused(strike({ petition: opened.id }), late)).toContain(opened.id);
+  // A building the strike would not answer for: not operational.
+  const shed = world.state.buildings.get(id("woodshed"));
+  if (!shed) throw new Error("woodshed");
+  const hurt = new World(world.state, ["farmer", "woodcutter", "drifter"]);
+  hurt.state = {
+    ...hurt.state,
+    buildings: new Map(hurt.state.buildings).set(id("woodshed"), {
+      ...shed,
+      status: "damaged",
+    } as never),
+  };
+  expect(refused(strike({ petition: opened.id }), hurt)).toContain("woodshed");
+  // Already answered.
+  godActs(world, strike({ petition: opened.id }));
+  expect(world.state.petitions.get(opened.id)?.status).toBe("answered");
+  expect(
+    refused(strike({ target: "the-tavern", petition: opened.id })),
+  ).toContain(opened.id);
+  // A help prayer is answered by a bless, not a strike.
+  const farm = damagedFarm();
+  const help = petition(farm, "farmer", "hera", {
+    kind: "building-damaged",
+    entityId: "storehouse",
+    amount: 1,
+    actor: "zeus",
+  });
+  expect(
+    refused(
+      {
+        actor: "hera",
+        kind: "strike",
+        target: "the-tavern",
+        power: 1,
+        petition: help.id,
+      },
+      farm,
+    ),
+  ).toContain(help.id);
+});
