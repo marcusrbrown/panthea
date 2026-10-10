@@ -354,7 +354,7 @@ U1, U3 and U4 are independent and may run in parallel lanes with separate worktr
 
 **Verification:** `cargo fmt --check`, `clippy -D warnings` and `cargo test --locked` pass, and CI runs the tests.
 
-- [ ] **U5: Client canon layer**
+- [x] **U5: Client canon layer**
 
 **Goal:** the game draws actors from canon through the shared pixel core, with placeholders per state.
 
