@@ -26,7 +26,7 @@ use crate::state::{
     ApplyRestartResult, AttachOutcome, ChildHandle, Lifecycle, StopResult, StudioState,
     TerminatedOutcome, MAX_RESTARTS,
 };
-use crate::teardown::{sidecar_args, wait_or_kill, ExitSignal, QUIT_BOUND};
+use crate::teardown::{quit_bound, sidecar_args, wait_or_kill, ExitSignal, QUIT_BOUND};
 
 /// Matches the `externalBin` entry in `tauri.conf.json`; the target-triple
 /// suffix is stripped by Tauri's sidecar bundling convention.
@@ -50,10 +50,18 @@ fn run_off_caller_thread(task: impl FnOnce() + Send + 'static) {
     std::thread::spawn(task);
 }
 
-fn kill_pid(pid: u32) {
+fn signal_pid(signal: &str, pid: u32) {
     let _ = Command::new("/bin/kill")
-        .args(["-KILL", &pid.to_string()])
+        .args([signal, &pid.to_string()])
         .status();
+}
+
+fn kill_pid(pid: u32) {
+    signal_pid("-KILL", pid);
+}
+
+fn term_pid(pid: u32) {
+    signal_pid("-TERM", pid);
 }
 
 fn lock<'a>(state: &'a StudioState) -> std::sync::MutexGuard<'a, Lifecycle> {
@@ -130,8 +138,9 @@ fn spawn_retry(app: AppHandle, retry_launch_id: u64) {
 }
 
 /// Retires `launch` in the mux (failing its pending requests and closing its
-/// stdin), then waits a bounded time for its child to exit and kills it if it
-/// does not.
+/// stdin), sends its child SIGTERM so it aborts the running job and stops the
+/// image server it owns, then waits a bounded time (derived from the launch's
+/// config) for the child to exit and kills it if it does not.
 fn end_launch(app: &AppHandle, launch: u64, child: Option<ChildHandle>) {
     let state = app.state::<StudioState>();
     state.mux.retire(launch);
@@ -143,10 +152,12 @@ fn end_launch(app: &AppHandle, launch: u64, child: Option<ChildHandle>) {
     let Some(child) = child else {
         return;
     };
+    let bound = watch.as_ref().map(|(_, bound)| *bound);
     let outcome = wait_or_kill(
         child.pid,
-        watch.as_ref().map(|rx| rx as &dyn ExitSignal),
-        QUIT_BOUND,
+        watch.as_ref().map(|(rx, _)| rx as &dyn ExitSignal),
+        bound.unwrap_or(QUIT_BOUND),
+        term_pid,
         kill_pid,
     );
     eprintln!("panthea-studio: sidecar teardown: {outcome:?}");
@@ -198,7 +209,7 @@ fn spawn_with_id(app: AppHandle, launch_id: u64) {
         .exit_watch
         .lock()
         .expect("sidecar state mutex poisoned")
-        .insert(launch_id, exit_rx);
+        .insert(launch_id, (exit_rx, quit_bound(&config)));
 
     if state
         .mux
@@ -264,7 +275,8 @@ fn start_polling(app: &AppHandle, launch_id: u64) {
         move |snapshot: Value| {
             let state = apply_app.state::<StudioState>();
             let mut lifecycle = lock(&state);
-            // A launch that answered has not crashed: forget the crashes before it.
+            // A launch that keeps answering has not crashed: after enough good
+            // polls in a row, forget the crashes before it.
             mark_healthy(&mut lifecycle, launch_id);
             apply_snapshot(&mut lifecycle, launch_id, snapshot);
         },

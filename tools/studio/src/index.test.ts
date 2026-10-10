@@ -711,6 +711,58 @@ describe("a session", () => {
     expect(pids.every((pid) => !alive(pid))).toBe(true);
   });
 
+  test("a quit during a generation (end of input, then SIGTERM) aborts the job, stops the owned server group and exits 1, rather than draining the job", async () => {
+    const rig = await runtimeRig({
+      sequence: ["hang"],
+      grandchild: true,
+      ignoreTerm: true,
+    });
+    const stdin = pipe();
+    const h = harness({ stdin: stdin.iterable });
+    const done = main(
+      ["session", "--config", configFile(rig)],
+      h.io,
+      rig.deps,
+      h.hub,
+    );
+    stdin.send(
+      JSON.stringify({
+        id: "g",
+        op: "generate",
+        args: {
+          id: "zeus-idle",
+          subject: "zeus",
+          kind: "sprite",
+          slots: JSON.parse(SOUTH),
+          batch: 1,
+          seed: 1,
+        },
+      }),
+    );
+    await waitFor(() => readLog(rig.dir).some((e) => e.event === "img_gen"));
+    await waitFor(() => readLog(rig.dir).some((e) => e.event === "grand"));
+    const pids = [
+      ...new Set(
+        readLog(rig.dir)
+          .filter((e) => e.event === "start" || e.event === "grand")
+          .map((e) => e.pid),
+      ),
+    ];
+
+    stdin.end();
+    h.fire("SIGTERM");
+    const code = await done;
+
+    expect(code).toBe(1);
+    expect(readStudioStatus(rig.root).jobs[0]?.job).toMatchObject({
+      status: "cancelled",
+      cancelledBy: "aborted",
+    });
+    expect(pids.length).toBe(2);
+    expect(pids.every((pid) => !alive(pid))).toBe(true);
+    expect(readStudioStatus(rig.root).session?.endedAt).toBeString();
+  });
+
   const generateLine = (id: string, slots: string, seed: number) =>
     JSON.stringify({
       id,

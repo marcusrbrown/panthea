@@ -552,6 +552,31 @@ describe("hand edits are reported, never replaced", () => {
 });
 
 describe("conform, sets, picks and rejection through the session", () => {
+  test("a conform set is found by own name only: constructor, toString and __proto__ are not sets", async () => {
+    const config: StudioConfig = {
+      studioRoot: tempRoot(),
+      contentRoot: "/content",
+      conform: { standard: PROVISIONAL_TEST_PARAMS },
+    };
+
+    for (const name of [
+      "constructor",
+      "toString",
+      "hasOwnProperty",
+      "__proto__",
+    ]) {
+      const { outcome } = await run(config, "conform", {
+        jobId: "zeus-idle-0000",
+        set: name,
+      });
+
+      expect(codeOf(outcome), name).toBe("invalid-config");
+      expect(JSON.stringify(outcome), name).toContain(
+        `no conform set named \\"${name}\\"`,
+      );
+    }
+  });
+
   test("conform a generated job with a named config set, then open a set and pick its candidate", async () => {
     const rig = assetRig();
     const [jobId] = runSlots(rig, "zeus-idle", "sprite", [

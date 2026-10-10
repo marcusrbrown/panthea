@@ -341,6 +341,32 @@ export function summarize(samples: readonly HeadroomSample[]): HeadroomSummary {
   };
 }
 
+/** Time, injected so the probe and the loop run under a test clock. */
+export interface Clock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+  /** Calls `fn` after `ms`; the returned function cancels it. */
+  after(ms: number, fn: () => void): () => void;
+}
+
+export const systemClock: Clock = {
+  now: () => performance.now(),
+  sleep: (ms) => Bun.sleep(ms),
+  after: (ms, fn) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+};
+
+/** One line-oriented conversation with a child (or a fake of one). */
+export interface RoundTripLink {
+  /** Sends one line (no trailing newline); throws if the child is gone. */
+  send(line: string): void;
+  onLine(handler: (line: string) => void): void;
+  onExit(handler: () => void): void;
+  close(): void;
+}
+
 export interface RoundTripProbe {
   /** Milliseconds from the request line to the reply with the same id; `undefined` when the child is gone or no reply comes in time. */
   measure(): Promise<number | undefined>;
@@ -353,69 +379,90 @@ export interface RoundTripProbe {
  * ignored, so a late answer to an earlier request is never taken for this one.
  */
 export function createRoundTripProbe(options: {
-  readonly command: readonly string[];
+  readonly link: RoundTripLink;
   readonly op: string;
   readonly timeoutMs?: number;
+  readonly clock?: Clock;
 }): RoundTripProbe {
+  const { link } = options;
+  const clock = options.clock ?? systemClock;
   const timeoutMs = options.timeoutMs ?? 5000;
-  const child = Bun.spawn([...options.command], {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "ignore",
-  });
   const waiting = new Map<string, (replied: boolean) => void>();
   let exited = false;
   let counter = 0;
 
-  void child.exited.then(() => {
+  link.onExit(() => {
     exited = true;
     for (const resolve of waiting.values()) resolve(false);
     waiting.clear();
   });
-  void (async () => {
-    const decoder = new TextDecoder();
-    let buffered = "";
-    for await (const chunk of child.stdout) {
-      buffered += decoder.decode(chunk, { stream: true });
-      for (
-        let end = buffered.indexOf("\n");
-        end !== -1;
-        end = buffered.indexOf("\n")
-      ) {
-        const line = buffered.slice(0, end);
-        buffered = buffered.slice(end + 1);
-        try {
-          const id = (JSON.parse(line) as { id?: unknown }).id;
-          if (typeof id === "string") waiting.get(id)?.(true);
-        } catch {
-          // Not a reply line.
-        }
-      }
+  link.onLine((line) => {
+    try {
+      const id = (JSON.parse(line) as { id?: unknown }).id;
+      if (typeof id === "string") waiting.get(id)?.(true);
+    } catch {
+      // Not a reply line.
     }
-  })();
+  });
 
   return {
     async measure() {
       if (exited) return undefined;
       counter += 1;
       const id = `headroom-${counter}`;
+      let cancel = () => {};
       const reply = new Promise<boolean>((resolve) => {
         waiting.set(id, resolve);
-        setTimeout(() => resolve(false), timeoutMs);
+        cancel = clock.after(timeoutMs, () => resolve(false));
       });
-      const started = performance.now();
+      const started = clock.now();
       try {
-        child.stdin.write(
-          `${JSON.stringify({ id, op: options.op, args: {} })}\n`,
-        );
-        void child.stdin.flush();
+        link.send(JSON.stringify({ id, op: options.op, args: {} }));
       } catch {
+        cancel();
         waiting.delete(id);
         return undefined;
       }
       const replied = await reply;
+      cancel();
       waiting.delete(id);
-      return replied ? performance.now() - started : undefined;
+      return replied ? clock.now() - started : undefined;
+    },
+    close: () => link.close(),
+  };
+}
+
+/** A real child process as a link: lines out to its stdin, lines in from its stdout. */
+export function spawnLink(command: readonly string[]): RoundTripLink {
+  const child = Bun.spawn([...command], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return {
+    send(line) {
+      child.stdin.write(`${line}\n`);
+      void child.stdin.flush();
+    },
+    onLine(handler) {
+      void (async () => {
+        const decoder = new TextDecoder();
+        let buffered = "";
+        for await (const chunk of child.stdout) {
+          buffered += decoder.decode(chunk, { stream: true });
+          for (
+            let end = buffered.indexOf("\n");
+            end !== -1;
+            end = buffered.indexOf("\n")
+          ) {
+            handler(buffered.slice(0, end));
+            buffered = buffered.slice(end + 1);
+          }
+        }
+      })();
+    },
+    onExit(handler) {
+      void child.exited.then(handler);
     },
     close() {
       try {
@@ -426,6 +473,47 @@ export function createRoundTripProbe(options: {
       child.kill();
     },
   };
+}
+
+/**
+ * Samples every `intervalMs` until `stopped()` or `durationMs` (0 for no limit)
+ * has passed, calling `onSample` with each. Every tick reads the process table
+ * again through `run`, so a worker that was restarted is sampled as its new pid
+ * and labelled with it. Chained waits, not an interval: a slow tick never
+ * queues the next one behind it.
+ */
+export async function sampleLoop(options: {
+  readonly run: RunCommand;
+  readonly diskPath: string;
+  readonly intervalMs: number;
+  readonly durationMs: number;
+  readonly clock: Clock;
+  readonly stopped: () => boolean;
+  readonly probe?: RoundTripProbe | undefined;
+  readonly onSample: (sample: HeadroomSample) => void;
+}): Promise<HeadroomSample[]> {
+  const { clock } = options;
+  const samples: HeadroomSample[] = [];
+  const started = clock.now();
+  while (
+    !options.stopped() &&
+    (options.durationMs === 0 || clock.now() - started < options.durationMs)
+  ) {
+    const tickStart = clock.now();
+    const base = sampleHeadroom(options.run, {
+      diskPath: options.diskPath,
+      atMs: tickStart - started,
+    });
+    const sample: HeadroomSample =
+      options.probe === undefined
+        ? base
+        : { ...base, roundTripMs: (await options.probe.measure()) ?? null };
+    samples.push(sample);
+    options.onSample(sample);
+    const wait = options.intervalMs - (clock.now() - tickStart);
+    if (wait > 0) await clock.sleep(wait);
+  }
+  return samples;
 }
 
 function runCommandSync(command: readonly string[]): string | undefined {
@@ -460,37 +548,27 @@ export async function main(argv: readonly string[]): Promise<HeadroomSummary> {
   const probe =
     sidecar !== undefined && config !== undefined
       ? createRoundTripProbe({
-          command: [sidecar, "session", "--config", config],
+          link: spawnLink([sidecar, "session", "--config", config]),
           op: "status",
         })
       : undefined;
-  const samples: HeadroomSample[] = [];
-  const started = performance.now();
   let stop = false;
   for (const signal of ["SIGINT", "SIGTERM"] as const)
     process.on(signal, () => {
       stop = true;
     });
 
-  // Chained timeouts, not an interval: a slow tick never queues the next one behind it.
-  while (
-    !stop &&
-    (durationMs === 0 || performance.now() - started < durationMs)
-  ) {
-    const tickStart = performance.now();
-    const base = sampleHeadroom(runCommandSync, {
-      diskPath,
-      atMs: tickStart - started,
-    });
-    const sample: HeadroomSample =
-      probe === undefined
-        ? base
-        : { ...base, roundTripMs: (await probe.measure()) ?? null };
-    samples.push(sample);
-    appendFileSync(seriesPath, `${JSON.stringify(sample)}\n`);
-    const wait = intervalMs - (performance.now() - tickStart);
-    if (wait > 0) await Bun.sleep(wait);
-  }
+  const samples = await sampleLoop({
+    run: runCommandSync,
+    diskPath,
+    intervalMs,
+    durationMs,
+    clock: systemClock,
+    stopped: () => stop,
+    probe,
+    onSample: (sample) =>
+      appendFileSync(seriesPath, `${JSON.stringify(sample)}\n`),
+  });
   probe?.close();
   const summary = summarize(samples);
   writeFileSync(

@@ -140,11 +140,15 @@ const quiet = () => {
 };
 
 suite("the compiled studio sidecar", () => {
-  test("the build writes a triple-suffixed, executable binary", () => {
-    if (!built) return;
-    expect(binary.endsWith(`panthea-studio-sidecar-${triple}`)).toBe(true);
+  test("the binary under test is an executable file, and a fresh build is triple-suffixed", () => {
+    // Asserted on whichever binary resolved, built here or prebuilt through
+    // PANTHEA_STUDIO_SIDECAR; only the name of a fresh build is ours to check.
+    expect(binary).not.toBe("");
+    expect(existsSync(binary)).toBe(true);
     expect(statSync(binary).isFile()).toBe(true);
     expect(statSync(binary).mode & 0o111).not.toBe(0);
+    if (built)
+      expect(binary.endsWith(`panthea-studio-sidecar-${triple}`)).toBe(true);
   });
 
   test("answers status with exactly one correlated reply, keeps stdout to replies only, and exits 0 when stdin closes", async () => {

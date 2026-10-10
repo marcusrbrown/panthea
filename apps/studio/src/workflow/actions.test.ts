@@ -4,6 +4,7 @@ import { createStudioHost } from "../host/client";
 import type { ConformParams } from "../host/types";
 import {
   conformJob,
+  createLatest,
   editReportSignature,
   editsForReports,
   inlineParamsAtScale,
@@ -11,7 +12,10 @@ import {
   parseSlotSpecs,
   readEditReport,
   readExistingSheet,
+  reopenEditor,
   rerollArgs,
+  resolveFlow,
+  sheetFlow,
   slotHint,
 } from "./actions";
 
@@ -218,5 +222,246 @@ describe("workflow host actions", () => {
     const nextSave = [{ id: "e1", status: "open", previewSheetHash: "save-2" }];
     expect(editReportSignature(first)).toBe(editReportSignature(sameSave));
     expect(editReportSignature(first)).not.toBe(editReportSignature(nextSave));
+  });
+});
+
+describe("reopening an open edit's editor", () => {
+  const opened = (launched: boolean, reason?: string) => ({
+    editId: "e1",
+    slots: ["idle/south"],
+    workspace: { size: { w: 64, h: 80 }, durationsMs: [167], tags: [] },
+    editor: { launched, ...(reason === undefined ? {} : { reason }) },
+  });
+  const edit = { id: "e1", workingSetId: "w1", slots: ["idle/south"] };
+
+  function hooks(live: () => boolean) {
+    const sessions: [string, unknown][] = [];
+    const log = { forgot: 0, errors: [] as string[] };
+    return {
+      sessions,
+      log,
+      hooks: {
+        isLive: live,
+        onSession: (id: string, session: unknown) =>
+          sessions.push([id, session]),
+        onForget: () => {
+          log.forgot += 1;
+        },
+        onError: (message: string) => log.errors.push(message),
+      },
+    };
+  }
+
+  test("records the editor's answer under the edit id", async () => {
+    const transport = fakeTransport({
+      edit_open: () => opened(false, "no-workspace"),
+    });
+    const run = hooks(() => true);
+
+    await reopenEditor(createStudioHost(transport), edit, run.hooks);
+
+    expect(transport.calls[0]?.args).toEqual({
+      editId: "e1",
+      workingSetId: "w1",
+      slots: ["idle/south"],
+    });
+    expect(run.sessions).toEqual([
+      ["e1", { launched: false, reason: "no-workspace", durationsMs: [167] }],
+    ]);
+  });
+
+  test("records the answer even when the effect that asked was cleaned up while the open was in flight", async () => {
+    let live = true;
+    const transport = fakeTransport({
+      edit_open: () => {
+        live = false;
+        return opened(false, "launch-failed");
+      },
+    });
+    const run = hooks(() => live);
+
+    await reopenEditor(createStudioHost(transport), edit, run.hooks);
+
+    expect(run.sessions).toEqual([
+      ["e1", { launched: false, reason: "launch-failed", durationsMs: [167] }],
+    ]);
+  });
+
+  test("a failure lets the edit be reopened again and is shown only to a live effect", async () => {
+    const failing = fakeTransport({
+      edit_open: () => {
+        throw hostError("root-locked", "locked");
+      },
+    });
+    const live = hooks(() => true);
+    const stale = hooks(() => false);
+
+    await reopenEditor(createStudioHost(failing), edit, live.hooks);
+    await reopenEditor(createStudioHost(failing), edit, stale.hooks);
+
+    expect(live.log).toEqual({ forgot: 1, errors: [expect.any(String)] });
+    expect(stale.log).toEqual({ forgot: 1, errors: [] });
+    expect(live.sessions).toEqual([]);
+  });
+
+  test("an edit with no working set is not opened", async () => {
+    const transport = fakeTransport({ edit_open: () => opened(true) });
+    const run = hooks(() => true);
+
+    await reopenEditor(
+      createStudioHost(transport),
+      { id: "e1", slots: [] },
+      run.hooks,
+    );
+
+    expect(transport.calls).toEqual([]);
+  });
+});
+
+/** A promise the test settles by hand, so replies can arrive in any order. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+describe("late replies to the request form", () => {
+  function run(over: Partial<Parameters<typeof resolveFlow<string>>[0]>) {
+    const seen: string[] = [];
+    const flow = resolveFlow<string>({
+      latest: createLatest(),
+      isCurrent: () => true,
+      call: async () => "spec",
+      onResolved: (value) => seen.push(`resolved ${value}`),
+      onRefused: () => seen.push("refused"),
+      ...over,
+    });
+    return { seen, flow };
+  }
+
+  test("a reply for the current form is applied, and a refusal is reported", async () => {
+    const ok = run({});
+    await ok.flow;
+    const refused = run({ call: async () => undefined });
+    await refused.flow;
+
+    expect(ok.seen).toEqual(["resolved spec"]);
+    expect(refused.seen).toEqual(["refused"]);
+  });
+
+  test("a reply that arrives after the form changed is dropped, success or refusal", async () => {
+    const ok = run({ isCurrent: () => false });
+    await ok.flow;
+    const refused = run({
+      isCurrent: () => false,
+      call: async () => undefined,
+    });
+    await refused.flow;
+
+    expect(ok.seen).toEqual([]);
+    expect(refused.seen).toEqual([]);
+  });
+
+  test("when two resolves overlap, only the newer one's reply is applied, whichever comes back first", async () => {
+    const latest = createLatest();
+    const first = deferred<string | undefined>();
+    const second = deferred<string | undefined>();
+    const seen: string[] = [];
+    const start = (reply: Promise<string | undefined>, name: string) =>
+      resolveFlow<string>({
+        latest,
+        isCurrent: () => true,
+        call: () => reply,
+        onResolved: (value) => seen.push(`${name} resolved ${value}`),
+        onRefused: () => seen.push(`${name} refused`),
+      });
+    const a = start(first.promise, "a");
+    const b = start(second.promise, "b");
+
+    second.resolve("b-spec");
+    await b;
+    first.resolve(undefined);
+    await a;
+
+    expect(seen).toEqual(["b resolved b-spec"]);
+  });
+});
+
+describe("late replies to loading a sheet", () => {
+  test("a sheet for the sheet still chosen is shown", async () => {
+    const shown: unknown[] = [];
+
+    await sheetFlow({
+      latest: createLatest(),
+      isCurrent: () => true,
+      read: async () => ({ id: "sheet-a" }),
+      onSheet: (sheet) => shown.push(sheet),
+      onError: () => {},
+    });
+
+    expect(shown).toEqual([{ id: "sheet-a" }]);
+  });
+
+  test("a sheet that arrives after the owner chose another set is dropped", async () => {
+    const shown: unknown[] = [];
+
+    await sheetFlow({
+      latest: createLatest(),
+      isCurrent: () => false,
+      read: async () => ({ id: "sheet-a" }),
+      onSheet: (sheet) => shown.push(sheet),
+      onError: () => {},
+    });
+
+    expect(shown).toEqual([]);
+  });
+
+  test("when two loads overlap, the earlier one's late sheet never replaces the later one's", async () => {
+    const latest = createLatest();
+    const slow = deferred<string | undefined>();
+    const shown: string[] = [];
+    const load = (reply: Promise<string | undefined>) =>
+      sheetFlow<string>({
+        latest,
+        isCurrent: () => true,
+        read: () => reply,
+        onSheet: (sheet) => shown.push(sheet),
+        onError: () => {},
+      });
+    const first = load(slow.promise);
+    const second = load(Promise.resolve("sheet-b"));
+
+    await second;
+    slow.resolve("sheet-a");
+    await first;
+
+    expect(shown).toEqual(["sheet-b"]);
+  });
+
+  test("a stale create does not go on to read, and a stale failure is not shown", async () => {
+    const created = deferred<unknown>();
+    const reads: string[] = [];
+    const errors: string[] = [];
+    let current = true;
+
+    const flow = sheetFlow<string>({
+      latest: createLatest(),
+      isCurrent: () => current,
+      create: () => created.promise,
+      read: async () => {
+        reads.push("read");
+        throw new Error("late failure");
+      },
+      onSheet: () => {},
+      onError: (message) => errors.push(message),
+    });
+    current = false;
+    created.resolve({ id: "set" });
+    await flow;
+
+    expect(reads).toEqual([]);
+    expect(errors).toEqual([]);
   });
 });

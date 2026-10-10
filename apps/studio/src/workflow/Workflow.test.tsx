@@ -32,6 +32,80 @@ function stateFor(
 const render = (state: ReturnType<typeof stateFor>) =>
   renderToStaticMarkup(createElement(WorkflowView, { state, host }));
 
+describe("the preview selection", () => {
+  const draft = (id: string, state: string) => ({
+    id,
+    assetId: "zeus-portrait",
+    state,
+    manifestRevision: `rev-${id}`,
+  });
+
+  function selectionFor(
+    assets: Record<string, unknown>[],
+    selected: string,
+  ): unknown[] {
+    const seen: unknown[] = [];
+    const state = workflowReducer(stateFor(undefined, { assets }), {
+      type: "select-asset",
+      assetId: selected,
+    });
+    renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state,
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+    return seen;
+  }
+
+  test("two drafts of one asset: the preview is asked for the selected record's id", () => {
+    const assets = [draft("draft-a", "draft"), draft("draft-b", "draft")];
+
+    expect(selectionFor(assets, "draft-b")).toEqual([
+      { source: "draft", id: "draft-b" },
+    ]);
+    expect(selectionFor(assets, "draft-a")).toEqual([
+      { source: "draft", id: "draft-a" },
+    ]);
+  });
+
+  test("an approved record is asked for by its record id too", () => {
+    const assets = [draft("draft-a", "draft"), draft("approved-b", "approved")];
+
+    expect(selectionFor(assets, "approved-b")).toEqual([
+      { source: "approved", id: "approved-b" },
+    ]);
+  });
+
+  test("a canon record is asked for by its asset id, the id canon is listed under", () => {
+    const assets = [{ ...draft("draft-canon-rec", "canon") }];
+
+    expect(selectionFor(assets, "draft-canon-rec")).toEqual([
+      { source: "canon", id: "zeus-portrait" },
+    ]);
+  });
+});
+
+describe("Generate", () => {
+  const resolved = workflowReducer(stateFor(), {
+    type: "resolution",
+    value: { request: { seed: 7 }, spec: { subject: "zeus" } },
+  });
+
+  test("is not offered as a live button while the form's resolved input is missing", () => {
+    // A late or cleared resolve can leave a spec on screen with no input to
+    // generate from; the button would then do nothing, silently.
+    const html = render(resolved);
+
+    expect(html).toContain("Resolved spec");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Generate<\/button>/);
+  });
+});
+
 describe("WorkflowView controls", () => {
   test("field-to-card gaps use the workflow row rhythm", () => {
     const css = readFileSync(
@@ -142,14 +216,19 @@ describe("WorkflowView controls", () => {
         value: { workingSetId: "set-default" },
       }),
     );
-    expect(html.indexOf("candidate-less-change")).toBeLessThan(
-      html.indexOf("candidate-more-change"),
-    );
+    const less = html.indexOf("candidate-less-change");
+    const more = html.indexOf("candidate-more-change");
+    expect(less).toBeGreaterThanOrEqual(0);
+    expect(more).toBeGreaterThanOrEqual(0);
+    expect(less).toBeLessThan(more);
     expect(html).toContain("palette-limit");
-    expect(html).toContain("Pixels changed");
-    expect(html).toContain("14");
-    expect(html).toContain("Scale");
-    expect(html).toContain("Colours merged");
+    // Each count sits in its own labelled cell, in the order of the cards.
+    const counts = [
+      ...html.matchAll(/<dt>Pixels changed<\/dt><dd>(\d+)<\/dd>/g),
+    ].map((match) => match[1]);
+    expect(counts).toEqual(["3", "14"]);
+    expect(html).toContain("<dt>Scale</dt>");
+    expect(html).toContain("<dt>Colours merged</dt>");
   });
 
   test("needs-scale candidates show their message without a report pill", () => {

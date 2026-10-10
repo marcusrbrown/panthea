@@ -23,6 +23,10 @@ use crate::poll::Dirty;
 
 pub const MAX_RESTARTS: u32 = 3;
 
+/// Consecutive good polls a launch must answer before its predecessors' crashes
+/// are forgotten (about five seconds at the poll gap).
+pub const HEALTHY_POLLS: u32 = 5;
+
 /// What the supervisor keeps of a running sidecar: its pid, for the last-resort
 /// kill. The child's stdin lives in the mux, which closes it when the launch is
 /// retired.
@@ -48,6 +52,9 @@ pub struct Lifecycle<C = ChildHandle> {
     /// Set once the supervisor gives up after `MAX_RESTARTS` attempts.
     pub exhausted: bool,
     pub restarts: u32,
+    /// Consecutive good polls the current launch has answered; reset by every
+    /// new launch. `HEALTHY_POLLS` of them forgive the earlier crashes.
+    pub healthy_polls: u32,
     /// The last snapshot sent to the webview, for change detection.
     pub last_sent: Option<serde_json::Value>,
     /// The most recently polled snapshot, cached whether or not anyone was
@@ -71,6 +78,7 @@ impl<C> Default for Lifecycle<C> {
             stopped: false,
             exhausted: false,
             restarts: 0,
+            healthy_polls: 0,
             last_sent: None,
             last_snapshot: None,
             channel: None,
@@ -190,6 +198,7 @@ pub fn begin_spawn<C>(lifecycle: &mut Lifecycle<C>) -> Option<u64> {
         return None;
     }
     lifecycle.launch_id += 1;
+    lifecycle.healthy_polls = 0;
     reset_snapshot_fields(lifecycle);
     Some(lifecycle.launch_id)
 }
@@ -220,12 +229,17 @@ pub fn attach_child<C>(lifecycle: &mut Lifecycle<C>, launch_id: u64, child: C) -
     AttachOutcome::Attached
 }
 
-/// A launch that stayed up long enough to answer has not crashed: forgets the
-/// crashes before it, so a long-lived app is not retired by three crashes that
-/// are days apart. A no-op for a stale launch.
+/// Counts one good poll answered by `launch_id`. A launch that has answered
+/// `HEALTHY_POLLS` polls in a row has stayed up, not just answered once: only
+/// then are the crashes before it forgotten, so a long-lived app is not retired
+/// by three crashes days apart, and a launch that answers once and dies is not
+/// restarted forever. A no-op for a stale launch.
 pub fn mark_healthy<C>(lifecycle: &mut Lifecycle<C>, launch_id: u64) {
     if is_current(lifecycle, launch_id) {
-        lifecycle.restarts = 0;
+        lifecycle.healthy_polls = lifecycle.healthy_polls.saturating_add(1);
+        if lifecycle.healthy_polls >= HEALTHY_POLLS {
+            lifecycle.restarts = 0;
+        }
     }
 }
 
@@ -398,9 +412,10 @@ pub struct StudioState {
     pub mux: Arc<Mux>,
     /// Set when this app changed something, so the next poll re-reads the lists.
     pub dirty: Dirty,
-    /// One receiver per live launch, signalled when its child terminates. Taken
-    /// by whoever ends the launch, to wait (bounded) for the exit.
-    pub exit_watch: Mutex<HashMap<u64, mpsc::Receiver<()>>>,
+    /// One receiver per live launch, signalled when its child terminates, with
+    /// the longest to wait for that exit (derived from the launch's config).
+    /// Taken by whoever ends the launch, to wait (bounded) for the exit.
+    pub exit_watch: Mutex<HashMap<u64, (mpsc::Receiver<()>, Duration)>>,
 }
 
 #[cfg(test)]
@@ -603,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn a_launch_that_answered_forgets_the_crashes_before_it() {
+    fn a_launch_that_stayed_up_for_enough_polls_forgets_the_crashes_before_it() {
         let mut lifecycle = Lifecycle::default();
         for _ in 0..2 {
             let id = begin_spawn(&mut lifecycle).unwrap();
@@ -614,11 +629,52 @@ mod tests {
         let id = begin_spawn(&mut lifecycle).unwrap();
         attach_child(&mut lifecycle, id, "child");
 
-        mark_healthy(&mut lifecycle, id - 1);
+        for _ in 0..HEALTHY_POLLS {
+            mark_healthy(&mut lifecycle, id - 1);
+        }
         assert_eq!(lifecycle.restarts, 2, "a stale launch cannot vouch");
+        for _ in 0..HEALTHY_POLLS - 1 {
+            mark_healthy(&mut lifecycle, id);
+        }
+        assert_eq!(lifecycle.restarts, 2, "one poll short of the window");
         mark_healthy(&mut lifecycle, id);
 
         assert_eq!(lifecycle.restarts, 0);
+    }
+
+    #[test]
+    fn a_launch_that_answers_once_and_then_dies_still_spends_a_restart_each_time() {
+        let mut lifecycle = Lifecycle::default();
+        let mut last = TerminatedOutcome::Stale;
+        for _ in 0..=MAX_RESTARTS {
+            let id = begin_spawn(&mut lifecycle).unwrap();
+            attach_child(&mut lifecycle, id, "child");
+            mark_healthy(&mut lifecycle, id);
+            last = on_terminated(&mut lifecycle, id, false).outcome;
+        }
+
+        assert_eq!(last, TerminatedOutcome::Exhausted);
+        assert!(lifecycle.exhausted);
+    }
+
+    #[test]
+    fn good_polls_of_an_earlier_launch_do_not_count_toward_the_next_one() {
+        let mut lifecycle = Lifecycle::default();
+        let first = begin_spawn(&mut lifecycle).unwrap();
+        attach_child(&mut lifecycle, first, "child");
+        for _ in 0..HEALTHY_POLLS - 1 {
+            mark_healthy(&mut lifecycle, first);
+        }
+        on_terminated(&mut lifecycle, first, false);
+        let second = begin_spawn(&mut lifecycle).unwrap();
+        attach_child(&mut lifecycle, second, "child");
+
+        mark_healthy(&mut lifecycle, second);
+
+        assert_eq!(
+            lifecycle.restarts, 1,
+            "one good poll of the new launch is not a window"
+        );
     }
 
     #[test]
@@ -821,7 +877,9 @@ mod tests {
         attach_child(&mut lifecycle, id, "child");
         assert_eq!(host_status(&lifecycle).attempt, None, "running");
 
-        mark_healthy(&mut lifecycle, id);
+        for _ in 0..HEALTHY_POLLS {
+            mark_healthy(&mut lifecycle, id);
+        }
         lifecycle.child = None;
         assert_eq!(host_status(&lifecycle).state, HostState::Starting);
         assert_eq!(host_status(&lifecycle).attempt, None);

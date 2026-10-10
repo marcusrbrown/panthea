@@ -3,10 +3,11 @@ import type {
   CandidateSummary,
   ConformHow,
   ConformParams,
+  EditOpened,
   EditReport,
   SummaryRecord,
 } from "../host/types";
-import { recordText } from "./model";
+import { recordText, recordValue } from "./model";
 
 export function parseSlotSpecs(
   source: string,
@@ -186,5 +187,119 @@ export async function readEditReport(
     if (error instanceof HostError && error.code === "wrong-state")
       return undefined;
     throw error;
+  }
+}
+
+/** What the host said about the editor when it opened an edit. */
+export interface EditorSession {
+  readonly launched: boolean;
+  readonly reason?: string;
+  readonly durationsMs: readonly number[];
+}
+
+export const editorSessionOf = (opened: EditOpened): EditorSession => ({
+  launched: opened.editor.launched,
+  ...(opened.editor.reason === undefined
+    ? {}
+    : { reason: opened.editor.reason }),
+  durationsMs: opened.workspace.durationsMs,
+});
+
+export interface ReopenHooks {
+  /** Whether the effect that asked is still the current one. */
+  readonly isLive: () => boolean;
+  readonly onSession: (editId: string, session: EditorSession) => void;
+  /** The reopen failed: the edit may be reopened again. */
+  readonly onForget: () => void;
+  readonly onError: (message: string) => void;
+}
+
+/**
+ * Reopens an open edit that the host does not know this window has opened (after
+ * a restart or a reload) to learn whether the editor launched. The answer is
+ * recorded by edit id whether or not the effect that asked is still current.
+ */
+export async function reopenEditor(
+  host: StudioHost,
+  edit: SummaryRecord,
+  hooks: ReopenHooks,
+): Promise<void> {
+  const workingSetId = recordText(edit, "workingSetId");
+  if (!workingSetId) return;
+  const raw = recordValue(edit, "slots");
+  const slots = (Array.isArray(raw) ? raw : []).filter(
+    (slot): slot is string => typeof slot === "string",
+  );
+  try {
+    const opened = await host.editOpen(edit.id, workingSetId, slots);
+    hooks.onSession(edit.id, editorSessionOf(opened));
+  } catch (error) {
+    hooks.onForget();
+    if (hooks.isLive())
+      hooks.onError(error instanceof Error ? error.message : String(error));
+  }
+}
+
+/** Tells a reply whether a newer request of the same kind began after its own. */
+export interface Latest {
+  /** Starts a request; the returned check is false once another has begun. */
+  begin(): () => boolean;
+}
+
+export function createLatest(): Latest {
+  let count = 0;
+  return {
+    begin() {
+      count += 1;
+      const mine = count;
+      return () => count === mine;
+    },
+  };
+}
+
+/**
+ * Resolves a request form. A reply that comes back after the form changed or a
+ * newer resolve began is dropped: it describes input the owner no longer has.
+ */
+export async function resolveFlow<T>(input: {
+  readonly latest: Latest;
+  readonly isCurrent: () => boolean;
+  readonly call: () => Promise<T | undefined>;
+  readonly onResolved: (value: T) => void;
+  readonly onRefused: () => void;
+}): Promise<void> {
+  const newest = input.latest.begin();
+  const result = await input.call();
+  if (!newest() || !input.isCurrent()) return;
+  if (result === undefined) input.onRefused();
+  else input.onResolved(result);
+}
+
+/**
+ * Loads a request's sheet, creating its working set first when it has none. A
+ * reply that comes back after the owner chose another sheet or set is dropped.
+ */
+export async function sheetFlow<T>(input: {
+  readonly latest: Latest;
+  readonly isCurrent: () => boolean;
+  /** Creates the working set; `undefined` when there is nothing to create. */
+  readonly create?: () => Promise<unknown | undefined>;
+  readonly read: () => Promise<T | undefined>;
+  readonly onSheet: (sheet: T) => void;
+  readonly onError: (message: string) => void;
+}): Promise<void> {
+  const newest = input.latest.begin();
+  const current = () => newest() && input.isCurrent();
+  try {
+    if (input.create) {
+      const created = await input.create();
+      if (created === undefined || !current()) return;
+    }
+    const sheet = await input.read();
+    if (sheet === undefined || !current()) return;
+    input.onSheet(sheet);
+  } catch (error) {
+    if (current())
+      input.onError(error instanceof Error ? error.message : String(error));
   }
 }

@@ -1,13 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { RunCommand } from "../../coexistence/src/sample";
+import type { HeadroomSample } from "./run";
 import {
+  type Clock,
   classifyProcess,
   createRoundTripProbe,
   parseDiskFreeKb,
   parseFootprintMiB,
   parsePressureLevel,
   parseProcessTable,
+  type RoundTripLink,
   sampleHeadroom,
+  sampleLoop,
   summarize,
 } from "./run";
 
@@ -359,68 +363,251 @@ describe("the summary", () => {
   });
 });
 
+/** A clock the test moves by hand: sleeping advances it, timers fire when it passes them. */
+function fakeClock() {
+  let at = 0;
+  const timers: { due: number; fn: () => void; live: boolean }[] = [];
+  const clock: Clock = {
+    now: () => at,
+    sleep: async (ms) => {
+      advance(ms);
+    },
+    after: (ms, fn) => {
+      const timer = { due: at + ms, fn, live: true };
+      timers.push(timer);
+      return () => {
+        timer.live = false;
+      };
+    },
+  };
+  function advance(ms: number) {
+    at += ms;
+    for (const timer of timers)
+      if (timer.live && timer.due <= at) {
+        timer.live = false;
+        timer.fn();
+      }
+  }
+  return { clock, advance, timers };
+}
+
+/** A link whose replies the test sends, standing in for the sidecar. */
+function fakeLink() {
+  const sent: string[] = [];
+  let lineHandler: (line: string) => void = () => {};
+  let exitHandler: () => void = () => {};
+  let gone = false;
+  const link: RoundTripLink = {
+    send: (line) => {
+      if (gone) throw new Error("the child is gone");
+      sent.push(line);
+    },
+    onLine: (handler) => {
+      lineHandler = handler;
+    },
+    onExit: (handler) => {
+      exitHandler = handler;
+    },
+    close: () => {},
+  };
+  return {
+    link,
+    sent,
+    reply: (id: string) => lineHandler(JSON.stringify({ id, ok: true })),
+    line: (text: string) => lineHandler(text),
+    exit: () => {
+      gone = true;
+      exitHandler();
+    },
+  };
+}
+
 describe("the round-trip probe", () => {
-  // A child that answers every line with `{"id":<same>,"ok":true}` after a delay.
-  const echo = (delayMs: number) => [
-    "bun",
-    "-e",
-    `const rl = require("node:readline").createInterface({ input: process.stdin });
-     rl.on("line", (line) => { const id = JSON.parse(line).id;
-       setTimeout(() => console.log(JSON.stringify({ id, ok: true })), ${delayMs}); });`,
-  ];
+  test("times the request line to the reply with the same id, on the injected clock", async () => {
+    const fake = fakeLink();
+    const time = fakeClock();
+    const probe = createRoundTripProbe({
+      link: fake.link,
+      op: "status",
+      clock: time.clock,
+    });
 
-  test("measures the time from the request line to the reply with the same id", async () => {
-    const probe = createRoundTripProbe({ command: echo(60), op: "status" });
-    try {
-      const first = await probe.measure();
-      const second = await probe.measure();
-
-      expect(first).toBeGreaterThanOrEqual(55);
-      expect(first).toBeLessThan(2000);
-      expect(second).toBeGreaterThanOrEqual(55);
-    } finally {
-      probe.close();
-    }
+    const first = probe.measure();
+    time.advance(60);
+    fake.reply("headroom-1");
+    expect(await first).toBe(60);
+    const second = probe.measure();
+    time.advance(35);
+    fake.reply("headroom-2");
+    expect(await second).toBe(35);
+    expect(fake.sent.map((line) => JSON.parse(line))).toEqual([
+      { id: "headroom-1", op: "status", args: {} },
+      { id: "headroom-2", op: "status", args: {} },
+    ]);
   });
 
-  test("a child that is gone answers undefined, and so does a reply that never comes within the bound", async () => {
-    const gone = createRoundTripProbe({
-      command: ["bun", "-e", "process.exit(0)"],
+  test("a reply for another id, or a line that is not JSON, is not taken for this request's answer", async () => {
+    const fake = fakeLink();
+    const time = fakeClock();
+    const probe = createRoundTripProbe({
+      link: fake.link,
       op: "status",
+      clock: time.clock,
     });
-    await Bun.sleep(150);
-    expect(await gone.measure()).toBeUndefined();
-    gone.close();
 
-    const silent = createRoundTripProbe({
-      command: ["bun", "-e", "setInterval(() => {}, 1000)"],
+    const measured = probe.measure();
+    fake.reply("headroom-0");
+    fake.line("not json");
+    fake.line(JSON.stringify({ ok: true }));
+    time.advance(90);
+    fake.reply("headroom-1");
+
+    expect(await measured).toBe(90);
+  });
+
+  test("no reply within the bound answers undefined, and its timer is not left running after an answer", async () => {
+    const fake = fakeLink();
+    const time = fakeClock();
+    const probe = createRoundTripProbe({
+      link: fake.link,
       op: "status",
       timeoutMs: 120,
+      clock: time.clock,
     });
-    try {
-      expect(await silent.measure()).toBeUndefined();
-    } finally {
-      silent.close();
-    }
+
+    const silent = probe.measure();
+    time.advance(120);
+    expect(await silent).toBeUndefined();
+
+    const answered = probe.measure();
+    fake.reply("headroom-2");
+    await answered;
+    expect(time.timers.filter((timer) => timer.live)).toEqual([]);
   });
 
-  test("a reply for an earlier request is not taken as the answer to this one", async () => {
+  test("a child that is gone answers undefined: one already gone, one that exits while waiting, one that cannot be written to", async () => {
+    const time = fakeClock();
+    const gone = fakeLink();
     const probe = createRoundTripProbe({
-      command: [
-        "bun",
-        "-e",
-        `const rl = require("node:readline").createInterface({ input: process.stdin });
-         let n = 0;
-         rl.on("line", (line) => { const id = JSON.parse(line).id; n += 1;
-           console.log(JSON.stringify({ id: "stale-" + n, ok: true }));
-           setTimeout(() => console.log(JSON.stringify({ id, ok: true })), 90); });`,
-      ],
+      link: gone.link,
       op: "status",
+      clock: time.clock,
     });
-    try {
-      expect(await probe.measure()).toBeGreaterThanOrEqual(85);
-    } finally {
-      probe.close();
-    }
+    const waiting = probe.measure();
+    gone.exit();
+    expect(await waiting).toBeUndefined();
+    expect(await probe.measure()).toBeUndefined();
+
+    const broken = fakeLink();
+    const unwritable = createRoundTripProbe({
+      link: {
+        ...broken.link,
+        send: () => {
+          throw new Error("EPIPE");
+        },
+      },
+      op: "status",
+      clock: time.clock,
+    });
+    expect(await unwritable.measure()).toBeUndefined();
+  });
+});
+
+describe("the sampling loop", () => {
+  /** A process table that answers the next worker pid on each read of it. */
+  function tableOf(workers: number[]) {
+    let reads = 0;
+    const rss = new Map<number, number>();
+    for (const pid of workers) rss.set(pid, 1024 * pid);
+    const run: RunCommand = (command) => {
+      if (command[0] === "ps" && command[1] === "-axo") {
+        const pid = workers[Math.min(reads, workers.length - 1)];
+        reads += 1;
+        return `${pid} 1 /art/bin/release/sd-server --listen-port 52581\n`;
+      }
+      if (command[0] === "ps" && command[1] === "-o")
+        return `${rss.get(Number(command[4]))}\n`;
+      if (command[0] === "vm_stat") return VM_STAT;
+      return undefined;
+    };
+    return { run, reads: () => reads };
+  }
+
+  test("re-reads the process table every tick: the worker is sampled and labelled as the pid it has on that tick, and a pid that has gone is not sampled again", async () => {
+    const time = fakeClock();
+    const table = tableOf([4101, 4101, 4177, 4177]);
+    const seen: HeadroomSample[] = [];
+
+    const samples = await sampleLoop({
+      run: table.run,
+      diskPath: "/tmp",
+      intervalMs: 1000,
+      durationMs: 4000,
+      clock: time.clock,
+      stopped: () => false,
+      onSample: (sample) => seen.push(sample),
+    });
+
+    expect(table.reads()).toBe(4);
+    expect(samples).toEqual(seen);
+    expect(samples.map((sample) => sample.atMs)).toEqual([0, 1000, 2000, 3000]);
+    expect(
+      samples.map((sample) =>
+        sample.processes.map((p) => [p.role, p.pid, p.rssMiB]),
+      ),
+    ).toEqual([
+      [["worker", 4101, 4101]],
+      [["worker", 4101, 4101]],
+      [["worker", 4177, 4177]],
+      [["worker", 4177, 4177]],
+    ]);
+    expect(summarize(samples).roles.worker?.pids).toEqual([
+      { pid: 4101, samples: 2 },
+      { pid: 4177, samples: 2 },
+    ]);
+  });
+
+  test("a slow tick shortens the wait instead of delaying the next one, and a stop request ends the loop after the tick in progress", async () => {
+    const time = fakeClock();
+    const table = tableOf([1]);
+    let ticks = 0;
+    const slow: RunCommand = (command) => {
+      if (command[0] === "vm_stat") time.advance(400);
+      return table.run(command);
+    };
+
+    const samples = await sampleLoop({
+      run: slow,
+      diskPath: "/tmp",
+      intervalMs: 1000,
+      durationMs: 0,
+      clock: time.clock,
+      stopped: () => ticks++ >= 3,
+      onSample: () => {},
+    });
+
+    expect(samples.map((sample) => sample.atMs)).toEqual([0, 1000, 2000]);
+  });
+
+  test("a round trip that fails is recorded as null, one that is measured as its time", async () => {
+    const time = fakeClock();
+    const answers = [42, undefined];
+    const probe = {
+      measure: async () => answers.shift(),
+      close: () => {},
+    };
+
+    const samples = await sampleLoop({
+      run: tableOf([1]).run,
+      diskPath: "/tmp",
+      intervalMs: 1000,
+      durationMs: 2000,
+      clock: time.clock,
+      stopped: () => false,
+      probe,
+      onSample: () => {},
+    });
+
+    expect(samples.map((sample) => sample.roundTripMs)).toEqual([42, null]);
   });
 });

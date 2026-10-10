@@ -39,8 +39,23 @@ It runs until `SIGINT` or `SIGTERM` (or `--duration-s`), then writes the summary
 
 ## Tests
 
-`bun test tools/probes/studio-headroom` runs against a fake process table that the test changes between ticks: the worker pid changes and the old pid is never read again; a pid that is in the table but gone by the RSS read is left out; two workers are both labelled; a sidecar the app did not start is not counted; a failing command leaves its field absent and the rest of the sample intact; the summary's peaks carry their pids; the round-trip probe times a real child, ignores a reply for an earlier request and answers `undefined` for a child that is gone or silent.
+`bun test tools/probes/studio-headroom` runs against a fake process table, a fake link to the sidecar and a test clock; no process is started and nothing sleeps. The loop test changes the worker's pid between ticks: each tick re-reads the table, labels the sample with that tick's pid, and the old pid is never sampled again. Others: a pid that is in the table but gone by the RSS read is left out; two workers are both labelled; a sidecar the app did not start is not counted; a failing command leaves its field absent and the rest of the sample intact; the summary's peaks carry their pids; a slow tick shortens the wait rather than delaying the next tick; the round-trip probe times a request to the reply with the same id on the injected clock, ignores a reply for another id, answers `undefined` on a timeout and for a child that is gone or cannot be written to, and leaves no timer running.
 
 ## Results
 
-See the headroom table in `docs/evidence/asset-studio/unit7/README.md`.
+One run, 2026-10-09, Apple M1 Pro 16 GiB, macOS 15.7.9: one Z-Image 512×640 job (110.0 s) queued from the window of the running packaged studio, sampled every 1 s (188 samples; the worker first appears 45 s in). Full method, the AE6 runs and the caveats are in `docs/evidence/asset-studio/unit7/README.md`.
+
+| | Before the job (45 s) | While the worker was up (143 s) |
+| --- | --- | --- |
+| Worker RSS / physical footprint | no worker | peak 3,776 MiB / 8,548 MiB (pid 87612, the only worker pid; footprint still 8,547 MiB at the end) |
+| Studio app RSS (footprint) | 84 MiB | peak 96 MiB (34 MiB) |
+| Sidecar RSS (footprint) | 328 MiB | peak 438 MiB (331 MiB) |
+| Memory pressure | normal 45 of 45 | normal 18, warn 125, critical 0 |
+| Swap used | up to 8,701 MiB | up to 13,041 MiB (swap total 10,240 → 13,312 MiB) |
+| Free pages | min 61 MiB | min 14 MiB |
+| Free disk | 38,608 MiB at the start | min 34,337 MiB, 35,369 MiB at the end |
+| Sidecar `status` round trip | median 168, p95 187, max 203 ms | median 238, p95 408, max 682 ms; 0 of 188 failed over the run |
+
+- The worker's RSS is less than half its footprint: judge by the footprint.
+- The round trip is the sidecar answering a read through a second session, not the app's own command bridge.
+- Not shown here: a run beside an inference model or the game, a second job, another host.

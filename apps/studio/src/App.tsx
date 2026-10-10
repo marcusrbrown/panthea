@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type CheckResult, runChecks } from "./check/run";
-import { harnessItems, type OcclusionPair } from "./harness/layout";
+import { harnessItems, type OcclusionPair, pickIn } from "./harness/layout";
 import { usePreview } from "./harness/usePreview";
 import { inTauri } from "./host/tauri";
 import { ZOOMS, type Zoom } from "./renderer/preview";
@@ -59,19 +59,6 @@ function readParams() {
     subject: query.get("subject"),
     portrait: query.get("portrait"),
   };
-}
-
-function pickIn(
-  list: readonly ListingEntry[],
-  wanted: Selection | undefined,
-): Selection | undefined {
-  const chosen =
-    list.find(
-      (entry) => entry.source === wanted?.source && entry.id === wanted?.id,
-    ) ?? list[0];
-  return chosen === undefined
-    ? undefined
-    : { source: chosen.source, id: chosen.id };
 }
 
 const describe = (entry: ListingEntry) =>

@@ -19,13 +19,19 @@ import type {
 } from "../host/types";
 import {
   conformJob,
+  createLatest,
+  type EditorSession,
+  editorSessionOf,
   editReportSignature,
   editsForReports,
   readEditReport as fetchEditReport,
   parseInlineConformDraft,
   parseSlotSpecs,
   readExistingSheet,
+  reopenEditor,
   rerollArgs,
+  resolveFlow,
+  sheetFlow,
   slotHint,
 } from "./actions";
 import { CandidatePixels } from "./CandidatePixelCell";
@@ -422,14 +428,7 @@ export function WorkflowView({
   const [activeEditId, setActiveEditId] = useState<string>();
   const [openedEdit, setOpenedEdit] = useState<SummaryRecord>();
   const [editorSessions, setEditorSessions] = useState<
-    Record<
-      string,
-      {
-        readonly launched: boolean;
-        readonly reason?: string;
-        readonly durationsMs: readonly number[];
-      }
-    >
+    Record<string, EditorSession>
   >({});
   const reopenedEdits = useRef(new Set<string>());
 
@@ -538,22 +537,40 @@ export function WorkflowView({
     return args;
   };
 
+  // A resolve reply is only for the form it was sent from: the form's current
+  // text is compared with the text it had at the click.
+  const formSignature = useRef("");
+  formSignature.current = JSON.stringify([
+    subject,
+    kind,
+    slots,
+    batch,
+    styleNote,
+  ]);
+  const latestResolve = useRef(createLatest());
+  const latestSheet = useRef(createLatest());
+  const workingSetIdRef = useRef(workingSetId);
+  workingSetIdRef.current = workingSetId;
+
   const resolveRequest = async (event: FormEvent) => {
     event.preventDefault();
     try {
       const args = formArgs();
+      const sentFrom = formSignature.current;
       setRequestId(text(args.id));
       setResolvedArgs(args);
-      const result = await call("resolve", args, true);
-      if (result !== undefined)
-        dispatch?.({ type: "resolution", value: result });
-      else {
-        setResolvedArgs(undefined);
-      }
-      if (result !== undefined)
-        setMessage(
-          "Request resolved. Review the specification before generating.",
-        );
+      await resolveFlow({
+        latest: latestResolve.current,
+        isCurrent: () => formSignature.current === sentFrom,
+        call: async () => call("resolve", args, true),
+        onResolved: (result) => {
+          dispatch?.({ type: "resolution", value: result });
+          setMessage(
+            "Request resolved. Review the specification before generating.",
+          );
+        },
+        onRefused: () => setResolvedArgs(undefined),
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -633,21 +650,21 @@ export function WorkflowView({
     );
     const targetId = existing?.id ?? `set-${slug(requestKey)}`;
     setWorkingSetId(targetId);
-    try {
-      if (!existing) {
-        if (!canMutate(state)) return;
-        const setup = await call("set-create", {
-          id: targetId,
-          requestId: requestKey,
-        });
-        if (setup === undefined) return;
-      }
-      const sheet = await readExistingSheet(host, targetId, readsEnabled);
-      if (sheet === undefined) return;
-      dispatchSheet(sheet);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-    }
+    workingSetIdRef.current = targetId;
+    if (!existing && !canMutate(state)) return;
+    await sheetFlow({
+      latest: latestSheet.current,
+      isCurrent: () => workingSetIdRef.current === targetId,
+      ...(existing
+        ? {}
+        : {
+            create: async () =>
+              call("set-create", { id: targetId, requestId: requestKey }),
+          }),
+      read: async () => readExistingSheet(host, targetId, readsEnabled),
+      onSheet: dispatchSheet,
+      onError: setMessage,
+    });
   };
 
   const dispatchSheet = (sheet: unknown) => {
@@ -682,16 +699,15 @@ export function WorkflowView({
   const activeAssetState = activeAsset
     ? recordText(activeAsset, "state")
     : undefined;
-  const activePreview = activeAsset
-    ? {
-        source:
-          activeAssetState === "approved"
-            ? ("approved" as const)
-            : activeAssetState === "draft"
-              ? ("draft" as const)
-              : ("canon" as const),
-        id: recordText(activeAsset, "assetId") ?? activeAsset.id,
-      }
+  // The preview source keys drafts and approved records by record id and canon
+  // by asset id; asking for the asset id of a draft would draw another record.
+  const activePreview: PreviewSelection | undefined = activeAsset
+    ? activeAssetState === "approved" || activeAssetState === "draft"
+      ? { source: activeAssetState, id: activeAsset.id }
+      : {
+          source: "canon",
+          id: recordText(activeAsset, "assetId") ?? activeAsset.id,
+        }
     : undefined;
 
   const activeEdit =
@@ -714,34 +730,13 @@ export function WorkflowView({
         !reopenedEdits.current.has(edit.id)
       ) {
         reopenedEdits.current.add(edit.id);
-        const workingSetId = recordText(edit, "workingSetId");
-        const slots = entries(recordValue(edit, "slots")).filter(
-          (slot): slot is string => typeof slot === "string",
-        );
-        if (workingSetId) {
-          void host
-            .editOpen(edit.id, workingSetId, slots)
-            .then((opened) => {
-              if (!live) return;
-              setEditorSessions((previous) => ({
-                ...previous,
-                [edit.id]: {
-                  launched: opened.editor.launched,
-                  ...(opened.editor.reason === undefined
-                    ? {}
-                    : { reason: opened.editor.reason }),
-                  durationsMs: opened.workspace.durationsMs,
-                },
-              }));
-            })
-            .catch((error: unknown) => {
-              reopenedEdits.current.delete(edit.id);
-              if (live)
-                setMessage(
-                  error instanceof Error ? error.message : String(error),
-                );
-            });
-        }
+        void reopenEditor(host, edit, {
+          isLive: () => live,
+          onSession: (id, session) =>
+            setEditorSessions((previous) => ({ ...previous, [id]: session })),
+          onForget: () => reopenedEdits.current.delete(edit.id),
+          onError: setMessage,
+        });
       }
       void fetchEditReport(host, edit.id)
         .then((report) => {
@@ -833,13 +828,7 @@ export function WorkflowView({
       setActiveEditId(opened.editId);
       setEditorSessions((previous) => ({
         ...previous,
-        [opened.editId]: {
-          launched: opened.editor.launched,
-          ...(opened.editor.reason === undefined
-            ? {}
-            : { reason: opened.editor.reason }),
-          durationsMs: opened.workspace.durationsMs,
-        },
+        [opened.editId]: editorSessionOf(opened),
       }));
       await readEditReport(opened.editId);
     } catch (error) {
@@ -1000,7 +989,7 @@ export function WorkflowView({
                   <button
                     type="button"
                     className="primary"
-                    disabled={!mutationsEnabled}
+                    disabled={!mutationsEnabled || resolvedArgs === undefined}
                     onClick={() => void generate()}
                   >
                     Generate

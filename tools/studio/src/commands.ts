@@ -343,7 +343,11 @@ function resolveParams(studio: Studio, a: Args) {
   if ((a.set === undefined) === (a.params === undefined))
     return refuse("invalid-arguments", "give exactly one of --set or --params");
   if (a.set !== undefined) {
-    const named = studio.config.conform?.[a.set as string];
+    const sets = studio.config.conform;
+    const name = a.set as string;
+    // Own names only: a set called constructor or __proto__ is not in the config.
+    const named =
+      sets !== undefined && Object.hasOwn(sets, name) ? sets[name] : undefined;
     return (
       named ??
       refuse(

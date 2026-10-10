@@ -128,7 +128,7 @@ impl Session {
         });
         let rx_ref: &dyn ExitSignal = &rx;
         let mut killed = false;
-        let outcome = wait_or_kill(0, Some(rx_ref), QUIT_BOUND, |_| killed = true);
+        let outcome = wait_or_kill(0, Some(rx_ref), QUIT_BOUND, |_| {}, |_| killed = true);
         assert!(!killed, "the session must exit by itself on stdin close");
         reaper.join().expect("reaper");
         eprintln!(
