@@ -165,7 +165,7 @@ The per-turn and per-god measurements mostly exist. The single-world lifecycle, 
 
 ### Resolved During Planning
 
-- **Queue-wait target:** 90 s p95 per god, from the ADR-0005 2026-10-05 amendment. The 30 s line in the M2 plan's Unit 13 is history.
+- **Queue-wait target:** 90 s p95 per god, from the ADR-0005 2026-10-05 amendment. The 30 s line in the M2 plan's Unit 13 is history. *(2026-10-10: ADR-0005's 2026-10-10 amendment now sets 105 for seven gods on granite3.3-8b-4k with the existing scheduler. The 90 here and the 90 in the earlier hours' results below are what those runs were judged against.)*
 - **Outage mechanism, empty-200 verdict, memory gating, gap length, queue-wait windows:** decided by the owner on 2026-10-07, as recorded above.
 - **Crash-safe catch-up summary dependency:** already merged (#57, `167450e`).
 - **Who starts the run:** a documented manual step on a quiet machine, with other apps closed, Ollama running and nothing heavy alongside. An agent may start it only after the owner confirms the machine is ready.
