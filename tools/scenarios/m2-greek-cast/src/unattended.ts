@@ -709,6 +709,8 @@ export async function driveUnattended(
     // The sidecar keeps one persisted summary, the latest pass's. The catch-up's own summary is therefore still there at
     // the end if no pass has run since; if one has (the sidecar runs a small pass of its own after a stall), the summary
     // at the end is that pass's, which is later in the journal, and the discard the catch-up made is still in the journal.
+    // A follow-up pass with no live tick between adds to the catch-up's totals instead of replacing them, so then the
+    // summary at the end still carries them; it has a new id either way.
     const final = finalFrame?.catchUpSummary;
     const journalDiscardedAtEnd = deps.discardedMs();
     const settledAt =
@@ -944,7 +946,7 @@ export function renderRunSummary(
   }
   if (result.catchUp !== undefined && result.catchUp.passes > 1) {
     lines.push(
-      `The sidecar ran ${result.catchUp.passes} catch-up passes. The persisted summary was replaced by the last pass (${(result.catchUp.appliedMs / 1000).toFixed(0)} s applied, ${(result.catchUp.skippedMs / MINUTE).toFixed(1)} min discarded); the journal holds ${(result.catchUp.journal.appliedMs / MINUTE).toFixed(1)} min applied and ${(result.catchUp.journal.discardedMs / MINUTE).toFixed(1)} min discarded.`,
+      `The sidecar ran ${result.catchUp.passes} catch-up passes. The persisted summary is the one the last pass left, which adds to the earlier pass's when no live tick ran between them (${(result.catchUp.appliedMs / 1000).toFixed(0)} s applied, ${(result.catchUp.skippedMs / MINUTE).toFixed(1)} min discarded); the journal holds ${(result.catchUp.journal.appliedMs / MINUTE).toFixed(1)} min applied and ${(result.catchUp.journal.discardedMs / MINUTE).toFixed(1)} min discarded.`,
       "",
     );
   }

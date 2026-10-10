@@ -7,6 +7,7 @@ import type { CatchUpSummary } from "@panthea/contracts";
 import {
   closeStore,
   exportArchive,
+  getCurrentSequence,
   getExternalProposal,
   insertExternalProposal,
   listEvents,
@@ -262,6 +263,84 @@ test("a capped catch-up run's discarded excess is never replayed by a later catc
       capMs,
     );
 
+    closeStore(store);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("the small pass that follows a long catch-up, with no live tick between, adds to the stored summary: the main pass's applied and skipped totals survive", async () => {
+  const storeDir = tempDir("panthea-sim-catchup-follow-up-");
+  try {
+    const capMs = 10 * 60 * 1000;
+    const loaded = loadGreekWorldState();
+    const seeded = {
+      ...loaded,
+      rules: { ...loaded.rules, catchUpCapMs: capMs },
+    };
+    const reducers = createWorldProjectionReducers(seeded);
+    const store = openStore(join(storeDir, "world.sqlite"), reducers);
+    ensureTraceSchema(store.db);
+    const deps = { store, reducers, traceDb: store.db };
+
+    // A gap of 15 minutes against a 10 minute cap: 10 applied, 5 discarded.
+    const firstNow = readClock(store.db).cursorWallMs + 15 * 60 * 1000;
+    const main = await runCatchUp(seeded, createPrng(1), deps, {
+      nowWallMs: firstNow,
+    });
+    const first = readCatchUpSummary(store.db);
+    expect(first).toMatchObject({ appliedMs: capMs, skippedMs: 5 * 60 * 1000 });
+
+    // The wall time the main pass itself took reads as a gap: five seconds.
+    const follow = await runCatchUp(main.state, main.prng, deps, {
+      nowWallMs: firstNow + 5_000,
+      continuesPrevious: true,
+    });
+    expect(follow.summary.appliedMs).toBe(5_000);
+
+    const kept = readCatchUpSummary(store.db);
+    expect(kept).toMatchObject({
+      appliedMs: capMs + 5_000,
+      skippedMs: 5 * 60 * 1000,
+      majorOutcomes: [
+        ...(first?.majorOutcomes ?? []),
+        ...follow.summary.majorOutcomes,
+      ],
+    });
+    expect(kept?.id).not.toBe(first?.id);
+    expect(kept?.atSequence).toBe(getCurrentSequence(store.db));
+    closeStore(store);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("control: the same small pass without the continuation replaces the stored summary with its own five seconds", async () => {
+  const storeDir = tempDir("panthea-sim-catchup-replace-");
+  try {
+    const capMs = 10 * 60 * 1000;
+    const loaded = loadGreekWorldState();
+    const seeded = {
+      ...loaded,
+      rules: { ...loaded.rules, catchUpCapMs: capMs },
+    };
+    const reducers = createWorldProjectionReducers(seeded);
+    const store = openStore(join(storeDir, "world.sqlite"), reducers);
+    ensureTraceSchema(store.db);
+    const deps = { store, reducers, traceDb: store.db };
+    const firstNow = readClock(store.db).cursorWallMs + 15 * 60 * 1000;
+    const main = await runCatchUp(seeded, createPrng(1), deps, {
+      nowWallMs: firstNow,
+    });
+
+    await runCatchUp(main.state, main.prng, deps, {
+      nowWallMs: firstNow + 5_000,
+    });
+
+    expect(readCatchUpSummary(store.db)).toMatchObject({
+      appliedMs: 5_000,
+      skippedMs: 0,
+    });
     closeStore(store);
   } finally {
     rmSync(storeDir, { recursive: true, force: true });

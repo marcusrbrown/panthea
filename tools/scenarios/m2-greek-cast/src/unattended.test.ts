@@ -1231,7 +1231,7 @@ test("when the catch-up takes longer than the sleep-gap threshold the sidecar ru
   )?.detail;
   expect(detail).toContain("2 passes");
   expect(detail).toContain("journal");
-  expect(read(h.outDir, "report.md")).toContain("replaced by the last pass");
+  expect(read(h.outDir, "report.md")).toContain("the one the last pass left");
 });
 
 test("the run waits for the catch-up to settle before it judges it: the boundary comes after the last pass finished and a quiet period, never between two passes", async () => {
