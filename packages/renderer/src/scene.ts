@@ -1,9 +1,13 @@
 // Scene composition: resolver results and tile coordinates in, drawable
 // instances out. Pure. It takes the output of `resolveAsset` rather than
 // calling it, so no node-only code from @panthea/assets reaches the browser
-// bundle: everything imported from there is a type.
+// bundle: everything imported from there is a type, and only from the
+// browser-safe subpath.
 
-import type { Resolution } from "@panthea/assets";
+import type {
+  CanonResolution,
+  PlaceholderReason,
+} from "@panthea/assets/browser";
 import {
   type Cell,
   depthOf,
@@ -20,8 +24,7 @@ import {
   TILE_W,
 } from "./iso";
 
-type Canon = Extract<Resolution, { source: "canon" }>;
-type Placeholder = Extract<Resolution, { source: "placeholder" }>;
+type Canon = CanonResolution;
 
 /** What placement needs of a placeholder; the resolver's PlaceholderAsset satisfies it. */
 export interface PlaceholderSize {
@@ -34,7 +37,7 @@ export type SceneResolution =
   | Canon
   | {
       readonly source: "placeholder";
-      readonly reason: Placeholder["reason"];
+      readonly reason: PlaceholderReason;
       readonly uri: string;
       readonly placeholder: PlaceholderSize;
     };
@@ -75,7 +78,7 @@ export type InstanceArt =
     }
   | {
       readonly source: "placeholder";
-      readonly reason: Placeholder["reason"];
+      readonly reason: PlaceholderReason;
       readonly uri: string;
       readonly placeholder: PlaceholderSize;
     }

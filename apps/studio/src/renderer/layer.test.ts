@@ -1,23 +1,25 @@
 import { describe, expect, it } from "bun:test";
 import { type RegistrySnapshot, resolveAsset } from "@panthea/assets";
 import { spriteFixture } from "@panthea/assets/fixtures";
-import { Scene, type Texture } from "three";
-import type { Sprite2D } from "three-flatland";
-import { diamondRow, TILE_H, TILE_W } from "./iso";
-import {
-  createSceneLayer,
-  frameIndexAt,
-  type LayerEntry,
-  layerPosition,
-  type SceneLayer,
-} from "./layer";
-import { composeScene, type Instance, type SceneEntity } from "./scene";
 import {
   type AtlasSpec,
+  composeScene,
+  createSceneLayer,
   diamondImage,
+  diamondRow,
+  frameIndexAt,
+  type Instance,
+  type LayerEntry,
+  layerPosition,
   type RawImage,
   rgbaImage,
-} from "./textures";
+  type SceneEntity,
+  type SceneLayer,
+  TILE_H,
+  TILE_W,
+} from "@panthea/renderer";
+import { Scene, type Texture } from "three";
+import type { Sprite2D } from "three-flatland";
 
 const god = spriteFixture("placeholder-zeus");
 const snapshot: RegistrySnapshot = {

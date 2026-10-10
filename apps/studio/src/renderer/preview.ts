@@ -6,6 +6,29 @@
 // fakes. All work is serialised on one queue, so a change that arrives while
 // the renderer is being rebuilt is applied once, afterwards.
 
+import {
+  type AtlasSpec,
+  type CanvasMetrics,
+  type Cell,
+  canvasMetrics,
+  composeScene,
+  type DecodedImage,
+  diamondImage,
+  type Footprint,
+  type Instance,
+  type Layer,
+  type LogicalSize,
+  type PixelBuffer,
+  type Point,
+  type PreviewView,
+  type RenderBackend,
+  roundCamera,
+  type SceneEntity,
+  type SceneLayer,
+  type SceneResolution,
+  ZOOMS,
+  type Zoom,
+} from "@panthea/renderer";
 import type {
   AssetProblem,
   AssetSource,
@@ -13,101 +36,25 @@ import type {
   Selection,
   SourceResolution,
 } from "../source/port";
-import type { Cell, Footprint, Layer, Point } from "./iso";
-import type { SceneLayer } from "./layer";
-import {
-  composeScene,
-  type Instance,
-  type SceneEntity,
-  type SceneResolution,
-} from "./scene";
-import { type AtlasSpec, type DecodedImage, diamondImage } from "./textures";
 
+// What moved into @panthea/renderer and studio code still imports from here.
+export {
+  type CanvasMetrics,
+  type PixelBuffer,
+  type PreviewView,
+  type RenderBackend,
+  roundCamera,
+  ZOOMS,
+  type Zoom,
+};
+
+// The studio draws at a fixed 480x270.
 export const LOGICAL_WIDTH = 480;
 export const LOGICAL_HEIGHT = 270;
-
-export const ZOOMS = [2, 3, 4] as const;
-export type Zoom = (typeof ZOOMS)[number];
-
-export interface CanvasMetrics {
-  /** Device pixels: exactly the logical size times the zoom. */
-  readonly backingWidth: number;
-  readonly backingHeight: number;
-  /** CSS pixels: the backing size over the device pixel ratio; fractional only here. */
-  readonly cssWidth: number;
-  readonly cssHeight: number;
-}
-
-export function canvasMetrics(
-  zoom: Zoom,
-  devicePixelRatio: number,
-): CanvasMetrics {
-  const ratio =
-    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
-      ? devicePixelRatio
-      : 1;
-  const backingWidth = LOGICAL_WIDTH * zoom;
-  const backingHeight = LOGICAL_HEIGHT * zoom;
-  return {
-    backingWidth,
-    backingHeight,
-    cssWidth: backingWidth / ratio,
-    cssHeight: backingHeight / ratio,
-  };
-}
-
-/** Whole logical pixels, so the camera never sits between texels. */
-export function roundCamera(origin: Point): Point {
-  return { x: Math.round(origin.x) + 0, y: Math.round(origin.y) + 0 };
-}
-
-/** Orthographic frustum edges (y up) for a viewport whose top-left is `origin` in screen space. */
-export function cameraBounds(origin: Point): {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-} {
-  return {
-    left: origin.x,
-    right: origin.x + LOGICAL_WIDTH,
-    top: -origin.y,
-    bottom: -(origin.y + LOGICAL_HEIGHT),
-  };
-}
-
-export interface PixelBuffer {
-  readonly width: number;
-  readonly height: number;
-  /** RGBA, top row first. */
-  readonly data: Uint8Array;
-}
-
-export interface PreviewView {
-  readonly zoom: Zoom;
-  readonly camera: Point;
-  readonly metrics: CanvasMetrics;
-}
-
-/** What the controller needs from a renderer; the GPU implementation is gpu.ts. */
-export interface RenderBackend {
-  readonly layer: SceneLayer;
-  /** Which graphics API is in use, for logs and evidence. */
-  readonly name?: string;
-  /** Resolves when the renderer is ready; `onDeviceLost` may be called any time after. */
-  start(onDeviceLost: () => void): Promise<void>;
-  view(view: PreviewView): void;
-  /**
-   * Resolves when everything the scene now holds can be drawn in one frame
-   * (new materials compiled). Called after the scene changes, not on ticks.
-   */
-  prepare?(): Promise<void>;
-  render(): void;
-  readRenderTarget(): Promise<PixelBuffer>;
-  readCanvas(): Promise<PixelBuffer>;
-  /** Safe to call twice. */
-  dispose(): void;
-}
+export const LOGICAL_SIZE: LogicalSize = {
+  width: LOGICAL_WIDTH,
+  height: LOGICAL_HEIGHT,
+};
 
 export type BackendFactory = (canvas: HTMLCanvasElement) => RenderBackend;
 
@@ -310,7 +257,7 @@ export function createPreview(options: PreviewOptions): Preview {
 
   function applyView(): void {
     if (live === undefined) return;
-    const metrics = canvasMetrics(zoom, devicePixelRatio());
+    const metrics = canvasMetrics(LOGICAL_SIZE, zoom, devicePixelRatio());
     const { canvas } = live;
     if (
       canvas.width !== metrics.backingWidth ||

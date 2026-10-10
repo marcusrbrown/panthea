@@ -22,16 +22,17 @@ import { DEPTH_CAMERA_Z, DEPTH_FAR, DEPTH_NEAR } from "./iso";
 import { createSceneLayer } from "./layer";
 import {
   cameraBounds,
-  LOGICAL_HEIGHT,
-  LOGICAL_WIDTH,
+  type LogicalSize,
   type PixelBuffer,
   type PreviewView,
   type RenderBackend,
-} from "./preview";
+} from "./view";
 
 export const DEFAULT_BACKGROUND = [38, 42, 52] as const;
 
 export interface GpuBackendOptions {
+  /** The fixed render-target size; the scene is drawn at 1x into it. */
+  readonly logicalSize: LogicalSize;
   /** Use the WebGL2 backend even where WebGPU exists. */
   readonly forceWebGL?: boolean;
   /** Clear colour as sRGB bytes, written to the target unchanged. */
@@ -52,8 +53,9 @@ function flipRows(buffer: PixelBuffer): PixelBuffer {
 
 export function createGpuBackend(
   canvas: HTMLCanvasElement,
-  options: GpuBackendOptions = {},
+  options: GpuBackendOptions,
 ): RenderBackend {
+  const { width: logicalWidth, height: logicalHeight } = options.logicalSize;
   const renderer = new WebGPURenderer({
     canvas,
     antialias: false,
@@ -74,15 +76,15 @@ export function createGpuBackend(
   const layer = createSceneLayer(scene);
   const camera = new OrthographicCamera(
     0,
-    LOGICAL_WIDTH,
+    logicalWidth,
     0,
-    -LOGICAL_HEIGHT,
+    -logicalHeight,
     DEPTH_NEAR,
     DEPTH_FAR,
   );
   camera.position.set(0, 0, DEPTH_CAMERA_Z);
 
-  const target = new RenderTarget(LOGICAL_WIDTH, LOGICAL_HEIGHT, {
+  const target = new RenderTarget(logicalWidth, logicalHeight, {
     depthBuffer: true,
     magFilter: NearestFilter,
     minFilter: NearestFilter,
@@ -137,7 +139,7 @@ export function createGpuBackend(
         view.metrics.backingHeight,
         false,
       );
-      const bounds = cameraBounds(view.camera);
+      const bounds = cameraBounds(options.logicalSize, view.camera);
       camera.left = bounds.left;
       camera.right = bounds.right;
       camera.top = bounds.top;
@@ -160,8 +162,8 @@ export function createGpuBackend(
         target,
         0,
         0,
-        LOGICAL_WIDTH,
-        LOGICAL_HEIGHT,
+        logicalWidth,
+        logicalHeight,
       );
       const bytes = new Uint8Array(
         data.buffer,
@@ -169,8 +171,8 @@ export function createGpuBackend(
         data.byteLength,
       );
       const buffer = {
-        width: LOGICAL_WIDTH,
-        height: LOGICAL_HEIGHT,
+        width: logicalWidth,
+        height: logicalHeight,
         data: bytes,
       };
       return isWebGL() ? flipRows(buffer) : buffer;
