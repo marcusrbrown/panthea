@@ -248,6 +248,7 @@ test("three device-loss remounts rebuild from cached bytes: no refetch, no leake
   for (let mounted = 0; mounted < 4; mounted += 1) {
     const { renderer, backend, lost } = await mount(canon);
     backends.push(backend);
+    backend.holdPrepare(); // only the draws' own frames are counted below
 
     await renderer.draw(view, "olympus");
     await renderer.draw(view, "mortal");
@@ -323,6 +324,7 @@ test("a draw superseded while its atlas loads hands back nothing and the newer d
   };
   const { canon } = setup({ source: slow });
   const { renderer, backend } = await mount(canon);
+  backend.holdPrepare(); // only the draws' own frames are counted below
   await canon.load();
 
   const first = renderer.draw(viewWithZeus(), "olympus");
@@ -339,19 +341,89 @@ test("a draw superseded while its atlas loads hands back nothing and the newer d
   expect(backend.layer.spriteFor("actor:zeus")).toBeUndefined();
 });
 
-test("a draw prepares the scene, then renders; ticks that change no frame render nothing", async () => {
+test("a draw renders at once however long the backend's async compile takes, then renders again when it settles; ticks that change no frame render nothing", async () => {
   const { canon } = setup();
   const { renderer, backend } = await mount(canon);
+  // The webview's compile can be starved of animation frames (a hidden or
+  // occluded window, a runtime without scheduler.yield): it settles late or never.
+  const settle = backend.holdPrepare();
 
-  await renderer.draw(viewWithZeus(), "olympus");
-  expect(backend.log).toEqual(["start", "prepare", "render"]);
+  const drawing = renderer.draw(viewWithZeus(), "olympus");
+  await flush();
+  expect(backend.log).toEqual(["start", "render", "prepare"]);
+  await drawing;
 
   renderer.tick(10);
   renderer.tick(10);
-  expect(backend.log).toEqual(["start", "prepare", "render"]);
+  expect(backend.log).toEqual(["start", "render", "prepare"]);
+
+  settle();
+  await flush();
+  expect(backend.log).toEqual(["start", "render", "prepare", "render"]);
 
   renderer.tick(313); // 333 ms: the second idle frame
-  expect(backend.log).toEqual(["start", "prepare", "render", "render"]);
+  expect(backend.log).toEqual([
+    "start",
+    "render",
+    "prepare",
+    "render",
+    "render",
+  ]);
+});
+
+test("every view of a stream presents although a compile outlasts the next view, and compiles never stack", async () => {
+  const { canon } = setup();
+  const { renderer, backend } = await mount(canon);
+  const settle = backend.holdPrepare();
+  const count = (entry: string) =>
+    backend.log.filter((logged) => logged === entry).length;
+
+  const view = previewView();
+  const drawn: Promise<readonly string[]>[] = [];
+  for (const offset of [0, 1, 2]) {
+    // The next view arrives as soon as the last one's synchronous work is done.
+    drawn.push(renderer.draw({ ...view, tick: view.tick + offset }, "mortal"));
+    await flush();
+  }
+
+  expect(count("render")).toBe(3);
+  expect(count("prepare")).toBe(1);
+  expect((await Promise.all(drawn)).every((ids) => ids.length > 0)).toBe(true);
+
+  // Views that arrived during the compile get exactly one more.
+  settle();
+  await flush();
+  expect(count("prepare")).toBe(2);
+  expect(count("render")).toBe(5);
+});
+
+test("a compile that settles after disposal renders nothing, and one that fails is reported and does not stop the next", async () => {
+  const { canon, problems } = setup();
+  const { renderer, backend } = await mount(canon);
+  const settle = backend.holdPrepare();
+
+  await renderer.draw(viewWithZeus(), "olympus");
+  renderer.dispose();
+  settle();
+  await flush();
+  expect(backend.log.filter((entry) => entry === "render")).toHaveLength(1);
+
+  const failing = await mount(canon);
+  const prepare = failing.backend.prepare;
+  let attempts = 0;
+  failing.backend.prepare = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("shader link failed");
+    await prepare?.();
+  };
+  await failing.renderer.draw(viewWithZeus(), "olympus");
+  await flush();
+  expect(problems.map((problem) => problem.message)).toEqual([
+    "shader link failed",
+  ]);
+  await failing.renderer.draw(viewWithZeus(), "olympus");
+  await flush();
+  expect(attempts).toBe(2);
 });
 
 test("nothing animates, so ticks never render, when no actor is canon", async () => {
@@ -365,16 +437,23 @@ test("nothing animates, so ticks never render, when no actor is canon", async ()
   expect(backend.log).toHaveLength(rendered);
 });
 
-test("a renderer disposed while the scene prepares renders nothing and hands back nothing", async () => {
-  const { canon } = setup();
+test("a renderer disposed while its atlas loads renders nothing and hands back nothing", async () => {
+  let release: (bytes: Uint8Array) => void = () => {};
+  const held = new Promise<Uint8Array>((resolve) => {
+    release = resolve;
+  });
+  const slow: FakeSource = {
+    ...fakeSource(zeusPayload()),
+    atlas: () => held,
+  };
+  const { canon } = setup({ source: slow });
   const { renderer, backend } = await mount(canon);
-  const release = backend.holdPrepare();
+  await canon.load();
 
   const drawing = renderer.draw(viewWithZeus(), "olympus");
   await flush();
-  expect(backend.log).toContain("prepare");
   renderer.dispose();
-  release();
+  release(ZEUS_ATLAS_BYTES);
 
   expect(await drawing).toEqual([]);
   expect(backend.log).not.toContain("render");

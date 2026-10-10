@@ -99,7 +99,8 @@ export function createWorldRenderer(
   let signature = "";
   let elapsed = 0;
   let generation = 0;
-  let preparing = 0;
+  let compiling = false;
+  let recompile = false;
   let ready = false;
   let disposed = false;
 
@@ -205,6 +206,34 @@ export function createWorldRenderer(
     return { item, payload: placeholderPayload(item.art.pixels) };
   }
 
+  /**
+   * Compiles the scene's new materials without blocking a frame, then renders
+   * once more with them. One compile runs at a time; a scene change meanwhile
+   * queues exactly one more, so a stream of views cannot stack compiles.
+   */
+  function compileBehind(): void {
+    if (backend.prepare === undefined) return;
+    if (compiling) {
+      recompile = true;
+      return;
+    }
+    compiling = true;
+    void (async () => {
+      do {
+        recompile = false;
+        try {
+          await backend.prepare?.();
+        } catch (error) {
+          canon.report({ scope: "compile", message: messageOf(error) });
+          break;
+        }
+        if (disposed) break;
+        backend.render();
+      } while (recompile);
+      compiling = false;
+    })();
+  }
+
   const frameSignature = (): string =>
     animated
       .map((track) => frameIndexAt(track.durations, track.loopStart, elapsed))
@@ -276,17 +305,18 @@ export function createWorldRenderer(
         : [],
     );
 
-    // New materials compile before the first frame that shows them.
-    preparing += 1;
-    try {
-      await backend.prepare?.();
-    } finally {
-      preparing -= 1;
-    }
-    if (stale()) return [];
+    // Present at once; never wait on the compile. The backend's async compile
+    // (`prepare`) yields to the main thread once per object, through
+    // animation frames where there is no scheduler.yield (WKWebView), so with
+    // a few hundred decor meshes it outlasts the next committed frame, and in a
+    // hidden or occluded window it never settles. Gating the frame on it left
+    // every draw superseded before it presented: a blank stage. A frame
+    // rendered ahead of the compile can omit materials still compiling, so the
+    // compile runs behind it and renders the scene again when it settles.
     backend.render();
     ready = true;
     signature = frameSignature();
+    compileBehind();
     return decor.drawnEventIds;
   }
 
@@ -305,7 +335,7 @@ export function createWorldRenderer(
       if (disposed) return;
       if (Number.isFinite(deltaMs) && deltaMs > 0) elapsed += deltaMs;
       backend.layer.tick(elapsed);
-      if (!ready || preparing > 0) return;
+      if (!ready) return;
       const next = frameSignature();
       if (next === signature) return;
       signature = next;
