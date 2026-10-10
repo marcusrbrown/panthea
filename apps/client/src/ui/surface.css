@@ -382,20 +382,24 @@ a:focus-visible {
 }
 
 .scene-column {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #e7dfce;
+  background: var(--paper);
 }
 .scene-heading {
-  flex: 0 0 69px;
+  z-index: 1;
+  position: absolute;
+  inset: 0 0 auto;
+  height: 69px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 23px;
-  border-bottom: 1px solid #cfc6b4;
+  pointer-events: none;
 }
 .scene-heading h2 {
   margin: 2px 0 0;
@@ -418,6 +422,8 @@ a:focus-visible {
   font: 10px var(--mono);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  padding: 5px 7px;
+  background: #eee9dcdd;
 }
 .scene-state-dot {
   width: 6px;
@@ -426,13 +432,10 @@ a:focus-visible {
   background: #507a5e;
 }
 .scene-stage {
-  position: relative;
-  flex: 1;
-  min-height: 260px;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
-  background-color: #e7dfce;
-  background-image: radial-gradient(#948c7a22 0.7px, transparent 0.7px);
-  background-size: 7px 7px;
+  background: var(--paper);
 }
 .scene-stage canvas {
   position: absolute;
@@ -486,13 +489,17 @@ a:focus-visible {
   background: #687167;
 }
 .location-strip {
+  z-index: 1;
+  position: absolute;
+  inset: auto 0 0;
   min-height: 61px;
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 9px 20px;
-  border-top: 1px solid #cfc6b4;
-  background: #f0eadc;
+  border-top: 1px solid #d0c9b8cc;
+  background: #eee9dcdd;
+  pointer-events: none;
 }
 .location-pin {
   color: var(--gold);
@@ -792,6 +799,18 @@ a:focus-visible {
   }
   .scene-column {
     min-height: 0;
+  }
+  .scene-heading {
+    height: 54px;
+    padding: 8px 12px;
+  }
+  .scene-heading h2 {
+    font-size: 20px;
+  }
+  .location-strip {
+    min-height: 48px;
+    gap: 8px;
+    padding: 6px 10px;
   }
   .detail-rail {
     min-height: 0;

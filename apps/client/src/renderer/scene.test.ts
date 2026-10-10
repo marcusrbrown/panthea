@@ -438,7 +438,7 @@ test("places, buildings, flames and event rings are meshes in the decor group, r
   );
 });
 
-test("mesh colours reach the target as their authored sRGB bytes, with no colour conversion", async () => {
+test("pixel building colors use the shared palette without color conversion", async () => {
   const { canon } = setup();
   const { renderer, backend } = await mount(canon);
 
@@ -447,9 +447,10 @@ test("mesh colours reach the target as their authored sRGB bytes, with no colour
   const shop = backend.decor.children.find(
     (child) => child.name === "building:the-tavern",
   );
-  const color = ((shop as Mesh).material as MeshBasicMaterial).color;
-  // The burning tavern: 0xb7794d, 0xc95637 for burning
+  const wall = shop?.children.find((child) => child.name === "wall") as Mesh;
+  const color = (wall.material as MeshBasicMaterial).color;
+  // The burning tavern uses the shared rust token.
   expect([color.r, color.g, color.b].map((v) => Math.round(v * 255))).toEqual([
-    0xc9, 0x56, 0x37,
+    0xa5, 0x4d, 0x36,
   ]);
 });
