@@ -450,11 +450,13 @@ test("an offered thread shows its god what it offered, to whom, and what is due;
   });
   const thread = run.latest();
   const row = digestOf(run.view("zeus").context.prompt).join("\n");
-  expect(row).toContain(`[${thread.id}] OPEN, waiting on farmer`);
-  expect(row).toContain("you offered terms on its prayer");
-  expect(row).toContain(`[${petition}]`);
+  // Waiting on the farmer with withdrawal its only move, the row is one line (the form a squeezed row takes).
+  expect(row).toContain(`[${thread.id}] OPEN, terms offered to farmer`);
   expect(row).toContain("farmer must offer you 1 currency");
   expect(row).toContain('"withdraw"');
+  expect(row.split("\n").filter((line) => line.startsWith("- ["))).toHaveLength(
+    1,
+  );
   expect(row).not.toContain("practice-opened");
 
   run.tick({
