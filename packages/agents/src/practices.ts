@@ -1325,6 +1325,15 @@ const ticksLeft = (deadline: number, now: number) =>
 
 const json = (value: unknown) => JSON.stringify(value);
 
+/**
+ * Whether a thread offers the god an answer: accept, counter, or refuse. Withdrawing is the god's to do on a
+ * thread of its own and answers nothing, so a thread with no other move is not one the god can answer. The one
+ * rule for the answer guidance and for how a thread's row is written (`isWaiting`).
+ */
+export function offersAnswer(view: Pick<ThreadView, "moves">): boolean {
+  return view.moves.some((move) => move !== "withdraw");
+}
+
 /** The withdrawal of a thread, as the object to send. */
 function withdrawLine(view: ThreadView): string {
   return `  You may withdraw it: ${json(view.intents.withdraw ?? { action: "practice", move: "withdraw", thread: view.id })}`;
@@ -1558,7 +1567,7 @@ export function describePracticeInstructions(
   threads: readonly ThreadView[],
   options: PracticeOptions,
 ): string[] {
-  const canAnswer = threads.some((view) => view.moves.length > 0);
+  const canAnswer = threads.some(offersAnswer);
   const canDemand = options.causes.length > 0 && options.gods.length > 0;
   const canOffer = options.offerable.length > 0;
   const canContest = options.contests.length > 0;
