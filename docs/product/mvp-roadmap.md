@@ -82,6 +82,41 @@ during import staging, code signing and notarization, the release build's web co
 Windows and Linux packaged runs. The heavy-work memory-sharing policy remains open as its own
 follow-up probe ([open-decisions.md](open-decisions.md)).
 
+### M2 outcome (2026-10-10)
+
+M2 exits on the fourth unattended hour (owner decision, 2026-10-10).
+
+Exit evidence ([report](../../tools/scenarios/m2-greek-cast/unattended/2026-10-10T15-16-26/report.md),
+merged in #196, `main` at `f65a1b0`): one hour of seven gods on granite3.3-8b-4k (local Ollama, 4K,
+reasoning off), with a provider outage (ticks 62–780) and a stop, then a restart with a 90-minute gap
+and catch-up. All 24 threshold rows passed. Queue-wait p95 was 92–102 against ADR-0005's amended 105,
+and the longest quiet stretch was 139 ticks. No prompt was cut (the busiest was 2,920 tokens) and there
+were 0 empty responses. Recovery took 15 ticks. Perception, goal and petition privacy held. Rebuild
+equals live (201,878 events in 480 ms), the archive import passed, and the sidecar footprint changed
+−1.36% across the settled span. The owner's rubric scores: novelty 1, causality 1, recognizable
+identity 1, pacing 2, inspectability 1. No score is 0.
+
+Workload baseline, for the [memory-policy gate](#m0-outcome-2026-09-27) (2026-09-28 paragraph):
+steady request latency median 9.8 s and p95 12.7 s; Ollama runner RSS peak 9,052 MiB and footprint
+peak 5,525 MiB; sidecar footprint peak 141 MiB; swap peak 2,325 MiB; store 241 MiB and archive 92 MiB.
+
+Known limits, carried forward as the tuning list:
+
+1. Gods rarely use their own listed powers, and their voices sound alike.
+2. Prayers mostly lapse while no god can act, and defections churn: most follow a lapse, and most
+   repeat moves reverse within 100 ticks.
+3. Strikes and blessings are uniform in size.
+4. In 35 supplications the mortal paid and the god's side lapsed.
+5. Reports and legends change no relationship. Contests cite defections thousands of ticks stale.
+6. Inspectability gaps: a strike carries no prayer id (the link is only via
+   `petition-answered.answeredBy`); the report's episode list cites an act's divinity-cost event, not
+   the act; the stored catch-up summary holds only the later short pass, so the applied and discarded
+   minutes are only in the operator observation and `run.json`; model output is action JSON with no
+   reasoning.
+7. The 105 queue-wait target holds only on a quiet machine, per ADR-0005's amendment.
+8. World maps that grow without bound (petitions, credits, wrongs, noticed, threads, contests) and the
+   unbounded event log and trace tables are left for the eight-hour endurance trial (M7, O08).
+
 ## First playable slice
 
 An early slice contains a small town scene, Zeus, one mortal, one damaging power, and a persistent event history.

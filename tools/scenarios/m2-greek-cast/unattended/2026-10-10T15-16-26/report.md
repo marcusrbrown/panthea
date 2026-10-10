@@ -149,11 +149,11 @@ Score each 0, 1, or 2: 0 = replan pressure, 1 = needs tuning, 2 = good enough to
 
 | Dimension | Score (0/1/2) | Notes |
 | --- | --- | --- |
-| Novelty |  |  |
-| Causality |  |  |
-| Recognizable identity |  |  |
-| Pacing |  |  |
-| Inspectability |  |  |
+| Novelty | 1 | The director fired every 120 ticks: 35 thefts and 24 spoilages, the same two kinds all hour. |
+| Causality | 1 | Of 59 director events, 49 led to a prayer and 2 got an answer. The rest lapsed or were only noticed, many while no god could act. |
+| Recognizable identity | 1 | Rated with the hour as a whole; see the table below. |
+| Pacing | 2 | Rated with the hour as a whole; see the table below. |
+| Inspectability | 1 | Each director event is attributed to the director and its prayer cites it. |
 
 **Episodes a god caused**
 
@@ -165,10 +165,12 @@ Score each 0, 1, or 2: 0 = replan pressure, 1 = needs tuning, 2 = good enough to
 
 | Dimension | Score (0/1/2) | Notes |
 | --- | --- | --- |
-| Novelty |  |  |
-| Causality |  |  |
-| Recognizable identity |  |  |
-| Pacing |  |  |
-| Inspectability |  |  |
+| Novelty | 1 | Only 1 of 36 report and legend texts repeats verbatim, but themes repeat: Hera's 5 reports press one claim, and 4 gods open with "I hear your plea". Every strike is power 1 and takes 2 goods; most blessings are 2 units of food, fish or olives. |
+| Causality | 1 | Every answered prayer, strike and patron change cites its cause. 1,460 of 1,633 prayers lapsed, about half opened during the outage or catch-up, when gods cannot act. 82 of 122 defections followed a lapse, and 77 of 108 repeat moves reversed within 100 ticks. Reports and legends changed no relationship. |
+| Recognizable identity | 1 | Hera's vengeance, Poseidon's strikes (10), Hades's calm (0 strikes) and Hermes's reports (12) fit. Acts drawing on the god's own listed powers: Hermes 30/41, Athena 23/36, Hephaestus 23/35, Poseidon 10/36, Zeus 9/41, Hera 8/36, Hades 1/36. The voices are alike across gods. |
+| Pacing | 2 | After catch-up the gods acted in rotation, each about every 85 ticks, with 4–7 acts a minute. The outage and the stop and catch-up left 60% of the hour's ticks without god acts, by the run's design. |
+| Inspectability | 1 | Every prayer cause and patron change resolves to stored events. Gaps: a strike carries no prayer id (the link is only via `petition-answered.answeredBy`); the report's episode list cites an act's divinity-cost event, not the act; the stored catch-up summary holds only the later short pass, so the 60.1 min applied and 30.1 discarded are only in the operator observation and `run.json`; model output is action JSON with no reasoning. |
 
-M2 exits only on a PASS verdict and your approval of these episodes. Decision: ______ (approve / not yet), date ______.
+Scored by the owner on 2026-10-10.
+
+M2 exits only on a PASS verdict and your approval of these episodes. Decision: approve, date 2026-10-10.
