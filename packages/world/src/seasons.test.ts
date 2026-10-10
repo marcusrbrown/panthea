@@ -49,6 +49,7 @@ const KINDS = { heat: "zeus", frost: "hera", rust: "athena" };
 function content(options: Options = {}): ContentPack {
   const god = (name: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "hall",
     deity: true as const,
@@ -94,6 +95,7 @@ function content(options: Options = {}): ContentPack {
       god("athena"),
       ...mortals.map((name) => ({
         id: name,
+        sprite: `placeholder-${name}`,
         name,
         locationId: "square",
         drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },

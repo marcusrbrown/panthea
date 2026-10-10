@@ -6,6 +6,7 @@ import {
   type GodProfile,
   loadContentPack,
   loadGodProfiles,
+  withGodSprites,
 } from "@panthea/content";
 import type { EventId, WorldEvent } from "@panthea/contracts";
 import {
@@ -30,9 +31,14 @@ const godsResult = loadGodProfiles(join(GREEK, "gods"), pack);
 if (!godsResult.ok)
   throw new Error(`${godsResult.path}: ${godsResult.message}`);
 const gods = godsResult.value;
+// A deity's sprite id is its profile's: fold it in, as pack assembly does, before genesis.
+const foldedResult = withGodSprites(pack, gods);
+if (!foldedResult.ok)
+  throw new Error(`${foldedResult.path}: ${foldedResult.message}`);
+const folded = foldedResult.value;
 
 export function greekState(): WorldState {
-  return createInitialWorldState(pack);
+  return createInitialWorldState(folded);
 }
 
 /** The gods the pack added after Zeus and Hera. */

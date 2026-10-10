@@ -17,6 +17,7 @@ import {
   type WorldState,
   withActor,
 } from "@panthea/world";
+import { testActor } from "@panthea/world/testing";
 import {
   buildGodContext,
   godAvailableActions,
@@ -366,15 +367,18 @@ test("Hera's own alliance demand, and a counter, fill in the recipient too; a gi
   }
   // With a third god in the world an offering could go to either, so it is not guessed.
   const crowded = new Run();
-  crowded.state = withActor(crowded.state, {
-    id: id("athena"),
-    locationId: id("great-hall"),
-    alive: true,
-    isDeity: true,
-    capabilities: ["divine"],
-    inventory: new Map([["divinity", 10]]),
-    revision: 0,
-  });
+  crowded.state = withActor(
+    crowded.state,
+    testActor({
+      id: id("athena"),
+      locationId: id("great-hall"),
+      alive: true,
+      isDeity: true,
+      capabilities: ["divine"],
+      inventory: new Map([["divinity", 10]]),
+      revision: 0,
+    }),
+  );
   const c = crowded.accused("zeus", "hera", { agent: "zeus", target: "hera" });
   const offering = {
     action: "practice",

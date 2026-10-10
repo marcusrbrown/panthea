@@ -8,6 +8,7 @@ import {
   toEntityId,
   withActor,
 } from "./index";
+import { testActor } from "./test-actor";
 
 test("the barrel export wires state, geography, validate, and actions together", () => {
   const pack: ContentPack = {
@@ -37,14 +38,17 @@ test("the barrel export wires state, geography, validate, and actions together",
   };
 
   let state = createInitialWorldState(pack);
-  state = withActor(state, {
-    id: toEntityId("npc-1"),
-    locationId: toEntityId("agora"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("npc-1"),
+      locationId: toEntityId("agora"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
 
   const submitted = submitProposal({
     schemaVersion: 1,

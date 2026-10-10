@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { loadContentPack, loadGodProfiles } from "@panthea/content";
+import {
+  loadContentPack,
+  loadGodProfiles,
+  withGodSprites,
+} from "@panthea/content";
 import {
   createInitialWorldState,
   DEFAULT_MEMORY_BALANCE,
@@ -65,8 +69,20 @@ test("the embedded Greek pack builds the same initial WorldState as loading cont
     throw new Error("expected both loads to succeed");
   }
 
-  const embeddedState = createInitialWorldState(embedded.value);
-  const fromDiskState = createInitialWorldState(fromDisk.value);
+  // Neither pack carries a deity's sprite until its profile is folded in, so genesis needs both folded.
+  const embeddedGods = loadEmbeddedGreekGodProfiles(embedded.value);
+  const diskGods = loadGodProfiles(GREEK_GODS_DIR, fromDisk.value);
+  if (!embeddedGods.ok || !diskGods.ok) {
+    throw new Error("expected both god profile loads to succeed");
+  }
+  const embeddedFolded = withGodSprites(embedded.value, embeddedGods.value);
+  const diskFolded = withGodSprites(fromDisk.value, diskGods.value);
+  if (!embeddedFolded.ok || !diskFolded.ok) {
+    throw new Error("expected both folds to succeed");
+  }
+
+  const embeddedState = createInitialWorldState(embeddedFolded.value);
+  const fromDiskState = createInitialWorldState(diskFolded.value);
   expect(embeddedState).toEqual(fromDiskState);
 });
 

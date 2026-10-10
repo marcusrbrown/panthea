@@ -110,6 +110,13 @@ export interface Inhabitant {
    * Absent means none, so the god contests no one.
    */
   readonly rivals?: readonly string[];
+  /**
+   * The sprite id the client draws this inhabitant with, a stable asset id (a canon id, or `placeholder-<id>`
+   * until art exists). A non-deity authors it in `inhabitants.json` and parsing requires it. A deity authors
+   * none: the god profile's `sprite` is the only source, folded into the pack at assembly, so parsing refuses
+   * one. Presentation data the world carries and never reads in a rule.
+   */
+  readonly sprite?: string;
 }
 
 /** A mortal's starting reverence for one god. */
@@ -358,6 +365,19 @@ function parseInhabitant(
       ? ok<readonly string[] | undefined>(undefined)
       : parseArray(value.rivals, `${path}.rivals`, parseString);
   if (!rivals.ok) return rivals;
+  let sprite: string | undefined;
+  if (deity.value === true) {
+    if (value.sprite !== undefined) {
+      return fail(
+        `${path}.sprite`,
+        "a deity authors no sprite: its god profile's sprite is the only source",
+      );
+    }
+  } else {
+    const parsedSprite = parseString(value.sprite, `${path}.sprite`);
+    if (!parsedSprite.ok) return parsedSprite;
+    sprite = parsedSprite.value;
+  }
   return ok({
     id: id.value,
     name: name.value,
@@ -376,6 +396,7 @@ function parseInhabitant(
     ...(rivals.value === undefined || rivals.value.length === 0
       ? {}
       : { rivals: rivals.value }),
+    ...(sprite === undefined ? {} : { sprite }),
   });
 }
 

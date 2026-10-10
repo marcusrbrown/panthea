@@ -30,7 +30,7 @@ export function readPackText(path = FIXTURE): string {
 /** The pack, with every god and the first `mortals` mortals (all of them when omitted), and the buildings of the mortals kept. */
 export function loadPack(mortals?: number): ContentPack {
   const raw = JSON.parse(readPackText()) as {
-    inhabitants: { id: string; deity?: boolean }[];
+    inhabitants: { id: string; deity?: boolean; sprite?: string }[];
     buildings: { owner?: string }[];
     rules: { petitionBalance?: Record<string, number> };
   };
@@ -53,9 +53,21 @@ export function loadPack(mortals?: number): ContentPack {
       (building) => building.owner === undefined || present.has(building.owner),
     );
   }
+  // The fixture predates the sprite id and is immutable. A mortal gets the `placeholder-<id>` it is authored with
+  // now, and a deity (whose profile supplies its sprite everywhere else) the same: the benchmark draws nothing.
+  for (const inhabitant of raw.inhabitants) {
+    if (inhabitant.deity !== true)
+      inhabitant.sprite = `placeholder-${inhabitant.id}`;
+  }
   const parsed = parseContentPack(raw);
   if (!parsed.ok) {
     throw new Error(`${parsed.path}: ${parsed.message}`);
   }
-  return parsed.value;
+  return {
+    ...parsed.value,
+    inhabitants: parsed.value.inhabitants.map((inhabitant) => ({
+      ...inhabitant,
+      sprite: inhabitant.sprite ?? `placeholder-${inhabitant.id}`,
+    })),
+  };
 }

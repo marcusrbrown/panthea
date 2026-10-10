@@ -26,7 +26,11 @@ import {
   rememberedBy,
   requestChars,
 } from "@panthea/agents";
-import { loadContentPack, loadGodProfiles } from "@panthea/content";
+import {
+  loadContentPack,
+  loadGodProfiles,
+  withGodSprites,
+} from "@panthea/content";
 import type { EventId, WorldEvent } from "@panthea/contracts";
 import {
   applyEvent,
@@ -209,7 +213,10 @@ export function captureCapped(): CappedCapture[] {
   const profiles = loadGodProfiles(join(greek, "gods"), pack.value);
   if (!profiles.ok) throw new Error(`${profiles.path}: ${profiles.message}`);
 
-  let state = createInitialWorldState(pack.value);
+  const folded = withGodSprites(pack.value, profiles.value);
+  if (!folded.ok) throw new Error(`${folded.path}: ${folded.message}`);
+
+  let state = createInitialWorldState(folded.value);
   let prng = createPrng(1);
   const log: WorldEvent[] = [];
   while (state.tick < TICK) {

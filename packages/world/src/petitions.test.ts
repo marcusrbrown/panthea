@@ -75,6 +75,7 @@ function pack(): ContentPack {
       calm("drifter", "square", [{ resource: "food", amount: 60 }]),
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "hall",
         deity: true,
@@ -82,6 +83,7 @@ function pack(): ContentPack {
       },
       {
         id: "hera",
+        sprite: "placeholder-hera",
         name: "Hera",
         locationId: "hall",
         deity: true,
@@ -112,6 +114,7 @@ function calm(
 ) {
   return {
     id: idValue,
+    sprite: `placeholder-${idValue}`,
     name: idValue,
     locationId,
     drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
@@ -2350,6 +2353,7 @@ function quarrel(
   });
   const god = (name: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "hall",
     deity: true as const,

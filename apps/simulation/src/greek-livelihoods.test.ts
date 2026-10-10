@@ -2,13 +2,13 @@ import { expect, test } from "bun:test";
 import type { WorldEvent } from "@panthea/contracts";
 import {
   applyEvent,
-  createInitialWorldState,
   createPrng,
   runTick,
   type WorldState,
 } from "@panthea/world";
 import { loadEmbeddedGreekWorldPack } from "./greek-world-pack";
 import { buildRoutineQueue } from "./tick";
+import { loadGreekWorldState } from "./world-store";
 
 /**
  * A scripted day in the Greek town: every routine-driven inhabitant decides
@@ -16,9 +16,7 @@ import { buildRoutineQueue } from "./tick";
  * livelihood produces and trades is read from the committed events.
  */
 function day(ticks: number): { state: WorldState; events: WorldEvent[] } {
-  const pack = loadEmbeddedGreekWorldPack();
-  if (!pack.ok) throw new Error(pack.message);
-  let state = createInitialWorldState(pack.value);
+  let state = loadGreekWorldState();
   let prng = createPrng(7);
   const events: WorldEvent[] = [];
   for (let tick = 0; tick < ticks; tick += 1) {
@@ -156,9 +154,7 @@ test("mortals who go short pray to the god they revere, so the day's prayers nam
 test("Hades hears prayers: when a trouble in his domain takes the ferryman's coin, he prays to the god of that domain, so Hades can enter a practice (R20)", () => {
   // Mortals pray when something goes wrong for them, and little does by itself now (R17): the ferryman feeds himself,
   // so the day stages what the world's troubles would do, a hoard swallowed, and the ferryman prays to Hades.
-  const pack = loadEmbeddedGreekWorldPack();
-  if (!pack.ok) throw new Error(pack.message);
-  let state = createInitialWorldState(pack.value);
+  let state = loadGreekWorldState();
   let prng = createPrng(7);
   const events: WorldEvent[] = [];
   for (let tick = 0; tick < 120; tick += 1) {

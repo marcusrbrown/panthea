@@ -27,7 +27,13 @@ import {
   getProposalOutcomeByProposalId,
   listReceiptsByEvent,
 } from "@panthea/telemetry";
-import { createPrng, submitProposal, toEntityId } from "@panthea/world";
+import {
+  createPrng,
+  decode as decodeWorldState,
+  submitProposal,
+  toEntityId,
+} from "@panthea/world";
+import { toViewModel } from "../../client/src/store";
 import { runCatchUp } from "./catchup";
 import { recordPartialSummary } from "./catchup-summary";
 import { refreshStatusAfterCatchUp } from "./index";
@@ -245,6 +251,34 @@ test("GET /frame returns a running-status SyncFrame carrying the world's committ
     };
     expect(frame.status).toBe("running");
     expect(frame.sequence).toBeGreaterThan(0);
+  } finally {
+    harness.stop();
+  }
+});
+
+test("a frame from the real service decodes in the client store with a sprite id on every actor", async () => {
+  const harness = startHarness();
+  try {
+    const response = await authed(harness, "/frame");
+    const parsed = parseSyncFrame(await response.json());
+    if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
+    const view = toViewModel(
+      parsed.value,
+      decodeWorldState(parsed.value.state),
+    );
+    const actors = Object.values(view.realms).flatMap((realm) =>
+      realm.flatMap((location) => location.actors),
+    );
+    expect(actors.length).toBeGreaterThan(20);
+    for (const actor of actors) {
+      expect({ id: actor.id, sprite: actor.sprite }).toEqual({
+        id: actor.id,
+        sprite: expect.stringMatching(/^[a-z0-9]+(-[a-z0-9]+)*$/),
+      });
+    }
+    const byId = new Map(actors.map((actor) => [actor.id, actor.sprite]));
+    expect(byId.get("zeus")).toBe("zeus-sprite");
+    expect(byId.get("woodcutter")).toBe("placeholder-woodcutter");
   } finally {
     harness.stop();
   }

@@ -6,7 +6,11 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { buildGodContext, rememberedBy } from "@panthea/agents";
-import { loadContentPack, loadGodProfiles } from "@panthea/content";
+import {
+  loadContentPack,
+  loadGodProfiles,
+  withGodSprites,
+} from "@panthea/content";
 import {
   createInitialWorldState,
   createPrng,
@@ -24,6 +28,10 @@ const pack = packResult.value;
 const godsResult = loadGodProfiles(join(GREEK, "gods"), pack);
 if (!godsResult.ok) throw new Error(godsResult.message);
 const gods = godsResult.value;
+// A deity's sprite id is its profile's: fold it in, as pack assembly does, before genesis.
+const foldedResult = withGodSprites(pack, gods);
+if (!foldedResult.ok) throw new Error(foldedResult.message);
+const foldedPack = foldedResult.value;
 const profile = (id: string) => {
   const found = gods.find((g) => g.id === id);
   if (!found) throw new Error(`no profile ${id}`);
@@ -34,7 +42,7 @@ const HERA_GOAL = "Make Zeus admit his deceit.";
 
 /** Hera sets her goal, then tells that same text as a legend with Zeus in the hall. */
 function legendDisclosure() {
-  let state = createInitialWorldState(pack);
+  let state = createInitialWorldState(foldedPack);
   const events: unknown[] = [];
   let n = 0;
   const tick = (raw: Record<string, unknown>) => {

@@ -4,6 +4,7 @@
       "id": "woodcutter",
       "name": "The Woodcutter",
       "locationId": "town-square",
+      "sprite": "placeholder-woodcutter",
       "temperament": "quarrelsome",
       "drives": {
         "thrift": 0.6,
@@ -27,6 +28,7 @@
       "id": "farmer",
       "name": "The Farmer",
       "locationId": "town-square",
+      "sprite": "placeholder-farmer",
       "temperament": "honest",
       "drives": {
         "thrift": 0.2,
@@ -51,6 +53,7 @@
       "id": "market-trader-iris",
       "name": "Iris the Market Trader",
       "locationId": "town-square",
+      "sprite": "placeholder-market-trader-iris",
       "temperament": "greedy",
       "drives": {
         "thrift": 0.2,
@@ -78,6 +81,7 @@
       "id": "ferryman",
       "name": "The Ferryman",
       "locationId": "ferry-dock",
+      "sprite": "placeholder-ferryman",
       "temperament": "proud",
       "drives": {
         "thrift": 0.2,
@@ -110,6 +114,7 @@
       "id": "fisher-kallias",
       "name": "Kallias the Fisher",
       "locationId": "ferry-dock",
+      "sprite": "placeholder-fisher-kallias",
       "temperament": "greedy",
       "drives": {
         "thrift": 0.3,
@@ -137,6 +142,7 @@
       "id": "fisher-melina",
       "name": "Melina the Fisher",
       "locationId": "ferry-dock",
+      "sprite": "placeholder-fisher-melina",
       "temperament": "honest",
       "drives": {
         "thrift": 0.3,
@@ -164,6 +170,7 @@
       "id": "fisher-stavros",
       "name": "Stavros the Fisher",
       "locationId": "ferry-dock",
+      "sprite": "placeholder-fisher-stavros",
       "temperament": "quarrelsome",
       "drives": {
         "thrift": 0.2,
@@ -191,6 +198,7 @@
       "id": "fisher-eleni",
       "name": "Eleni the Fisher",
       "locationId": "ferry-dock",
+      "sprite": "placeholder-fisher-eleni",
       "temperament": "proud",
       "drives": {
         "thrift": 0.3,
@@ -218,6 +226,7 @@
       "id": "fisher-dion",
       "name": "Dion the Fisher",
       "locationId": "ferry-dock",
+      "sprite": "placeholder-fisher-dion",
       "temperament": "greedy",
       "drives": {
         "thrift": 0.3,
@@ -245,6 +254,7 @@
       "id": "olive-grower-aristo",
       "name": "Aristo the Olive Grower",
       "locationId": "ancient-olive-tree",
+      "sprite": "placeholder-olive-grower-aristo",
       "temperament": "greedy",
       "drives": {
         "thrift": 0.3,
@@ -277,6 +287,7 @@
       "id": "olive-grower-phoebe",
       "name": "Phoebe the Olive Grower",
       "locationId": "ancient-olive-tree",
+      "sprite": "placeholder-olive-grower-phoebe",
       "temperament": "honest",
       "drives": {
         "thrift": 0.3,
@@ -309,6 +320,7 @@
       "id": "olive-grower-leon",
       "name": "Leon the Olive Grower",
       "locationId": "ancient-olive-tree",
+      "sprite": "placeholder-olive-grower-leon",
       "temperament": "quarrelsome",
       "drives": {
         "thrift": 0.3,
@@ -341,6 +353,7 @@
       "id": "weaver-ismene",
       "name": "Ismene the Weaver",
       "locationId": "ancient-olive-tree",
+      "sprite": "placeholder-weaver-ismene",
       "temperament": "honest",
       "drives": {
         "thrift": 0.5,
@@ -373,6 +386,7 @@
       "id": "weaver-zoe",
       "name": "Zoe the Weaver",
       "locationId": "ancient-olive-tree",
+      "sprite": "placeholder-weaver-zoe",
       "temperament": "honest",
       "drives": {
         "thrift": 0.5,
@@ -405,6 +419,7 @@
       "id": "weaver-xenia",
       "name": "Xenia the Weaver",
       "locationId": "ancient-olive-tree",
+      "sprite": "placeholder-weaver-xenia",
       "temperament": "proud",
       "drives": {
         "thrift": 0.5,
@@ -437,6 +452,7 @@
       "id": "herdsman-damon",
       "name": "Damon the Herdsman",
       "locationId": "ancient-olive-tree",
+      "sprite": "placeholder-herdsman-damon",
       "temperament": "greedy",
       "drives": {
         "thrift": 0.3,
@@ -464,6 +480,7 @@
       "id": "smith-ktesias",
       "name": "Ktesias the Smith",
       "locationId": "forge",
+      "sprite": "placeholder-smith-ktesias",
       "temperament": "proud",
       "drives": {
         "thrift": 0.5,
@@ -491,6 +508,7 @@
       "id": "smith-brontes",
       "name": "Brontes the Smith",
       "locationId": "forge",
+      "sprite": "placeholder-smith-brontes",
       "temperament": "quarrelsome",
       "drives": {
         "thrift": 0.5,
@@ -518,6 +536,7 @@
       "id": "smith-delia",
       "name": "Delia the Smith",
       "locationId": "forge",
+      "sprite": "placeholder-smith-delia",
       "temperament": "honest",
       "drives": {
         "thrift": 0.5,
@@ -545,6 +564,7 @@
       "id": "provisioner-nikanor",
       "name": "Nikanor the Provisioner",
       "locationId": "forge",
+      "sprite": "placeholder-provisioner-nikanor",
       "temperament": "greedy",
       "drives": {
         "thrift": 0.2,

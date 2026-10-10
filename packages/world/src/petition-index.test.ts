@@ -22,6 +22,7 @@ const evt = (text: string) => text as EventId;
 function pack(): ContentPack {
   const mortal = (name: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "square",
     drives: { thrift: 0, appetite: 0, greed: 0, piety: 0.5 },
@@ -41,6 +42,7 @@ function pack(): ContentPack {
       mortal("woodcutter"),
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "zeus",
         locationId: "hall",
         deity: true,

@@ -22,6 +22,7 @@ function view(overrides: Partial<WorldViewModel> = {}): WorldViewModel {
               id: "wanderer",
               locationId: "town-square",
               alive: true,
+              sprite: "placeholder-wanderer",
               isDeity: false,
               inventory: [],
             },

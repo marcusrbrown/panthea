@@ -60,6 +60,11 @@ import {
   type WorldState,
   withActor,
 } from "@panthea/world";
+import { testActor } from "@panthea/world/testing";
+import {
+  loadEmbeddedGreekGodProfiles,
+  loadEmbeddedGreekWorldPack,
+} from "./greek-world-pack";
 import { applyOneTick, type QueuedProposal, stepWorldTick } from "./tick";
 import {
   createEventSource,
@@ -108,14 +113,17 @@ test("real world reducers/rules through a real store: tick, restart, and export/
   try {
     const storePath = join(storeDir, "world.sqlite");
 
-    const seededState = withActor(loadGreekWorldState(), {
-      id: toEntityId("wanderer"),
-      locationId: toEntityId("wilderness-grove"),
-      alive: true,
-      capabilities: [],
-      inventory: new Map(),
-      revision: 0,
-    });
+    const seededState = withActor(
+      loadGreekWorldState(),
+      testActor({
+        id: toEntityId("wanderer"),
+        locationId: toEntityId("wilderness-grove"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map(),
+        revision: 0,
+      }),
+    );
 
     const projectionReducers = createWorldProjectionReducers(seededState);
 
@@ -294,14 +302,17 @@ test("rebuild restores the seeded actor even from a freshly constructed composit
   try {
     const storePath = join(storeDir, "world.sqlite");
 
-    const seeded = withActor(loadGreekWorldState(), {
-      id: toEntityId("wanderer"),
-      locationId: toEntityId("wilderness-grove"),
-      alive: true,
-      capabilities: [],
-      inventory: new Map(),
-      revision: 0,
-    });
+    const seeded = withActor(
+      loadGreekWorldState(),
+      testActor({
+        id: toEntityId("wanderer"),
+        locationId: toEntityId("wilderness-grove"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map(),
+        revision: 0,
+      }),
+    );
     const seededReducers = createWorldProjectionReducers(seeded);
 
     let store = openStore(storePath, seededReducers);
@@ -384,14 +395,17 @@ test("an archive whose genesis row contains a malformed actor entry is rejected 
 
   try {
     const storePath = join(storeDir, "world.sqlite");
-    const seeded = withActor(loadGreekWorldState(), {
-      id: toEntityId("wanderer"),
-      locationId: toEntityId("wilderness-grove"),
-      alive: true,
-      capabilities: [],
-      inventory: new Map(),
-      revision: 0,
-    });
+    const seeded = withActor(
+      loadGreekWorldState(),
+      testActor({
+        id: toEntityId("wanderer"),
+        locationId: toEntityId("wilderness-grove"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map(),
+        revision: 0,
+      }),
+    );
     const reducers = createWorldProjectionReducers(seeded);
 
     const store = openStore(storePath, reducers);
@@ -1083,6 +1097,69 @@ test("startup succeeds with the embedded god profiles by default", () => {
   expect(() => loadGreekWorldState()).not.toThrow();
 });
 
+test("genesis gives every actor its sprite id: a god's from its profile alone, a mortal's from its content id", () => {
+  const state = loadGreekWorldState();
+  const sprites = new Map(
+    [...state.actors.values()].map((actor) => [actor.id, actor.sprite]),
+  );
+  expect(sprites.get(toEntityId("zeus"))).toBe("zeus-sprite");
+  const pack = loadEmbeddedGreekWorldPack();
+  if (!pack.ok) throw new Error(pack.message);
+  const profiles = loadEmbeddedGreekGodProfiles(pack.value);
+  if (!profiles.ok) throw new Error(profiles.message);
+  expect(profiles.value.length).toBe(7);
+  for (const god of profiles.value) {
+    expect(sprites.get(toEntityId(god.id))).toBe(god.sprite);
+  }
+  expect(sprites.get(toEntityId("hera"))).toBe("placeholder-hera");
+  for (const inhabitant of pack.value.inhabitants) {
+    if (inhabitant.deity) continue;
+    expect(sprites.get(toEntityId(inhabitant.id))).toBe(
+      `placeholder-${inhabitant.id}`,
+    );
+  }
+  for (const [actor, sprite] of sprites) {
+    expect({ actor, sprite: typeof sprite }).toEqual({
+      actor,
+      sprite: "string",
+    });
+  }
+});
+
+test("an archive's content hash covers each actor's sprite: changing one in the stored genesis changes the hash", () => {
+  const storeDir = tempDir("panthea-sprite-store-");
+  const exportDir = tempDir("panthea-sprite-export-");
+  try {
+    const seeded = loadGreekWorldState();
+    const reducers = createWorldProjectionReducers(seeded);
+    const store = openStore(join(storeDir, "world.sqlite"), reducers);
+    const exportPath = join(exportDir, "archive.sqlite");
+    const manifest = exportArchive(store, exportPath);
+    closeStore(store);
+
+    const archiveDb = new Database(exportPath);
+    const row = archiveDb
+      .query("SELECT data FROM genesis WHERE id = 1")
+      .get() as { data: string };
+    expect(row.data).toContain('"sprite":"zeus-sprite"');
+    archiveDb.run("UPDATE genesis SET data = ? WHERE id = 1", [
+      row.data.replace('"sprite":"zeus-sprite"', '"sprite":"zeus-redrawn"'),
+    ]);
+    const rehashed = computeContentHash(archiveDb, {
+      formatVersion: manifest.formatVersion,
+      sqliteSchemaVersion: manifest.sqliteSchemaVersion,
+      payloadSchemaVersion: manifest.payloadSchemaVersion,
+      worldId: manifest.worldId,
+      eventSequence: manifest.eventSequence,
+    });
+    archiveDb.close();
+    expect(rehashed).not.toBe(manifest.contentHash);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+    rmSync(exportDir, { recursive: true, force: true });
+  }
+});
+
 // --- Memory, beliefs, and relationships through the real store ----------------------
 
 const id = toEntityId;
@@ -1101,14 +1178,17 @@ function socialSeed(memoryBalance?: Record<string, number>): WorldState {
     withActor(greek, { ...zeus, locationId: id("tavern") }),
     { ...hera, locationId: id("town-square") },
   );
-  const seeded = withActor(placed, {
-    id: id("bard"),
-    locationId: id("tavern"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  const seeded = withActor(
+    placed,
+    testActor({
+      id: id("bard"),
+      locationId: id("tavern"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   // These stories are about what gods and reports do; the town's own wrongs are tested apart.
   const { temperamentOdds: _wrongs, ...rules } = seeded.rules;
   const quiet = { ...seeded, rules };
@@ -2428,14 +2508,14 @@ test("a god's strike on a mortal takes goods up to the strikeGoodsCap and the pr
           },
           { ...ferryman, locationId: id("altar") },
         ),
-        {
+        testActor({
           id: id("wanderer"),
           locationId: id("town-square"),
           alive: true,
           capabilities: [],
           inventory: new Map(),
           revision: 0,
-        },
+        }),
       );
       const world = liveWorld(storePath, seed);
       const held = getResourceAmount(ferryman.inventory, "food");

@@ -76,6 +76,11 @@ function contentRoot(): string {
       `${JSON.stringify({ ...god, sprite: `placeholder-${god.id}` }, null, 2)}\n`,
     );
   }
+  writeInhabitants(dir, [
+    { id: "woodcutter", sprite: "placeholder-woodcutter" },
+    { id: "farmer", sprite: "placeholder-farmer" },
+    { id: "zeus", deity: true },
+  ]);
   const subjects = join(dir, "assets", "subjects");
   for (const name of readdirSync(subjects)) {
     const { portrait: _mapped, ...subject } = JSON.parse(
@@ -87,6 +92,18 @@ function contentRoot(): string {
     );
   }
   return dir;
+}
+
+/** Replaces the root's inhabitants file with `inhabitants`: the fields the validator reads, never the committed cast. */
+function writeInhabitants(
+  root: string,
+  inhabitants: readonly Record<string, unknown>[],
+) {
+  mkdirSync(join(root, "world"), { recursive: true });
+  writeFileSync(
+    join(root, "world", "inhabitants.json"),
+    `${JSON.stringify({ inhabitants }, null, 2)}\n`,
+  );
 }
 
 /** Replaces the root's palette files with the fixture palette's. */
@@ -203,6 +220,92 @@ describe("committed content", () => {
     ).toBe("placeholder-zeus");
     expect(zeus).toMatchObject({ godId: "zeus", paletteFamily: "olympus" });
     expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+});
+
+describe("inhabitant sprite ids", () => {
+  const woodcutter = (sprite: unknown) => [
+    { id: "woodcutter", sprite },
+    { id: "zeus", deity: true },
+  ];
+
+  it("accepts every committed inhabitant's sprite id as canon or a placeholder", () => {
+    const { snapshot } = loadRegistry(
+      join(COMMITTED, "assets", "registry"),
+      vocabulary,
+    );
+    const { inhabitants } = JSON.parse(
+      readFileSync(join(COMMITTED, "world", "inhabitants.json"), "utf8"),
+    ) as { inhabitants: { id: string; deity?: boolean; sprite?: string }[] };
+    const mortals = inhabitants.filter((inhabitant) => !inhabitant.deity);
+    expect(mortals.length).toBeGreaterThan(0);
+    for (const mortal of mortals) {
+      expect(mortal.sprite).toBe(`placeholder-${mortal.id}`);
+      expect(snapshot.entries.has(mortal.sprite ?? "")).toBe(false);
+    }
+  });
+
+  it("accepts a placeholder id and ignores deity inhabitants, whose sprite is their profile's", () => {
+    const root = contentRoot();
+    writeInhabitants(root, woodcutter("placeholder-woodcutter"));
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("accepts a canon sprite id that is published in the registry", () => {
+    const root = contentRoot();
+    publish(root, spriteFixture("woodcutter-sprite"));
+    writeInhabitants(root, woodcutter("woodcutter-sprite"));
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("flags an id that is neither published nor a placeholder", () => {
+    const root = contentRoot();
+    writeInhabitants(root, woodcutter("woodcutter-sprite"));
+    expect(diagnosticsOf(root)).toEqual([
+      {
+        file: "world/inhabitants.json",
+        message: expect.stringContaining('"woodcutter-sprite"'),
+      },
+    ]);
+    expect(diagnosticsOf(root)[0]?.message).toContain("woodcutter");
+  });
+
+  it("flags an id that is not a valid asset id, and a missing or non-string sprite", () => {
+    for (const sprite of ["Placeholder Woodcutter", "", 7, undefined]) {
+      const root = contentRoot();
+      writeInhabitants(root, woodcutter(sprite));
+      expect(files(root)).toEqual(["world/inhabitants.json"]);
+    }
+  });
+
+  it("flags a published id whose manifest is not a sprite", () => {
+    const root = contentRoot();
+    publish(root, portraitFixture("woodcutter-face", "zeus"));
+    writeInhabitants(root, woodcutter("woodcutter-face"));
+    const found = diagnosticsOf(root).filter(
+      (diagnostic) => diagnostic.file === "world/inhabitants.json",
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toContain("portrait");
+  });
+
+  it("flags a missing or malformed inhabitants file", () => {
+    const missing = contentRoot();
+    rmSync(join(missing, "world", "inhabitants.json"));
+    expect(diagnosticsOf(missing)).toEqual([
+      { file: "world/inhabitants.json", message: "file is missing" },
+    ]);
+
+    const malformed = contentRoot();
+    writeFileSync(join(malformed, "world", "inhabitants.json"), '{"nope":1}');
+    expect(files(malformed)).toEqual(["world/inhabitants.json"]);
+  });
+
+  it("uses the isolated fixture registry, never the committed canon", () => {
+    // zeus-sprite is published in the committed canon; the fixture's registry is empty.
+    const root = contentRoot();
+    writeInhabitants(root, woodcutter("zeus-sprite"));
+    expect(files(root)).toEqual(["world/inhabitants.json"]);
   });
 });
 

@@ -42,14 +42,31 @@ function pack(): ContentPack {
     inhabitants: [
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "tavern",
         deity: true,
         startingInventory: [{ resource: "divinity", amount: 100 }],
       },
-      { id: "hera", name: "Hera", locationId: "tavern", deity: true },
-      { id: "farmer", name: "The Farmer", locationId: "tavern" },
-      { id: "bard", name: "The Bard", locationId: "square" },
+      {
+        id: "hera",
+        sprite: "placeholder-hera",
+        name: "Hera",
+        locationId: "tavern",
+        deity: true,
+      },
+      {
+        id: "farmer",
+        sprite: "placeholder-farmer",
+        name: "The Farmer",
+        locationId: "tavern",
+      },
+      {
+        id: "bard",
+        sprite: "placeholder-bard",
+        name: "The Bard",
+        locationId: "square",
+      },
     ],
     rules: {
       catchUpCapMs: 0,

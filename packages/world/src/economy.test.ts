@@ -17,6 +17,7 @@ import {
   type WorldState,
   withActor,
 } from "./state";
+import { testActor } from "./test-actor";
 
 function mustGetActor(state: WorldState, id: string): ActorState {
   const actor = state.actors.get(toEntityId(id));
@@ -52,22 +53,28 @@ function twoActorPack(): ContentPack {
 
 function stateWithTwoActors() {
   let state = createInitialWorldState(twoActorPack());
-  state = withActor(state, {
-    id: toEntityId("a"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["wood", 4]]),
-    revision: 0,
-  });
-  state = withActor(state, {
-    id: toEntityId("b"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("a"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["wood", 4]]),
+      revision: 0,
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("b"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      revision: 0,
+    }),
+  );
   return state;
 }
 
