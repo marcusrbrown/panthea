@@ -35,7 +35,7 @@ export interface GodTiming {
   /** Ticks between this god's consecutive request starts. */
   readonly medianGapTicks: number | undefined;
   readonly worstGapTicks: number | undefined;
-  /** The 95th percentile (nearest rank) of the ticks between this god's consecutive request starts: how long it waits its turn on one model (ADR-0005's 90 s target, a tick being a second). */
+  /** The 95th percentile (nearest rank) of the ticks between this god's consecutive request starts: how long it waits its turn on one model (ADR-0005's 105 s target, a tick being a second). */
   readonly p95GapTicks: number | undefined;
   readonly medianLatencyMs: number | undefined;
 }

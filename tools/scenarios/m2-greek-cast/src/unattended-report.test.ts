@@ -208,7 +208,7 @@ test("the longest quiet stretch is shown per god, and one that runs to the end o
   );
 });
 
-test("an idle reason that can only be inferred is labelled as inferred, and a god with no gap over 90 ticks is not blamed", () => {
+test("an idle reason that can only be inferred is labelled as inferred, and a god with no gap over 105 ticks is not blamed", () => {
   const scene = healthyScene();
   scene.requests = scene.requests.filter((r) => {
     const tick = Number(/tick (\d+)/.exec(r.promptPayload ?? "")?.[1]);
@@ -218,9 +218,9 @@ test("an idle reason that can only be inferred is labelled as inferred, and a go
   scene.proposals = scene.proposals.filter((p) => kept.has(p.proposalId));
   const text = report({ scene });
   expect(text).toMatch(
-    /- hades: \d+ gaps? longer than 90 service ticks between requests\. Inferred: the scheduler's skips are not journaled/,
+    /- hades: \d+ gaps? longer than 105 service ticks between requests\. Inferred: the scheduler's skips are not journaled/,
   );
-  // A god whose gaps are all within 90 service ticks is not named, whatever the others did.
+  // A god whose gaps are all within 105 service ticks is not named, whatever the others did.
   const analysis = analyzeUnattended(runData());
   const steady = analysis.gods.filter(
     (g) => g.service.longGaps === 0 && g.requests > 0,
@@ -251,7 +251,7 @@ test("an idle reason that can only be inferred is labelled as inferred, and a go
     }
   }
   expect(report({ scene: dense })).toContain(
-    "Every god took its turns without a gap over 90 service ticks.",
+    "Every god took its turns without a gap over 105 service ticks.",
   );
 });
 

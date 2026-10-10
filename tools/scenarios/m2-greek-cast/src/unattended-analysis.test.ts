@@ -467,7 +467,54 @@ test("positive control: a god whose last request is 400 service ticks before the
   expect(zeus?.service.longestQuiet.serviceTicks).toBeLessThan(300);
 });
 
-test("positive control: a god whose queue wait exceeds 90 service ticks fails the queue-wait row, and the inclusive figure is shown beside it", () => {
+/**
+ * Zeus takes a turn exactly `gap` service ticks after the last, all run long, so his p95 queue wait is `gap`. The
+ * request ticks are laid out in service time and mapped back to world ticks around the outage (900 to 1620) and the
+ * catch-up (2220 to 5820), so no request lands inside a window.
+ */
+function sceneWithZeusEvery(gap: number): Scene {
+  const scene = healthyScene();
+  scene.requests = scene.requests.filter((r) => r.role !== "zeus");
+  const kept = new Set(scene.requests.map((r) => r.proposalId));
+  scene.proposals = scene.proposals.filter((p) => kept.has(p.proposalId));
+  const outageLength = TICKS.restored - TICKS.outage;
+  const catchUpLength = TICKS.catchUp - TICKS.stopped;
+  const tickOf = (service: number): number =>
+    service < TICKS.outage
+      ? service
+      : service < TICKS.outage + (TICKS.stopped - TICKS.restored)
+        ? service + outageLength
+        : service + outageLength + catchUpLength;
+  for (let service = 20; ; service += gap) {
+    const tick = tickOf(service);
+    if (tick >= TICKS.ended - 20) break;
+    turn(scene, "zeus", tick);
+  }
+  return scene;
+}
+
+test("the queue-wait row holds at a p95 of 105 service ticks and fails at 106", () => {
+  expect(QUEUE_WAIT_TARGET_TICKS).toBe(105);
+  const atLimit = analyzeUnattended(
+    runData({ scene: sceneWithZeusEvery(105) }),
+  );
+  const zeusAtLimit = atLimit.gods.find((g) => g.god === "zeus");
+  expect(zeusAtLimit?.service.p95ServiceGapTicks).toBe(105);
+  expect(rowOf(atLimit.rows, "queue.wait").ok).toBe(true);
+  expect(rowOf(atLimit.rows, "queue.wait").threshold).toBe("at most 105 ticks");
+  expect(zeusAtLimit?.service.longGaps).toBe(0);
+
+  const over = analyzeUnattended(runData({ scene: sceneWithZeusEvery(106) }));
+  expect(
+    over.gods.find((g) => g.god === "zeus")?.service.p95ServiceGapTicks,
+  ).toBe(106);
+  const row = rowOf(over.rows, "queue.wait");
+  expect(row.ok).toBe(false);
+  expect(row.measured).toContain("zeus");
+  expect(row.measured).toContain("106");
+});
+
+test("positive control: a god whose queue wait exceeds 105 service ticks fails the queue-wait row, and the inclusive figure is shown beside it", () => {
   const scene = healthyScene();
   // Zeus takes no turn for 200 service ticks before the outage.
   scene.requests = scene.requests.filter((r) => {
@@ -478,7 +525,7 @@ test("positive control: a god whose queue wait exceeds 90 service ticks fails th
   scene.proposals = scene.proposals.filter((p) => keptIds.has(p.proposalId));
   const { rows } = analyzeUnattended(runData({ scene }));
   const queue = rowOf(rows, "queue.wait");
-  expect(QUEUE_WAIT_TARGET_TICKS).toBe(90);
+  expect(QUEUE_WAIT_TARGET_TICKS).toBe(105);
   expect(queue.ok).toBe(false);
   expect(queue.measured).toContain("zeus");
   expect(queue.measured).toContain("including the windows");
