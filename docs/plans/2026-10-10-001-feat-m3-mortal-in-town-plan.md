@@ -54,7 +54,7 @@ The client is a read-only observer, and nobody can take part (see origin: Proble
 ## Scope Boundaries
 
 - Phase 1 only. Interruption, artifacts, conflict, death, the Underworld as a place to play, god defeat, realm rules and transformation belong to later phases.
-- Mortals answer without a model. Looks come from the existing sprites.
+- Mortals answer without a model. Looks come from the existing sprites. (2026-10-10: a look is a sprite id. `mortal-entered` carries it, and it sets `ActorState.sprite`, a field added by `docs/plans/2026-10-10-002-feat-packaged-game-canon-art-plan.md`, which lands first. This plan defines and validates the set of valid looks. Today that set is placeholder ids plus any published mortal sprite.)
 - A new mortal owns no building. It gathers and sells alongside the existing owners.
 - Retiring from the Underworld is phase 4.
 - The rest of the M2 tuning list is not phase 1 work.
@@ -235,7 +235,7 @@ The client is a read-only observer, and nobody can take part (see origin: Proble
 - **Admission.** The player slot is reserved inside `admitWithinCap` (`apps/simulation/src/tick.ts`), under `maxProposalsPerTick`, not in `mergeTickQueue`. Only one player act can be pending at a time, and a client-minted `proposalId` makes retries idempotent.
 - **Client text.** The client renders all player, god and mortal text as text nodes, with no HTML or markdown (U05 webview boundary).
 - **Pause in game.** A new shell command relays pause and resume. The tray keeps its own (owner, 2026-10-10).
-- **Store.** `user_version` goes to 7. M2 worlds are not migrated (greenfield).
+- **Store.** `user_version` goes to 7. M2 worlds are not migrated (greenfield). (2026-10-10: the packaged-game canon art plan takes version 7, so this plan's bump becomes 8.)
   - The new return-summary table joins `HASHED_TABLES` in `packages/persistence/src/archive.ts`, with export and import.
   - Archive export and import keep every journal row, including `player` rows, pending or consumed, because they are the world's recorded inputs (O01). The source restriction applies only to live `/proposals` intake. A pending player act in an imported archive is refused as `control-lapsed` by the startup release, like any act pending at a restart. A consumed act keeps its outcome, so a retried `proposalId` returns it.
 
@@ -526,6 +526,8 @@ sequenceDiagram
 **Verification:** the simulation and shell tests pass. The ADR note records the source, relay, observation, closed schema, control check and capability changes.
 
 - [ ] **Unit 7: Client: entry, controls, talk, request states and return**
+
+(2026-10-10: this unit builds on the shared pixel renderer, `packages/renderer`, that the packaged-game canon art plan adopts in the client. Where god portraits appear in talk is decided in this unit's design pass.)
 
 **Goal:** the player-facing surfaces, designed and built by @designer.
 

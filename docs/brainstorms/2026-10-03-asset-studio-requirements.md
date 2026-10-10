@@ -155,9 +155,9 @@ Tiers: **T1** Zeus on screen (success criterion 1); **T2** visual reference scen
 
 ## Success Criteria
 
-1. The owner can submit one request and, within one sitting, have a canon Zeus idle-south, seated pose, and portrait drawn in the game client over the placeholder, with provenance that would survive a licence audit. (T1)
+1. The owner can submit one request and, within one sitting, have a canon Zeus idle-south, seated pose, and portrait drawn in the game client over the placeholder, with provenance that would survive a licence audit. (T1) (2026-10-10, owner: the game client path does not wait for this criterion. Seated, strike and the timed sitting are queued studio work, and the game draws placeholders until they are published. See `docs/plans/2026-10-10-002-feat-packaged-game-canon-art-plan.md`.)
 2. Every canon asset's bytes are committed with a manifest whose provenance chain is complete; derived and procedural assets regenerate byte-identically; no canon asset depends on a non-commercial or unverifiable licence.
-3. The core agent's velocity is unaffected: studio PRs touch shared packages additively and merge without rebasing world or agent code.
+3. The core agent's velocity is unaffected: studio PRs touch shared packages additively and merge without rebasing world or agent code. (2026-10-10, owner: an agreed exception is that the actor sprite id is added to world state for the game client path.)
 4. A planner reading this document and the research summary can sequence the work by tier without inventing product behaviour, interaction states, scope, or the art guide's defaults.
 
 ---
