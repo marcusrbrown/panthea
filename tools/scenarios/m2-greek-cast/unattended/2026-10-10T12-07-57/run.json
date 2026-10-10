@@ -1,0 +1,216 @@
+{
+  "status": "completed",
+  "settings": {
+    "model": "granite3.3-8b-4k",
+    "reasoningEffort": "none",
+    "endpoint": "local"
+  },
+  "baseline": {
+    "store": {
+      "state": "captured",
+      "bytes": 254189568,
+      "walBytes": 0
+    },
+    "archive": {
+      "state": "captured",
+      "bytes": 97689600,
+      "eventSequence": 203970
+    },
+    "rebuild": {
+      "state": "captured",
+      "ms": 533.64,
+      "events": 203970,
+      "equal": true,
+      "liveDigest": "023fdfdd83d3f7c6b42ea070253968ac1789a73ebcd0159c186b95f68b6c5796",
+      "rebuiltDigest": "023fdfdd83d3f7c6b42ea070253968ac1789a73ebcd0159c186b95f68b6c5796",
+      "projectionBytes": 1081656,
+      "integrity": "ok",
+      "process": "separate",
+      "childPid": 68751
+    },
+    "importProof": {
+      "state": "captured",
+      "ok": true,
+      "events": 203970,
+      "slotCreated": true
+    }
+  },
+  "plan": {
+    "minutes": 60,
+    "outageBoundMs": 900000,
+    "outageMs": 720000,
+    "stopAfterRestoreMs": 600000,
+    "runMs": 3600000,
+    "gapMs": 5400000,
+    "gate": true
+  },
+  "startedWallMs": 1791634081196,
+  "endedWallMs": 1791637690586,
+  "elapsedWallMs": 3609390,
+  "runningMs": 3603195,
+  "boundaries": [
+    {
+      "phase": "started",
+      "wallMs": 1791634082100,
+      "tick": 0,
+      "runningMs": 9
+    },
+    {
+      "phase": "outage-started",
+      "wallMs": 1791634146245,
+      "tick": 64,
+      "runningMs": 64154,
+      "note": "5 of 7 gods had acted"
+    },
+    {
+      "phase": "proxy-restored",
+      "wallMs": 1791634866532,
+      "tick": 783,
+      "runningMs": 784441
+    },
+    {
+      "phase": "stopped",
+      "wallMs": 1791635466804,
+      "tick": 1381,
+      "runningMs": 1384712
+    },
+    {
+      "phase": "restarted",
+      "wallMs": 1791635467276,
+      "tick": 1381,
+      "runningMs": 1385047
+    },
+    {
+      "phase": "catch-up-finished",
+      "wallMs": 1791635475406,
+      "tick": 4989,
+      "runningMs": 1393177
+    },
+    {
+      "phase": "ended",
+      "wallMs": 1791637683462,
+      "tick": 7196,
+      "runningMs": 3601233
+    }
+  ],
+  "checks": [
+    {
+      "name": "the sidecar stops cleanly",
+      "ok": true,
+      "detail": "exit code 0"
+    },
+    {
+      "name": "the catch-up is bracketed by its own log lines",
+      "ok": true,
+      "detail": "2026-10-10T12:31:06.941Z .. 2026-10-10T12:31:12.031Z"
+    },
+    {
+      "name": "the catch-up applies the cap and discards the rest",
+      "ok": true,
+      "detail": "2 passes; the journal: 60.1 min applied by tick, 30.1 min discarded"
+    },
+    {
+      "name": "no provider request is made during the catch-up",
+      "ok": true,
+      "detail": "0 requests inside it"
+    },
+    {
+      "name": "the catch-up summary persists to the end, or a later catch-up pass replaced it",
+      "ok": true,
+      "detail": "7ea3b7e2-d0d2-40ae-a632-1dc5d37f1bec (sequence 140409) was replaced by 884e5516-7c3e-44a4-a204-15d8bc8b8c15 (sequence 186738), a later pass's, 1 later pass seen"
+    }
+  ],
+  "outage": {
+    "trigger": "gods",
+    "godsActed": 5
+  },
+  "restore": {
+    "runnerAtRestore": "absent",
+    "firstRequestAfterRestore": {
+      "latencyMs": 14212,
+      "status": 200,
+      "empty": false,
+      "afterRestoreMs": 167
+    }
+  },
+  "catchUp": {
+    "summaryId": "7ea3b7e2-d0d2-40ae-a632-1dc5d37f1bec",
+    "appliedMs": 5000,
+    "skippedMs": 0,
+    "startedWallMs": 1791635466941,
+    "finishedWallMs": 1791635472031,
+    "atSequence": 140409,
+    "passes": 2,
+    "laterPasses": 1,
+    "journal": {
+      "appliedMs": 3608000,
+      "discardedMs": 1803859
+    }
+  },
+  "gate": {
+    "verdict": "FAIL",
+    "failedRows": ["queue.wait"]
+  },
+  "memory": {
+    "samples": 361,
+    "spanMs": 3600957,
+    "runner": {
+      "start": 5605605376,
+      "peak": 8871624704,
+      "end": 7384547328,
+      "present": 349,
+      "absent": 12
+    },
+    "sidecar": {
+      "start": 62193664,
+      "peak": 381599744,
+      "end": 254197760,
+      "present": 360,
+      "absent": 1
+    },
+    "swapUsedMiB": {
+      "start": 743.62,
+      "peak": 2109.19,
+      "end": 1861.12,
+      "present": 361,
+      "absent": 0
+    },
+    "sidecarFootprint": {
+      "start": 33621504,
+      "peak": 168331968,
+      "end": 140577536,
+      "present": 360,
+      "absent": 1
+    },
+    "runnerFootprint": {
+      "start": 738604032,
+      "peak": 6290972032,
+      "end": 5798173120,
+      "present": 349,
+      "absent": 12
+    },
+    "sidecarTrend": {
+      "judgeable": true,
+      "percentPer10Min": 3.5419412698086488,
+      "levellingOff": false,
+      "windowSamples": 120
+    },
+    "footprintTrend": {
+      "judgeable": true,
+      "percentPer10Min": 4.069648361494822,
+      "levellingOff": false,
+      "windowSamples": 120
+    },
+    "settledGrowth": {
+      "judgeable": true,
+      "growthPercent": 4.936091845390234,
+      "withinLimit": true,
+      "firstHalfMeanBytes": 127623044.92307693,
+      "secondHalfMeanBytes": 133922635.63636364,
+      "settledFromMs": 1791636375406,
+      "settledMs": 1306755,
+      "firstHalfSamples": 65,
+      "secondHalfSamples": 66
+    }
+  }
+}

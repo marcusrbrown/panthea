@@ -471,6 +471,32 @@ The owner chose to:
 
 After those fixes, the hour is rerun once on a quiet machine. If queue wait is still over 90, the measured conflict goes to the owner with a proposed amendment to ADR-0005's target. The rating sheet is unfilled. M2 does not exit on this run.
 
+Status (2026-10-10, third hour): the hour was rerun on granite3.3-8b-4k from `main` at `c74fe32`, with the prompt cap, the cap-stall fixes (#184) and the settled-span memory row (#183) (`tools/scenarios/m2-greek-cast/unattended/2026-10-10T12-07-57/`). Spotlight indexing was off. Load stayed at 1.5–1.9 for the first 23 minutes, then rose to 2.2–3.6 with another process at about 50% CPU. The run went through every phase in 60.1 running minutes. It exited 1, FAIL, on one of 24 rows.
+
+**Held:**
+- No prompt was cut. Real prompt tokens had a median of 2,728, a p95 of 2,851 and a maximum of 2,943.
+- There were no empty responses.
+- A god acted 15 ticks after the proxy returned.
+- The catch-up held: 60.1 minutes applied, 30.1 discarded, and no provider request inside it.
+- Activity, influence and repetition held for all seven gods. Perception, goal and petition privacy held.
+- The settled-span memory row held at +4.94% against 10%.
+- Rebuild equals live: 203,970 events in 534 ms.
+- The archive imports.
+
+**Failed: queue wait.** Per-god p95 was 93–98 ticks for six gods and 130 for Zeus, against 90.
+- **Zeus.** Two of his turns were skipped as `prompt-over-cap` (16 and 92 tokens over), which left a 257-tick quiet stretch. That passes the 300 limit. He had opened a demand whose only move for him was to withdraw it, yet the prompt still carried the rule telling him to answer an open thread, and his own waiting thread in its long form. Without the two skips his p95 is 97.
+- **Request times.** The mean request was 9.18 s in the quietest stretch (minutes 13–23) and 10.25 s after the restart. At a matched prompt size, latency rose 5–9% over the run.
+- **Rounds.** 71–80% of rounds after the restart had 8 picks, because a god that owes goes ahead of the round.
+- **What 90 needs.** A p95 of 90 needs a mean request of about 8.6–9.2 s. Replays of the run's pick order at the quiet stretch's request times put all seven gods at 90 or under in 3% of trials.
+- **What the replays support.** A p95 of 105 or under holds in 97–98% of replays at this run's load.
+
+The owner chose to:
+- fix the withdraw-only thread prompt;
+- amend ADR-0005's queue-wait target to p95 ≤ 105 for seven gods on granite3.3 at this load, with the scheduler unchanged;
+- rerun the hour once more on a quiet machine before the M2 decision.
+
+The rating sheet is unfilled. M2 does not exit on this run.
+
 ## System-Wide Impact
 
 - **Interaction graph:** the only production path exercised in a new way is the router meeting a failing endpoint mid-run, which is existing behaviour. Everything new lives in `tools/scenarios`. `apps/simulation` and the packages are unchanged unless the run finds a defect. A defect is fixed in a separate PR with a test.
