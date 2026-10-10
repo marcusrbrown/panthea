@@ -110,6 +110,43 @@ export function editableSlotsForSet(workingSet: SummaryRecord): string[] {
   return slots.filter((slot) => available.has(slot));
 }
 
+/** Resolve an open edit to its own set, never to the set currently selected in the UI. */
+export function editOpenTarget(
+  edit: SummaryRecord,
+  workingSets: readonly SummaryRecord[],
+):
+  | {
+      readonly editId: string;
+      readonly workingSetId: string;
+      readonly slots: string[];
+    }
+  | undefined {
+  if (recordText(edit, "status") !== "open") return undefined;
+  const workingSetId = recordText(edit, "workingSetId");
+  const slotsValue = recordValue(edit, "slots");
+  const slots = Array.isArray(slotsValue)
+    ? slotsValue.filter((slot): slot is string => typeof slot === "string")
+    : [];
+  if (
+    !workingSetId ||
+    !workingSets.some((set) => set.id === workingSetId) ||
+    slots.length === 0
+  )
+    return undefined;
+  return { editId: edit.id, workingSetId, slots };
+}
+
+/** Relaunch an existing edit through its own working set and original slots. */
+export function reopenWorkingSetEdit(
+  host: StudioHost,
+  edit: SummaryRecord,
+  workingSets: readonly SummaryRecord[],
+): Promise<EditOpened> | undefined {
+  const target = editOpenTarget(edit, workingSets);
+  if (!target) return undefined;
+  return host.editOpen(target.editId, target.workingSetId, target.slots);
+}
+
 /** The action behind the candidate's Pick button. */
 export function pickCandidateForSet(
   host: StudioHost,

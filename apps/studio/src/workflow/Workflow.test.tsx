@@ -395,6 +395,10 @@ describe("WorkflowView controls", () => {
       }),
     );
     expect(html).not.toContain("greek-master");
+    expect(html).toContain("Pack requires a complete working set.");
+    expect(html).not.toContain(
+      "Only selected frames in an open working set can be packed.",
+    );
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Pack draft<\/button>/);
   });
 

@@ -39,6 +39,8 @@ describe("CandidatePixelCell", () => {
     expect(html).toContain('width="128"');
     expect(html).toContain('height="160"');
     expect(html).toContain("image-rendering:pixelated");
+    expect(html).toContain('class="candidate-pixels candidate-pixels-stacked"');
+    expect(html.indexOf("<figcaption>")).toBeGreaterThan(html.indexOf("<img"));
   });
 
   test("shows a per-cell error instead of a broken image", () => {

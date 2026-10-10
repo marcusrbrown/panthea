@@ -45,7 +45,7 @@ export function CandidatePixelCell({
   }
 
   return (
-    <figure className="candidate-pixels">
+    <figure className="candidate-pixels candidate-pixels-stacked">
       <img
         src={image.url}
         width={image.width * 2}

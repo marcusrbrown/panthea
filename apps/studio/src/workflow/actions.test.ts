@@ -42,6 +42,44 @@ const buildPackArgsWithStillFrame = buildPackArgs as unknown as (
 ) => { readonly stillFrameMs?: number } | undefined;
 
 describe("workflow host actions", () => {
+  test("Open editor again uses the active edit's set, not the selected set", async () => {
+    const setA = { id: "working-set-a", kind: "sprite" };
+    const selectedSetB = { id: "working-set-b", kind: "portrait" };
+    const activeEdit = {
+      id: "edit-a",
+      workingSetId: setA.id,
+      status: "open",
+      slots: ["idle/south"],
+    };
+    const reopen = (
+      workflowActions as unknown as {
+        reopenWorkingSetEdit?: (
+          host: ReturnType<typeof createStudioHost>,
+          edit: typeof activeEdit,
+          sets: readonly (typeof setA)[],
+        ) => Promise<unknown> | undefined;
+      }
+    ).reopenWorkingSetEdit;
+
+    expect(reopen).toBeFunction();
+    if (!reopen) return;
+    const transport = fakeTransport({
+      edit_open: () => ({
+        editId: "edit-a",
+        slots: ["idle/south"],
+        workspace: { size: { w: 64, h: 80 }, durationsMs: [167], tags: [] },
+        editor: { launched: true },
+      }),
+    });
+    await reopen(createStudioHost(transport), activeEdit, [setA, selectedSetB]);
+
+    expect(transport.calls[0]?.args).toEqual({
+      editId: "edit-a",
+      workingSetId: "working-set-a",
+      slots: ["idle/south"],
+    });
+  });
+
   test("blank scale is omitted from inline conform params", () => {
     const params: ConformParams = {
       background: { type: "alpha" },
