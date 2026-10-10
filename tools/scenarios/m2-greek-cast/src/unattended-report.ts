@@ -12,6 +12,7 @@ import {
   analyzeUnattended,
   CONTEXT_TOKENS,
   PHASES,
+  QUEUE_WAIT_TARGET_TICKS,
   type ThresholdRow,
   type UnattendedAnalysis,
 } from "./unattended-analysis";
@@ -76,7 +77,7 @@ function idleReasons(analysis: UnattendedAnalysis): string[] {
     const gap = g.service.longGaps;
     if (gap > 0) {
       lines.push(
-        `- ${g.god}: ${gap} ${gap === 1 ? "gap" : "gaps"} longer than 90 service ticks between requests. Inferred: the scheduler's skips are not journaled, so a god that was never scheduled shows only as the absence of a request.`,
+        `- ${g.god}: ${gap} ${gap === 1 ? "gap" : "gaps"} longer than ${QUEUE_WAIT_TARGET_TICKS} service ticks between requests. Inferred: the scheduler's skips are not journaled, so a god that was never scheduled shows only as the absence of a request.`,
       );
     }
     if (g.requests === 0) {
@@ -86,7 +87,9 @@ function idleReasons(analysis: UnattendedAnalysis): string[] {
     }
   }
   return lines.length === 0
-    ? ["Every god took its turns without a gap over 90 service ticks."]
+    ? [
+        `Every god took its turns without a gap over ${QUEUE_WAIT_TARGET_TICKS} service ticks.`,
+      ]
     : lines;
 }
 

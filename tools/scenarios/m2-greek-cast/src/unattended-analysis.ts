@@ -47,8 +47,12 @@ import type {
   UnattendedResult,
 } from "./unattended";
 
-/** ADR-0005's queue-wait target for a god on one model, in service ticks (a tick is a second). */
-export const QUEUE_WAIT_TARGET_TICKS = 90;
+/**
+ * ADR-0005's queue-wait target for a god on one model, in service ticks (a tick is a second): a p95 of 105 or less,
+ * from the 2026-10-10 amendment. It was 90 before, which the third unattended hour measured as out of reach for seven
+ * gods on granite3.3-8b-4k with owed-ahead scheduling.
+ */
+export const QUEUE_WAIT_TARGET_TICKS = 105;
 /** The longest a god may go with no request, in service ticks: about three times the worst gap measured. */
 export const QUIET_LIMIT_TICKS = 300;
 /** Ticks after the proxy returns within which reasoning resumes and the gods act again. */
