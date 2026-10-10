@@ -47,6 +47,11 @@ import {
 } from "./format";
 import { isOutcome, type Studio } from "./host";
 
+/** The sheet-hash type the SDK takes, without a second dependency for one alias. */
+type Sha256 = NonNullable<
+  Parameters<import("@panthea/assets/studio").StudioSession["finishEdit"]>[5]
+>;
+
 type Kind = "string" | "int" | "number" | "json";
 export type Spec = Record<string, { t: Kind; req?: true }>;
 type Args = Record<string, unknown>;
@@ -1071,6 +1076,7 @@ const OPS: Record<string, OpDef> = {
       ...str("json"),
       ...str("method"),
       ...str("description"),
+      ...str("reviewed"),
     },
     run: async (studio, a) => editBring(studio, a, "finish"),
   },
@@ -1288,6 +1294,14 @@ async function editBring(
   a: Args,
   mode: "import" | "finish",
 ): Promise<Outcome> {
+  // The sheet hash the owner reviewed (an edit report's `sheetHash`): a finish
+  // that would take any other sheet is refused as `stale-review`.
+  const reviewed = a.reviewed as string | undefined;
+  if (reviewed !== undefined && !/^[0-9a-f]{64}$/.test(reviewed))
+    return refuse(
+      "invalid-arguments",
+      '"reviewed" must be a sheet hash (64 lowercase hex digits)',
+    );
   const session = studio.owner();
   if (isOutcome(session)) return session;
   const content = studio.loadedContent();
@@ -1312,11 +1326,17 @@ async function editBring(
             files.json,
             content,
             step,
+            reviewed as Sha256 | undefined,
           );
   else {
     const editor = studio.editorFor(session);
     if (isOutcome(editor)) return editor;
-    result = await editor.refresh(a.id as string, content, mode);
+    result = await editor.refresh(
+      a.id as string,
+      content,
+      mode,
+      reviewed as Sha256 | undefined,
+    );
   }
   if (!result.ok) return refuse(result.reason, safeMessage(result.message));
   if (mode === "finish") studio.unwatchEdit(a.id as string);

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { StudioHost } from "../host/client";
 import type { EditReport, SummaryRecord } from "../host/types";
+import { finishReviewedEdit } from "./actions";
 import { recordText } from "./model";
 
 function editorReasonCopy(reason: string | undefined) {
@@ -26,6 +27,7 @@ export function EditPanel({
   durationsMs = [],
   onOpen,
   onChange,
+  onStale,
 }: {
   readonly host: StudioHost;
   readonly edit: SummaryRecord;
@@ -36,6 +38,8 @@ export function EditPanel({
   readonly durationsMs?: readonly number[];
   readonly onOpen?: () => void;
   readonly onChange?: (message: string) => void;
+  /** The workspace was saved again since the report on screen: refresh it. */
+  readonly onStale?: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -50,10 +54,20 @@ export function EditPanel({
     setBusy(true);
     setError("");
     try {
-      if (editorLaunched === false) await host.editImport(editId, true);
-      else await host.call("finish", { id: editId });
-      onChange?.("Edit finished. The reviewed pixels were kept.");
-      setConfirmed(false);
+      const outcome = await finishReviewedEdit(
+        host,
+        editId,
+        report,
+        editorLaunched,
+      );
+      if (outcome.kind === "stale") {
+        setError(outcome.message);
+        setConfirmed(false);
+        onStale?.();
+      } else {
+        onChange?.("Edit finished. The reviewed pixels were kept.");
+        setConfirmed(false);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

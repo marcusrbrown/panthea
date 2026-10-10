@@ -2347,6 +2347,87 @@ describe("finishing an edit", () => {
   });
 });
 
+describe("finishing an edit against the save that was reviewed", () => {
+  const v1 = () =>
+    authored([
+      { slot: "idle/south", frames: frames(4, 0, 20) },
+      { slot: "idle/north", frames: frames(4, 10, 40) },
+    ]);
+  const v2 = () =>
+    authored([
+      { slot: "idle/south", frames: frames(4, 3, 21) },
+      { slot: "idle/north", frames: frames(4, 10, 40) },
+    ]);
+
+  test("a sheet other than the reviewed one is refused as stale-review, writes nothing and leaves the edit open", () => {
+    const { root, session } = opened();
+    const first = v1();
+    const second = v2();
+    expect(session.importEdit("e1", first.png, first.json, content)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    const before = editOf(root, "e1");
+    const setBefore = setOf(root);
+
+    const refused = session.finishEdit(
+      "e1",
+      second.png,
+      second.json,
+      content,
+      undefined,
+      sha256Hex(first.png),
+    );
+
+    expect(refused).toMatchObject({ ok: false, reason: "stale-review" });
+    expect(editOf(root, "e1")).toEqual(before);
+    expect(editOf(root, "e1")?.status).toBe("open");
+    expect(setOf(root)).toEqual(setBefore);
+    session.close();
+  });
+
+  test("the reviewed sheet finishes, and so does a finish that names no review", () => {
+    const named = opened();
+    const second = v2();
+    expect(
+      named.session.finishEdit(
+        "e1",
+        second.png,
+        second.json,
+        content,
+        undefined,
+        sha256Hex(second.png),
+      ),
+    ).toEqual({ ok: true, changed: true });
+    expect(editOf(named.root, "e1")?.status).toBe("finished");
+    named.session.close();
+
+    const plain = opened();
+    const again = v2();
+    expect(
+      plain.session.finishEdit("e1", again.png, again.json, content),
+    ).toEqual({ ok: true, changed: true });
+    plain.session.close();
+  });
+
+  test("a sheet that is refused for its own sake is refused for it, not as stale", () => {
+    const { session } = opened();
+    const second = v2();
+
+    expect(
+      session.finishEdit(
+        "e1",
+        second.png,
+        "not json",
+        content,
+        undefined,
+        sha256Hex(second.png),
+      ),
+    ).toMatchObject({ ok: false, reason: "invalid-params" });
+    session.close();
+  });
+});
+
 describe("discarding an edit", () => {
   test("leaves the working set byte-identical and keeps the edit's blobs and preview for audit", () => {
     const { root, session } = opened();

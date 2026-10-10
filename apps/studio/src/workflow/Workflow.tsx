@@ -1390,6 +1390,7 @@ export function WorkflowView({
                   durationsMs={editorSessions[activeEdit.id]?.durationsMs}
                   canMutate={canMutate(state)}
                   onOpen={() => void openEdit()}
+                  onStale={() => void readEditReport(activeEdit.id)}
                   onChange={(result) => {
                     setMessage(result);
                     void readEditReport(activeEdit.id);

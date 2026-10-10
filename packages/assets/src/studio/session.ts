@@ -5,7 +5,7 @@
 
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import type { GenerationJob, JobOutput } from "@panthea/contracts";
+import type { GenerationJob, JobOutput, Sha256 } from "@panthea/contracts";
 import { parseSlug } from "@panthea/contracts";
 import type { Palette } from "../palette";
 import {
@@ -106,6 +106,7 @@ export interface StudioSession {
     json: string,
     content: StudioContent,
     step?: FinishStep,
+    reviewed?: Sha256,
   ): EditResult;
   /** Ends an edit and leaves the working set exactly as it was. */
   discardEdit(id: string): EditCommandResult;

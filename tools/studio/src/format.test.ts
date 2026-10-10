@@ -284,6 +284,38 @@ describe("status summaries", () => {
     });
   });
 
+  test("openEdits names each open edit with the hash of its latest saved sheet, null before a save, and leaves finished and discarded edits out", () => {
+    const edit = (
+      id: string,
+      status: string,
+      preview: { sheetHash: string } | null,
+    ) => ({ id, workingSetId: "w", slots: ["idle/south"], status, preview });
+    const summary = statusSummary(
+      {
+        session: undefined,
+        requests: [],
+        jobs: [],
+        candidates: [],
+        workingSets: [],
+        edits: [
+          edit("e-saved", "open", { sheetHash: "a".repeat(64) }),
+          edit("e-new", "open", null),
+          edit("e-done", "finished", { sheetHash: "b".repeat(64) }),
+          edit("e-gone", "discarded", null),
+        ],
+        assets: [],
+        commands: [],
+        invalid: [],
+      } as never,
+      () => true,
+    ) as { openEdits: unknown };
+
+    expect(summary.openEdits).toEqual([
+      { id: "e-saved", previewSheetHash: "a".repeat(64) },
+      { id: "e-new", previewSheetHash: null },
+    ]);
+  });
+
   describe("the owner is open only while its process is alive and the session is not ended", () => {
     const ownerOf = (
       session: { endedAt?: string },

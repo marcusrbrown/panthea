@@ -8,8 +8,11 @@
 //! store, so the seven reads of a full snapshot take about 1.1 s. A tick
 //! therefore reads `status` alone, and re-reads the lists only when the status
 //! changed, when this app changed something (`dirty`), or every
-//! `FULL_REFRESH_EVERY` ticks as a net for changes that leave the counts alone
-//! (an editor save imported by the session's watcher). `source-keys` answers
+//! `FULL_REFRESH_EVERY` ticks as a net for changes that leave the counts alone.
+//! An editor save imported by the session's watcher leaves the counts alone, so
+//! `status` also carries each open edit's saved-sheet hash (`openEdits`): the
+//! save changes the status and the next tick re-reads, instead of waiting for
+//! the net (measured at 2-8 s). `source-keys` answers
 //! from memory in well under a millisecond, so it is read every tick.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -346,6 +349,47 @@ mod tests {
             assert_eq!(sidecar.count("list"), 2 * LISTS.len());
             assert_ne!(before, after);
             assert_eq!(after["jobs"][0]["rev"], 1);
+        });
+    }
+
+    #[test]
+    fn a_saved_sheet_hash_changing_alone_re_reads_the_lists_on_the_next_tick() {
+        runtime().block_on(async {
+            // The counts never change: only an open edit's saved-sheet hash does,
+            // the way an editor save imported by the session's watcher changes it.
+            let hash = Arc::new(Mutex::new("aa".to_string()));
+            let mux = Arc::new(Mux::new());
+            let sidecar = {
+                let hash = hash.clone();
+                Scripted::attach(&mux, 1, move |op, args| match op {
+                    "status" => Reply::Ok(json!({
+                        "counts": { "edits": 1 },
+                        "openEdits": [{ "id": "e1", "previewSheetHash": *hash.lock().unwrap() }],
+                    })),
+                    "list" => Reply::Ok(json!([{
+                        "kind": args["kind"],
+                        "previewSheetHash": *hash.lock().unwrap(),
+                    }])),
+                    "source-keys" => Reply::Ok(json!({ "listing": "l", "selections": [] })),
+                    _ => Reply::Refuse("unknown-op", "x"),
+                })
+            };
+            let mut poller = Poller::default();
+            let dirty = Dirty::default();
+            let before = poller.tick(&mux, &dirty).await.unwrap();
+            poller.tick(&mux, &dirty).await.unwrap();
+            assert_eq!(
+                sidecar.count("list"),
+                LISTS.len(),
+                "an unchanged status reads no lists"
+            );
+
+            *hash.lock().unwrap() = "bb".to_string();
+            let after = poller.tick(&mux, &dirty).await.unwrap();
+
+            assert_eq!(sidecar.count("list"), 2 * LISTS.len(), "the very next tick");
+            assert_eq!(before["edits"][0]["previewSheetHash"], "aa");
+            assert_eq!(after["edits"][0]["previewSheetHash"], "bb");
         });
     }
 

@@ -115,6 +115,38 @@ One real Z-Image 512×640 job (`zeus` idle/south, seed from the resolved request
 - The AE6 runs sampled the same way and saw the same shape: worker footprint peaks of 8,452 and 8,456 MiB (RSS 4,130 and 3,785 MiB), pressure critical in 2 samples each of 115 and 128, round trip median 183 ms (p95 240, max 342) and 183 ms (p95 319, max 653), no failed reads.
 - Responsiveness here is the sidecar answering `status` through a second read-only session, not the app's command bridge through the webview.
 
+## Quit during a generation
+
+After the quit change (the app signals the sidecar to stop, so it aborts the running job and stops the image server it owns, instead of closing its input and waiting out the job), the packaged app was quit while a real job ran.
+
+Method: the packaged app on the same host as the other runs, against a scratch copy of the owner-run store and a copy of the creative config (models in the main checkout), with its own user directory. One Z-Image 512×640 job was queued from the window (Resolve request, then Generate, slots reduced to `idle/south`). Once the store showed the job `running` and an `sd-server` process existed, and 3 s later, the app was quit with Cmd-Q. The quit duration is from the keystroke until both the app and its sidecar process were gone. Then `pgrep` for `sd-server` at exit, 5 s and 30 s, the job record, the candidates directory, and a second sidecar session on the same config.
+
+| | Run 1 | Run 2 |
+| --- | --- | --- |
+| Job state when quit | running (3 s after the server appeared) | running (same) |
+| Quit duration | 0.62 s | 0.57 s |
+| Host log | `sidecar teardown: Graceful` | `sidecar teardown: Graceful` |
+| `sd-server` processes at exit, +5 s, +30 s | none, none, none | none, none, none |
+| Job record afterwards | `cancelled`, `cancelledBy: aborted`, no outputs | same |
+| Candidates for the job | 0 | 0 |
+| Second session opened on the same store | writer: `rootLock` `holder: self`, owner open | same |
+
+- The quit did not wait out the job (about 90 s) and did not need the 15 s bound: the sidecar exited on its own within a second.
+- The old behaviour was not re-run as a control on the real runtime; its cause (end of input drains the queue, then the bound kills the sidecar) is from the code, and the order of the signals is pinned by `teardown.rs` tests.
+
+## Edit-save lag
+
+An editor save imported by the session's watcher changes no job or edit count, so the app saw it only on the poller's every-fifth-tick full read. `status` now also carries each open edit's saved-sheet hash (`openEdits`), and a change in it makes the next tick re-read the lists.
+
+Method: the built sidecar on a scratch copy of the 71 MB owner-run store, the native poller's tick logic reproduced in a script (status every tick, the six lists when status changed or every fifth tick, a 1 s gap), and one edit imported at a random time 14 times; the lag is from the import's reply to the first tick whose lists carry the new hash. The old status was emulated by dropping `openEdits` from the same reply.
+
+| | Runs | Min | Median | Max |
+| --- | --- | --- | --- | --- |
+| Before (`openEdits` dropped) | 14 | 2.72 s | 5.32 s | 7.50 s |
+| After | 14 | 1.52 s | 1.85 s | 2.58 s |
+
+The plan's target was about 1 s. What remains is one tick's own cost (a status read of about 160 ms plus six list reads at about 160 ms each, so about 1.2 s) plus the 1 s gap: a save lands at a random point in that cycle. A cheaper list read in the session is the only way below it. Measured on the sidecar and the reproduced tick logic, not through the app's window.
+
 ## Findings from the run
 
 1. **The "about 37 seconds" restart copy was not what the runtime does** (above). After these runs the copy dropped the number: "Restarting the image server. The next job reloads the model." The screenshots show the old text.
@@ -126,6 +158,8 @@ One real Z-Image 512×640 job (`zeus` idle/south, seed from the resolved request
 - **Forced device loss in the packaged app** (above).
 - **The WebGL2 backend by observation.** Inferred from `navigator.gpu` being undefined in this host's WKWebView.
 - **Late output after an abort on the real runtime.** Only against the fake runtime.
+- **The quit proof is two runs of one job on one host**, and the old quit was not re-run as a control. A model that ignores TERM for longer than the derived bound is not covered (it would be killed).
+- **Edit-save lag through the app's window.** Measured with the reproduced tick logic, 14 saves; it is still about 1.9 s, not the plan's 1 s.
 - **A hand save in the Aseprite window.** The save that reached the watcher was a scripted batch run of the real Aseprite over the workspace file while its window was open. No pixel was drawn by hand.
 - **`editor-unavailable` and `launch-failed` in the packaged app.** The fallback shown is the no-workspace reason only; the other two are unit-tested (`EditPanel.test.tsx`).
 - **Responsiveness through the app's own command bridge.** Measured on the sidecar only.

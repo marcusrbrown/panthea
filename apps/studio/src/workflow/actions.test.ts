@@ -7,6 +7,7 @@ import {
   createLatest,
   editReportSignature,
   editsForReports,
+  finishReviewedEdit,
   inlineParamsAtScale,
   parseInlineConformDraft,
   parseSlotSpecs,
@@ -15,6 +16,7 @@ import {
   reopenEditor,
   rerollArgs,
   resolveFlow,
+  STALE_REVIEW_MESSAGE,
   sheetFlow,
   slotHint,
 } from "./actions";
@@ -463,5 +465,86 @@ describe("late replies to loading a sheet", () => {
 
     expect(reads).toEqual([]);
     expect(errors).toEqual([]);
+  });
+});
+
+describe("finishing the version that was reviewed", () => {
+  const report = {
+    editId: "e1",
+    workingSetId: "w1",
+    state: "open",
+    sheetHash: "c".repeat(64),
+    metadataHash: "d".repeat(64),
+    slots: [],
+  } as const;
+
+  test("with the editor, finish names the sheet hash of the report on screen", async () => {
+    const transport = fakeTransport({
+      studio_call: () => ({ editId: "e1", state: "finished", changed: true }),
+    });
+
+    const outcome = await finishReviewedEdit(
+      createStudioHost(transport),
+      "e1",
+      report,
+      true,
+    );
+
+    expect(outcome).toEqual({ kind: "finished" });
+    expect(transport.calls[0]).toEqual({
+      command: "studio_call",
+      args: { op: "finish", args: { id: "e1", reviewed: "c".repeat(64) } },
+    });
+  });
+
+  test("a workspace saved again since the report is a plain message, not an error", async () => {
+    const transport = fakeTransport({
+      studio_call: () => {
+        throw hostError("stale-review", "edit e1 was saved again");
+      },
+    });
+
+    const outcome = await finishReviewedEdit(
+      createStudioHost(transport),
+      "e1",
+      report,
+      true,
+    );
+
+    expect(outcome).toEqual({ kind: "stale", message: STALE_REVIEW_MESSAGE });
+    expect(STALE_REVIEW_MESSAGE).toBe(
+      "The workspace changed since this report. Review the new version, then finish.",
+    );
+  });
+
+  test("any other refusal is still an error for the caller to show", async () => {
+    const transport = fakeTransport({
+      studio_call: () => {
+        throw hostError("wrong-state", "edit e1 is finished");
+      },
+    });
+
+    await expect(
+      finishReviewedEdit(createStudioHost(transport), "e1", report, true),
+    ).rejects.toMatchObject({ code: "wrong-state" });
+  });
+
+  test("with no editor the owner picks the files to finish with, so no hash is named and none applies", async () => {
+    const transport = fakeTransport({
+      edit_import: () => ({ editId: "e1", state: "finished", changed: true }),
+    });
+
+    const outcome = await finishReviewedEdit(
+      createStudioHost(transport),
+      "e1",
+      report,
+      false,
+    );
+
+    expect(outcome).toEqual({ kind: "finished" });
+    expect(transport.calls.map((call) => call.command)).toEqual([
+      "edit_import",
+    ]);
+    expect(transport.calls[0]?.args).toEqual({ editId: "e1", finish: true });
   });
 });

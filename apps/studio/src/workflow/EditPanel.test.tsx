@@ -72,6 +72,20 @@ describe("EditPanel", () => {
     expect(html).toContain("I reviewed this pixel diff");
   });
 
+  test("finish stays disabled while no report has been shown, however the confirmation is set", () => {
+    const html = renderToStaticMarkup(
+      createElement(EditPanel, {
+        host,
+        edit: { id: "edit-1", status: "open", slots: ["idle/south"] },
+        editorLaunched: true,
+        canMutate: true,
+      }),
+    );
+
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Finish and keep<\/button>/);
+    expect(html).toContain("Waiting for the report-only check");
+  });
+
   test("missing editor exposes export and import instead of an editor claim", () => {
     const html = renderToStaticMarkup(
       createElement(EditPanel, {

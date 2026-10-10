@@ -260,6 +260,14 @@ export function statusSummary(
       assets: status.assets.length,
     },
     jobs,
+    // An editor save imported by the session's watcher changes no count, only
+    // this: a host that polls `status` sees the save by comparing it.
+    openEdits: status.edits
+      .filter((edit) => edit.status === "open")
+      .map((edit) => ({
+        id: edit.id,
+        previewSheetHash: edit.preview?.sheetHash ?? null,
+      })),
     invalid: status.invalid.map((p) => ({ file: p.file })),
   };
 }

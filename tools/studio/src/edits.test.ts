@@ -163,6 +163,158 @@ describe("editing with files and no editor", () => {
     expect(set?.status).toBe("complete");
   });
 
+  test("status carries each open edit's saved-sheet hash, so a save that changes no count still changes the status", async () => {
+    const { rig, config, over } = pickedSet();
+    const dir = scratch();
+    const open = new Studio(config, depsFor(capture(), over), "oneshot");
+    const session = open.owner();
+    if ("ok" in session) throw new Error("busy");
+    session.openEdit("e1", "w", ["idle/south"], rig.content);
+    await open.teardown();
+    type Status = { counts: unknown; openEdits: unknown };
+    const statusOf = async () => {
+      const { outcome } = await run(config, "status", {}, over);
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome));
+      return outcome.result as Status;
+    };
+    const save = async (n: number) => {
+      const sheet = sheetOf(CELL, [
+        { slot: "idle/south", frames: four(rig, n) },
+      ]);
+      writeFileSync(join(dir, `s${n}.png`), sheet.png);
+      writeFileSync(join(dir, `s${n}.json`), sheet.json);
+      const { outcome } = await run(
+        config,
+        "import",
+        {
+          id: "e1",
+          png: join(dir, `s${n}.png`),
+          json: join(dir, `s${n}.json`),
+        },
+        over,
+      );
+      expect(outcome.ok).toBe(true);
+    };
+
+    const before = await statusOf();
+    await save(20);
+    const first = await statusOf();
+    await save(30);
+    const second = await statusOf();
+
+    expect(before.openEdits).toEqual([{ id: "e1", previewSheetHash: null }]);
+    expect(first.openEdits).toEqual([
+      { id: "e1", previewSheetHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    ]);
+    expect(second.openEdits).not.toEqual(first.openEdits);
+    // The counts alone cannot tell the saves apart: this is why the hash is here.
+    expect(second.counts).toEqual(first.counts);
+  });
+
+  test("finish with reviewed refuses a sheet saved after the one reviewed, leaves the edit open, and finishes the reviewed one", async () => {
+    const { rig, config, over } = pickedSet();
+    const dir = scratch();
+    const open = new Studio(config, depsFor(capture(), over), "oneshot");
+    const session = open.owner();
+    if ("ok" in session) throw new Error("busy");
+    session.openEdit("e1", "w", ["idle/south"], rig.content);
+    await open.teardown();
+    const files = (n: number) => {
+      const sheet = sheetOf(CELL, [
+        { slot: "idle/south", frames: four(rig, n) },
+      ]);
+      writeFileSync(join(dir, `s${n}.png`), sheet.png);
+      writeFileSync(join(dir, `s${n}.json`), sheet.json);
+      return { png: join(dir, `s${n}.png`), json: join(dir, `s${n}.json`) };
+    };
+    const hashOf = (png: string) =>
+      new Bun.CryptoHasher("sha256")
+        .update(new Uint8Array(readFileSync(png)))
+        .digest("hex");
+    const v1 = files(20);
+    const v2 = files(30);
+    expect(
+      (await run(config, "import", { id: "e1", ...v1 }, over)).outcome.ok,
+    ).toBe(true);
+    expect(
+      (await run(config, "import", { id: "e1", ...v2 }, over)).outcome.ok,
+    ).toBe(true);
+
+    const stale = await run(
+      config,
+      "finish",
+      { id: "e1", ...v2, reviewed: hashOf(v1.png) },
+      over,
+    );
+
+    expect(stale.outcome).toMatchObject({
+      ok: false,
+      error: { code: "stale-review" },
+    });
+    expect(readStudioStatus(rig.root).edits[0]?.status).toBe("open");
+    const named = await run(
+      config,
+      "finish",
+      { id: "e1", ...v2, reviewed: hashOf(v2.png) },
+      over,
+    );
+    expect(named.outcome).toMatchObject({
+      ok: true,
+      result: { state: "finished" },
+    });
+  });
+
+  test("finish through the editor hands the reviewed hash to the editor's export-and-finish, and a plain finish hands none", async () => {
+    const { config, over } = pickedSet();
+    const asked: unknown[] = [];
+    const studio = new Studio(
+      config,
+      depsFor(capture(), {
+        ...over,
+        createEditor: (session) => ({
+          ...fakeEditor(session, []),
+          refresh: async (_id, _content, mode, reviewed) => {
+            asked.push([mode, reviewed ?? null]);
+            return {
+              ok: false,
+              reason: "stale-review",
+              message: "saved again",
+            } as never;
+          },
+        }),
+      }),
+      "oneshot",
+    );
+
+    const named = await execute(studio, "finish", {
+      id: "e1",
+      reviewed: "a".repeat(64),
+    });
+    await execute(studio, "finish", { id: "e1" });
+
+    expect(named).toMatchObject({ ok: false, error: { code: "stale-review" } });
+    expect(asked).toEqual([
+      ["finish", "a".repeat(64)],
+      ["finish", null],
+    ]);
+  });
+
+  test("reviewed is a sheet hash: anything else is refused before the editor or the store is touched", async () => {
+    const { config, over } = pickedSet();
+    for (const reviewed of ["", "not-a-hash", 7]) {
+      const { outcome } = await run(
+        config,
+        "finish",
+        { id: "e1", reviewed },
+        over,
+      );
+      expect(outcome, String(reviewed)).toMatchObject({
+        ok: false,
+        error: { code: "invalid-arguments" },
+      });
+    }
+  });
+
   test("finish with --method script and a --description records a script step; the default stays a hand edit", async () => {
     const { rig, config, over } = pickedSet();
     const dir = scratch();

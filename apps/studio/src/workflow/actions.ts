@@ -303,3 +303,35 @@ export async function sheetFlow<T>(input: {
       input.onError(error instanceof Error ? error.message : String(error));
   }
 }
+
+export const STALE_REVIEW_MESSAGE =
+  "The workspace changed since this report. Review the new version, then finish.";
+
+export type FinishOutcome =
+  | { readonly kind: "finished" }
+  | { readonly kind: "stale"; readonly message: string };
+
+/**
+ * Finishes an edit with the version the owner reviewed. With the editor, the
+ * finish names the sheet hash of the report on screen, and the session refuses
+ * (`stale-review`) if the workspace was saved again since: that is a plain
+ * message, and the caller refreshes the report. Without an editor the owner
+ * picks the files to finish with in the same step, so there is no earlier
+ * save for them to have missed and no hash to name.
+ */
+export async function finishReviewedEdit(
+  host: StudioHost,
+  editId: string,
+  report: EditReport,
+  editorLaunched: boolean | undefined,
+): Promise<FinishOutcome> {
+  try {
+    if (editorLaunched === false) await host.editImport(editId, true);
+    else await host.call("finish", { id: editId, reviewed: report.sheetHash });
+    return { kind: "finished" };
+  } catch (error) {
+    if (error instanceof HostError && error.code === "stale-review")
+      return { kind: "stale", message: STALE_REVIEW_MESSAGE };
+    throw error;
+  }
+}
