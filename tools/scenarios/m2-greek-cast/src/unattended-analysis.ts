@@ -6,6 +6,7 @@
 // existing ones, called and not redefined. The new rules are the ones about time: the windows with no service are left
 // out of queue wait and of the longest quiet stretch; the recovery after the proxy returns is judged in ticks.
 
+import { DIVINE_CAPACITY_RESOURCE } from "@panthea/world";
 import type { StoredEvent } from "./checks";
 import {
   analyzeEpisode,
@@ -327,6 +328,26 @@ export function isDirectorEvent(event: StoredEvent): boolean {
 }
 
 const minutes = (ms: number): string => (ms / 60_000).toFixed(1);
+
+/**
+ * The event that is a god act itself, among the events its proposal caused. A bless and a strike commit the divinity
+ * they cost first (a `resource-consumed` of the god's), so the first event on the correlation is the bill, not the act.
+ * An act with only a cost has no event of its own and falls back on the first.
+ */
+export function actEventOf(
+  god: string,
+  caused: readonly StoredEvent[],
+): StoredEvent {
+  const own = caused.find(
+    (e) =>
+      !(
+        e.kind === "resource-consumed" &&
+        e.entityId === god &&
+        e.resource === DIVINE_CAPACITY_RESOURCE
+      ),
+  );
+  return own ?? (caused[0] as StoredEvent);
+}
 
 function pickSpread<T>(items: readonly T[], count: number): T[] {
   if (items.length <= count) return [...items];
@@ -867,7 +888,7 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
       tick: Number(e.tick),
       phase: phaseOfTick(result, Number(e.tick)),
       text:
-        `the director's ${String(e.kind)} on ${String(e.entityId)}` +
+        `the director's ${String(e.kind)} on ${String(e.entityId)} [${e.id}]` +
         (prayer === undefined
           ? ", not yet prayed about"
           : `, prayed about to ${String(prayer.god)} [${prayer.id}]`),
@@ -889,17 +910,18 @@ export function analyzeUnattended(data: UnattendedRunData): UnattendedAnalysis {
               ).length > 0,
           )
           .map(({ proposal, caused }) => {
+            // Ordered by when the act began, but cited by the act's own event.
             const first = caused[0] as StoredEvent;
-            return { god, proposal, first };
+            return { god, proposal, first, act: actEventOf(god, caused) };
           }),
       )
       .sort((a, b) => Number(a.first.sequence) - Number(b.first.sequence)),
     5,
-  ).map(({ god, proposal, first }) => ({
-    id: first.id,
-    tick: Number(first.tick),
-    phase: phaseOfTick(result, Number(first.tick)),
-    text: `${god}'s ${proposal.kind}, which caused a told belief or a felt change [${first.id}]`,
+  ).map(({ god, proposal, act }) => ({
+    id: act.id,
+    tick: Number(act.tick),
+    phase: phaseOfTick(result, Number(act.tick)),
+    text: `${god}'s ${proposal.kind}, which caused a told belief or a felt change [${act.id}]`,
   }));
 
   const rowsHold = rows.every((r) => r.ok);
