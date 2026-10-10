@@ -414,6 +414,9 @@ describe("WorkflowView controls", () => {
     expect(html).toContain("Footprint height");
     expect(html).toContain("Original-work licence");
     expect(html).toContain("Author / method description");
+    expect(html).toMatch(
+      /Author \/ method description <span class="field-hint">optional<\/span>/,
+    );
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Pack draft<\/button>/);
   });
 

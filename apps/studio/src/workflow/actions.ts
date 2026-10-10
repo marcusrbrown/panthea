@@ -68,7 +68,7 @@ export interface PackDraftArgs {
   readonly footprint?: { readonly w: number; readonly h: number };
   readonly originalWork?: {
     readonly licence: string;
-    readonly attribution: string;
+    readonly attribution?: string;
   };
 }
 
@@ -119,8 +119,11 @@ export function buildPackArgs(
   if (packNeedsOriginalWork(input.selectedSet)) {
     const licence = input.originalWorkLicence.trim();
     const attribution = input.originalWorkAttribution.trim();
-    if (licence === "" || attribution === "") return undefined;
-    originalWork = { licence, attribution };
+    if (licence === "") return undefined;
+    originalWork = {
+      licence,
+      ...(attribution === "" ? {} : { attribution }),
+    };
   }
 
   const nextRecordId = (base: string) => {

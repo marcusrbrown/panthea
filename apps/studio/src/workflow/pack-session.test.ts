@@ -77,6 +77,7 @@ function packThroughSession(
     readonly styleTag: string;
     readonly footprintWidth?: string;
     readonly footprintHeight?: string;
+    readonly originalWorkAttribution?: string;
   },
 ) {
   expect(buildPackArgs).toBeFunction();
@@ -92,7 +93,9 @@ function packThroughSession(
     footprintWidth: values.footprintWidth ?? "1",
     footprintHeight: values.footprintHeight ?? "1",
     originalWorkLicence: "MIT",
-    originalWorkAttribution: "Marcus R. Brown, hand-edited in Aseprite",
+    originalWorkAttribution:
+      values.originalWorkAttribution ??
+      "Marcus R. Brown, hand-edited in Aseprite",
   });
   if (!input) throw new Error("The valid pack form did not produce arguments");
   const result = rig.session.pack(
@@ -157,10 +160,20 @@ describe("pack form arguments against an in-process StudioSession", () => {
     const { input, asset } = packThroughSession(rig, "wp", {
       assetId: "zeus-portrait",
       styleTag: "u5-test",
+      originalWorkAttribution: "",
     });
 
     expect(input.footprint).toBeUndefined();
-    expect(input.originalWork?.licence).toBe("MIT");
+    expect(input.originalWork).toEqual({ licence: "MIT" });
+    expect(
+      asset.record.manifest.provenance.licences.find(
+        (licence) => licence.role === "original-work",
+      ),
+    ).toEqual({
+      subject: "zeus-portrait",
+      role: "original-work",
+      licence: "MIT",
+    });
     expect(asset.record.manifest.kind).toBe("portrait");
   });
 

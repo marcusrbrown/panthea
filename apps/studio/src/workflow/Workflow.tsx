@@ -1296,11 +1296,11 @@ export function WorkflowView({
                         />
                       </label>
                       <label className="workflow-field">
-                        Author / method description
+                        Author / method description{" "}
+                        <span className="field-hint">optional</span>
                         <textarea
                           className="workflow-control"
                           rows={2}
-                          required
                           value={originalWorkAttribution}
                           onChange={(event) =>
                             setOriginalWorkAttribution(event.target.value)

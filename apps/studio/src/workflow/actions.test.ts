@@ -123,6 +123,67 @@ describe("workflow host actions", () => {
     });
   });
 
+  test("hand-edited packs are enabled with a licence and blank attribution", () => {
+    const args = buildPackArgs({
+      selectedSet: {
+        id: "w",
+        kind: "sprite",
+        authored: { "idle/south": { editId: "e1", frames: 4 } },
+      },
+      assets: [],
+      assetId: "zeus-idle",
+      styleTag: "u5-test",
+      footprintWidth: "1",
+      footprintHeight: "2",
+      originalWorkLicence: "MIT",
+      originalWorkAttribution: "",
+    });
+
+    expect(args).toBeDefined();
+  });
+
+  test("blank author or method omits attribution from pack arguments", () => {
+    const args = buildPackArgs({
+      selectedSet: {
+        id: "w",
+        kind: "sprite",
+        authored: { "idle/south": { editId: "e1", frames: 4 } },
+      },
+      assets: [],
+      assetId: "zeus-idle",
+      styleTag: "u5-test",
+      footprintWidth: "1",
+      footprintHeight: "2",
+      originalWorkLicence: "MIT",
+      originalWorkAttribution: "  ",
+    });
+
+    expect(args?.originalWork).toEqual({ licence: "MIT" });
+    expect(Object.hasOwn(args?.originalWork ?? {}, "attribution")).toBe(false);
+  });
+
+  test("a filled author or method is passed through as attribution", () => {
+    const args = buildPackArgs({
+      selectedSet: {
+        id: "w",
+        kind: "sprite",
+        authored: { "idle/south": { editId: "e1", frames: 4 } },
+      },
+      assets: [],
+      assetId: "zeus-idle",
+      styleTag: "u5-test",
+      footprintWidth: "1",
+      footprintHeight: "2",
+      originalWorkLicence: "MIT",
+      originalWorkAttribution: "Hand-edited in Aseprite",
+    });
+
+    expect(args?.originalWork).toEqual({
+      licence: "MIT",
+      attribution: "Hand-edited in Aseprite",
+    });
+  });
+
   test("inline params require every threshold and an explicit background", () => {
     const draft = {
       backgroundType: "alpha" as const,
