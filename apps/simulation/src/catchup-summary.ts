@@ -7,6 +7,15 @@
 // names the backlog that produced it: only that backlog, still open, may keep
 // the id it already persisted; every later backlog mints its own.
 //
+// One exception to "every later backlog mints its own": the live loop reads the
+// wall time a catch-up pass itself took as a gap and runs a small follow-up
+// pass at once. That pass is the same absence, not a new one, so a follow-up
+// that says it continues the pass before it (`continuesPrevious`) adds to that
+// summary instead of replacing it: the client then shows the whole absence, not
+// the few seconds the first pass took. The service cannot know whether a client
+// has dismissed the earlier summary, so the combined one is a changed summary
+// and gets a new id, like any other change.
+//
 // Every write here is meant to run inside the transaction that ends (or
 // partially records) the backlog, so the summary row and the progress delete
 // commit or roll back together, and only what committed is ever published.
@@ -180,6 +189,28 @@ export function recordPartialSummary(
     : undefined;
 }
 
+export interface CloseOptions {
+  /**
+   * The pass being closed follows the one before it with nothing running in
+   * between (no live tick): the same absence. It adds to that pass's summary,
+   * which it must adjoin: the summary ended at the sequence this backlog
+   * started after, and no partial summary of its own is bound to it.
+   */
+  readonly continuesPrevious?: boolean;
+}
+
+/** `previous` and `account` as one account: the time and outcomes of the whole absence. */
+function combined(
+  previous: CatchUpSummaryRecord,
+  account: BacklogAccount,
+): BacklogAccount {
+  return {
+    appliedMs: previous.appliedMs + account.appliedMs,
+    skippedMs: previous.skippedMs + account.skippedMs,
+    majorOutcomes: [...previous.majorOutcomes, ...account.majorOutcomes],
+  };
+}
+
 export interface ClosedBacklog {
   /** What the backlog applied, skipped, and found, frozen at its ending sequence. */
   readonly account: BacklogAccount;
@@ -192,17 +223,29 @@ export interface ClosedBacklog {
  * sequence, persists it as the latest summary (unless it amounts to nothing),
  * and clears the progress. Call inside the commit transaction that ends the
  * backlog, so the summary and the delete commit or roll back with it. Returns
- * `undefined` when no backlog is open.
+ * `undefined` when no backlog is open. A pass that amounts to nothing leaves
+ * the earlier summary alone, even when it continues it.
  */
-export function closeCatchUpBacklog(db: Database): ClosedBacklog | undefined {
+export function closeCatchUpBacklog(
+  db: Database,
+  options: CloseOptions = {},
+): ClosedBacklog | undefined {
   const progress = readCatchUpProgress(db);
   if (!progress) {
     return undefined;
   }
   const endSequence = getCurrentSequence(db);
   const account = accountOf(db, progress, endSequence);
+  const previous =
+    options.continuesPrevious === true && progress.summaryId === undefined
+      ? readCatchUpSummary(db)
+      : undefined;
+  const persisted =
+    previous !== undefined && previous.atSequence === progress.startSequence
+      ? combined(previous, account)
+      : account;
   const delivered = isNonEmptyAccount(account)
-    ? persistAccount(db, progress, account, endSequence, false)
+    ? persistAccount(db, progress, persisted, endSequence, false)
     : undefined;
   clearCatchUpProgress(db);
   return { account, delivered };

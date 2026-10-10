@@ -671,3 +671,82 @@ test("prompt size with four owed boons against one", () => {
     `BOON_OWED_FOUR one ${size(one.view("zeus").context)} four ${size(run.view("zeus").context)} digest one ${digestOf(one.view("zeus").context.prompt).join("\n").length} four ${digestOf(run.view("zeus").context.prompt).join("\n").length}`,
   );
 });
+
+// --- A strike names the prayer it answers ------------------------------------------------------------
+
+/** Zeus's strike on `target`, parsed from what his prompt shows and built into a proposal. */
+function builtStrike(run: Run, target: string) {
+  const { schema, snapshot, remembered } = run.view("zeus");
+  const parsed = schema.parse({ action: "strike", target, power: 1 });
+  if (!parsed.ok) throw new Error(parsed.message);
+  const built = buildModelProposal(
+    id("zeus"),
+    snapshot,
+    parsed.value,
+    remembered,
+  );
+  if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+  return built.proposal;
+}
+
+test("a strike on a building a shown prayer lists names that prayer on the proposal, and the building's event carries it", () => {
+  const run = new Run();
+  const petition = run.prayPunish();
+  const proposal = builtStrike(run, "woodshed");
+  expect(proposal).toMatchObject({ kind: "strike", petition });
+  const ran = run.tick(proposal as never);
+  expect(ran.rejected).toEqual([]);
+  const struck = ran.events.find(
+    (e) => e.kind === "building-damaged" || e.kind === "building-ignited",
+  );
+  const named =
+    struck?.kind === "building-damaged"
+      ? struck.petitionId
+      : struck?.kind === "building-ignited" && struck.cause.kind === "strike"
+        ? struck.cause.petitionId
+        : undefined;
+  expect(named).toBe(petition);
+});
+
+test("a strike on the wrongdoer itself names the prayer asking for its punishment, and the mortal-struck event carries it", () => {
+  const run = new Run();
+  const petition = run.prayPunish("farmer", "zeus", []);
+  const proposal = builtStrike(run, "woodcutter");
+  expect(proposal).toMatchObject({ kind: "strike", petition });
+  const ran = run.tick(proposal as never);
+  expect(ran.rejected).toEqual([]);
+  const harm = ran.events.find((e) => e.kind === "mortal-struck");
+  expect(harm?.kind === "mortal-struck" && harm.petitionId).toBe(petition);
+  expect(ran.events.find((e) => e.kind === "petition-answered")).toMatchObject({
+    petitionId: petition,
+    answeredBy: harm?.id,
+  });
+});
+
+test("with two prayers against the same wrongdoer, the strike names the one a boon is owed on", () => {
+  const run = new Run();
+  const first = run.prayPunish("farmer", "zeus", []);
+  const second = run.prayPunish("farmer", "zeus", []);
+  expect(second).not.toBe(first);
+  run.agreed(second);
+  expect(builtStrike(run, "woodcutter")).toMatchObject({ petition: second });
+});
+
+test("a strike on a building in the scene that no shown prayer lists names no prayer, and so does its event", () => {
+  const run = new Run();
+  run.prayPunish("farmer", "zeus", []);
+  const zeus = getActor(run.state, id("zeus"));
+  const shed = run.state.buildings.get(id("woodshed"));
+  if (!zeus || !shed) throw new Error("fixture");
+  run.place("zeus", String(shed.locationId));
+  const proposal = builtStrike(run, "woodshed");
+  expect(proposal.kind).toBe("strike");
+  expect("petition" in proposal).toBe(false);
+  const ran = run.tick(proposal as never);
+  expect(ran.rejected).toEqual([]);
+  const struck = ran.events.find(
+    (e) => e.kind === "building-damaged" || e.kind === "building-ignited",
+  );
+  expect(struck).toBeDefined();
+  expect(JSON.stringify(struck)).not.toContain("petitionId");
+});

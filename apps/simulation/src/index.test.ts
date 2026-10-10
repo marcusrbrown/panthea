@@ -6,7 +6,14 @@
 // covered by scripts/scan-binary.sh.
 
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  setSystemTime,
+  test,
+} from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +44,7 @@ import {
   createHydratedStatusRef,
   refreshStatusAfterCatchUp,
   resolveAppDataDir,
+  startService,
   TICK_TIMER_ENV,
 } from "./index";
 import { parseLaunchConfig } from "./launch-config";
@@ -675,6 +683,79 @@ describe("service (bun run src/index.ts)", () => {
     });
     expect(replaced.appliedMs).toBeGreaterThanOrEqual(2 * 60 * 1000);
     expect(await fetchSummary(later.port, "summary-token-7")).toEqual(replaced);
+  });
+
+  /**
+   * Starts the service on a store whose cursor is three minutes behind, with the system clock jumping `jumpMs` forward the
+   * moment the startup catch-up begins: the wall time a long catch-up takes, which the live loop then reads as a gap.
+   * Resolves with the service once its second catch-up pass has finished (the live loop ran it at once, no tick between).
+   */
+  async function serviceWhoseCatchUpTookLong(token: string, jumpMs: number) {
+    await createStore();
+    setCursor(Date.now() - 3 * 60 * 1000);
+    const lines: string[] = [];
+    let jumped = false;
+    const handle = startService({
+      token,
+      launch: parseLaunchConfig(NO_SETTINGS_LINE),
+      appDataDir,
+      port: 0,
+      tickTimerMs: FAST_TICK_MS,
+      handleSignals: false,
+      exit: () => undefined,
+      onLog: (line) => {
+        lines.push(line);
+        if (!jumped && line.endsWith("catch-up started")) {
+          jumped = true;
+          setSystemTime(new Date(Date.now() + jumpMs));
+        }
+      },
+    });
+    const passes = () =>
+      lines.filter((l) => l.endsWith("catch-up finished")).length;
+    await waitUntil("the follow-up catch-up pass to finish", () =>
+      passes() >= 2 ? true : undefined,
+    );
+    return { handle, lines };
+  }
+
+  test("a catch-up that took longer than the sleep threshold leaves one summary for the whole absence: the follow-up pass the live loop runs adds to the main pass's totals", async () => {
+    try {
+      const { handle, lines } = await serviceWhoseCatchUpTookLong(
+        "summary-follow-up-token",
+        20_000,
+      );
+      try {
+        expect(
+          lines.filter((l) => l.endsWith("catch-up started")),
+        ).toHaveLength(2);
+        const kept = withActiveDb((db) => readCatchUpSummary(db));
+        // Three minutes from the main pass and twenty seconds from the follow-up, not the follow-up's twenty alone.
+        expect(kept?.appliedMs).toBeGreaterThanOrEqual(200_000);
+        expect(kept?.appliedMs).toBeLessThan(205_000);
+        expect(
+          await fetchSummary(handle.port, "summary-follow-up-token"),
+        ).toEqual(kept);
+      } finally {
+        handle.shutdown("test");
+      }
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test("a gap that opens after the world has ticked live is a new absence: it replaces the summary and is not added to it", async () => {
+    const { running, persisted } = await serviceThatCaughtUp("summary-token-9");
+    // Live ticks have run since the catch-up.
+    await running.waitCycles("ticked", 3);
+    // The machine sleeps for a minute.
+    setCursor(Date.now() - 60 * 1000);
+    const replaced = await waitUntil("a new summary", () => {
+      const current = withActiveDb((db) => readCatchUpSummary(db));
+      return current && current.id !== persisted.id ? current : undefined;
+    });
+    expect(replaced.appliedMs).toBeGreaterThanOrEqual(60 * 1000);
+    expect(replaced.appliedMs).toBeLessThan(65 * 1000);
   });
 
   test("a restart prunes model-request payload text older than seven days at startup and keeps the digests", async () => {

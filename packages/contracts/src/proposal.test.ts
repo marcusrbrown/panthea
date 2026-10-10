@@ -150,6 +150,34 @@ test("a valid strike proposal parses to its typed variant", () => {
   }
 });
 
+test("a strike may name the petition it answers; a strike that names none carries none; a malformed petition id is refused", () => {
+  const answering = parseProposal(
+    base({
+      source: "model",
+      kind: "strike",
+      target: "lykos",
+      power: 1,
+      petition: "evt-4",
+    }),
+  );
+  expect(answering.ok).toBe(true);
+  if (answering.ok && answering.value.kind === "strike") {
+    expect(String(answering.value.petition)).toBe("evt-4");
+  }
+  const bare = parseProposal(
+    base({ kind: "strike", target: "lykos", power: 1 }),
+  );
+  expect(bare.ok).toBe(true);
+  if (bare.ok) expect("petition" in bare.value).toBe(false);
+  for (const petition of ["", 4, null]) {
+    expect(
+      parseProposal(
+        base({ kind: "strike", target: "lykos", power: 1, petition }),
+      ).ok,
+    ).toBe(false);
+  }
+});
+
 test("a valid repair proposal parses to its typed variant", () => {
   const result = parseProposal(base({ kind: "repair", structure: "tavern-1" }));
   expect(result.ok).toBe(true);
