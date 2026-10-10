@@ -490,7 +490,7 @@ test("with a thread that needs the god, the openings yield to the digest rows; a
     term: tell("zeus"),
   });
   const hera = digestOf(waiting.view("hera").context.prompt);
-  expect(hera.join("\n")).toContain("OPEN, waiting on zeus");
+  expect(hera.join("\n")).toContain("OPEN with zeus");
   expect(hera.join("\n")).toContain("You may begin a bargain");
   expect(second).toBeDefined();
 });

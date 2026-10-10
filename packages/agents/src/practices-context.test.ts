@@ -223,10 +223,10 @@ test("the digest shows a thread's cause as this god knows it, the last answered 
   expect(run.view("hera").context.prompt).not.toContain(PRACTICES_HEADING);
 
   const thread = run.demand(cause);
-  // Hera made the demand: she knows the cause, it is hers, and she can only withdraw it.
+  // Hera made the demand and can only withdraw it: it is one line, which names the other god and carries the withdrawal.
   const hera = rowsOf(digestOf(run.view("hera").context.prompt))[0] as string;
-  expect(hera).toContain(`farmer told you of it [${cause}]`);
-  expect(hera).toContain("you demanded");
+  expect(hera).toContain("OPEN with zeus");
+  expect(hera).not.toContain("\n");
   expect(hera).toContain('"withdraw"');
   expect(hera).not.toContain('"accept"');
 
@@ -246,7 +246,7 @@ test("after a counter, the answer is the other god's: the countering god may onl
   const thread = run.demand(run.hears());
   run.move("zeus", "counter", thread.id, { term: tell("zeus", 150) });
   const zeus = rowsOf(digestOf(run.view("zeus").context.prompt))[0] as string;
-  expect(zeus).toContain("you countered");
+  expect(zeus).toContain("OPEN with hera");
   expect(zeus).not.toContain('"accept"');
   expect(zeus).toContain('"withdraw"');
   const hera = rowsOf(digestOf(run.view("hera").context.prompt))[0] as string;
@@ -465,10 +465,9 @@ test("the other god's private goal and unobserved evidence never appear in this 
   expect(text).not.toContain(secret);
   expect(text).not.toContain("SECRET-GOAL");
   expect(text).not.toContain(cause);
-  // Control: Hera holds the evidence, and her own prompt shows it.
+  // Control: Hera holds the evidence, and her own prompt shows it. Her open demand is one line and no longer repeats the cause.
   const hera = run.view("hera");
   expect(hera.context.prompt).toContain(`farmer told you: "${secret}"`);
-  expect(hera.context.prompt).toContain(`[${cause}]`);
 });
 
 test("a cause the god does know, told or seen, is shown to it in its own terms even when the other party made the demand", () => {

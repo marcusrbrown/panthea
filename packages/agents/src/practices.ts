@@ -1334,9 +1334,33 @@ export function offersAnswer(view: Pick<ThreadView, "moves">): boolean {
   return view.moves.some((move) => move !== "withdraw");
 }
 
+/**
+ * A thread the god only waits on: its own offer or demand, not yet accepted, with withdrawal the only move
+ * it has. Its row is one line (`compactRow`), the form every squeezed row already takes, since the other
+ * party's answer is the only thing it waits for and there is nothing to choose.
+ */
+function isWaiting(view: ThreadView): boolean {
+  return (
+    view.standing === "other" &&
+    view.status !== "accepted" &&
+    view.moves.length > 0 &&
+    !offersAnswer(view)
+  );
+}
+
 /** The withdrawal of a thread, as the object to send. */
+function withdrawIntent(view: ThreadView): Record<string, unknown> {
+  return (
+    view.intents.withdraw ?? {
+      action: "practice",
+      move: "withdraw",
+      thread: view.id,
+    }
+  );
+}
+
 function withdrawLine(view: ThreadView): string {
-  return `  You may withdraw it: ${json(view.intents.withdraw ?? { action: "practice", move: "withdraw", thread: view.id })}`;
+  return `  You may withdraw it: ${json(withdrawIntent(view))}`;
 }
 
 /**
@@ -1422,6 +1446,10 @@ function fullRow(view: ThreadView): string[] {
       );
       break;
     case "other":
+      if (isWaiting(view)) {
+        lines.push(compactRow(view));
+        break;
+      }
       if (view.supplication !== undefined) {
         const { petition, boonGiven, offeringMade } = view.supplication;
         if (view.status === "accepted") {
@@ -1476,10 +1504,16 @@ function compactRow(view: ThreadView): string {
         : `- [${view.id}] YOU OWE ${view.other}: ${term}, ${by}.${view.unperformable === undefined ? "" : " UNPERFORMABLE now."}`;
     case "awaiting":
       return `- [${view.id}] AWAITING YOUR ANSWER: ${term}, ${by}. Answer by tick ${view.negotiationDeadline} with ${view.moves.map((move) => json(view.intents[move] ?? { action: "practice", move, thread: view.id })).join(" or ")}.`;
-    case "other":
-      return view.supplication !== undefined
-        ? `- [${view.id}] ${view.status === "accepted" ? `${view.other} ACCEPTED your terms` : `OPEN, terms offered to ${view.other}`}: ${term}, ${by}.`
-        : `- [${view.id}] OPEN with ${view.other}: ${term}, ${by}.`;
+    case "other": {
+      const row =
+        view.supplication !== undefined
+          ? `- [${view.id}] ${view.status === "accepted" ? `${view.other} ACCEPTED your terms` : `OPEN, terms offered to ${view.other}`}: ${term}, ${by}.`
+          : `- [${view.id}] OPEN with ${view.other}: ${term}, ${by}.`;
+      // The one move a waiting thread has stays written out to copy: squeezing the row may not take the way to withdraw.
+      return isWaiting(view)
+        ? `${row} Withdraw with ${json(withdrawIntent(view))}.`
+        : row;
+    }
   }
 }
 
