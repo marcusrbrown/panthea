@@ -9,6 +9,7 @@ import {
 import { join } from "node:path";
 import { sha256Hex } from "@panthea/assets";
 import { portraitFixture, spriteFixture } from "@panthea/assets/fixtures";
+import { isPreviewSlug, PREVIEW_SOURCE_KINDS } from "@panthea/assets/studio";
 import {
   emptyWorld,
   fakeWatchFs,
@@ -29,8 +30,11 @@ import {
   type AtlasBytes,
   BRIDGE_PREFIX,
   bridgePaths,
+  isSlug,
+  isSourceKind,
   type Listing,
   type ResolveRequest,
+  SOURCE_KINDS,
   type SourceResolution,
 } from "./port";
 
@@ -846,5 +850,32 @@ describe("the production watcher waits for a root that does not exist yet", () =
         .open()
         .some((watch) => watch.path === w.studioRoot && watch.recursive),
     ).toBe(true);
+  });
+});
+
+describe("the browser's copies of the core's vocabulary", () => {
+  test("name the same source kinds and accept the same ids", () => {
+    expect([...SOURCE_KINDS]).toEqual([...PREVIEW_SOURCE_KINDS]);
+    for (const kind of [...PREVIEW_SOURCE_KINDS, "registry", "", "toString"])
+      expect(isSourceKind(kind), kind).toBe(
+        (PREVIEW_SOURCE_KINDS as readonly string[]).includes(kind),
+      );
+    for (const id of [
+      "zeus-portrait",
+      "a",
+      "a-b-c",
+      "Zeus",
+      "a--b",
+      "-a",
+      "a-",
+      "../x",
+      "a/b",
+      "",
+      "a".repeat(128),
+      "a".repeat(129),
+    ])
+      expect(isSlug(id), id).toBe(isPreviewSlug(id));
+    for (const value of [undefined, null, 7, {}])
+      expect(isSlug(value)).toBe(isPreviewSlug(value));
   });
 });

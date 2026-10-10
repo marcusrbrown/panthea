@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { inTauri, tauriHost } from "../host/tauri";
 import { createDomHost, decodePng } from "../renderer/browser";
 import { createGpuBackend } from "../renderer/gpu";
 import {
@@ -15,6 +16,7 @@ import {
 } from "../renderer/preview";
 import { createDevBridgeSource } from "../source/client";
 import type { AssetProblem, AssetSource, Listing } from "../source/port";
+import { createTauriSource } from "../source/tauri";
 import { HARNESS_CAMERA } from "./layout";
 
 export interface PreviewParams {
@@ -68,7 +70,10 @@ export function usePreview(
     const element = container.current;
     if (element === null) return;
     const options = initial.current;
-    const source = createDevBridgeSource();
+    // The packaged app reads through the native host; a browser, through the dev bridge.
+    const source = inTauri()
+      ? createTauriSource(tauriHost(), { onProblem: addProblem })
+      : createDevBridgeSource();
     let latest: RenderBackend | undefined;
     let renders = 0;
     let frame = 0;

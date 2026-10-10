@@ -8,15 +8,23 @@ import { join } from "node:path";
 import {
   type ApproveOptions,
   type AssetOpResult,
+  type CandidateFrames,
   type CommandResult,
+  candidateFrames,
+  type EditRecord,
   type EditResult,
+  editReport,
   type FinishStep,
+  isPreviewSlug,
+  isPreviewSourceKind,
   newRequestRecord,
   type PackInput,
+  parsePreviewResolve,
   type RequestInput,
   resolveEdit,
   type StudioAssetRecord,
   type StudioContent,
+  type StudioSession,
   sheet,
   slotConformance,
   summarizeSheet,
@@ -24,6 +32,7 @@ import {
 import { parseConformParams } from "./config";
 import {
   assetSummary,
+  type CandidateKinds,
   candidateSummary,
   done,
   editSummary,
@@ -37,6 +46,11 @@ import {
   statusSummary,
 } from "./format";
 import { isOutcome, type Studio } from "./host";
+
+/** The sheet-hash type the SDK takes, without a second dependency for one alias. */
+type Sha256 = NonNullable<
+  Parameters<import("@panthea/assets/studio").StudioSession["finishEdit"]>[5]
+>;
 
 type Kind = "string" | "int" | "number" | "json";
 export type Spec = Record<string, { t: Kind; req?: true }>;
@@ -252,6 +266,51 @@ function readFiles(
   }
 }
 
+interface Shape {
+  readonly slots: RequestInput["slots"];
+  readonly kind: "sprite" | "portrait";
+}
+
+/** The request fields `generate` and `resolve` both take, checked before anything is built or opened. */
+function requestShape(a: Args): Shape | Outcome {
+  const slots = parseSlots(a.slots);
+  if (isOutcome(slots)) return slots;
+  if (a.kind !== "sprite" && a.kind !== "portrait")
+    return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
+  return { slots, kind: a.kind };
+}
+
+/** The request record and spec for these arguments, built from content alone: no store, lock or runtime. */
+function buildRequest(
+  studio: Studio,
+  content: StudioContent,
+  a: Args,
+  shape: Shape,
+  edit?: Edit,
+) {
+  const built = newRequestRecord(
+    content,
+    {
+      id: a.id as string,
+      subject: a.subject as string,
+      kind: shape.kind,
+      slots: shape.slots,
+      ...(a.batch === undefined ? {} : { batch: a.batch as number }),
+      ...(a.seed === undefined ? {} : { seed: a.seed as number }),
+      ...(a.styleNote === undefined
+        ? {}
+        : { styleNote: a.styleNote as string }),
+      ...(edit === undefined ? {} : { edit }),
+    },
+    studio.deps.drawSeed,
+  );
+  return built.ok
+    ? built.value
+    : refuse("invalid-request", "the request is not valid", {
+        error: j(built.error),
+      });
+}
+
 /** Runs the queued drain to its end in a one-shot command; in a session it answers at once. */
 async function afterEnqueue(
   studio: Studio,
@@ -289,7 +348,11 @@ function resolveParams(studio: Studio, a: Args) {
   if ((a.set === undefined) === (a.params === undefined))
     return refuse("invalid-arguments", "give exactly one of --set or --params");
   if (a.set !== undefined) {
-    const named = studio.config.conform?.[a.set as string];
+    const sets = studio.config.conform;
+    const name = a.set as string;
+    // Own names only: a set called constructor or __proto__ is not in the config.
+    const named =
+      sets !== undefined && Object.hasOwn(sets, name) ? sets[name] : undefined;
     return (
       named ??
       refuse(
@@ -418,6 +481,68 @@ function reportSlot(
   return done(detail);
 }
 
+function candidateReply(studio: Studio, a: Args, withBytes: boolean): Outcome {
+  const root = studio.root;
+  if (root === undefined) return studio.missing("studioRoot");
+  const result: CandidateFrames = candidateFrames(
+    root,
+    a.candidateId as string,
+  );
+  if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+  return done({
+    candidateId: result.candidateId,
+    width: result.width,
+    height: result.height,
+    frames: result.frames.map((frame) => ({
+      index: frame.index,
+      durationMs: frame.durationMs,
+      imageHash: frame.imageHash,
+      ...(withBytes
+        ? { base64: Buffer.from(frame.bytes).toString("base64") }
+        : {}),
+    })),
+  });
+}
+
+/**
+ * What an edit's workspace holds, from the edit's own record: the frames of the
+ * latest save, or else the frames it opened with, one tag per slot (1-based,
+ * as the editor reports them) and the strip they make.
+ */
+function workspaceOf(edit: EditRecord): Json {
+  const durationsMs: number[] = [];
+  const tags: Json[] = [];
+  for (const slot of edit.slots) {
+    const frames =
+      edit.preview?.slots[slot]?.frames ?? edit.baseSignature[slot]?.frames;
+    const from = durationsMs.length + 1;
+    for (const frame of frames ?? []) durationsMs.push(frame.durationMs);
+    tags.push({ name: slot, from, to: durationsMs.length });
+  }
+  return {
+    size: { w: edit.cell.w * durationsMs.length, h: edit.cell.h },
+    durationsMs,
+    tags,
+  };
+}
+
+/** The reply for an edit that exists: its slots, its workspace, and where the workspace file is (null when there is none). */
+function editReply(
+  session: StudioSession,
+  id: string,
+  workspacePath: string | undefined,
+): Outcome {
+  const found = session.store.readEdit(id);
+  if (found.kind !== "found")
+    return refuse("wrong-state", `edit ${id} cannot be read`);
+  return done({
+    editId: id,
+    slots: [...found.value.slots],
+    workspace: workspaceOf(found.value),
+    workspacePath: workspacePath ?? null,
+  });
+}
+
 const LIST_KINDS = [
   "requests",
   "jobs",
@@ -434,7 +559,14 @@ const OPS: Record<string, OpDef> = {
       const status = studio.readOnly();
       return isOutcome(status)
         ? status
-        : done(statusSummary(status, studio.deps.isAlive));
+        : done({
+            ...(statusSummary(status, studio.deps.isAlive) as Record<
+              string,
+              Json
+            >),
+            rootLock: studio.rootLock(status),
+            conformSets: Object.keys(studio.config.conform ?? {}).sort(),
+          });
     },
   },
   list: {
@@ -446,8 +578,12 @@ const OPS: Record<string, OpDef> = {
       switch (a.kind) {
         case "requests":
           return done(status.requests.map(requestSummary));
-        case "jobs":
-          return done(status.jobs.map(jobSummary));
+        case "jobs": {
+          const kinds: CandidateKinds = new Map(
+            status.candidates.map((c) => [c.id, c.result.status] as const),
+          );
+          return done(status.jobs.map((record) => jobSummary(record, kinds)));
+        }
         case "candidates":
           return done(status.candidates.map(candidateSummary));
         case "working-sets":
@@ -490,7 +626,126 @@ const OPS: Record<string, OpDef> = {
       );
     },
   },
+  "edit-report": {
+    // The latest save of an edit: each frame's stored report-only result and
+    // its changed pixels against the version the save was measured against.
+    spec: str("id", true),
+    run: (studio, a) => {
+      const root = studio.root;
+      if (root === undefined) return studio.missing("studioRoot");
+      const result = editReport(root, a.id as string);
+      if (!result.ok) return refuse(result.reason, safeMessage(result.message));
+      const { ok: _ok, ...reply } = result;
+      return done(j(reply));
+    },
+  },
+  // A candidate's stored conformed image. `candidate-frames` is the metadata
+  // alone; `candidate-bytes` adds each frame's PNG as base64 and is reached
+  // only by the host's byte path. Both read without the writer lock.
+  "candidate-frames": {
+    spec: str("candidateId", true),
+    run: (studio, a) => candidateReply(studio, a, false),
+  },
+  "candidate-bytes": {
+    spec: str("candidateId", true),
+    run: (studio, a) => candidateReply(studio, a, true),
+  },
   derive: { spec: {}, run: () => unsupported() },
+
+  // The preview's asset source: read-only, no writer lock, answered from the
+  // source's last scan of the configured registry and studio roots.
+  "source-list": {
+    spec: {},
+    run: (studio) => {
+      const source = studio.previewSource();
+      return isOutcome(source) ? source : done(j(source.list()));
+    },
+  },
+  "source-resolve": {
+    spec: {
+      ...str("source", true),
+      ...str("id", true),
+      ...str("state"),
+      ...str("direction"),
+      ...str("ability"),
+      ...str("expression"),
+    },
+    run: (studio, a) => {
+      const request = parsePreviewResolve(a);
+      if (typeof request === "string")
+        return refuse("invalid-arguments", request);
+      const source = studio.previewSource();
+      return isOutcome(source) ? source : done(j(source.resolve(request)));
+    },
+  },
+  "source-bytes": {
+    // A held atlas by selection and the pixel key it was resolved with, or the placeholder by its hash.
+    spec: {
+      ...str("source"),
+      ...str("id"),
+      ...str("v"),
+      ...str("placeholder"),
+    },
+    run: (studio, a) => {
+      const base64 = (bytes: Uint8Array) =>
+        Buffer.from(bytes).toString("base64");
+      if (a.placeholder !== undefined) {
+        if (
+          a.source !== undefined ||
+          a.id !== undefined ||
+          a.v !== undefined ||
+          !/^[0-9a-f]{64}$/.test(a.placeholder as string)
+        )
+          return refuse(
+            "invalid-arguments",
+            "give a placeholder hash alone, or source, id and v",
+          );
+        const source = studio.previewSource();
+        if (isOutcome(source)) return source;
+        const bytes = source.placeholder(a.placeholder as string);
+        return bytes === undefined
+          ? refuse("not-found", "no such placeholder")
+          : done({
+              placeholder: a.placeholder as string,
+              base64: base64(bytes),
+            });
+      }
+      if (
+        !isPreviewSourceKind(a.source) ||
+        !isPreviewSlug(a.id) ||
+        typeof a.v !== "string"
+      )
+        return refuse(
+          "invalid-arguments",
+          "give source (canon, draft or approved), a lowercase hyphenated id and the version v from source-resolve",
+        );
+      const source = studio.previewSource();
+      if (isOutcome(source)) return source;
+      const got = source.bytes({ source: a.source, id: a.id }, a.v);
+      if (!got.ok)
+        return got.reason === "stale"
+          ? refuse(
+              "stale-version",
+              "the version is not the selection's current one: resolve it again",
+            )
+          : refuse("not-found", "no validated atlas for this selection");
+      return done({
+        source: a.source,
+        id: a.id,
+        pixelKey: got.pixelKey,
+        width: got.width,
+        height: got.height,
+        base64: base64(got.bytes),
+      });
+    },
+  },
+  "source-keys": {
+    spec: {},
+    run: (studio) => {
+      const source = studio.previewSource();
+      return isOutcome(source) ? source : done(j(source.keys()));
+    },
+  },
 
   generate: {
     spec: {
@@ -516,33 +771,13 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(content)) return content;
       const runtime = studio.runtimeFor(session);
       if (isOutcome(runtime)) return runtime;
-      const slots = parseSlots(a.slots);
-      if (isOutcome(slots)) return slots;
-      if (a.kind !== "sprite" && a.kind !== "portrait")
-        return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
+      const shape = requestShape(a);
+      if (isOutcome(shape)) return shape;
       const edit = readEditArgs(a);
       if (isOutcome(edit)) return edit;
-      const built = newRequestRecord(
-        content,
-        {
-          id: a.id as string,
-          subject: a.subject as string,
-          kind: a.kind,
-          slots,
-          ...(a.batch === undefined ? {} : { batch: a.batch as number }),
-          ...(a.seed === undefined ? {} : { seed: a.seed as number }),
-          ...(a.styleNote === undefined
-            ? {}
-            : { styleNote: a.styleNote as string }),
-          ...(edit === undefined ? {} : { edit: edit.request }),
-        },
-        studio.deps.drawSeed,
-      );
-      if (!built.ok)
-        return refuse("invalid-request", "the request is not valid", {
-          error: j(built.error),
-        });
-      const spec = built.value.spec;
+      const built = buildRequest(studio, content, a, shape, edit?.request);
+      if (isOutcome(built)) return built;
+      const spec = built.spec;
       if (edit !== undefined && spec.edit !== undefined) {
         // Checked with the files served from memory, so a refusal stores nothing.
         const checked = resolveEdit(spec.edit, spec.generated, {
@@ -565,7 +800,7 @@ const OPS: Record<string, OpDef> = {
           );
         }
       }
-      const ack = session.submitRequest(built.value.record);
+      const ack = session.submitRequest(built.record);
       if (!ack.ok)
         return refuse(ack.reason, safeMessage(ack.message), {
           requestId: a.id as string,
@@ -574,14 +809,47 @@ const OPS: Record<string, OpDef> = {
       return afterEnqueue(studio, a.id as string, ack.jobIds);
     },
   },
+  resolve: {
+    // The request fields only: edits name files by path, and a preview never reads files.
+    spec: {
+      ...str("id", true),
+      ...str("subject", true),
+      ...str("kind", true),
+      slots: { t: "json", req: true },
+      batch: { t: "int" },
+      seed: { t: "int" },
+      ...str("styleNote"),
+    },
+    run: (studio, a) => {
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const shape = requestShape(a);
+      if (isOutcome(shape)) return shape;
+      const built = buildRequest(studio, content, a, shape);
+      if (isOutcome(built)) return built;
+      return done({
+        id: a.id as string,
+        request: j(built.record.request),
+        spec: j(built.spec),
+      });
+    },
+  },
   reroll: {
-    spec: { ...str("requestId", true), perSlot: { t: "int", req: true } },
+    spec: {
+      ...str("requestId", true),
+      perSlot: { t: "int", req: true },
+      ...str("slotKey"),
+    },
     run: async (studio, a) => {
       const session = studio.owner();
       if (isOutcome(session)) return session;
       const runtime = studio.runtimeFor(session);
       if (isOutcome(runtime)) return runtime;
-      const ack = session.reroll(a.requestId as string, a.perSlot as number);
+      const ack = session.reroll(
+        a.requestId as string,
+        a.perSlot as number,
+        a.slotKey as string | undefined,
+      );
       if (!ack.ok)
         return refuse(ack.reason, safeMessage(ack.message), {
           requestId: a.requestId as string,
@@ -715,8 +983,6 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
-      const editor = studio.editorFor(session);
-      if (isOutcome(editor)) return editor;
       const slots = a.slots;
       if (!Array.isArray(slots) || slots.some((s) => typeof s !== "string"))
         return refuse(
@@ -730,6 +996,12 @@ const OPS: Record<string, OpDef> = {
         content,
       );
       if (!opened.ok) return refuse(opened.reason, safeMessage(opened.message));
+      // No editor configured: the edit still exists, with its sheet and
+      // metadata, so the files path (export, edit by hand, import) works.
+      if (studio.config.editor === undefined)
+        return editReply(session, a.id as string, undefined);
+      const editor = studio.editorFor(session);
+      if (isOutcome(editor)) return editor;
       const built = await editor.openWorkspace(a.id as string);
       if (!built.ok)
         return refuse(built.reason, safeMessage(built.message), {
@@ -738,6 +1010,7 @@ const OPS: Record<string, OpDef> = {
             "the edit is open: export its sheet with `export`, edit it by hand and bring it back with `import` or `finish` using --png and --json",
         });
       studio.watchEdit(a.id as string, studio.workspaceHash(a.id as string));
+      const workspacePath = studio.workspacePath(a.id as string);
       return done({
         editId: a.id as string,
         slots: slots as string[],
@@ -750,7 +1023,46 @@ const OPS: Record<string, OpDef> = {
             to: t.to,
           })),
         },
+        // A path the native host launches the editor on; the host strips it before anything reaches the webview.
+        ...(workspacePath === undefined ? {} : { workspacePath }),
       });
+    },
+  },
+  // An edit that is already open: names its workspace file again, rebuilding
+  // it only if it is gone, and makes sure the session is watching it. The path
+  // reaches the native host only, which strips it before the webview.
+  "edit-workspace": {
+    spec: str("id", true),
+    run: async (studio, a) => {
+      const session = studio.owner();
+      if (isOutcome(session)) return session;
+      const id = a.id as string;
+      const found = isPreviewSlug(id)
+        ? session.store.readEdit(id)
+        : ({ kind: "missing" } as const);
+      if (found.kind === "missing") return refuse("not-found", `no edit ${id}`);
+      if (found.kind === "invalid")
+        return refuse("wrong-state", `edit ${id} is invalid`);
+      if (found.value.status !== "open")
+        return refuse(
+          "wrong-state",
+          `edit ${id} is ${found.value.status}, not open`,
+        );
+      if (studio.config.editor === undefined)
+        return editReply(session, id, undefined);
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const editor = studio.editorFor(session);
+      if (isOutcome(editor)) return editor;
+      if (studio.workspaceHash(id) === undefined) {
+        const built = await editor.openWorkspace(id);
+        if (!built.ok)
+          return refuse(built.reason, safeMessage(built.message), {
+            editId: id,
+          });
+      }
+      studio.watchEdit(id, studio.workspaceHash(id));
+      return editReply(session, id, studio.workspacePath(id));
     },
   },
   import: {
@@ -764,6 +1076,7 @@ const OPS: Record<string, OpDef> = {
       ...str("json"),
       ...str("method"),
       ...str("description"),
+      ...str("reviewed"),
     },
     run: async (studio, a) => editBring(studio, a, "finish"),
   },
@@ -981,6 +1294,14 @@ async function editBring(
   a: Args,
   mode: "import" | "finish",
 ): Promise<Outcome> {
+  // The sheet hash the owner reviewed (an edit report's `sheetHash`): a finish
+  // that would take any other sheet is refused as `stale-review`.
+  const reviewed = a.reviewed as string | undefined;
+  if (reviewed !== undefined && !/^[0-9a-f]{64}$/.test(reviewed))
+    return refuse(
+      "invalid-arguments",
+      '"reviewed" must be a sheet hash (64 lowercase hex digits)',
+    );
   const session = studio.owner();
   if (isOutcome(session)) return session;
   const content = studio.loadedContent();
@@ -1005,11 +1326,17 @@ async function editBring(
             files.json,
             content,
             step,
+            reviewed as Sha256 | undefined,
           );
   else {
     const editor = studio.editorFor(session);
     if (isOutcome(editor)) return editor;
-    result = await editor.refresh(a.id as string, content, mode);
+    result = await editor.refresh(
+      a.id as string,
+      content,
+      mode,
+      reviewed as Sha256 | undefined,
+    );
   }
   if (!result.ok) return refuse(result.reason, safeMessage(result.message));
   if (mode === "finish") studio.unwatchEdit(a.id as string);
@@ -1029,6 +1356,14 @@ export const READ_ONLY = new Set([
   "list",
   "sheet",
   "report",
+  "edit-report",
+  "candidate-frames",
+  "candidate-bytes",
+  "resolve",
+  "source-list",
+  "source-resolve",
+  "source-bytes",
+  "source-keys",
   "derive",
 ]);
 
@@ -1049,6 +1384,12 @@ export async function execute(
     if (isOutcome(read)) return read;
     if (studio.stopping && !READ_ONLY.has(op))
       return refuse("shutting-down", "the session is shutting down");
+    if (studio.mode === "session" && !READ_ONLY.has(op)) {
+      // A session that does not own the root tries the lock now, so every
+      // write is refused (or promoted) in one place, before the op's own work.
+      const owned = studio.owner();
+      if (isOutcome(owned)) return owned;
+    }
     return await def.run(studio, read);
   } catch {
     return refuse("internal", "the command failed unexpectedly");

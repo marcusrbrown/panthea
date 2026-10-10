@@ -5,6 +5,7 @@ import {
   harnessItems,
   MISSING_SPRITE,
   PORTRAIT_PANEL_AT,
+  pickIn,
 } from "./layout";
 
 const zeus = { source: "draft", id: "zeus-idle" } as const;
@@ -117,5 +118,36 @@ describe("harnessItems", () => {
   it("keeps the camera on whole logical pixels", () => {
     expect(Number.isInteger(HARNESS_CAMERA.x)).toBe(true);
     expect(Number.isInteger(HARNESS_CAMERA.y)).toBe(true);
+  });
+});
+
+describe("pickIn", () => {
+  const entry = (source: "canon" | "draft" | "approved", id: string) =>
+    ({
+      source,
+      id,
+      assetId: "zeus-portrait",
+      kind: "sprite",
+      ok: true,
+    }) as never;
+  const two = [entry("draft", "draft-a"), entry("draft", "draft-b")];
+
+  it("returns the wanted record when it is listed", () => {
+    expect(pickIn(two, { source: "draft", id: "draft-b" })).toEqual({
+      source: "draft",
+      id: "draft-b",
+    });
+  });
+
+  it("returns nothing, not the first record, when the wanted id is not listed", () => {
+    expect(
+      pickIn(two, { source: "draft", id: "zeus-portrait" }),
+    ).toBeUndefined();
+    expect(pickIn(two, { source: "approved", id: "draft-a" })).toBeUndefined();
+  });
+
+  it("takes the first record only when nothing is wanted", () => {
+    expect(pickIn(two, undefined)).toEqual({ source: "draft", id: "draft-a" });
+    expect(pickIn([], undefined)).toBeUndefined();
   });
 });

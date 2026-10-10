@@ -66,18 +66,27 @@ The environment is never passed to the server or the editor.
 | --- | --- |
 | `session` | Owns the studio root and serves the commands below as newline-delimited JSON (see Sessions) |
 | `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it. Add `--edit-mask <png> --edit-strength <n> --edit-cue <text>` with one base (`--edit-base-job <id> --edit-base-output <sha256>` or `--edit-base-image <png> --edit-base-description <text>`) to make it a masked img2img edit (see Edits) |
-| `reroll` | `--request-id --per-slot`: more jobs for a request, continuing its seed sequence |
-| `status`, `list <kind>`, `sheet` | Read the durable records without taking the writer lock |
+| `reroll` | `--request-id --per-slot [--slot-key]`: more jobs for a request, continuing its seed sequence. With `--slot-key` only that slot gets the new jobs (an unknown slot key is `invalid-request` and queues nothing); without it every slot does |
+| `status`, `list <kind>`, `sheet` | Read the durable records without taking the writer lock. `status` also lists `conformSets`, the names of the config's conform sets (never their settings). It also lists `openEdits`, `[{"id","previewSheetHash"}]` for each open edit (`previewSheetHash` is `null` before its first save): a save imported by the watcher changes no count, so a host that polls `status` sees it by comparing this. In `list jobs`, a succeeded job carries `candidate`: `"done"`, `"needs-scale"`, or `null` when it has not been conformed (a candidate's id is its job's id) |
+| `resolve` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: the request `generate` would store and the generation spec built from it, from the content root alone. It takes no lock and writes nothing, so it works while another session owns the root. An omitted seed is drawn and reported; pass the reported seed to `generate` for the same request. An unknown subject, state or kind is the same refusal `generate` gives, with the valid alternatives. Edit files are not accepted. Reply: `{"id","request","spec"}` |
+| `source-list`, `source-resolve`, `source-bytes`, `source-keys` | The preview's asset source: published canon (`registryRoot`) plus the store's drafts and approved records (`studioRoot`), validated against the `contentRoot` vocabulary. Read-only, no lock (see Asset source) |
 | `report` | `--working-set-id --slot`: a fresh report-only conformance of the slot's stored pixels against the current `contentRoot` palette, without the writer lock; exit `1` with the exact diff when conforming would change them |
+| `edit-report` | `--id`: the latest save of an open or finished edit, without the writer lock and without writing. Per slot and frame: the stored report-only result (`report`, `failedChecks`) and the pixels changed against the version the save was measured against (`change`, `pixelsChanged`, `diff`), which is the save before it, or the frames the edit opened with. `diffAgainst` is `unavailable` for a save made before that was recorded. Frames the save has beyond that version are `addedFrames`; frames it lacks are `removedFrames`. A discarded edit, or one with no save, is `wrong-state`; an unknown one is `not-found`. Reply: `{"editId","workingSetId","state","sheetHash","metadataHash","slots":[{"slot","diffAgainst","frames":[{"index","report","failedChecks","change","pixelsChanged","diff"}],"addedFrames","removedFrames"}]}` |
+| `candidate-frames`, `candidate-bytes` | `--candidate-id`: a conformed candidate's stored image, read without the writer lock. That is the 1x image the conformance sampled from the generated original, which a pick keeps as the slot's pixels; not the palette-snapped proposal and not the larger original. A candidate is one still, so there is one frame and `durationMs` is `null`. `candidate-frames` is the metadata, `{"candidateId","width","height","frames":[{"index","durationMs","imageHash"}]}`; `candidate-bytes` adds `"base64"` (the PNG, checked against `imageHash`) to each frame and is reached only by the app's byte path. An unknown candidate is `not-found`, one that needs a scale is `wrong-state`, and a missing or altered blob is `corrupt-blob` |
 | `remove`, `abort` | Cancel a queued job, or the running one (only the process that owns it) |
 | `conform` | `--job-id` with `--set <name>` or `--params <json>`: a candidate from a generated image |
+| `edit-workspace` | `--id`: an edit that is already open, named again for a host that relaunches the editor on it. Replies like `open` (`editId`, `slots`, `workspace`, `workspacePath`); rebuilds the workspace file only if it is gone, and keeps one watch per edit. `not-found` for an unknown edit, `wrong-state` for a finished or discarded one, `workspacePath: null` with no editor configured. Not a read: it takes the writer lock |
 | `set create`, `set replace-sheet`, `pick` | Working sets and keyframe picks |
 | `reject` | Rejects a packed draft |
-| `open`, `import`, `finish`, `discard`, `export` | Hand edits, in the editor or with files; `finish --png --json` also takes `--method hand\|script` (default `hand`) and `--description` (required for `script`: what ran), so a scripted edit is not recorded as a hand edit |
+| `open`, `import`, `finish`, `discard`, `export` | Hand edits, in the editor or with files; `open` replies with `workspacePath`, the absolute path of the workspace file, for a host that launches the editor on it, or `null` when no `editor` is configured (the edit is still created, with its sheet and metadata, so `export` and `import`/`finish --png --json` work); `finish --png --json` also takes `--method hand\|script` (default `hand`) and `--description` (required for `script`: what ran), so a scripted edit is not recorded as a hand edit. `finish --reviewed <sheetHash>` names the save the owner reviewed (an `edit-report`'s `sheetHash`, 64 lowercase hex digits): if the sheet the finish would take (the editor's fresh export, or `--png`) hashes differently, it is refused as `stale-review`, nothing is written and the edit stays open. Without `--reviewed` a finish takes whatever is there |
 | `pack`, `approve`, `approve-with-exception`, `publish` | Final records and canon |
 | `derive` | Not supported: exits `1` and changes nothing |
 
 `--slots`, `--params` and the other JSON flags take JSON text or `@file`.
+
+## Parity check
+
+`bun tools/studio/src/parity.ts --a <root> --a-candidate <id> --b <root> --b-candidate <id>` reads two conformed candidates without the writer lock and compares the decoded generated image, the decoded conformed 1x image, the conformance report and the metrics. It prints one JSON line and exits `0` when they are identical, `1` when they differ (naming the first differing pixel) or a candidate cannot be read, and `64` for a usage error. The seed is shown, not compared: a different seed shows up as different pixels. `parity.test.ts` pins the comparison and the CLI-path against session-path pair against the staged fake runtime; the packaged-app run is recorded in `docs/evidence/asset-studio/unit7/README.md`.
 
 ## Edits
 
@@ -111,9 +120,19 @@ write is durable, and the drain runs behind it. These are different answers by
 design.
 
 Only one process owns a studio root. Reads work against a root someone else
-owns. A command that changes anything against a root another process owns is
-refused with `busy`; there is no remote control of another process. `abort`
-only works inside the process that is running the job.
+owns. A one-shot command that changes anything against a root another process
+owns is refused with `busy`; there is no remote control of another process.
+`abort` only works inside the process that is running the job.
+
+A `session` started on a root another process holds does not exit. It serves
+every read and refuses every other op with `root-locked`, whose error carries
+`holder` (the holding process id, or `null` when it left no live record).
+`status` reports `rootLock`: `{"holder":"self"|"other"|"none","pid":number|null}`,
+read from the lock holder's session record and a liveness check. There is no
+polling: the session tries the lock again at each write, so the first write
+after the holder has exited takes the root (`rootLock` then says `self`), and a
+holder that has come back is `root-locked` again. `open`, which exists to
+write, still stops with `root-locked` and exit `1`.
 
 ### Sessions
 
@@ -131,6 +150,27 @@ session that serves one edit: it builds the workspace, imports it again when the
 file's content changes, and exits `0` after `finish` or `discard`, or `1` if
 input ends first.
 
+### Asset source
+
+`source-list`, `source-resolve`, `source-bytes` and `source-keys` serve what the
+isometric preview reads, through the same node-side core
+(`@panthea/assets/studio`, `createPreviewSource`) that backs the Vite dev bridge.
+They need `studioRoot`, `registryRoot` and `contentRoot` in the config and take
+no writer lock. The source scans on first use and again, after a short
+coalescing window, when either root changes; a root that does not exist yet is
+picked up once it is created.
+
+| Op | Arguments | Reply |
+| --- | --- | --- |
+| `source-list` | none | `{"entries":[{"source","id","assetId","kind","state","ok"}],"problems":[{"scope","message"}]}` |
+| `source-resolve` | `source` (`canon`, `draft` or `approved`), `id`, optional `state`, `direction`, `ability`, `expression` | `{"kind":"frames","selection","manifestKey","asset","bytes":{"width","height","pixelKey"}}`, or `{"kind":"placeholder","selection","reason","uri","problems","bytes"}` when nothing valid is held |
+| `source-bytes` | `source`, `id` and `v` (the `pixelKey` from `source-resolve`), or `placeholder` (a placeholder's `pixelKey`) alone | `{"source","id","pixelKey","width","height","base64"}`, or `{"placeholder","base64"}`; `base64` is the validated PNG. A `v` that is not the selection's current key is refused `stale-version` (resolve again); nothing held is `not-found` |
+| `source-keys` | none | `{"listing","selections":[{"source","id","key"}]}`: compare with the previous reply to see what changed |
+
+Ids are lowercase hyphenated slugs; anything else, and any unknown argument, is
+`invalid-arguments`. Bytes are pinned to the key they were resolved with, so a
+rewritten draft is never served under the old key.
+
 ## Approval and publication
 
 Neither is ever automatic and `--yes` is refused. `approve` and
@@ -143,6 +183,11 @@ the owner's approval of a failing report; it does not clear licence terms, which
 need separate `--assessments` of the exact records.
 
 ## Stopping
+
+`--parent-pid <pid>` (with `session` or `open`) arms a parent guard for a session
+run as a sidecar: every two seconds it checks that process is alive, and when it
+is not, the session stops exactly as on `SIGTERM`: the editor and runtime close
+before the lock is released, and it exits `1`. Without the flag there is no guard.
 
 End of input, an error, `SIGINT` and `SIGTERM` all close the editor and shut the
 runtime down before the writer lock is released. If the owned server will not

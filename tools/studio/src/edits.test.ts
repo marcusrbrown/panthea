@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import {
   type EditorAdapter,
   readStudioStatus,
@@ -161,6 +161,158 @@ describe("editing with files and no editor", () => {
       set?.frames["idle/south"]?.handEdits.map((h) => h.description),
     ).toEqual(["hand edit e1"]);
     expect(set?.status).toBe("complete");
+  });
+
+  test("status carries each open edit's saved-sheet hash, so a save that changes no count still changes the status", async () => {
+    const { rig, config, over } = pickedSet();
+    const dir = scratch();
+    const open = new Studio(config, depsFor(capture(), over), "oneshot");
+    const session = open.owner();
+    if ("ok" in session) throw new Error("busy");
+    session.openEdit("e1", "w", ["idle/south"], rig.content);
+    await open.teardown();
+    type Status = { counts: unknown; openEdits: unknown };
+    const statusOf = async () => {
+      const { outcome } = await run(config, "status", {}, over);
+      if (!outcome.ok) throw new Error(JSON.stringify(outcome));
+      return outcome.result as Status;
+    };
+    const save = async (n: number) => {
+      const sheet = sheetOf(CELL, [
+        { slot: "idle/south", frames: four(rig, n) },
+      ]);
+      writeFileSync(join(dir, `s${n}.png`), sheet.png);
+      writeFileSync(join(dir, `s${n}.json`), sheet.json);
+      const { outcome } = await run(
+        config,
+        "import",
+        {
+          id: "e1",
+          png: join(dir, `s${n}.png`),
+          json: join(dir, `s${n}.json`),
+        },
+        over,
+      );
+      expect(outcome.ok).toBe(true);
+    };
+
+    const before = await statusOf();
+    await save(20);
+    const first = await statusOf();
+    await save(30);
+    const second = await statusOf();
+
+    expect(before.openEdits).toEqual([{ id: "e1", previewSheetHash: null }]);
+    expect(first.openEdits).toEqual([
+      { id: "e1", previewSheetHash: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    ]);
+    expect(second.openEdits).not.toEqual(first.openEdits);
+    // The counts alone cannot tell the saves apart: this is why the hash is here.
+    expect(second.counts).toEqual(first.counts);
+  });
+
+  test("finish with reviewed refuses a sheet saved after the one reviewed, leaves the edit open, and finishes the reviewed one", async () => {
+    const { rig, config, over } = pickedSet();
+    const dir = scratch();
+    const open = new Studio(config, depsFor(capture(), over), "oneshot");
+    const session = open.owner();
+    if ("ok" in session) throw new Error("busy");
+    session.openEdit("e1", "w", ["idle/south"], rig.content);
+    await open.teardown();
+    const files = (n: number) => {
+      const sheet = sheetOf(CELL, [
+        { slot: "idle/south", frames: four(rig, n) },
+      ]);
+      writeFileSync(join(dir, `s${n}.png`), sheet.png);
+      writeFileSync(join(dir, `s${n}.json`), sheet.json);
+      return { png: join(dir, `s${n}.png`), json: join(dir, `s${n}.json`) };
+    };
+    const hashOf = (png: string) =>
+      new Bun.CryptoHasher("sha256")
+        .update(new Uint8Array(readFileSync(png)))
+        .digest("hex");
+    const v1 = files(20);
+    const v2 = files(30);
+    expect(
+      (await run(config, "import", { id: "e1", ...v1 }, over)).outcome.ok,
+    ).toBe(true);
+    expect(
+      (await run(config, "import", { id: "e1", ...v2 }, over)).outcome.ok,
+    ).toBe(true);
+
+    const stale = await run(
+      config,
+      "finish",
+      { id: "e1", ...v2, reviewed: hashOf(v1.png) },
+      over,
+    );
+
+    expect(stale.outcome).toMatchObject({
+      ok: false,
+      error: { code: "stale-review" },
+    });
+    expect(readStudioStatus(rig.root).edits[0]?.status).toBe("open");
+    const named = await run(
+      config,
+      "finish",
+      { id: "e1", ...v2, reviewed: hashOf(v2.png) },
+      over,
+    );
+    expect(named.outcome).toMatchObject({
+      ok: true,
+      result: { state: "finished" },
+    });
+  });
+
+  test("finish through the editor hands the reviewed hash to the editor's export-and-finish, and a plain finish hands none", async () => {
+    const { config, over } = pickedSet();
+    const asked: unknown[] = [];
+    const studio = new Studio(
+      config,
+      depsFor(capture(), {
+        ...over,
+        createEditor: (session) => ({
+          ...fakeEditor(session, []),
+          refresh: async (_id, _content, mode, reviewed) => {
+            asked.push([mode, reviewed ?? null]);
+            return {
+              ok: false,
+              reason: "stale-review",
+              message: "saved again",
+            } as never;
+          },
+        }),
+      }),
+      "oneshot",
+    );
+
+    const named = await execute(studio, "finish", {
+      id: "e1",
+      reviewed: "a".repeat(64),
+    });
+    await execute(studio, "finish", { id: "e1" });
+
+    expect(named).toMatchObject({ ok: false, error: { code: "stale-review" } });
+    expect(asked).toEqual([
+      ["finish", "a".repeat(64)],
+      ["finish", null],
+    ]);
+  });
+
+  test("reviewed is a sheet hash: anything else is refused before the editor or the store is touched", async () => {
+    const { config, over } = pickedSet();
+    for (const reviewed of ["", "not-a-hash", 7]) {
+      const { outcome } = await run(
+        config,
+        "finish",
+        { id: "e1", reviewed },
+        over,
+      );
+      expect(outcome, String(reviewed)).toMatchObject({
+        ok: false,
+        error: { code: "invalid-arguments" },
+      });
+    }
   });
 
   test("finish with --method script and a --description records a script step; the default stays a hand edit", async () => {
@@ -332,6 +484,115 @@ describe("editing with files and no editor", () => {
   });
 });
 
+describe("saves imported by the watcher", () => {
+  test("each save the watcher imports reports its changed pixels against the version before it, and the first against the base", async () => {
+    const { rig, config, over } = pickedSet();
+    const calls: string[] = [];
+    let next = sheetOf(CELL, [{ slot: "idle/south", frames: four(rig) }]);
+    const studio = new Studio(
+      config,
+      depsFor(capture(), {
+        ...over,
+        createEditor: (session) => ({
+          ...fakeEditor(session, calls),
+          // The editor's save reaches the session the way the real adapter's does: through the SDK import.
+          refresh: async (id, content, mode) => {
+            calls.push(`${mode} ${id}`);
+            return session.importEdit(id, next.png, next.json, content);
+          },
+        }),
+      }),
+      "session",
+    );
+    try {
+      await execute(studio, "open", {
+        id: "e1",
+        workingSetId: "w",
+        slots: ["idle/south"],
+      });
+      const file = join(rig.root, "edits", "e1", "workspace.aseprite");
+      const imports = () => calls.filter((c) => c === "import e1").length;
+      type Frame = {
+        index: number;
+        change: string;
+        pixelsChanged: number | null;
+        diff: unknown[] | null;
+      };
+      const frames = async (): Promise<{
+        frames: Frame[];
+        addedFrames: number[];
+      }> => {
+        const outcome = await execute(studio, "edit-report", { id: "e1" });
+        if (!outcome.ok) throw new Error(JSON.stringify(outcome));
+        return (
+          outcome.result as {
+            slots: { frames: Frame[]; addedFrames: number[] }[];
+          }
+        ).slots[0] as { frames: Frame[]; addedFrames: number[] };
+      };
+
+      const none = await execute(studio, "edit-report", { id: "e1" });
+      expect(none).toMatchObject({ ok: false, error: { code: "wrong-state" } });
+
+      writeFileSync(file, "workspace-v2");
+      await waitFor(() => imports() === 1);
+      const first = await frames();
+      expect(first.addedFrames).toEqual([1, 2, 3]);
+      expect(first.frames[0]?.change).not.toBe("added");
+      expect(first.frames.slice(1).map((f) => f.pixelsChanged)).toEqual([
+        null,
+        null,
+        null,
+      ]);
+
+      next = sheetOf(CELL, [
+        {
+          slot: "idle/south",
+          frames: [
+            ...four(rig).slice(0, 2),
+            paintFigure(rig.content, CELL, 9),
+            ...four(rig).slice(3),
+          ],
+        },
+      ]);
+      writeFileSync(file, "workspace-v3");
+      await waitFor(() => imports() === 2);
+      const second = await frames();
+      expect(second.addedFrames).toEqual([]);
+      expect(second.frames.map((f) => f.change)).toEqual([
+        "unchanged",
+        "unchanged",
+        "changed",
+        "unchanged",
+      ]);
+      expect(second.frames[2]?.pixelsChanged).toBeGreaterThan(0);
+      expect(second.frames[2]?.diff).toHaveLength(
+        second.frames[2]?.pixelsChanged as number,
+      );
+
+      // The same pixels, retimed: a save that changes no pixel.
+      next = sheetOf(CELL, [
+        {
+          slot: "idle/south",
+          frames: [
+            ...four(rig).slice(0, 2),
+            paintFigure(rig.content, CELL, 9),
+            ...four(rig).slice(3),
+          ],
+          durations: [100, 100, 100, 100],
+        },
+      ]);
+      writeFileSync(file, "workspace-v4");
+      await waitFor(() => imports() === 3);
+      const same = await frames();
+      expect(same.frames.map((f) => f.pixelsChanged)).toEqual([0, 0, 0, 0]);
+      expect(same.frames.every((f) => f.change === "unchanged")).toBe(true);
+    } finally {
+      await studio.teardown();
+    }
+  });
+});
+
 describe("opening an edit in the editor", () => {
   test("builds the workspace, answers with its public metadata, and imports a changed workspace once by content hash until the edit is finished", async () => {
     const { rig, config, over } = pickedSet();
@@ -388,6 +649,34 @@ describe("opening an edit in the editor", () => {
     }
     expect(calls.at(-1)).toBe("close");
     expect(cap.err.join("\n")).toContain("edit e1 imported");
+  });
+
+  test("replies with the workspace file's location for a host that launches the editor itself, and keeps every other reply field", async () => {
+    const { rig, config, over } = pickedSet();
+
+    const { outcome } = await run(
+      config,
+      "open",
+      { id: "e1", workingSetId: "w", slots: ["idle/south"] },
+      { ...over, createEditor: (session) => fakeEditor(session, []) },
+    );
+
+    const file = join(rig.root, "edits", "e1", "workspace.aseprite");
+    expect(outcome).toEqual({
+      ok: true,
+      result: {
+        editId: "e1",
+        slots: ["idle/south"],
+        workspace: {
+          size: { w: 64, h: 80 },
+          durationsMs: [167],
+          tags: [{ name: "idle/south", from: 1, to: 1 }],
+        },
+        workspacePath: file,
+      },
+    });
+    expect(isAbsolute(file)).toBe(true);
+    expect(existsSync(file)).toBe(true);
   });
 
   test("an editor that is not there is reported with fallback guidance, no editor output leaks, and the edit stays open for a hand export", async () => {

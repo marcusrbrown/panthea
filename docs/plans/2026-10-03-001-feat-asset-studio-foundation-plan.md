@@ -229,7 +229,7 @@ flowchart TB
 - **Verification:** The owner approved the current `greek-master` palette digest on 2026-10-05. This approval is not canon asset approval. Any guide-default change is a separate owner question.
 
 ### Unit 5. Shared pipeline and CLI
-- [x] Exercise request, edit and publish flows headlessly. PR #174 published the six-expression Zeus portrait. The idle-south sprite is deferred (owner, 2026-10-08); the child plan's Unit 7 note records the evidence, and Zeus keeps `placeholder-zeus`.
+- [x] Exercise request, edit and publish flows headlessly. PR #174 published the six-expression Zeus portrait. The idle-south sprite was deferred at that point (owner, 2026-10-08) and was published afterwards as `zeus-sprite` (PR #188, 2026-10-09); `docs/evidence/asset-studio/unit5/README.md` records both.
 - **Requirements:** R2, R4–R12, R18, R20; F1, F2, F4; AE3, AE5, AE6.
 - **Dependencies:** Units 2, 3; Unit 1's selected draft generator (Z-Image-Turbo without a LoRA), Unit 4 approval for canon.
 - **Child plan:** `docs/plans/2026-10-05-001-feat-studio-pipeline-cli-plan.md` is the authoritative Unit 5 implementation plan.
@@ -253,6 +253,7 @@ flowchart TB
 - [ ] Host pipeline and full owner workflow.
 - **Requirements:** R8, R10–R12, R16–R18; AE6, AE9; U08, X02.
 - **Dependencies:** Units 5, 6; approval before capabilities, build pipeline or dependency changes.
+- **Child plan:** `docs/plans/2026-10-08-003-feat-studio-tauri-app-plan.md` is the authoritative Unit 7 implementation plan. Its U1–U5 are done; U6 (packaged evidence, headroom and parity) is recorded in `docs/evidence/asset-studio/unit7/README.md`, which also lists what that run did not prove.
 - **Files:** Create `apps/studio/package.json`, `src/App.tsx`, `src/App.test.tsx`, native crate/config/capabilities, `src-tauri/src/sidecar.rs`, `commands.rs`, native tests and sidecar build script; update evidence, traceability and ADR/index.
 - **Approach:** Bun pipeline sidecar supervised by native host. Explicit command bridge, no webview shell/filesystem permissions. Request form displays resolved input before queueing; queue shows progress/error/retry and remove/abort. Contact sheet exposes checks, scale, changes, pick/approve/reroll and frame playback. Editing-externally state supports finish/discard; unavailable editor offers export/import. Live reload includes draft and approved preview.
 - **Patterns:** Desktop named-command capability and sidecar supervision, without simulation-specific commands or credentials.

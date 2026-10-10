@@ -58,7 +58,18 @@ export function safeMessage(text: string): string {
     : `${trimmed.slice(0, MAX_MESSAGE - 1)}…`;
 }
 
-export function jobSummary(record: JobRecord): Json {
+/** The candidate record a job has, if any: a candidate's id is its job's id. */
+export type CandidateKinds = ReadonlyMap<string, "done" | "needs-scale">;
+
+/**
+ * `candidates`, when given, adds `candidate` to a succeeded job: `"done"`,
+ * `"needs-scale"`, or null when it has not been conformed. Without it the
+ * summary is what it always was.
+ */
+export function jobSummary(
+  record: JobRecord,
+  candidates?: CandidateKinds,
+): Json {
   const { job, source } = record;
   const base = {
     id: job.id,
@@ -72,6 +83,9 @@ export function jobSummary(record: JobRecord): Json {
     case "succeeded":
       return {
         ...base,
+        ...(candidates === undefined
+          ? {}
+          : { candidate: candidates.get(job.id) ?? null }),
         outputs: job.outputs.map(
           (o): Json =>
             o.medium === "image"
@@ -129,13 +143,24 @@ export function candidateSummary(record: CandidateRecord): Json {
       ...base,
       status: "needs-scale",
       message: safeMessage(result.message),
+      report: null,
+      scale: null,
+      coloursMerged: null,
+      pixelsChanged: null,
     };
   return {
     ...base,
     status: "done",
     imageHash: result.imageHash,
     proposalHash: result.proposalHash,
-    report: result.report.status,
+    report: {
+      status: result.report.status,
+      failedChecks: result.report.checks
+        .filter((c) => c.status === "fail")
+        .map((c) => c.check),
+    },
+    scale: result.metrics.resize.factor,
+    coloursMerged: result.metrics.coloursMerged,
     pixelsChanged: result.metrics.pixelsChanged,
   };
 }
@@ -235,6 +260,14 @@ export function statusSummary(
       assets: status.assets.length,
     },
     jobs,
+    // An editor save imported by the session's watcher changes no count, only
+    // this: a host that polls `status` sees the save by comparing it.
+    openEdits: status.edits
+      .filter((edit) => edit.status === "open")
+      .map((edit) => ({
+        id: edit.id,
+        previewSheetHash: edit.preview?.sheetHash ?? null,
+      })),
     invalid: status.invalid.map((p) => ({ file: p.file })),
   };
 }

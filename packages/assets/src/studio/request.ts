@@ -452,6 +452,8 @@ export function newRequestRecord(
 export function planJobs(
   record: RequestRecord,
   perSlot: number,
+  /** Plan only the request's slot with this key; every slot when absent. */
+  onlySlotKey?: string,
 ): RequestResult<{ jobs: readonly PlannedJob[]; nextOrdinal: number }> {
   if (!Number.isInteger(perSlot) || perSlot < 1)
     return bad({
@@ -467,7 +469,17 @@ export function planJobs(
       path: "request.seed",
       message: "a stored request has a base seed",
     });
-  const count = request.slots.length * perSlot;
+  const slots =
+    onlySlotKey === undefined
+      ? request.slots
+      : request.slots.filter((slot) => slotKey(slot) === onlySlotKey);
+  if (slots.length === 0)
+    return bad({
+      kind: "invalid-request",
+      path: "slotKey",
+      message: "the request has no such slot",
+    });
+  const count = slots.length * perSlot;
   const lastOrdinal = record.nextOrdinal + count - 1;
   if (baseSeed + lastOrdinal > Number.MAX_SAFE_INTEGER)
     return bad({ kind: "seed-overflow", baseSeed, lastOrdinal });
@@ -475,7 +487,7 @@ export function planJobs(
   const jobs: PlannedJob[] = [];
   for (let index = 0; index < count; index += 1) {
     const ordinal = record.nextOrdinal + index;
-    const slot = request.slots[Math.floor(index / perSlot)] as GenerationSlot;
+    const slot = slots[Math.floor(index / perSlot)] as GenerationSlot;
     jobs.push({
       source: { requestId: record.id, slotKey: slotKey(slot), ordinal },
       job: {

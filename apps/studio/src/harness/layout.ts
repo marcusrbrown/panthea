@@ -5,7 +5,7 @@
 
 import type { Point } from "../renderer/iso";
 import type { PreviewItem } from "../renderer/preview";
-import type { Selection } from "../source/port";
+import type { ListingEntry, Selection } from "../source/port";
 
 /** Top-left of the 480x270 viewport in screen space. */
 export const HARNESS_CAMERA: Point = { x: -240, y: -80 };
@@ -98,4 +98,24 @@ export function harnessItems(selection: HarnessSelection): PreviewItem[] {
     });
   }
   return items;
+}
+
+/**
+ * The listed entry the harness should draw: the wanted one, or the first when
+ * nothing is wanted. A wanted id that is not listed answers nothing, so the
+ * slot draws its placeholder rather than another record.
+ */
+export function pickIn(
+  list: readonly ListingEntry[],
+  wanted: Selection | undefined,
+): Selection | undefined {
+  const chosen =
+    wanted === undefined
+      ? list[0]
+      : list.find(
+          (entry) => entry.source === wanted.source && entry.id === wanted.id,
+        );
+  return chosen === undefined
+    ? undefined
+    : { source: chosen.source, id: chosen.id };
 }

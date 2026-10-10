@@ -184,6 +184,61 @@ describe("a one-shot generation", () => {
     expect(status.jobs.every((j) => j.job.status === "succeeded")).toBe(true);
   });
 
+  test("a reroll with a slotKey queues jobs for that slot only, and an unknown slot queues nothing", async () => {
+    const rig = await runtimeRig();
+    const deps = rig.deps;
+    const first = await run(
+      rig.config,
+      "generate",
+      {
+        id: "zeus-idle",
+        subject: "zeus",
+        kind: "sprite",
+        slots: [...SOUTH, ...NORTH],
+        batch: 1,
+        seed: 500,
+      },
+      deps,
+    );
+
+    const one = await run(
+      rig.config,
+      "reroll",
+      { requestId: "zeus-idle", perSlot: 2, slotKey: "idle/north" },
+      deps,
+    );
+    const bad = await run(
+      rig.config,
+      "reroll",
+      { requestId: "zeus-idle", perSlot: 1, slotKey: "idle/nowhere" },
+      deps,
+    );
+    const all = await run(
+      rig.config,
+      "reroll",
+      { requestId: "zeus-idle", perSlot: 1 },
+      deps,
+    );
+
+    expect(first.outcome.ok && one.outcome.ok && all.outcome.ok).toBe(true);
+    expect(bad.outcome).toMatchObject({
+      ok: false,
+      error: { code: "invalid-request" },
+    });
+    const status = readStudioStatus(rig.root);
+    expect(
+      status.jobs.map((j) => [j.source.ordinal, j.source.slotKey]),
+    ).toEqual([
+      [0, "idle/south"],
+      [1, "idle/north"],
+      [2, "idle/north"],
+      [3, "idle/north"],
+      [4, "idle/south"],
+      [5, "idle/north"],
+    ]);
+    expect(status.requests[0]?.nextOrdinal).toBe(6);
+  });
+
   test("a bad request is a usage error with the valid alternatives and nothing is queued", async () => {
     const rig = await runtimeRig();
 

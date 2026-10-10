@@ -20,6 +20,7 @@ import {
   alive,
   assetRig,
   capture,
+  heldBy,
   parsed,
   pipe,
   removeTempRoots,
@@ -85,6 +86,65 @@ function configFile(rig: Awaited<ReturnType<typeof runtimeRig>>): string {
   );
   return file;
 }
+
+describe("a session started on a root another process holds", () => {
+  test("it stays up read-only instead of exiting: reads answer, a write is root-locked with the holder, and ending stdin exits 0", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const deps = heldBy(4242);
+    const stdin = pipe();
+    const h = harness({ stdin: stdin.iterable });
+    const done = main(["session", "--root", rig.root], h.io, deps, h.hub);
+
+    stdin.send('{"id":"s","op":"status","args":{}}');
+    stdin.send('{"id":"l","op":"list","args":{"kind":"jobs"}}');
+    stdin.send(
+      JSON.stringify({
+        id: "g",
+        op: "generate",
+        args: { id: "r", subject: "zeus", kind: "sprite", slots: [] },
+      }),
+    );
+    stdin.send('{"id":"s2","op":"status","args":{}}');
+    stdin.end();
+    const code = await done;
+
+    const responses = parsed(h.cap.out);
+    const byId = (id: string) => responses.find((r) => r.id === id);
+    expect(code).toBe(0);
+    expect(responses).toHaveLength(4);
+    expect(byId("s")).toMatchObject({
+      ok: true,
+      result: { rootLock: { holder: "other", pid: 4242 } },
+    });
+    expect(byId("l")).toMatchObject({ ok: true, result: [] });
+    expect(byId("g")).toMatchObject({
+      ok: false,
+      error: { code: "root-locked", holder: 4242 },
+    });
+    expect(byId("s2")).toMatchObject({ ok: true });
+    expect(h.cap.err.join("\n")).toContain("read-only");
+  });
+
+  test("an edit session exists to write, so it still stops on a held root", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const h = harness();
+
+    const code = await main(
+      ["open", "--root", rig.root, "--id", "e1", "--working-set-id", "w"],
+      h.io,
+      heldBy(4242),
+      h.hub,
+    );
+
+    expect(code).toBe(1);
+    expect(parsed(h.cap.out)[0]).toMatchObject({
+      ok: false,
+      error: { code: "root-locked", holder: 4242 },
+    });
+  });
+});
 
 describe("command lines", () => {
   test("flags become arguments by name, with whole numbers and JSON converted by the command's own spec", () => {
@@ -480,6 +540,50 @@ describe("a session", () => {
     expect(h.cap.err).toEqual([]);
   });
 
+  test("each op the app added answers an inherited-name argument once with invalid-arguments and its id, and the next request is still served", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const stdin = pipe();
+    const h = harness({ stdin: stdin.iterable });
+    const done = main(["session", "--root", rig.root], h.io, {}, h.hub);
+    const ops = [
+      "resolve",
+      "source-list",
+      "source-resolve",
+      "source-bytes",
+      "source-keys",
+      "edit-report",
+      "candidate-frames",
+      "candidate-bytes",
+      "edit-workspace",
+    ];
+
+    for (const op of ops) {
+      stdin.send(
+        JSON.stringify({ id: `${op}:toString`, op, args: { toString: 1 } }),
+      );
+      stdin.send(`{"id":"${op}:proto","op":"${op}","args":{"__proto__":1}}`);
+    }
+    stdin.send('{"id":"ok","op":"status","args":{}}');
+    stdin.end();
+    const code = await done;
+
+    expect(code).toBe(0);
+    const responses = parsed(h.cap.out);
+    expect(responses).toHaveLength(ops.length * 2 + 1);
+    for (const op of ops)
+      for (const id of [`${op}:toString`, `${op}:proto`]) {
+        const mine = responses.filter((r) => r.id === id);
+        expect(mine, id).toHaveLength(1);
+        expect(mine[0], id).toMatchObject({
+          ok: false,
+          error: { code: "invalid-arguments" },
+        });
+      }
+    expect(responses.filter((r) => r.id === "ok")).toHaveLength(1);
+    expect(h.cap.err).toEqual([]);
+  });
+
   test("exactly two responses come back for a bad inherited-name op followed by a status, in that order", async () => {
     const rig = assetRig();
     rig.session.close();
@@ -607,6 +711,58 @@ describe("a session", () => {
     expect(pids.every((pid) => !alive(pid))).toBe(true);
   });
 
+  test("a quit during a generation (end of input, then SIGTERM) aborts the job, stops the owned server group and exits 1, rather than draining the job", async () => {
+    const rig = await runtimeRig({
+      sequence: ["hang"],
+      grandchild: true,
+      ignoreTerm: true,
+    });
+    const stdin = pipe();
+    const h = harness({ stdin: stdin.iterable });
+    const done = main(
+      ["session", "--config", configFile(rig)],
+      h.io,
+      rig.deps,
+      h.hub,
+    );
+    stdin.send(
+      JSON.stringify({
+        id: "g",
+        op: "generate",
+        args: {
+          id: "zeus-idle",
+          subject: "zeus",
+          kind: "sprite",
+          slots: JSON.parse(SOUTH),
+          batch: 1,
+          seed: 1,
+        },
+      }),
+    );
+    await waitFor(() => readLog(rig.dir).some((e) => e.event === "img_gen"));
+    await waitFor(() => readLog(rig.dir).some((e) => e.event === "grand"));
+    const pids = [
+      ...new Set(
+        readLog(rig.dir)
+          .filter((e) => e.event === "start" || e.event === "grand")
+          .map((e) => e.pid),
+      ),
+    ];
+
+    stdin.end();
+    h.fire("SIGTERM");
+    const code = await done;
+
+    expect(code).toBe(1);
+    expect(readStudioStatus(rig.root).jobs[0]?.job).toMatchObject({
+      status: "cancelled",
+      cancelledBy: "aborted",
+    });
+    expect(pids.length).toBe(2);
+    expect(pids.every((pid) => !alive(pid))).toBe(true);
+    expect(readStudioStatus(rig.root).session?.endedAt).toBeString();
+  });
+
   const generateLine = (id: string, slots: string, seed: number) =>
     JSON.stringify({
       id,
@@ -731,19 +887,15 @@ describe("a session", () => {
     ]);
   });
 
-  test("a session takes the root when it starts: on a root another process owns it refuses with busy and exit 1", async () => {
+  test("a session started on a root another process owns no longer exits busy: it serves read-only and exits 0 when stdin ends", async () => {
     const rig = assetRig();
     const h = harness();
 
     const code = await main(["session", "--root", rig.root], h.io, {}, h.hub);
 
-    expect(code).toBe(1);
-    expect(parsed(h.cap.out)).toEqual([
-      expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({ code: "busy" }),
-      }),
-    ]);
+    expect(code).toBe(0);
+    expect(parsed(h.cap.out)).toEqual([]);
+    expect(h.cap.err.join("\n")).toContain("serving read-only");
     rig.session.close();
   });
 });

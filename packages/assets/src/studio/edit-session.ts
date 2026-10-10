@@ -4,6 +4,7 @@ import type { RgbaImage } from "../conformance";
 import { sha256Hex } from "../hash";
 import {
   applyFinish,
+  baseFrameRefs,
   buildPreview,
   checkFinishStep,
   type EditEvidence,
@@ -23,6 +24,7 @@ import { decodePng } from "./png/decode";
 import type { StudioContent } from "./request";
 import type { CommandType, Store } from "./store";
 import {
+  type FrameRef,
   type SlotBasis,
   slotBasisOf,
   type WorkingSetRecord,
@@ -34,6 +36,7 @@ export type EditFailure =
   | "wrong-state"
   | "write-failed"
   | "invalid-params"
+  | "stale-review"
   | "unsupported-png"
   | "corrupt-png";
 
@@ -80,12 +83,18 @@ export interface EditOps {
     json: string,
     content: StudioContent,
   ): EditResult;
+  /**
+   * `reviewed` is the sheet hash the owner reviewed (an edit report's
+   * `sheetHash`). When given, a sheet with another hash is refused as
+   * `stale-review` before anything is written.
+   */
   finishEdit(
     id: string,
     png: Uint8Array,
     json: string,
     content: StudioContent,
     step?: FinishStep,
+    reviewed?: Sha256,
   ): EditResult;
   discardEdit(id: string): EditCommandResult;
 }
@@ -300,6 +309,38 @@ export function createEditOps(host: EditHost): EditOps {
     };
   }
 
+  /**
+   * What each slot of a save is measured against. Saving the very sheet the
+   * current preview was built from keeps what that save was measured against,
+   * so finishing it does not erase the diff its author saw. Any other save
+   * names the preview it replaces; with none, the frames the edit opened with,
+   * which only the working set can name while this edit has not yet written
+   * its own frames into it. A slot neither can name is left out.
+   */
+  function againstOf(
+    { edit, set }: Loaded,
+    checked: Checked,
+    content: StudioContent,
+  ): Record<string, readonly FrameRef[]> {
+    const earlier = edit.preview;
+    const sameSave =
+      earlier?.sheetHash === checked.sheetHash &&
+      earlier.metadataHash === checked.metaHash;
+    const against: Record<string, readonly FrameRef[]> = {};
+    for (const slot of edit.slots) {
+      const named =
+        earlier !== null
+          ? sameSave
+            ? earlier.slots[slot]?.against
+            : earlier.slots[slot]?.frames
+          : set.frames[slot]?.editId === edit.id
+            ? undefined
+            : baseFrameRefs(set, slot, placeholderMs(content, set.kind, slot));
+      if (named !== undefined) against[slot] = named;
+    }
+    return against;
+  }
+
   const preview = (loaded: Loaded, checked: Checked, content: StudioContent) =>
     buildPreview({
       image: checked.image,
@@ -308,6 +349,7 @@ export function createEditOps(host: EditHost): EditOps {
       edit: loaded.edit,
       kind: loaded.set.kind,
       content,
+      against: againstOf(loaded, checked, content),
     });
 
   const storeBlobs = (png: Uint8Array, blobs: readonly Uint8Array[]) => {
@@ -363,6 +405,7 @@ export function createEditOps(host: EditHost): EditOps {
     json: string,
     content: StudioContent,
     how?: FinishStep,
+    reviewed?: Sha256,
   ): EditResult {
     if (host.isClosed()) return refused("closed", CLOSED);
     const step = checkFinishStep(how);
@@ -371,6 +414,15 @@ export function createEditOps(host: EditHost): EditOps {
     if ("ok" in loaded) return loaded;
     const { edit, set } = loaded;
     const checked = check(loaded, png, json);
+    if (
+      reviewed !== undefined &&
+      !("ok" in checked) &&
+      checked.sheetHash !== reviewed
+    )
+      return refused(
+        "stale-review",
+        `edit ${id} was saved again since the version that was reviewed`,
+      );
     // A retry after the set was written but the edit was not marked finished.
     const applied = edit.slots.every((slot) => set.frames[slot]?.editId === id);
     if (!applied) {

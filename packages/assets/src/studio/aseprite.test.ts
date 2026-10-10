@@ -29,6 +29,7 @@ import {
 import {
   createEditorAdapter,
   type EditorAdapter,
+  exportScriptPath,
   resolveAseprite,
 } from "./aseprite";
 import { sheetJson } from "./export-import";
@@ -380,6 +381,37 @@ describe("finding the editor", () => {
     expect(found.message).toMatch(/Aseprite/);
     expect(found.message).toMatch(/sheet\.png/);
     expect(found.message).toMatch(/sheet\.json/);
+  });
+});
+
+describe("the batch script's location", () => {
+  const source = join(import.meta.dir, "scripts", "export.lua");
+
+  test("is the source file when it is on disk, and nothing is written", () => {
+    const dir = scratchDir();
+
+    expect(exportScriptPath(dir)).toBe(source);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("is a copy of the embedded text in the scratch directory when there is no source tree, as in a compiled binary", () => {
+    const dir = scratchDir();
+    const gone = join(dir, "no-source-tree", "export.lua");
+
+    const path = exportScriptPath(dir, gone);
+
+    expect(path).toBe(join(dir, "export.lua"));
+    expect(readFileSync(path, "utf8")).toBe(readFileSync(source, "utf8"));
+    expect(existsSync(gone)).toBe(false);
+  });
+
+  test("the copy is private to the owner and is removed with its scratch directory", () => {
+    const dir = scratchDir();
+    const path = exportScriptPath(dir, join(dir, "absent.lua"));
+
+    expect(statSync(path).mode & 0o077).toBe(0);
+    rmSync(dir, { recursive: true });
+    expect(existsSync(path)).toBe(false);
   });
 });
 

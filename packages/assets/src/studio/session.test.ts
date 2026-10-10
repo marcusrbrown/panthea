@@ -592,21 +592,30 @@ describe("a closed session's store", () => {
 });
 
 describe("public surface", () => {
-  test("the studio subpath exposes the host and the lock-free reader, not the unlocked store factory", () => {
+  test("the studio subpath exposes the host, the lock-free reader and the preview source, not the unlocked store factory", () => {
     expect(Object.keys(studio).sort()).toEqual([
+      "COALESCE_MS",
       "DEFAULT_BATCH",
+      "PREVIEW_SOURCE_KINDS",
       "PROVIDER",
       "SELECTED_PROFILE",
       "STUDIO_SCHEMA_VERSION",
       "adapterInput",
       "buildSpec",
+      "candidateFrames",
       "canonicalFrameHash",
       "createEditorAdapter",
+      "createPreviewSource",
       "decodePng",
+      "editReport",
+      "fsWatcher",
+      "isPreviewSlug",
+      "isPreviewSourceKind",
       "loadStudioContent",
       "newRequestRecord",
       "openRuntime",
       "openStudioSession",
+      "parsePreviewResolve",
       "planJobs",
       "readStudioBlob",
       "readStudioStatus",
@@ -619,6 +628,7 @@ describe("public surface", () => {
       "sortSheet",
       "studioPaths",
       "summarizeSheet",
+      "timerScheduler",
     ]);
   });
 });
@@ -764,6 +774,37 @@ describe("request submission", () => {
       "zeus-faces-0001",
     ]);
     expect(readStudioStatus(root).requests[0]?.nextOrdinal).toBe(24);
+    session.close();
+  });
+
+  test("a reroll of one slot enqueues only that slot's jobs and continues the sequence; an unknown slot writes nothing", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    session.submitRequest(faces("zeus-faces", 5000));
+    const slot = readStudioStatus(root).jobs[8]?.source.slotKey as string;
+
+    const result = session.reroll("zeus-faces", 2, slot);
+
+    expect(result.ok && result.jobIds).toEqual([
+      "zeus-faces-0024",
+      "zeus-faces-0025",
+    ]);
+    const status = readStudioStatus(root);
+    expect(status.jobs).toHaveLength(26);
+    const added = status.jobs.filter((r) => r.source.ordinal >= 24);
+    expect(added.map((r) => [r.source.slotKey, r.job.request.seed])).toEqual([
+      [slot, 5024],
+      [slot, 5025],
+    ]);
+    expect(status.requests[0]?.nextOrdinal).toBe(26);
+
+    const before = snapshot(root);
+    expect(session.reroll("zeus-faces", 1, "expression/nobody")).toMatchObject({
+      ok: false,
+      reason: "invalid-request",
+      enqueued: [],
+    });
+    expect(snapshot(root)).toEqual(before);
     session.close();
   });
 

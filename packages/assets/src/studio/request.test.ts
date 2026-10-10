@@ -462,6 +462,35 @@ describe("job expansion", () => {
     expect(ids.size).toBe(36);
   });
 
+  test("a reroll of one slot plans only that slot, continuing the same ordinal and seed sequence", () => {
+    const first = ok(planJobs(record, 4));
+    const key = slotKey(record.request.slots[2] ?? {});
+
+    const one = ok(
+      planJobs({ ...record, nextOrdinal: first.nextOrdinal }, 3, key),
+    );
+
+    expect(one.jobs).toHaveLength(3);
+    expect(one.jobs.map((j) => j.source.slotKey)).toEqual([key, key, key]);
+    expect(one.jobs.map((j) => j.source.ordinal)).toEqual([24, 25, 26]);
+    expect(one.jobs.map((j) => j.job.request.seed)).toEqual([1024, 1025, 1026]);
+    expect(one.nextOrdinal).toBe(27);
+    for (const { job } of one.jobs) {
+      expect(slotKey(job.request.slots[0] ?? {})).toBe(key);
+      expect(parseGenerationJob(job).ok).toBe(true);
+    }
+  });
+
+  test("a slot the request does not have is refused with nothing planned, and no slot behaves as before", () => {
+    expect(planJobs(record, 1, "expression/nobody")).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-request", path: "slotKey" },
+    });
+    expect(planJobs(record, 1, "")).toMatchObject({ ok: false });
+    expect(ok(planJobs(record, 2)).jobs).toHaveLength(12);
+    expect(ok(planJobs(record, 2, undefined)).jobs).toHaveLength(12);
+  });
+
   test("a seed that would pass the safe-integer limit is refused with nothing planned", () => {
     const edge = (base: number, perSlot: number) =>
       planJobs(

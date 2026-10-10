@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+
 import { type CheckResult, runChecks } from "./check/run";
-import { harnessItems, type OcclusionPair } from "./harness/layout";
+import { harnessItems, type OcclusionPair, pickIn } from "./harness/layout";
 import { usePreview } from "./harness/usePreview";
+import { inTauri } from "./host/tauri";
 import { ZOOMS, type Zoom } from "./renderer/preview";
 import type { ListingEntry, Selection, SourceKind } from "./source/port";
 import { SOURCE_KINDS } from "./source/port";
+import { routePreviewSelection } from "./workflow/actions";
+import { type PreviewSelection, WorkflowApp } from "./workflow/Workflow";
 
 type CheckState =
   | { readonly status: "idle" | "running" }
@@ -59,24 +63,52 @@ function readParams() {
   };
 }
 
-function pickIn(
-  list: readonly ListingEntry[],
-  wanted: Selection | undefined,
-): Selection | undefined {
-  const chosen =
-    list.find(
-      (entry) => entry.source === wanted?.source && entry.id === wanted?.id,
-    ) ?? list[0];
-  return chosen === undefined
-    ? undefined
-    : { source: chosen.source, id: chosen.id };
-}
-
 const describe = (entry: ListingEntry) =>
   `${entry.id}${entry.assetId === entry.id ? "" : ` (${entry.assetId})`}${entry.ok ? "" : " — refused"}`;
 
 export function App() {
-  const params = useMemo(readParams, []);
+  const params = readParams();
+  if (params.check || !inTauri()) return <PreviewHarness />;
+  return (
+    <WorkflowApp
+      renderPreview={(selection) => (
+        <PreviewHarness compact selection={selection} />
+      )}
+    />
+  );
+}
+
+function PreviewHarness({
+  compact = false,
+  selection,
+}: {
+  readonly compact?: boolean;
+  readonly selection?: PreviewSelection;
+}) {
+  const selectionSource = selection?.source;
+  const selectionId = selection?.id;
+  const selectionKind = selection?.kind;
+  const params = useMemo(() => {
+    const base = readParams();
+    if (
+      selectionSource === undefined ||
+      selectionId === undefined ||
+      selectionKind === undefined
+    )
+      return base;
+    const route = routePreviewSelection({
+      source: selectionSource,
+      id: selectionId,
+      kind: selectionKind,
+    });
+    return {
+      ...base,
+      source: route.source as SourceKind,
+      ...(route.subjectKey === undefined
+        ? { portrait: route.portraitKey }
+        : { subject: route.subjectKey }),
+    };
+  }, [selectionSource, selectionId, selectionKind]);
   const container = useRef<HTMLDivElement | null>(null);
   const handle = usePreview(container, params);
   const { preview, source, listing } = handle;
@@ -91,6 +123,22 @@ export function App() {
   const [companion, setCompanion] = useState(true);
   const [occlusion, setOcclusion] = useState<OcclusionPair>(params.occlusion);
   const [check, setCheck] = useState<CheckState>({ status: "idle" });
+  useEffect(() => {
+    if (
+      selectionSource === undefined ||
+      selectionId === undefined ||
+      selectionKind === undefined
+    )
+      return;
+    const route = routePreviewSelection({
+      source: selectionSource,
+      id: selectionId,
+      kind: selectionKind,
+    });
+    setSourceKind(selectionSource);
+    if (route.subjectKey !== undefined) setSubjectKey(route.subjectKey);
+    if (route.portraitKey !== undefined) setPortraitKey(route.portraitKey);
+  }, [selectionSource, selectionId, selectionKind]);
 
   const entries = listing?.entries ?? [];
   const sprites = entries.filter(
@@ -172,8 +220,13 @@ export function App() {
   const problems = [...(listing?.problems ?? []), ...handle.problems];
 
   return (
-    <main style={{ fontFamily: "monospace", padding: 12 }}>
-      <h1 style={{ fontSize: 16 }}>Panthea Studio preview</h1>
+    <section
+      className={
+        compact ? "preview-harness preview-compact" : "preview-harness"
+      }
+      style={{ fontFamily: "monospace", padding: compact ? 0 : 12 }}
+    >
+      {!compact && <h1 style={{ fontSize: 16 }}>Panthea Studio preview</h1>}
       <p>
         {handle.status === "failed"
           ? `Renderer failed: ${handle.failure}`
@@ -300,7 +353,11 @@ export function App() {
       <div
         ref={container}
         id="preview"
-        style={{ display: "inline-block", background: "#000" }}
+        style={{
+          display: "inline-block",
+          background: "#171817",
+          imageRendering: "pixelated",
+        }}
       />
 
       <section>
@@ -320,6 +377,6 @@ export function App() {
           <pre id="check-result">{JSON.stringify(check, null, 2)}</pre>
         </section>
       )}
-    </main>
+    </section>
   );
 }

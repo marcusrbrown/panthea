@@ -97,3 +97,57 @@ jobs:
 
       - name: ✅ cargo clippy
         run: cargo clippy --locked --all-targets -- -D warnings
+
+  rust-studio:
+    name: rust-studio
+    permissions:
+      contents: read
+    runs-on: macos-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/studio/src-tauri
+    steps:
+      - name: ⤵ Checkout Branch
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: 🦀 Setup Rust
+        # dtolnay/rust-toolchain has no version tags; pinned to a specific
+        # master commit (their only stable reference point) rather than a
+        # floating branch ref.
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: 📦 Rust cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/studio/src-tauri
+
+      - name: 🥟 Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: 📦 Install dependencies
+        run: bun install --frozen-lockfile
+        working-directory: .
+
+      - name: 🔧 Build sidecar
+        # tauri-build resolves bundle.externalBin at compile time, so the
+        # sidecar binary must exist before clippy can run.
+        run: bash apps/studio/scripts/build-sidecar.sh
+        working-directory: .
+
+      - name: ✅ cargo fmt --check
+        # cargo fmt has no --locked flag (it never touches Cargo.lock); the
+        # lockfile-integrity guarantee comes from cargo clippy --locked below.
+        run: cargo fmt --check
+
+      - name: ✅ cargo clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: ✅ cargo test
+        # The sidecar integration test spawns the real session through Bun.
+        run: cargo test --locked

@@ -7,6 +7,7 @@
 // fully transparent pixels to zero; a sheet imported by hand (refreshFallback)
 // keeps whatever the owner exported.
 
+/// <reference path="./lua-module.d.ts" />
 import { type ChildProcess, spawn } from "node:child_process";
 import {
   accessSync,
@@ -21,9 +22,11 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Sha256 } from "@panthea/contracts";
 import type { EditResult } from "./edit-session";
 import { parseSheetJson } from "./export-import";
 import type { StudioContent } from "./request";
+import EMBEDDED_SCRIPT from "./scripts/export.lua" with { type: "text" };
 import type { StudioSession } from "./session";
 import { studioPaths } from "./workspace";
 
@@ -49,7 +52,21 @@ export type EditorResolution =
   | { readonly ok: false; readonly message: string };
 
 const DEFAULT_BUNDLE = "/Applications/Aseprite.app/Contents/MacOS/aseprite";
-const SCRIPT = fileURLToPath(new URL("./scripts/export.lua", import.meta.url));
+const SCRIPT_FILE = fileURLToPath(
+  new URL("./scripts/export.lua", import.meta.url),
+);
+
+/**
+ * The batch script's path. Run from source it is the file in the source tree.
+ * A compiled binary ships no source tree, so there the embedded text is copied
+ * into the run's scratch directory, which is removed with it.
+ */
+export function exportScriptPath(dir: string, onDisk = SCRIPT_FILE): string {
+  if (existsSync(onDisk)) return onDisk;
+  const copy = join(dir, "export.lua");
+  writeFileSync(copy, EMBEDDED_SCRIPT, { mode: 0o600 });
+  return copy;
+}
 
 const isExecutable = (path: string): boolean => {
   try {
@@ -127,6 +144,7 @@ export interface EditorAdapter {
     editId: string,
     content: StudioContent,
     mode: "import" | "finish",
+    reviewed?: Sha256,
   ): Promise<EditResult | EditorFailure>;
   /** The same import path for a sheet and metadata the owner exported by hand. */
   refreshFallback(
@@ -135,6 +153,7 @@ export interface EditorAdapter {
     json: string,
     content: StudioContent,
     mode: "import" | "finish",
+    reviewed?: Sha256,
   ): EditResult;
   /** Kills any running editor child and waits for it to be gone. */
   close(): Promise<void>;
@@ -387,7 +406,7 @@ export function createEditorAdapter(
             `${k}=${v}`,
           ]),
           "--script",
-          SCRIPT,
+          exportScriptPath(dir),
         ];
         const result = await run(editor.path, args, dir);
         const problem = failed(result);
@@ -416,7 +435,7 @@ export function createEditorAdapter(
       }
     },
 
-    async refresh(editId, content, mode) {
+    async refresh(editId, content, mode, reviewed) {
       const editor = resolveAseprite(config);
       if (!editor.ok) return fail("editor-unavailable", editor.message);
       const edit = openEdit(editId);
@@ -466,16 +485,16 @@ export function createEditorAdapter(
         const json = readFileSync(data, "utf8");
         return mode === "import"
           ? session.importEdit(editId, png, json, content)
-          : session.finishEdit(editId, png, json, content);
+          : session.finishEdit(editId, png, json, content, undefined, reviewed);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
     },
 
-    refreshFallback: (editId, png, json, content, mode) =>
+    refreshFallback: (editId, png, json, content, mode, reviewed) =>
       mode === "import"
         ? session.importEdit(editId, png, json, content)
-        : session.finishEdit(editId, png, json, content),
+        : session.finishEdit(editId, png, json, content, undefined, reviewed),
 
     async close() {
       const active = [...running];

@@ -34,6 +34,7 @@ import {
   timingWarnings,
 } from "./export-import";
 import { decodePng } from "./png/decode";
+import { editReport } from "./reports";
 
 afterEach(removeTempRoots);
 
@@ -2346,6 +2347,87 @@ describe("finishing an edit", () => {
   });
 });
 
+describe("finishing an edit against the save that was reviewed", () => {
+  const v1 = () =>
+    authored([
+      { slot: "idle/south", frames: frames(4, 0, 20) },
+      { slot: "idle/north", frames: frames(4, 10, 40) },
+    ]);
+  const v2 = () =>
+    authored([
+      { slot: "idle/south", frames: frames(4, 3, 21) },
+      { slot: "idle/north", frames: frames(4, 10, 40) },
+    ]);
+
+  test("a sheet other than the reviewed one is refused as stale-review, writes nothing and leaves the edit open", () => {
+    const { root, session } = opened();
+    const first = v1();
+    const second = v2();
+    expect(session.importEdit("e1", first.png, first.json, content)).toEqual({
+      ok: true,
+      changed: true,
+    });
+    const before = editOf(root, "e1");
+    const setBefore = setOf(root);
+
+    const refused = session.finishEdit(
+      "e1",
+      second.png,
+      second.json,
+      content,
+      undefined,
+      sha256Hex(first.png),
+    );
+
+    expect(refused).toMatchObject({ ok: false, reason: "stale-review" });
+    expect(editOf(root, "e1")).toEqual(before);
+    expect(editOf(root, "e1")?.status).toBe("open");
+    expect(setOf(root)).toEqual(setBefore);
+    session.close();
+  });
+
+  test("the reviewed sheet finishes, and so does a finish that names no review", () => {
+    const named = opened();
+    const second = v2();
+    expect(
+      named.session.finishEdit(
+        "e1",
+        second.png,
+        second.json,
+        content,
+        undefined,
+        sha256Hex(second.png),
+      ),
+    ).toEqual({ ok: true, changed: true });
+    expect(editOf(named.root, "e1")?.status).toBe("finished");
+    named.session.close();
+
+    const plain = opened();
+    const again = v2();
+    expect(
+      plain.session.finishEdit("e1", again.png, again.json, content),
+    ).toEqual({ ok: true, changed: true });
+    plain.session.close();
+  });
+
+  test("a sheet that is refused for its own sake is refused for it, not as stale", () => {
+    const { session } = opened();
+    const second = v2();
+
+    expect(
+      session.finishEdit(
+        "e1",
+        second.png,
+        "not json",
+        content,
+        undefined,
+        sha256Hex(second.png),
+      ),
+    ).toMatchObject({ ok: false, reason: "invalid-params" });
+    session.close();
+  });
+});
+
 describe("discarding an edit", () => {
   test("leaves the working set byte-identical and keeps the edit's blobs and preview for audit", () => {
     const { root, session } = opened();
@@ -2701,6 +2783,528 @@ describe("a preview that is reverted", () => {
     }
 
     expect(editOf(root, "e1")?.preview?.sheetHash).toBe(sha256Hex(edited.png));
+    session.close();
+  });
+});
+
+// --- What a save is measured against -------------------------------------------------
+
+const baseOf = (root: string, slot: string) => {
+  const pick = setOf(root)?.picks[slot] as { imageHash: Sha256 };
+  return [
+    {
+      hash: pick.imageHash,
+      durationMs: placeholderMs(content, "sprite", slot),
+    },
+  ];
+};
+const againstOf = (root: string, slot: string) =>
+  editOf(root, "e1")?.preview?.slots[slot]?.against;
+const framesOf = (root: string, slot: string) =>
+  editOf(root, "e1")?.preview?.slots[slot]?.frames;
+
+/** The same two slots with the south frames' tones chosen by the caller. */
+const sheetWith = (
+  south: number[],
+  north: number[] = [10, 11, 12, 13],
+  durations?: { south?: number[]; north?: number[] },
+) =>
+  authored([
+    {
+      slot: "idle/south",
+      frames: south.map((tone, i) => toneFrame(cell, tone, 20 + i)),
+      ...(durations?.south === undefined ? {} : { durations: durations.south }),
+    },
+    {
+      slot: "idle/north",
+      frames: north.map((tone, i) => toneFrame(cell, tone, 40 + i)),
+      ...(durations?.north === undefined ? {} : { durations: durations.north }),
+    },
+  ]);
+
+describe("recording what a save is measured against", () => {
+  test("the first save is measured against the frames the edit opened with, each slot's own", () => {
+    const { root, session } = opened();
+    const first = sheetWith([0, 1, 2, 3]);
+
+    session.importEdit("e1", first.png, first.json, content);
+
+    expect(againstOf(root, "idle/south")).toEqual(baseOf(root, "idle/south"));
+    expect(againstOf(root, "idle/north")).toEqual(baseOf(root, "idle/north"));
+    session.close();
+  });
+
+  test("a later save is measured against the save it replaced, and that save's own record is not carried forward", () => {
+    const { root, session } = opened();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const firstFrames = {
+      south: framesOf(root, "idle/south"),
+      north: framesOf(root, "idle/north"),
+    };
+    const second = sheetWith([0, 1, 5, 3]);
+
+    session.importEdit("e1", second.png, second.json, content);
+
+    expect(againstOf(root, "idle/south")).toEqual(firstFrames.south);
+    expect(againstOf(root, "idle/north")).toEqual(firstFrames.north);
+    expect(
+      editOf(root, "e1")?.preview?.slots["idle/south"]?.against,
+    ).not.toEqual(baseOf(root, "idle/south"));
+    session.close();
+  });
+
+  test("a save back at the base clears the preview, and the next save is measured against the base again", () => {
+    const { root, session } = opened();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const base = {
+      png: session.store.readEditFile("e1", "sheet.png") as Uint8Array,
+      json: new TextDecoder().decode(
+        session.store.readEditFile("e1", "sheet.json"),
+      ),
+    };
+    session.importEdit("e1", base.png, base.json, content);
+    expect(editOf(root, "e1")?.preview).toBeNull();
+    const third = sheetWith([4, 1, 2, 3]);
+
+    session.importEdit("e1", third.png, third.json, content);
+
+    expect(againstOf(root, "idle/south")).toEqual(baseOf(root, "idle/south"));
+    session.close();
+  });
+
+  test("finishing without a save first is measured against the base", () => {
+    const { root, session } = opened();
+    const final = sheetWith([0, 1, 2, 3]);
+
+    session.finishEdit("e1", final.png, final.json, content);
+
+    expect(editOf(root, "e1")?.status).toBe("finished");
+    expect(againstOf(root, "idle/south")).toEqual(baseOf(root, "idle/south"));
+    session.close();
+  });
+
+  test("finishing the sheet that was last saved keeps what that save was measured against, not the save itself", () => {
+    const { root, session } = opened();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const second = sheetWith([0, 1, 5, 3]);
+    session.importEdit("e1", second.png, second.json, content);
+    const recorded = {
+      south: againstOf(root, "idle/south"),
+      north: againstOf(root, "idle/north"),
+    };
+    const saved = framesOf(root, "idle/south");
+
+    session.finishEdit("e1", second.png, second.json, content);
+
+    expect(againstOf(root, "idle/south")).toEqual(recorded.south);
+    expect(againstOf(root, "idle/north")).toEqual(recorded.north);
+    expect(againstOf(root, "idle/south")).not.toEqual(saved);
+    session.close();
+  });
+
+  test("finishing a different sheet than the last save is measured against that save", () => {
+    const { root, session } = opened();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const savedFrames = framesOf(root, "idle/south");
+    const other = sheetWith([0, 1, 9, 3]);
+
+    session.finishEdit("e1", other.png, other.json, content);
+
+    expect(againstOf(root, "idle/south")).toEqual(savedFrames);
+    session.close();
+  });
+
+  test("a finish retried after the set was written, with no earlier save, has no base to name and records none", () => {
+    const { root, session } = opened();
+    const final = full();
+    chmodSync(join(root, "edits"), 0o500);
+    try {
+      expect(
+        session.finishEdit("e1", final.png, final.json, content),
+      ).toMatchObject({ ok: false, reason: "write-failed" });
+    } finally {
+      chmodSync(join(root, "edits"), 0o700);
+    }
+
+    session.finishEdit("e1", final.png, final.json, content);
+
+    expect(editOf(root, "e1")?.status).toBe("finished");
+    expect(againstOf(root, "idle/south")).toBeUndefined();
+    expect(editOf(root, "e1")?.preview?.slots["idle/south"]).not.toHaveProperty(
+      "against",
+    );
+    session.close();
+  });
+
+  test("a record written before this field existed parses, and one that carries it reads back unchanged", () => {
+    const { root, session } = opened();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const withAgainst = editOf(root, "e1") as EditRecord;
+
+    expect(parseEditRecord(JSON.parse(JSON.stringify(withAgainst)))).toEqual({
+      ok: true,
+      value: withAgainst,
+    });
+    const old = JSON.parse(JSON.stringify(withAgainst));
+    for (const slot of Object.values(old.preview.slots))
+      delete (slot as { against?: unknown }).against;
+    const parsedOld = parseEditRecord(old);
+    expect(parsedOld.ok).toBe(true);
+    session.close();
+  });
+
+  const badAgainst: [string, unknown][] = [
+    ["an empty list", []],
+    ["a bad hash", [{ hash: "x", durationMs: 167 }]],
+    ["a fractional duration", [{ hash: "a".repeat(64), durationMs: 1.5 }]],
+    ["a list of text", ["a".repeat(64)]],
+    ["text", "frames"],
+    ["null", null],
+    ["a stray key", [{ hash: "a".repeat(64), durationMs: 167, extra: 1 }]],
+  ];
+  for (const [name, value] of badAgainst)
+    test(`a preview slot whose against is ${name} is refused`, () => {
+      const { root, session } = opened();
+      const first = sheetWith([0, 1, 2, 3]);
+      session.importEdit("e1", first.png, first.json, content);
+      const record = JSON.parse(JSON.stringify(editOf(root, "e1")));
+      record.preview.slots["idle/south"].against = value;
+
+      expect(parseEditRecord(record).ok).toBe(false);
+      session.close();
+    });
+
+  test("the preview builder passes a slot's against through and leaves the key off when none is given", () => {
+    const edit: Pick<EditRecord, "slots" | "cell" | "evidence"> = {
+      slots: ["idle/south"],
+      cell,
+      evidence: { "idle/south": evidence },
+    };
+    const meta = parseSheetJson(
+      doc([{ slot: "idle/south", durations: [167] }]),
+      { slots: ["idle/south"], cell, max: { "idle/south": 4 } },
+    );
+    if (!meta.ok) throw new Error(meta.message);
+    const image = strip([toneFrame(cell, 0, 1)]);
+    const against = [{ hash: "b".repeat(64) as Sha256, durationMs: 167 }];
+    const args = {
+      image,
+      sheetHash: sha256Hex(new Uint8Array([1])),
+      meta: meta.value,
+      edit,
+      kind: "sprite" as const,
+      content,
+    };
+
+    const given = buildPreview({ ...args, against: { "idle/south": against } });
+    const none = buildPreview(args);
+
+    expect(
+      given.ok && given.value.preview.slots["idle/south"]?.against,
+    ).toEqual(against);
+    expect(
+      none.ok && none.value.preview.slots["idle/south"],
+    ).not.toHaveProperty("against");
+  });
+});
+
+// --- Reporting on a saved edit ----------------------------------------------------
+
+/** 56 x 72 solid pixels differ between two tones; the border is transparent in both. */
+const TONE_PIXELS = (cell.w - 8) * (cell.h - 8);
+
+describe("reporting on an edit's latest save", () => {
+  const rig2 = () => {
+    const r = opened();
+    return r;
+  };
+
+  test("a first save shows each frame's stored report and its diff against the base, with the extra frames named as added", () => {
+    const { root, session } = rig2();
+    // The south base is tone 0; frame 0 keeps it (only transparent RGB differs), the rest are new.
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    expect(report).toMatchObject({
+      editId: "e1",
+      workingSetId: "w",
+      state: "open",
+      sheetHash: sha256Hex(first.png),
+    });
+    expect(report.slots.map((s) => s.slot)).toEqual(slots);
+    const south = report.slots[0];
+    expect(south).toMatchObject({
+      slot: "idle/south",
+      diffAgainst: "recorded",
+      addedFrames: [1, 2, 3],
+      removedFrames: [],
+    });
+    expect(south?.frames.map((f) => f.change)).toEqual([
+      "unchanged",
+      "added",
+      "added",
+      "added",
+    ]);
+    expect(south?.frames[0]).toMatchObject({ pixelsChanged: 0, diff: [] });
+    expect(south?.frames[1]).toMatchObject({ pixelsChanged: null, diff: null });
+    const stored = editOf(root, "e1")?.preview?.slots["idle/south"];
+    south?.frames.forEach((frame, index) => {
+      expect(frame.index).toBe(index);
+      expect(["pass", "fail"]).toContain(frame.report);
+      expect(frame.report).toBe(
+        stored?.reports[index]?.report.status as "pass" | "fail",
+      );
+      expect(frame.failedChecks).toEqual(
+        (stored?.reports[index]?.report.checks ?? [])
+          .filter((c) => c.status === "fail")
+          .map((c) => c.check),
+      );
+    });
+    session.close();
+  });
+
+  test("a second save shows exactly the pixels that changed since the first, frame by frame", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const second = sheetWith([0, 1, 5, 3]);
+    session.importEdit("e1", second.png, second.json, content);
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    const south = report.slots[0];
+    expect(south?.addedFrames).toEqual([]);
+    expect(south?.removedFrames).toEqual([]);
+    expect(south?.frames.map((f) => [f.change, f.pixelsChanged])).toEqual([
+      ["unchanged", 0],
+      ["unchanged", 0],
+      ["changed", TONE_PIXELS],
+      ["unchanged", 0],
+    ]);
+    const changed = south?.frames[2];
+    expect(changed?.diff).toHaveLength(TONE_PIXELS);
+    expect(changed?.diff?.[0]).toEqual({
+      x: 4,
+      y: 4,
+      before: `#${(82 + 2).toString(16)}6471ff`,
+      after: `#${(82 + 5).toString(16)}6471ff`,
+    });
+    expect(report.slots[1]?.frames.every((f) => f.pixelsChanged === 0)).toBe(
+      true,
+    );
+    session.close();
+  });
+
+  test("a save that changes no pixel shows 0 changed on every frame, even when only timing moved", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const retimed = sheetWith([0, 1, 2, 3], [10, 11, 12, 13], {
+      south: [100, 100, 100, 100],
+    });
+    expect(
+      session.importEdit("e1", retimed.png, retimed.json, content),
+    ).toEqual({ ok: true, changed: true });
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    for (const slot of report.slots)
+      for (const frame of slot.frames) {
+        expect(frame.pixelsChanged, `${slot.slot} ${frame.index}`).toBe(0);
+        expect(frame.change).toBe("unchanged");
+        expect(frame.diff).toEqual([]);
+      }
+    session.close();
+  });
+
+  test("a first save of the base's own pixels with new timing shows 0 changed against the base", () => {
+    const { root, session } = rig2();
+    const retimed = authored([
+      { slot: "idle/south", frames: frames(1, 0, 9), durations: [123] },
+      { slot: "idle/north", frames: frames(1, 1, 10), durations: [123] },
+    ]);
+    expect(
+      session.importEdit("e1", retimed.png, retimed.json, content),
+    ).toEqual({ ok: true, changed: true });
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    expect(
+      report.slots.map((s) => s.frames.map((f) => f.pixelsChanged)),
+    ).toEqual([[0], [0]]);
+    session.close();
+  });
+
+  test("when the frame counts differ, the frames only one side has are named, never diffed", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const shorter = sheetWith([0, 1], [10, 11, 12, 13]);
+    session.importEdit("e1", shorter.png, shorter.json, content);
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    const south = report.slots[0];
+    expect(south?.frames).toHaveLength(2);
+    expect(south?.addedFrames).toEqual([]);
+    expect(south?.removedFrames).toEqual([2, 3]);
+    expect(south?.frames.map((f) => f.change)).toEqual([
+      "unchanged",
+      "unchanged",
+    ]);
+    session.close();
+  });
+
+  test("a finished edit still reports, against what its finish save was measured against", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const final = sheetWith([0, 1, 5, 3]);
+    session.finishEdit("e1", final.png, final.json, content);
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    expect(report.state).toBe("finished");
+    expect(report.sheetHash).toBe(sha256Hex(final.png));
+    expect(report.slots[0]?.frames.map((f) => f.pixelsChanged)).toEqual([
+      0,
+      0,
+      TONE_PIXELS,
+      0,
+    ]);
+    session.close();
+  });
+
+  test("a finish with no earlier save reports against the base", () => {
+    const { root, session } = rig2();
+    const final = sheetWith([0, 1, 2, 3]);
+    session.finishEdit("e1", final.png, final.json, content);
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    expect(report.state).toBe("finished");
+    expect(report.slots[0]).toMatchObject({
+      diffAgainst: "recorded",
+      addedFrames: [1, 2, 3],
+    });
+    session.close();
+  });
+
+  test("a record without against reports every frame's stored result and says the diff is unavailable", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const record = JSON.parse(JSON.stringify(editOf(root, "e1")));
+    for (const slot of Object.values(record.preview.slots))
+      delete (slot as { against?: unknown }).against;
+    const old = parseEditRecord(record);
+    if (!old.ok) throw new Error(old.message);
+    session.store.putEdit(old.value);
+
+    const report = editReport(root, "e1");
+
+    if (!report.ok) throw new Error(report.message);
+    for (const slot of report.slots) {
+      expect(slot.diffAgainst).toBe("unavailable");
+      expect(slot.addedFrames).toEqual([]);
+      expect(slot.removedFrames).toEqual([]);
+      for (const frame of slot.frames) {
+        expect(frame.change).toBe("unavailable");
+        expect(frame.pixelsChanged).toBeNull();
+        expect(frame.diff).toBeNull();
+        expect(["pass", "fail"]).toContain(frame.report);
+      }
+    }
+    session.close();
+  });
+
+  test("an unknown edit, a bad id, a discarded edit and an edit with no save are each refused for their own reason", () => {
+    const { root, session } = rig2();
+
+    expect(editReport(root, "nope")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(editReport(root, "Not An Id")).toMatchObject({
+      ok: false,
+      reason: "not-found",
+    });
+    expect(editReport(root, "e1")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+      message: expect.stringContaining("no save"),
+    });
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    session.discardEdit("e1");
+    expect(editReport(root, "e1")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+      message: expect.stringContaining("discarded"),
+    });
+    session.close();
+  });
+
+  test("an edit saved back to the base has no save to report", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    session.importEdit(
+      "e1",
+      session.store.readEditFile("e1", "sheet.png") as Uint8Array,
+      new TextDecoder().decode(session.store.readEditFile("e1", "sheet.json")),
+      content,
+    );
+
+    expect(editReport(root, "e1")).toMatchObject({
+      ok: false,
+      reason: "wrong-state",
+    });
+    session.close();
+  });
+
+  test("it reads while the writer lock is held, takes no lock of its own, and writes nothing", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    const before = snapshot(root);
+
+    expect(openStudioSession(root).kind).toBe("busy");
+    const report = editReport(root, "e1");
+
+    expect(report.ok).toBe(true);
+    expect(openStudioSession(root).kind).toBe("busy");
+    expect(snapshot(root)).toEqual(before);
+    session.close();
+    expect(editReport(root, "e1").ok).toBe(true);
+  });
+
+  test("a frame whose stored pixels are missing or altered is a corrupt-blob refusal, not a wrong diff", () => {
+    const { root, session } = rig2();
+    const first = sheetWith([0, 1, 2, 3]);
+    session.importEdit("e1", first.png, first.json, content);
+    // Frame 0 is compared with the base; the added frames after it are never read.
+    const target = framesOf(root, "idle/south")?.[0]?.hash as string;
+    writeFileSync(join(root, "blobs", `${target}.png`), "not the image");
+
+    expect(editReport(root, "e1")).toMatchObject({
+      ok: false,
+      reason: "corrupt-blob",
+    });
     session.close();
   });
 });

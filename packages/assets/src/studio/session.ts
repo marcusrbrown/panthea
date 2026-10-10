@@ -5,7 +5,7 @@
 
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import type { GenerationJob, JobOutput } from "@panthea/contracts";
+import type { GenerationJob, JobOutput, Sha256 } from "@panthea/contracts";
 import { parseSlug } from "@panthea/contracts";
 import type { Palette } from "../palette";
 import {
@@ -52,7 +52,8 @@ export interface StudioSession {
   enqueue(source: JobSource, job: QueuedJob): CommandResult;
   /** Cancels a queued job. */
   submitRequest(record: RequestRecord): ExpandResult;
-  reroll(requestId: string, perSlot: number): ExpandResult;
+  /** Another `perSlot` jobs for every slot of the request, or only for `slotKey` when given. */
+  reroll(requestId: string, perSlot: number, slotKey?: string): ExpandResult;
   /** Queued jobs in durable enqueue order. */
   queued(): QueuedResult;
   start(jobId: string): CommandResult;
@@ -105,6 +106,7 @@ export interface StudioSession {
     json: string,
     content: StudioContent,
     step?: FinishStep,
+    reviewed?: Sha256,
   ): EditResult;
   /** Ends an edit and leaves the working set exactly as it was. */
   discardEdit(id: string): EditCommandResult;
@@ -326,8 +328,12 @@ export function openStudioSession(root: string): StudioOpen {
 
     // The advanced ordinal is durable before any job is enqueued, so a retry
     // or a reroll never reuses an ordinal or a seed.
-    const expand = (record: RequestRecord, perSlot: number): ExpandResult => {
-      const plan = planJobs(record, perSlot);
+    const expand = (
+      record: RequestRecord,
+      perSlot: number,
+      onlySlotKey?: string,
+    ): ExpandResult => {
+      const plan = planJobs(record, perSlot, onlySlotKey);
       if (!plan.ok)
         return expandRefusal(
           plan.error.kind === "seed-overflow"
@@ -440,7 +446,7 @@ export function openStudioSession(root: string): StudioOpen {
             );
           return expand(record, record.request.batch);
         },
-        reroll(requestId, perSlot) {
+        reroll(requestId, perSlot, onlySlotKey) {
           if (closed) return expandRefusal("closed", CLOSED);
           const read = store.readRequest(requestId);
           if (read.kind === "missing")
@@ -450,7 +456,7 @@ export function openStudioSession(root: string): StudioOpen {
               "wrong-state",
               `request ${requestId} is invalid: ${read.message}`,
             );
-          return expand(read.value, perSlot);
+          return expand(read.value, perSlot, onlySlotKey);
         },
         queued() {
           if (closed) return { ok: false, reason: "closed", message: CLOSED };
