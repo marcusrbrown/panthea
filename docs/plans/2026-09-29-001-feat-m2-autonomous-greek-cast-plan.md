@@ -590,7 +590,7 @@ Done 2026-10-04: Units 9, 10, and 11 are done through that plan. Unit 9 (the fiv
 - *Attribution:* `director.test.ts` (the first test, and "the director's pressure never opens a thread or a contest and never answers for a god") and the store test, which reads the attribution back from the journal.
 Real gap found: none. Each property already held; the new tests pin them, and each was checked by a mutation that fails it. The unit's remaining measurement, the director's attributions across an unattended run, stays with Unit 13.
 
-- [ ] **Unit 13: Unattended run, M2 exit gate, and workload baseline**
+- [x] **Unit 13: Unattended run, M2 exit gate, and workload baseline**
 
 **Goal:** acceptance evidence on the M1 Pro, a pass/fail M2 exit decision, and the memory-policy baseline.
 
@@ -620,6 +620,8 @@ Real gap found: none. Each property already held; the new tests pin them, and ea
 **Verification:** the run's report and gate result are committed; the roadmap records an M2 outcome only after the gate passes.
 
 Status (2026-10-07): planned in detail in `docs/plans/2026-10-07-002-feat-m2-unattended-run-plan.md`. The 30 s queue-wait line above is history. The gate uses the ADR-0005 2026-10-05 target, a p95 of 90 s per god outside the no-service windows, and adds a longest quiet stretch of at most 300 ticks per god (owner, 2026-10-07). The baseline model is granite3.3-8b-4k (ADR-0005, 2026-10-07). Memory is recorded as the workload baseline and fails only on a dead process or sidecar RSS still rising at the end. The crash-safe catch-up summary dependency merged as #57.
+
+Status (2026-10-10): done. The fourth unattended hour (`tools/scenarios/m2-greek-cast/unattended/2026-10-10T15-16-26/`) passed all 24 threshold rows. The owner scored novelty 1, causality 1, recognizable identity 1, pacing 2, and inspectability 1; no score is 0, so M2 exits. The known limits are recorded in the roadmap's M2 outcome.
 
 ## System-Wide Impact
 

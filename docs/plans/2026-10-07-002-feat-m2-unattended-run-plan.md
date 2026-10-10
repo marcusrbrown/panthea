@@ -511,6 +511,8 @@ Status (2026-10-10, fourth hour): the hour was rerun on granite3.3-8b-4k from `m
 
 Athena's 102 sits 3 under the limit on a machine quieter than the third hour's, which is the load ADR-0005's amendment assumes. The rating sheet is open. M2 exits only on the owner's rating.
 
+Status (2026-10-10, owner's rating): the owner scored novelty 1, causality 1, recognizable identity 1, pacing 2, and inspectability 1. No score is 0, so M2 exits on this run. The tuning list is carried forward as known limits in the roadmap's M2 outcome.
+
 ## System-Wide Impact
 
 - **Interaction graph:** the only production path exercised in a new way is the router meeting a failing endpoint mid-run, which is existing behaviour. Everything new lives in `tools/scenarios`. `apps/simulation` and the packages are unchanged unless the run finds a defect. A defect is fixed in a separate PR with a test.
