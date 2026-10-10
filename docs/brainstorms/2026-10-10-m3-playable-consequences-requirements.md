@@ -113,6 +113,7 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
   - Creating a mortal, taking control and giving it up are also recorded inputs. Replays and the away summary therefore depend only on what was recorded.
 - R4. The player moves, and travels between places and realms wherever the content allows a mortal (W02). The player acts in context:
   - work;
+  - eat;
   - exchange goods;
   - pray;
   - make an offering of goods or coin to a god, which the god perceives;
@@ -123,9 +124,9 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
 
 *Talk*
 - R8. The player can type free text to any actor present. Who is present and addressable is shown (M02).
-- R9. Words to a present god open a request that the god owes an answer. The god answers on its next turn rather than in normal rotation, either in its own voice or with an act: bless, strike, refuse or offer terms.
+- R9. Words to a present god open a request that the god owes an answer. The god answers in its own voice or with an act: bless, strike, refuse or offer terms. It answers on its next turn while a small priority budget shared by all gods has room. Otherwise it answers in normal rotation, and the request shows as queued (owner, 2026-10-10).
 - R10. Words to an absent god become a plea with a prayer's answer window and lapse. A god spoken to by name, or prayed to at its altar, may choose to come to the player on its turn.
-- R11. The player sees each request's state, with its reason: waiting, answered, refused or lapsed. An answer that arrives while the player is away appears in the return summary.
+- R11. The player sees each request's state with its reason. The states are queued, waiting, answered, refused, lapsed and closed. A request is closed when a new line replaces it or the mortal retires. An answer that arrives while the player is away appears in the return summary.
 - R12. A mortal spoken to keeps the words as a memory and answers with a short line drawn from its own state: need, grudge, temperament, trade and patron. No model is involved.
 - R13. Speech is recorded in history. Only actors present perceive it, under the perception rules (W04).
 
