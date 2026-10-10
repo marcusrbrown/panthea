@@ -22,7 +22,6 @@ import {
 
 import type { CanonClient } from "../assets/canon";
 import { type AtlasDecoder, decodeAtlas, releaseImage } from "../assets/decode";
-import { sha256Hex } from "../assets/sha256";
 import type { WorldViewModel } from "../store";
 import {
   type ActorItem,
@@ -174,7 +173,9 @@ export function createWorldRenderer(
   function placeholderPayload(
     pixels: Extract<ActorItem["art"], { source: "placeholder" }>["pixels"],
   ): Payload {
-    const pixelKey = `${pixels.width}x${pixels.height}:${sha256Hex(pixels.rgba)}`;
+    // The client only ever draws the default placeholder, whose pixels are a
+    // pure function of its size, so the size names the pixels.
+    const pixelKey = `default:${pixels.width}x${pixels.height}`;
     const key = `placeholder:${pixelKey}`;
     let payload = payloads.get(key);
     if (payload === undefined) {

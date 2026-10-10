@@ -152,7 +152,8 @@ fn canon_atlas_of(store: &CanonStore, hash: &str) -> Result<Vec<u8>, String> {
 }
 
 /// The verified canon registry as text for the webview to parse: the index,
-/// every manifest whose bytes hash to its name, the vocabulary, which kind of
+/// every manifest whose bytes hash to its name (each with that hash, which the
+/// index's revisions are matched against), the vocabulary, which kind of
 /// root was read, and the files that were dropped. Loaded once at startup.
 #[tauri::command]
 pub fn canon_registry(store: State<CanonStore>) -> CanonRegistry {

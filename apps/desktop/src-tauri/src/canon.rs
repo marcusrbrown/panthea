@@ -5,7 +5,8 @@
 // their file name, and refuses any path that resolves outside the root
 // (through `..` or a symlink). It parses no manifest -- the webview parses the
 // index and manifests with the contract parser, so the schema has one
-// definition, in TypeScript.
+// definition, in TypeScript. Each manifest is returned with the hash it was
+// verified against, so the webview matches index revisions by it.
 //
 // The verified set is loaded once at startup and is immutable. Blob bytes are
 // held in memory, so serving one never touches the disk again and a file
@@ -36,12 +37,21 @@ pub struct Problem {
     pub reason: String,
 }
 
+/// A manifest whose bytes hash to its file stem. `hash` is that stem, which
+/// is the revision the index names, so the webview matches by it and never
+/// hashes anything itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct VerifiedManifest {
+    pub hash: String,
+    pub text: String,
+}
+
 /// What `canon_registry` returns: texts only, for the webview to parse.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CanonRegistry {
     pub index: Option<String>,
-    pub manifests: Vec<String>,
+    pub manifests: Vec<VerifiedManifest>,
     pub vocabulary: Option<String>,
     pub root_kind: RootKind,
     pub problems: Vec<Problem>,
@@ -227,7 +237,9 @@ impl CanonStore {
                             load_hashed_dir(&root, &manifest_dir, "json", &mut problems);
                         for (hash, bytes) in manifests {
                             match String::from_utf8(bytes) {
-                                Ok(text) => registry.manifests.push(text),
+                                Ok(text) => {
+                                    registry.manifests.push(VerifiedManifest { hash, text })
+                                }
                                 Err(_) => problems.push(problem(
                                     &format!("{manifest_dir}/{hash}.json"),
                                     "not valid UTF-8",
@@ -358,7 +370,7 @@ mod tests {
     #[test]
     fn a_fixture_registry_with_one_sprite_and_one_portrait_verifies() {
         let fixture = Fixture::new();
-        let (_, _, sprite_blob, portrait_blob) = publish_two(&fixture);
+        let (sprite_rev, portrait_rev, sprite_blob, portrait_blob) = publish_two(&fixture);
 
         let store = fixture.load();
         let registry = store.registry();
@@ -370,9 +382,16 @@ mod tests {
             Some(r#"{"entries":[],"schemaVersion":1}"#)
         );
         assert_eq!(registry.vocabulary.as_deref(), Some(VOCABULARY));
-        let mut manifests = registry.manifests.clone();
+        let mut manifests: Vec<(String, String)> = registry
+            .manifests
+            .iter()
+            .map(|manifest| (manifest.hash.clone(), manifest.text.clone()))
+            .collect();
         manifests.sort();
-        let mut expected = vec![SPRITE_MANIFEST.to_string(), PORTRAIT_MANIFEST.to_string()];
+        let mut expected = vec![
+            (sprite_rev, SPRITE_MANIFEST.to_string()),
+            (portrait_rev, PORTRAIT_MANIFEST.to_string()),
+        ];
         expected.sort();
         assert_eq!(manifests, expected);
         assert_eq!(store.atlas(&sprite_blob).unwrap(), SPRITE_PNG);
@@ -386,8 +405,38 @@ mod tests {
         let json = serde_json::to_value(fixture.load().registry()).unwrap();
         assert_eq!(json["rootKind"], "repo");
         assert!(json["manifests"].is_array());
+        let first = &json["manifests"][0];
+        assert!(first["hash"].is_string() && first["text"].is_string());
         assert!(json["problems"].is_array());
         assert!(json.get("root_kind").is_none());
+    }
+
+    #[test]
+    fn each_manifest_carries_the_hash_of_the_file_stem_it_was_verified_against() {
+        let fixture = Fixture::new();
+        publish_two(&fixture);
+
+        let registry = fixture.load().registry().clone();
+
+        let mut stems: Vec<String> = fs::read_dir(fixture.root().join("registry/manifests"))
+            .unwrap()
+            .map(|entry| {
+                let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+                name.strip_suffix(".json").unwrap().to_string()
+            })
+            .collect();
+        stems.sort();
+        let mut hashes: Vec<String> = registry
+            .manifests
+            .iter()
+            .map(|manifest| manifest.hash.clone())
+            .collect();
+        hashes.sort();
+        assert_eq!(hashes, stems);
+        for manifest in &registry.manifests {
+            assert!(is_sha256_hex(&manifest.hash));
+            assert_eq!(sha256_hex(manifest.text.as_bytes()), manifest.hash);
+        }
     }
 
     #[test]
@@ -407,7 +456,7 @@ mod tests {
         assert!(!registry
             .manifests
             .iter()
-            .any(|text| text.contains("tampered")));
+            .any(|manifest| manifest.text.contains("tampered")));
         assert_eq!(registry.problems.len(), 1);
         assert_eq!(
             registry.problems[0].path,
@@ -417,8 +466,7 @@ mod tests {
         assert!(registry
             .manifests
             .iter()
-            .any(|text| text == SPRITE_MANIFEST));
-        assert!(!sprite_rev.is_empty());
+            .any(|manifest| manifest.hash == sprite_rev && manifest.text == SPRITE_MANIFEST));
         assert_eq!(store.atlas(&sprite_blob).unwrap(), SPRITE_PNG);
     }
 
@@ -500,7 +548,7 @@ mod tests {
         assert!(!registry
             .manifests
             .iter()
-            .any(|text| text.contains("outside")));
+            .any(|manifest| manifest.text.contains("outside")));
         assert_eq!(registry.problems.len(), 1);
     }
 

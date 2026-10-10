@@ -40,7 +40,7 @@ if (
 
 export interface RegistryPayload {
   index: string | null;
-  manifests: string[];
+  manifests: { hash: string; text: string }[];
   vocabulary: string | null;
   rootKind: "repo" | "bundled";
   problems: { path: string; reason: string }[];
@@ -54,7 +54,7 @@ export const indexText = (
 export function zeusPayload(): RegistryPayload {
   return {
     index: indexText([{ assetId: "zeus-sprite", revision: ZEUS_REVISION }]),
-    manifests: [ZEUS_MANIFEST_TEXT],
+    manifests: [{ hash: ZEUS_REVISION, text: ZEUS_MANIFEST_TEXT }],
     vocabulary: VOCABULARY_TEXT,
     rootKind: "repo",
     problems: [],

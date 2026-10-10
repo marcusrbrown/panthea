@@ -118,7 +118,11 @@ test("a blob that no parsed manifest names is never fetched", async () => {
     ...zeusPayload(),
     // A manifest for a blob the registry holds, but that the index does not select
     // and that does not parse: neither makes the blob drawable.
-    manifests: [ZEUS_MANIFEST_TEXT, orphan, "{ not a manifest"],
+    manifests: [
+      { hash: ZEUS_REVISION, text: ZEUS_MANIFEST_TEXT },
+      { hash: sha256(orphan), text: orphan },
+      { hash: sha256("{ not a manifest"), text: "{ not a manifest" },
+    ],
   };
   const { canon, source, problems } = client(
     payload,
@@ -215,7 +219,10 @@ test("a manifest that fails the contract parser is dropped and reported, others 
       { assetId: "broken", revision: brokenRevision },
       { assetId: "zeus-sprite", revision: ZEUS_REVISION },
     ]),
-    manifests: [brokenText, ZEUS_MANIFEST_TEXT],
+    manifests: [
+      { hash: brokenRevision, text: brokenText },
+      { hash: ZEUS_REVISION, text: ZEUS_MANIFEST_TEXT },
+    ],
   };
   const { canon, problems } = client(payload);
 
@@ -239,20 +246,57 @@ test("a manifest the index does not name by its revision is dropped", async () =
   expect(problems.map((p) => p.scope)).toEqual(["index.json"]);
 });
 
-test("a manifest that is not stored as canonical text is dropped", async () => {
-  const spaced = `${ZEUS_MANIFEST_TEXT.trimEnd()}\n\n`;
-  const spacedRevision = sha256(spaced);
+test("a manifest is used only when the index revision matches a hash the shell returned", async () => {
+  const other = "d".repeat(64);
   const payload = {
     ...zeusPayload(),
-    index: indexText([{ assetId: "zeus-sprite", revision: spacedRevision }]),
-    manifests: [spaced],
+    // The text is Zeus's, but the shell verified it under a different hash.
+    manifests: [{ hash: other, text: ZEUS_MANIFEST_TEXT }],
   };
   const { canon, problems } = client(payload);
 
   const { snapshot } = await canon.load();
 
   expect(snapshot.entries.size).toBe(0);
-  expect(problems[0]?.message).toContain("canonical");
+  expect(problems.map((p) => p.scope)).toEqual(["index.json"]);
+  expect(problems[0]?.message).toContain(ZEUS_REVISION);
+});
+
+test("an index revision with no verified manifest at all is dropped and reported", async () => {
+  const payload = { ...zeusPayload(), manifests: [] };
+  const { canon, problems } = client(payload);
+
+  expect((await canon.load()).snapshot.entries.size).toBe(0);
+  expect(problems).toEqual([
+    {
+      scope: "index.json",
+      message: `zeus-sprite: no verified manifest has revision ${ZEUS_REVISION}`,
+    },
+  ]);
+});
+
+test("the old payload shape, manifests as bare text, is refused as a whole", async () => {
+  const payload = { ...zeusPayload(), manifests: [ZEUS_MANIFEST_TEXT] };
+  const { canon, problems } = client(payload);
+
+  expect((await canon.load()).snapshot.entries.size).toBe(0);
+  expect(problems).toEqual([
+    {
+      scope: "canon_registry",
+      message: "manifests is not a list of hash and text",
+    },
+  ]);
+});
+
+test("a manifest hash that is not a sha256 is refused as a whole", async () => {
+  const payload = {
+    ...zeusPayload(),
+    manifests: [{ hash: "not-a-hash", text: ZEUS_MANIFEST_TEXT }],
+  };
+  const { canon, problems } = client(payload);
+
+  expect((await canon.load()).snapshot.entries.size).toBe(0);
+  expect(problems[0]?.scope).toBe("canon_registry");
 });
 
 test("a manifest for a different asset than the index entry is dropped", async () => {

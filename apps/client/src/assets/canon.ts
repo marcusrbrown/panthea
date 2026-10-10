@@ -19,14 +19,12 @@ import {
 import {
   type AssetManifest,
   type AssetVocabulary,
-  canonicalManifestText,
   parseAssetManifest,
   parseAssetVocabulary,
   parseRegistryIndex,
+  parseSha256,
 } from "@panthea/contracts";
 import { invoke } from "@tauri-apps/api/core";
-
-import { sha256Hex } from "./sha256";
 
 export type RootKind = "repo" | "bundled";
 
@@ -92,9 +90,15 @@ export interface CanonClientOptions {
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** A manifest the shell verified: `hash` is the file stem its bytes were checked against. */
+interface VerifiedManifest {
+  readonly hash: string;
+  readonly text: string;
+}
+
 interface RegistryPayload {
   readonly index: string | null;
-  readonly manifests: readonly string[];
+  readonly manifests: readonly VerifiedManifest[];
   readonly vocabulary: string | null;
   readonly rootKind: RootKind;
   readonly problems: readonly { path: string; reason: string }[];
@@ -117,9 +121,14 @@ function parsePayload(
     return bad("vocabulary is neither text nor null");
   if (
     !Array.isArray(manifests) ||
-    manifests.some((m) => typeof m !== "string")
+    manifests.some(
+      (m) =>
+        !isRecord(m) ||
+        typeof m.text !== "string" ||
+        !parseSha256(m.hash, "hash").ok,
+    )
   ) {
-    return bad("manifests is not a list of text");
+    return bad("manifests is not a list of hash and text");
   }
   if (rootKind !== "repo" && rootKind !== "bundled") {
     return bad("rootKind is neither repo nor bundled");
@@ -139,7 +148,7 @@ function parsePayload(
     ok: true,
     payload: {
       index,
-      manifests: manifests as string[],
+      manifests: manifests as VerifiedManifest[],
       vocabulary,
       rootKind,
       problems: problems as { path: string; reason: string }[],
@@ -154,8 +163,6 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
     return { ok: false };
   }
 }
-
-const textBytes = (text: string): Uint8Array => new TextEncoder().encode(text);
 
 /** Parses a registry payload into a snapshot, dropping and reporting what fails. */
 function buildSnapshot(
@@ -203,11 +210,11 @@ function buildSnapshot(
     return EMPTY_SNAPSHOT;
   }
 
-  // A manifest is named by the hash of its exact text, as in the registry.
+  // The shell checked each manifest's bytes against the hash it names, so an
+  // index revision matches a manifest by that hash and nothing is hashed here.
   const manifests = new Map<string, AssetManifest>();
   const rejected = new Set<string>();
-  for (const text of payload.manifests) {
-    const revision = sha256Hex(textBytes(text));
+  for (const { hash: revision, text } of payload.manifests) {
     const scope = `manifests/${revision}.json`;
     const drop = (message: string) => {
       rejected.add(revision);
@@ -221,10 +228,6 @@ function buildSnapshot(
     const parsed = parseAssetManifest(json.value, vocabulary);
     if (!parsed.ok) {
       drop(`${parsed.path}: ${parsed.message}`);
-      continue;
-    }
-    if (text !== canonicalManifestText(parsed.value)) {
-      drop("not stored as canonical manifest text");
       continue;
     }
     manifests.set(revision, parsed.value);
