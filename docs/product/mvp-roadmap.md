@@ -113,6 +113,11 @@ Known limits, carried forward as the tuning list:
    the act; the stored catch-up summary holds only the later short pass, so the applied and discarded
    minutes are only in the operator observation and `run.json`; model output is action JSON with no
    reasoning.
+   *Closed 2026-10-10:* the first three gaps. A strike now names the prayer it answers on its own
+   events, which the world checks (O04). The report's god episodes cite the act's own event, and its
+   director episodes cite the director's event too (O04, W10). A follow-up catch-up pass with no live
+   tick between adds to the stored summary instead of replacing it (O03, O04). Model output as action
+   JSON with no reasoning remains open.
 7. The 105 queue-wait target holds only on a quiet machine, per ADR-0005's amendment.
 8. World maps that grow without bound (petitions, credits, wrongs, noticed, threads, contests) and the
    unbounded event log and trace tables are left for the eight-hour endurance trial (M7, O08).
