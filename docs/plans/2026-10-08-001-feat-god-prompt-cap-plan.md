@@ -291,6 +291,8 @@ context, schema, proposal-builder all use (s, r); record estimate, ratio, shed c
 
 **Status (2026-10-08, cap stalls):** a goal-history row that no shown memory or own action backs is now a unit of the memories tier: the first one shed (its memory missed the salience cut every shown memory passed), oldest first, touching only itself, and the refill restores it in its original place after the feelings. `shed.memories` counts these rows with the memories and feelings. The goal itself is still never shed. The practice digest's offer opening points to the kept prayer's own set-terms line instead of repeating its object. `granite3.3-8b-4k` stays at 2.85 and the default at 2.8 (the rerun measured 2.807 on one id-dense request; 2.75 was tried and put protected floors over the cap). The causal set keeps one answer slot: no prayer is protected as the answerable prayer while a thread awaits the god's answer.
 
+**Status (2026-10-10, withdraw-only thread):** the rule "Answer an open thread" is told only when a shown thread offers accept, counter or refuse, and a thread the god only waits on (withdraw its only move) is written as one line with its withdrawal object. Both were measured on Zeus's two over-cap turns in the third unattended hour; the floor, the order and the ratios are unchanged.
+
 - [ ] **Unit 3: Wire the cap into the turn, and record it**
 
 **Goal:** `runGodTurn` applies the cap before building the context, schema and proposal; refuses to send an over-cap prompt; and records the cap figures.
