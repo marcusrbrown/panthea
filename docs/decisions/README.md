@@ -16,3 +16,4 @@ Update this index and [traceability.md](../product/traceability.md) whenever an 
 | [0008](0008-world-state-and-client-transport.md) | World state and client transport | Accepted | P01, W03, W04, W05, W07, W09, O01, O02, O03, O04, D11, D14 |
 | [0009](0009-asset-registry-lifecycle-and-uris.md) | Asset registry, lifecycle and logical URIs | Accepted | U06, U07, U08, X02 |
 | [0010](0010-studio-app-host.md) | Studio app host | Accepted | U06, U07, U08, X02 |
+| [0011](0011-game-canon-art-loading.md) | Game canon art loading | Accepted | U07, U08, X02 |
