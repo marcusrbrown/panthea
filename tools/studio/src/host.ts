@@ -2,7 +2,9 @@
 // session on first use, lazily creates the runtime and the editor adapter,
 // shares one drain between every command, watches open edits, and tears
 // everything down in an order that keeps the root locked until the owned
-// server is really gone.
+// server is really gone. A session-mode process also gives the writer lock
+// back after a grace period when it is idle, and takes it again at the next
+// write: that release is its own path, not `teardown()`.
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -33,6 +35,7 @@ import {
 } from "@panthea/assets/studio";
 import type { StudioConfig } from "./config";
 import {
+  done,
   type Json,
   jobSummary,
   type Outcome,
@@ -101,10 +104,34 @@ const workspaceFile = (session: StudioSession, editId: string) =>
   join(studioPaths(session.store.root).edits, editId, "workspace.aseprite");
 
 interface Watch {
-  readonly timer: ReturnType<typeof setInterval>;
+  /** Cancels the poll that is armed; undefined while an import is running. */
+  cancel: (() => void) | undefined;
+  live: boolean;
   baseline: string;
   busy: boolean;
 }
+
+/**
+ * How long an idle session keeps the writer lock. Measured in
+ * tools/probes/studio-release: with artifact verification cached a release
+ * followed by a re-acquire costs about 2 s (the session acquire is 0.17 s, the
+ * server's cold start the rest), 8 s without the cache. The grace has to outlast
+ * an automatic burst (drain, conform, the poll's next list) and a review's
+ * clicks, and bounds how long a CLI step finds the root locked after the app's
+ * last write.
+ */
+export const RELEASE_GRACE_MS = 15_000;
+
+/** The margin quit adds to the runtime's own stop deadlines. */
+const RELEASE_MARGIN_MS = 3000;
+
+/** An import the watcher did not attempt: the next poll tries again with the baseline untouched. */
+const RETRY_IMPORT = new Set([
+  "root-locked",
+  "shutting-down",
+  "release-failed",
+  "busy",
+]);
 
 export class Studio {
   stopRequested: string | undefined;
@@ -122,6 +149,18 @@ export class Studio {
   private readonly watches = new Map<string, Watch>();
   /** Jobs this process is running or has queued, by the status last reported. */
   private readonly watched = new Map<string, string>();
+  /** Ops running now that may use the lock (the release op and `status` are not counted). */
+  private inflight = 0;
+  /** The release in progress; it settles with its outcome and is never rejected. */
+  private releasing: Promise<Outcome> | undefined;
+  /** Why the last release attempt failed; the lock is still held while this is set. */
+  private releaseFailure: string | undefined;
+  private cancelGrace: (() => void) | undefined;
+  /** Whether a write used the lock since the grace was armed: a write restarts the grace, a read does not. */
+  private touched = false;
+  /** Jobs this process saw reach a terminal status, and jobs a `list jobs` read has carried since. A result has reached the client when it is in both. */
+  private readonly settledJobs = new Set<string>();
+  private readonly shown = new Set<string>();
 
   constructor(
     readonly config: StudioConfig,
@@ -194,10 +233,36 @@ export class Studio {
     );
   }
 
-  owner(): StudioSession | Outcome {
+  /**
+   * Waits out a release in progress. A caller that had to wait while the
+   * release failed gets the typed refusal: the lock was kept, but the runtime
+   * it would have used is gone.
+   */
+  private async afterRelease(): Promise<Outcome | undefined> {
+    if (this.releasing === undefined) return undefined;
+    while (this.releasing !== undefined) await this.releasing;
+    return this.releaseFailure === undefined
+      ? undefined
+      : refuse(
+          "release-failed",
+          "releasing the writer lock failed and the lock was kept",
+          { hint: "release again, or quit the app" },
+        );
+  }
+
+  /** The session that holds the lock, taking the lock first if this process does not hold it. A release in progress is waited for, then a fresh acquire follows. */
+  async owner(): Promise<StudioSession | Outcome> {
+    const failed = await this.afterRelease();
+    return failed ?? this.acquire();
+  }
+
+  private acquire(): StudioSession | Outcome {
     if (this.stopping)
       return refuse("shutting-down", "the session is shutting down");
-    if (this.session !== undefined) return this.session;
+    if (this.session !== undefined) {
+      this.touched = true;
+      return this.session;
+    }
     if (this.root === undefined) return this.missing("studioRoot");
     const opened = this.deps.openSession(this.root);
     if (opened.kind === "busy")
@@ -209,6 +274,7 @@ export class Studio {
             hint: "read it with status or list, or send the command to the owning session",
           });
     this.session = opened.session;
+    this.touched = true;
     for (const id of opened.session.recovered)
       this.deps.log(`recovered interrupted job ${id}`);
     return this.session;
@@ -237,7 +303,8 @@ export class Studio {
    * refuses rather than start new ones; an existing source keeps answering from
    * its last scan.
    */
-  previewSource(): PreviewSource | Outcome {
+  async previewSource(): Promise<PreviewSource | Outcome> {
+    while (this.releasing !== undefined) await this.releasing;
     if (this.preview !== undefined) return this.preview;
     if (this.stopping)
       return refuse("shutting-down", "the session is shutting down");
@@ -262,6 +329,13 @@ export class Studio {
   }
 
   runtimeFor(session: StudioSession): StudioRuntime | Outcome {
+    // A failed release left the runtime closed: it cannot run a job.
+    if (this.releaseFailure !== undefined)
+      return refuse(
+        "release-failed",
+        "the runtime was shut down by a release that failed",
+        { hint: "release again, or quit the app" },
+      );
     if (this.runtime !== undefined) return this.runtime;
     const { artifactRoot, runtime } = this.config;
     if (artifactRoot === undefined) return this.missing("artifactRoot");
@@ -314,12 +388,36 @@ export class Studio {
         this.watched.set(id, status);
         this.deps.log(`job ${id} ${status}`);
       }
-      if (status !== "queued" && status !== "running") this.watched.delete(id);
+      if (status !== "queued" && status !== "running") {
+        this.watched.delete(id);
+        this.settledJobs.add(id);
+      }
     }
+    this.pruneDelivered();
+  }
+
+  /** Forgets jobs whose terminal result has reached the client. */
+  private pruneDelivered(): void {
+    for (const id of this.settledJobs)
+      if (this.shown.delete(id)) this.settledJobs.delete(id);
+  }
+
+  /** A `list jobs` read carried these terminal jobs to the client. */
+  resultsDelivered(ids: readonly string[]): void {
+    // Only jobs this process ran count; anything else a listing carries is not remembered.
+    for (const id of ids)
+      if (this.settledJobs.has(id) || this.watched.has(id)) this.shown.add(id);
+    this.pruneDelivered();
   }
 
   /** Starts draining the durable queue unless a drain is already running; one drain at a time. */
   kick(): void {
+    // A release in progress is waited out; if it succeeded there is no runtime
+    // left to drain, and the next write that starts one kicks again.
+    if (this.releasing !== undefined) {
+      void this.releasing.then(() => this.kick());
+      return;
+    }
     const session = this.session;
     const runtime = this.runtime;
     if (this.stopping || !session || !runtime) return;
@@ -334,13 +432,13 @@ export class Studio {
     // keep the event loop from the drain, whatever the period.
     const pollMs = this.config.runtime?.pollMs ?? 100;
     let polling = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelTick: (() => void) | undefined;
     const tick = () => {
       this.reportProgress(session);
-      if (polling) timer = setTimeout(tick, pollMs);
+      if (polling) cancelTick = this.deps.schedule(tick, pollMs);
     };
     this.reportProgress(session);
-    timer = setTimeout(tick, pollMs);
+    cancelTick = this.deps.schedule(tick, pollMs);
     const queuedLeft = () => {
       const queued = session.queued();
       return queued.ok && queued.jobs.length > 0;
@@ -364,11 +462,12 @@ export class Studio {
       }
     })().finally(() => {
       polling = false;
-      clearTimeout(timer);
+      cancelTick?.();
       this.reportProgress(session);
       this.drain = undefined;
       if (!this.stopping && this.refusal === undefined && queuedLeft())
         this.kick();
+      this.settle();
     });
   }
 
@@ -388,38 +487,88 @@ export class Studio {
       : undefined;
   }
 
-  /** Foreground-watches an edit's workspace; a changed file is imported once by content hash. */
+  /**
+   * Foreground-watches an edit's workspace; a changed file is imported once by
+   * content hash. The watcher is a lazy writer: each import goes through
+   * `owner()` (taking the lock if a release gave it up) and the editor that is
+   * current then, and the watch survives a release. Only finishing or
+   * discarding the edit ends it.
+   */
   watchEdit(editId: string, workspaceHash: string | undefined): void {
     const session = this.session;
-    const editor = this.editor;
-    const content = this.content;
     const pollMs = this.config.editor?.editPollMs;
-    if (!session || !editor || !content || pollMs === undefined) return;
+    if (!session || !this.editor || !this.content || pollMs === undefined)
+      return;
     // One watch per edit: a second request for the same edit keeps the first.
     if (this.watches.has(editId)) return;
     const file = workspaceFile(session, editId);
     const watch: Watch = {
       baseline: workspaceHash ?? "",
       busy: false,
-      timer: setInterval(async () => {
-        if (watch.busy || !existsSync(file)) return;
-        const hash = sha256(new Uint8Array(readFileSync(file)));
-        if (hash === watch.baseline) return;
-        watch.busy = true;
-        watch.baseline = hash;
-        try {
-          const result = await editor.refresh(editId, content, "import");
-          this.deps.log(
-            result.ok
-              ? `edit ${editId} ${result.changed ? "imported" : "unchanged"}`
-              : `edit ${editId} not imported: ${result.reason}`,
-          );
-        } finally {
-          watch.busy = false;
-        }
-      }, pollMs),
+      live: true,
+      cancel: undefined,
+    };
+    const arm = () => {
+      if (watch.live)
+        watch.cancel = this.deps.schedule(() => void poll(), pollMs);
+    };
+    const poll = async () => {
+      watch.cancel = undefined;
+      try {
+        await this.importChanged(editId, file, watch);
+      } finally {
+        arm();
+      }
     };
     this.watches.set(editId, watch);
+    arm();
+  }
+
+  /**
+   * One poll of a watch. The baseline advances after a success or a terminal
+   * refusal; a refusal to take the lock (or a release that failed) leaves it,
+   * so the next poll tries again.
+   */
+  private async importChanged(
+    editId: string,
+    file: string,
+    watch: Watch,
+  ): Promise<void> {
+    if (!watch.live || !existsSync(file)) return;
+    const hash = sha256(new Uint8Array(readFileSync(file)));
+    if (hash === watch.baseline) return;
+    watch.busy = true;
+    try {
+      const owned = await this.owner();
+      if (isOutcome(owned)) {
+        if (!owned.ok && RETRY_IMPORT.has(owned.error.code)) return;
+        watch.baseline = hash;
+        this.deps.log(
+          `edit ${editId} not imported: ${owned.ok ? "refused" : owned.error.code}`,
+        );
+        return;
+      }
+      const editor = this.editorFor(owned);
+      const content = this.loadedContent();
+      watch.baseline = hash;
+      if (isOutcome(editor) || isOutcome(content)) {
+        this.deps.log(`edit ${editId} not imported: not configured`);
+        return;
+      }
+      try {
+        const result = await editor.refresh(editId, content, "import");
+        this.deps.log(
+          result.ok
+            ? `edit ${editId} ${result.changed ? "imported" : "unchanged"}`
+            : `edit ${editId} not imported: ${result.reason}`,
+        );
+      } catch {
+        this.deps.log(`edit ${editId} not imported: the import failed`);
+      }
+    } finally {
+      watch.busy = false;
+      this.settle();
+    }
   }
 
   /** The edit's workspace file, for a host that launches the editor on it; undefined before the session is open. */
@@ -441,7 +590,8 @@ export class Studio {
   unwatchEdit(editId: string): void {
     const watch = this.watches.get(editId);
     if (watch === undefined) return;
-    clearInterval(watch.timer);
+    watch.live = false;
+    watch.cancel?.();
     this.watches.delete(editId);
     this.editEnded?.(editId);
   }
@@ -457,8 +607,11 @@ export class Studio {
    */
   teardown(): Promise<void> {
     this.tearingDown ??= (async () => {
+      this.disarmGrace();
       this.preview?.close();
       for (const id of [...this.watches.keys()]) this.unwatchEdit(id);
+      // A release in progress finishes (or fails) first, so nothing is closed twice.
+      if (this.releasing !== undefined) await this.releasing;
       await this.editor?.close();
       if (this.runtime !== undefined) {
         const pollMs = this.config.runtime?.pollMs ?? 100;
@@ -473,6 +626,161 @@ export class Studio {
       } else this.session?.close();
     })();
     return this.tearingDown;
+  }
+
+  /** Counts an op that may use the lock while it runs; the returned function ends it and re-evaluates the idle grace. */
+  begin(counted = true): () => void {
+    if (counted) this.inflight += 1;
+    return () => {
+      if (counted) this.inflight -= 1;
+      this.settle();
+    };
+  }
+
+  /**
+   * Why the app is not idle, or undefined when it is. Idle needs all of: no op
+   * in flight, no drain running, the drain not stopped by a refusal, no job
+   * queued or running, every terminal result carried to the client, and no
+   * edit import in flight. An open edit with no import running does not count.
+   */
+  idleReason(): string | undefined {
+    if (this.releasing !== undefined) return "a release is in progress";
+    if (this.inflight > 0) return "an op is in flight";
+    if (this.drain !== undefined) return "a drain is running";
+    if (this.refusal !== undefined)
+      return `the drain stopped on a refusal: ${this.refusal}`;
+    if (this.watched.size > 0) return "a job is queued or running";
+    this.pruneDelivered();
+    if (this.settledJobs.size > 0)
+      return "a job result has not reached the client";
+    for (const watch of this.watches.values())
+      if (watch.busy) return "an edit import is in flight";
+    return undefined;
+  }
+
+  /** Why the last release failed while the lock was kept; undefined otherwise. */
+  get releaseFailed(): string | undefined {
+    return this.releaseFailure;
+  }
+
+  /**
+   * Gives the writer lock back if the app is idle. Its own path, not
+   * `teardown()`: it never latches `stopping` and never unwatches edits. The
+   * steps, in order: close the editor, shut the runtime down (which stops the
+   * server group and, with nothing running, aborts nothing), close the
+   * session, then clear the session, runtime, editor and preview refs. One
+   * attempt, bounded like quit; if it fails the lock is kept and the failure is
+   * reported.
+   */
+  release(): Promise<Outcome> {
+    if (this.releasing !== undefined) return this.releasing;
+    if (this.stopping)
+      return Promise.resolve(
+        refuse("shutting-down", "the session is shutting down"),
+      );
+    const session = this.session;
+    if (session === undefined) return Promise.resolve(done({ state: "free" }));
+    let reason = this.idleReason();
+    if (reason === undefined) {
+      // The one full read: a job left queued in the store (not drained by this
+      // process) still stops a release.
+      const queued = session.queued();
+      if (queued.ok && queued.jobs.length > 0)
+        reason = "a job is queued or running";
+    }
+    if (reason !== undefined)
+      return Promise.resolve(
+        refuse("not-idle", `the app is not idle: ${reason}`, { reason }),
+      );
+    this.disarmGrace();
+    const attempt = this.performRelease(session);
+    this.releasing = attempt;
+    void attempt.then(() => {
+      if (this.releasing === attempt) this.releasing = undefined;
+      this.settle();
+    });
+    return attempt;
+  }
+
+  private async performRelease(session: StudioSession): Promise<Outcome> {
+    const { deadlines } = this.config.runtime ?? {};
+    const bound =
+      (deadlines === undefined ? 0 : deadlines.termGraceMs + deadlines.killMs) +
+      RELEASE_MARGIN_MS;
+    // The steps keep going past the bound: a shutdown that finishes late still
+    // completes the release, and only then clears the refs.
+    const steps = (async (): Promise<string | undefined> => {
+      try {
+        await this.editor?.close();
+        if (this.runtime !== undefined) {
+          const result = await this.runtime.shutdown();
+          if (!result.ok) return `the runtime did not stop (${result.reason})`;
+        }
+        session.close();
+        // Teardown closes the preview itself once it has begun.
+        if (!this.stopping) this.preview?.close();
+        this.session = undefined;
+        this.runtime = undefined;
+        this.editor = undefined;
+        this.preview = undefined;
+        this.releaseFailure = undefined;
+        return undefined;
+      } catch {
+        return "closing the session threw";
+      }
+    })();
+    let cancel: () => void = () => {};
+    const timeout = new Promise<string>((resolve) => {
+      cancel = this.deps.schedule(
+        () => resolve(`the release did not finish within ${bound} ms`),
+        bound,
+      );
+    });
+    const failure = await Promise.race([steps, timeout]);
+    cancel();
+    if (failure === undefined) {
+      this.deps.log("released the writer lock");
+      return done({ state: "released" });
+    }
+    this.releaseFailure ??= failure;
+    this.deps.log(`release failed: the writer lock is kept (${failure})`);
+    return refuse(
+      "release-failed",
+      "releasing the writer lock failed and the lock was kept",
+      { reason: failure },
+    );
+  }
+
+  /** Re-evaluates the idle grace: armed when idle, restarted by a write, left alone by a read. */
+  settle(): void {
+    if (
+      this.mode !== "session" ||
+      this.stopping ||
+      this.session === undefined ||
+      this.releasing !== undefined ||
+      // After a failed release nothing retries on its own: a manual release does.
+      this.releaseFailure !== undefined
+    )
+      return;
+    if (this.idleReason() !== undefined) {
+      this.disarmGrace();
+      return;
+    }
+    if (this.cancelGrace !== undefined && !this.touched) return;
+    this.disarmGrace();
+    this.touched = false;
+    this.cancelGrace = this.deps.schedule(() => {
+      this.cancelGrace = undefined;
+      void this.release().then((outcome) => {
+        if (!outcome.ok && outcome.error.code !== "not-idle")
+          this.deps.log(`automatic release: ${outcome.error.code}`);
+      });
+    }, RELEASE_GRACE_MS);
+  }
+
+  private disarmGrace(): void {
+    this.cancelGrace?.();
+    this.cancelGrace = undefined;
   }
 
   jobsOf(ids: readonly string[]): Json[] {

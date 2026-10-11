@@ -60,6 +60,8 @@ interface OpDef {
   readonly spec: Spec;
   /** The one argument a bare word on the command line fills. */
   readonly positional?: string;
+  /** False for an op that must not count as work in flight: `status` reports idleness and `release` is what gives the lock up. */
+  readonly counted?: false;
   readonly run: (studio: Studio, args: Args) => Promise<Outcome> | Outcome;
 }
 
@@ -555,6 +557,7 @@ const LIST_KINDS = [
 const OPS: Record<string, OpDef> = {
   status: {
     spec: {},
+    counted: false,
     run: (studio) => {
       const status = studio.readOnly();
       return isOutcome(status)
@@ -565,6 +568,10 @@ const OPS: Record<string, OpDef> = {
               Json
             >),
             rootLock: studio.rootLock(status),
+            // Whether a release would be accepted now, and why not.
+            idle: studio.idleReason() === undefined,
+            idleReason: studio.idleReason() ?? null,
+            releaseFailure: studio.releaseFailed ?? null,
             conformSets: Object.keys(studio.config.conform ?? {}).sort(),
           });
     },
@@ -581,6 +588,15 @@ const OPS: Record<string, OpDef> = {
         case "jobs": {
           const kinds: CandidateKinds = new Map(
             status.candidates.map((c) => [c.id, c.result.status] as const),
+          );
+          // The terminal results in this listing have now reached the client.
+          studio.resultsDelivered(
+            status.jobs
+              .filter(
+                ({ job }) =>
+                  job.status !== "queued" && job.status !== "running",
+              )
+              .map(({ job }) => job.id),
           );
           return done(status.jobs.map((record) => jobSummary(record, kinds)));
         }
@@ -651,13 +667,16 @@ const OPS: Record<string, OpDef> = {
     run: (studio, a) => candidateReply(studio, a, true),
   },
   derive: { spec: {}, run: () => unsupported() },
+  // Gives the writer lock back if the app is idle. It takes no lock itself (it
+  // is in READ_ONLY), and a process that holds nothing answers `free`.
+  release: { spec: {}, counted: false, run: (studio) => studio.release() },
 
   // The preview's asset source: read-only, no writer lock, answered from the
   // source's last scan of the configured registry and studio roots.
   "source-list": {
     spec: {},
-    run: (studio) => {
-      const source = studio.previewSource();
+    run: async (studio) => {
+      const source = await studio.previewSource();
       return isOutcome(source) ? source : done(j(source.list()));
     },
   },
@@ -670,11 +689,11 @@ const OPS: Record<string, OpDef> = {
       ...str("ability"),
       ...str("expression"),
     },
-    run: (studio, a) => {
+    run: async (studio, a) => {
       const request = parsePreviewResolve(a);
       if (typeof request === "string")
         return refuse("invalid-arguments", request);
-      const source = studio.previewSource();
+      const source = await studio.previewSource();
       return isOutcome(source) ? source : done(j(source.resolve(request)));
     },
   },
@@ -686,7 +705,7 @@ const OPS: Record<string, OpDef> = {
       ...str("v"),
       ...str("placeholder"),
     },
-    run: (studio, a) => {
+    run: async (studio, a) => {
       const base64 = (bytes: Uint8Array) =>
         Buffer.from(bytes).toString("base64");
       if (a.placeholder !== undefined) {
@@ -700,7 +719,7 @@ const OPS: Record<string, OpDef> = {
             "invalid-arguments",
             "give a placeholder hash alone, or source, id and v",
           );
-        const source = studio.previewSource();
+        const source = await studio.previewSource();
         if (isOutcome(source)) return source;
         const bytes = source.placeholder(a.placeholder as string);
         return bytes === undefined
@@ -719,7 +738,7 @@ const OPS: Record<string, OpDef> = {
           "invalid-arguments",
           "give source (canon, draft or approved), a lowercase hyphenated id and the version v from source-resolve",
         );
-      const source = studio.previewSource();
+      const source = await studio.previewSource();
       if (isOutcome(source)) return source;
       const got = source.bytes({ source: a.source, id: a.id }, a.v);
       if (!got.ok)
@@ -741,8 +760,8 @@ const OPS: Record<string, OpDef> = {
   },
   "source-keys": {
     spec: {},
-    run: (studio) => {
-      const source = studio.previewSource();
+    run: async (studio) => {
+      const source = await studio.previewSource();
       return isOutcome(source) ? source : done(j(source.keys()));
     },
   },
@@ -765,7 +784,7 @@ const OPS: Record<string, OpDef> = {
       ...str("editCue"),
     },
     run: async (studio, a) => {
-      const session = studio.owner();
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
@@ -841,7 +860,7 @@ const OPS: Record<string, OpDef> = {
       ...str("slotKey"),
     },
     run: async (studio, a) => {
-      const session = studio.owner();
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const runtime = studio.runtimeFor(session);
       if (isOutcome(runtime)) return runtime;
@@ -860,8 +879,8 @@ const OPS: Record<string, OpDef> = {
   },
   remove: {
     spec: str("jobId", true),
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       return (
         fromCommand(session.remove(a.jobId as string)) ??
@@ -872,7 +891,7 @@ const OPS: Record<string, OpDef> = {
   abort: {
     spec: str("jobId", true),
     run: async (studio, a) => {
-      const session = studio.owner();
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const runtime = studio.runtimeIfStarted();
       if (runtime === undefined)
@@ -888,10 +907,10 @@ const OPS: Record<string, OpDef> = {
   },
   conform: {
     spec: { ...str("jobId", true), ...str("set"), params: { t: "json" } },
-    run: (studio, a) => {
+    run: async (studio, a) => {
       const params = resolveParams(studio, a);
       if (isOutcome(params)) return params;
-      const session = studio.owner();
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
@@ -903,8 +922,8 @@ const OPS: Record<string, OpDef> = {
   },
   "set-create": {
     spec: { ...str("id", true), ...str("requestId", true) },
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
@@ -921,8 +940,8 @@ const OPS: Record<string, OpDef> = {
   },
   "set-replace-sheet": {
     spec: { ...str("workingSetId", true), ...str("requestId", true) },
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       return (
         fromCommand(
@@ -941,8 +960,8 @@ const OPS: Record<string, OpDef> = {
       ...str("candidateId", true),
       ...str("slot"),
     },
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const slot = a.slot as string | undefined;
       return (
@@ -959,8 +978,8 @@ const OPS: Record<string, OpDef> = {
   },
   reject: {
     spec: { ...str("id", true), ...str("reason") },
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const result = session.rejectAsset(
         a.id as string,
@@ -979,7 +998,7 @@ const OPS: Record<string, OpDef> = {
       slots: { t: "json", req: true },
     },
     run: async (studio, a) => {
-      const session = studio.owner();
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
@@ -1034,7 +1053,7 @@ const OPS: Record<string, OpDef> = {
   "edit-workspace": {
     spec: str("id", true),
     run: async (studio, a) => {
-      const session = studio.owner();
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const id = a.id as string;
       const found = isPreviewSlug(id)
@@ -1082,8 +1101,8 @@ const OPS: Record<string, OpDef> = {
   },
   discard: {
     spec: str("id", true),
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const result = session.discardEdit(a.id as string);
       if (!result.ok) return refuse(result.reason, safeMessage(result.message));
@@ -1093,8 +1112,8 @@ const OPS: Record<string, OpDef> = {
   },
   export: {
     spec: { ...str("id", true), ...str("dir", true) },
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const written: string[] = [];
       try {
@@ -1129,8 +1148,8 @@ const OPS: Record<string, OpDef> = {
       stillFrameMs: { t: "int" },
       originalWork: { t: "json" },
     },
-    run: (studio, a) => {
-      const session = studio.owner();
+    run: async (studio, a) => {
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
@@ -1197,12 +1216,12 @@ const OPS: Record<string, OpDef> = {
   },
   publish: {
     spec: { ...str("id", true), ...str("confirm") },
-    run: (studio, a) => {
+    run: async (studio, a) => {
       const found = assetOf(studio, a.id as string);
       if (isOutcome(found)) return found;
       const gate = confirmation(found, a.confirm, "approved");
       if (gate !== undefined) return gate;
-      const session = studio.owner();
+      const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
@@ -1236,11 +1255,11 @@ function approveSpec(withException: boolean): Spec {
   };
 }
 
-function approve(
+async function approve(
   studio: Studio,
   a: Args,
   withException: boolean,
-): Outcome | Promise<Outcome> {
+): Promise<Outcome> {
   const options: { -readonly [K in keyof ApproveOptions]: ApproveOptions[K] } =
     {};
   if (withException) {
@@ -1257,7 +1276,7 @@ function approve(
   if (isOutcome(found)) return found;
   const gate = confirmation(found, a.confirm, "draft");
   if (gate !== undefined) return gate;
-  const session = studio.owner();
+  const session = await studio.owner();
   if (isOutcome(session)) return session;
   const content = studio.loadedContent();
   if (isOutcome(content)) return content;
@@ -1290,7 +1309,7 @@ async function editBring(
       "invalid-arguments",
       '"reviewed" must be a sheet hash (64 lowercase hex digits)',
     );
-  const session = studio.owner();
+  const session = await studio.owner();
   if (isOutcome(session)) return session;
   const content = studio.loadedContent();
   if (isOutcome(content)) return content;
@@ -1353,6 +1372,7 @@ export const READ_ONLY = new Set([
   "source-bytes",
   "source-keys",
   "derive",
+  "release",
 ]);
 
 export async function execute(
@@ -1365,6 +1385,9 @@ export async function execute(
     return refuse("unknown-op", `unknown command "${op}"`, {
       known: opNames(),
     });
+  // The op counts as work in flight from here to its answer, so a release
+  // never starts under it; when it ends the idle grace is re-evaluated.
+  const end = studio.begin(def.counted !== false);
   // Everything past the lookup is inside the try, so a throw while reading
   // the arguments is still one error response for this request.
   try {
@@ -1375,11 +1398,13 @@ export async function execute(
     if (studio.mode === "session" && !READ_ONLY.has(op)) {
       // A session that does not own the root tries the lock now, so every
       // write is refused (or promoted) in one place, before the op's own work.
-      const owned = studio.owner();
+      const owned = await studio.owner();
       if (isOutcome(owned)) return owned;
     }
     return await def.run(studio, read);
   } catch {
     return refuse("internal", "the command failed unexpectedly");
+  } finally {
+    end();
   }
 }

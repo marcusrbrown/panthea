@@ -114,6 +114,25 @@ describe("calls", () => {
     ]);
   });
 
+  test("release is an op with no arguments, and a refusal because the app is not idle is a typed host error", async () => {
+    expect(STUDIO_OPS).toContain("release");
+    const transport = fakeTransport({
+      studio_call: (args) => {
+        if ((args as { op: string }).op !== "release") return {};
+        throw hostError("not-idle", "the app is not idle: an op is in flight");
+      },
+    });
+
+    const error = await createStudioHost(transport)
+      .call("release")
+      .catch((caught: unknown) => caught);
+
+    expect(transport.to("studio_call").map((call) => call.args)).toEqual([
+      { op: "release", args: {} },
+    ]);
+    expect(error).toMatchObject({ code: "not-idle", retryable: false });
+  });
+
   test("the typed op list is the Rust schema table, in the same order", async () => {
     const text = await Bun.file(
       join(import.meta.dir, "..", "..", "src-tauri", "src", "schema.rs"),

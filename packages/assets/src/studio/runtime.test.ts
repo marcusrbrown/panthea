@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -576,6 +577,73 @@ describe("unavailable runtime", () => {
       expect(ledger(r).filter((c) => c[1] === "unavailable")).toHaveLength(2);
     });
   }
+
+  describe("artifact verification is cached for the life of the process", () => {
+    // Hashing the models dominates a cold start (about 6 s of 8 s on the real
+    // ones, tools/probes/studio-release), and a release followed by a re-acquire
+    // opens a new runtime on the same files. The cache key is path, size and mtime.
+    const KNOWN = 1_700_000_000;
+    const ONE = 1;
+
+    async function reopen(r: Rig) {
+      await r.runtime.close();
+      r.runtime = openRuntime(r.session, {
+        artifactRoot: r.dir,
+        port: r.port,
+        content,
+        deadlines: DEADLINES,
+        pollMs: 15,
+        profile: r.profile,
+      });
+    }
+
+    async function verified() {
+      const r = await rig({});
+      const model = join(r.dir, "models/diffusion.bin");
+      utimesSync(model, KNOWN, KNOWN);
+      submit(r, "zeus-idle");
+      const first = await drain(r);
+      expect(first.results.map((x) => x.outcome)).toEqual(["succeeded"]);
+      await reopen(r);
+      submit(r, "zeus-idle-2", { seed: 101 });
+      return { r, model };
+    }
+
+    test("a file whose path, size and mtime are unchanged is not hashed again", async () => {
+      const { r, model } = await verified();
+      // The same size, the same mtime, other bytes: only a rehash would notice.
+      writeFileSync(model, "diffusioX");
+      utimesSync(model, KNOWN, KNOWN);
+
+      const result = await drain(r);
+
+      expect(result.results.map((x) => x.outcome)).toEqual(["succeeded"]);
+    });
+
+    test("a changed mtime is hashed again and a file that no longer matches is unavailable", async () => {
+      const { r, model } = await verified();
+      writeFileSync(model, "diffusioX");
+      utimesSync(model, KNOWN + ONE, KNOWN + ONE);
+
+      const result = await drain(r);
+
+      expect(result.stopped).toBe("unavailable");
+      const job = jobsById(r)["zeus-idle-2-0000"]?.job;
+      expect(job?.status === "unavailable" && job.reason).toMatch(/sha256/);
+    });
+
+    test("a changed size is refused whatever the cache holds", async () => {
+      const { r, model } = await verified();
+      writeFileSync(model, "diffusion+");
+      utimesSync(model, KNOWN, KNOWN);
+
+      const result = await drain(r);
+
+      expect(result.stopped).toBe("unavailable");
+      const job = jobsById(r)["zeus-idle-2-0000"]?.job;
+      expect(job?.status === "unavailable" && job.reason).toMatch(/size/);
+    });
+  });
 
   test("an occupied endpoint is refused and its server never contacted", async () => {
     const port = await freePort();

@@ -66,6 +66,7 @@ export const STUDIO_OPS = [
   "approve",
   "approve-with-exception",
   "publish",
+  "release",
 ] as const;
 export type StudioOp = (typeof STUDIO_OPS)[number];
 

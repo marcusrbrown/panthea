@@ -52,29 +52,49 @@ export interface HostStatus {
   readonly attempt?: number;
   readonly maxAttempts?: number;
   readonly lockHolder?: number;
+  /**
+   * Who holds the studio root's writer lock, while the sidecar runs and has
+   * said: this app, nobody (the app gives the lock back when idle and takes it
+   * at the next write), or another process (`read-only`, with `lockHolder`).
+   */
+  readonly lock?: RootLock;
 }
+
+export const ROOT_LOCKS = ["held", "free", "other"] as const;
+export type RootLock = (typeof ROOT_LOCKS)[number];
 
 const ATTEMPT_STATES: readonly HostState[] = ["restarting", "unavailable"];
 
 export function parseHostStatus(value: unknown): Parsed<HostStatus> {
   if (!isObject(value)) return bad("host", "not an object");
-  const { state, attempt, maxAttempts, lockHolder } = value;
+  const { state, attempt, maxAttempts, lockHolder, lock } = value;
   if (!HOST_STATES.includes(state as HostState))
     return bad("host.state", "not a known state");
   const known = state as HostState;
+  // Which lock words a state may carry: a running sidecar holds the lock or
+  // finds it free; a read-only one sees another process holding it.
+  const allowed: readonly RootLock[] =
+    known === "running"
+      ? ["held", "free"]
+      : known === "read-only"
+        ? ["other"]
+        : [];
+  if (lock !== undefined && !allowed.includes(lock as RootLock))
+    return bad("host.lock", "not a lock state this host state can have");
+  const withLock = lock === undefined ? {} : { lock: lock as RootLock };
   if (known === "read-only") {
     if (attempt !== undefined || maxAttempts !== undefined)
       return bad("host", "an attempt on a state that has none");
     if (!isCount(lockHolder) || lockHolder < 1)
       return bad("host.lockHolder", "not a positive process id");
-    return good({ state: known, lockHolder });
+    return good({ state: known, lockHolder, ...withLock });
   }
   if (lockHolder !== undefined)
     return bad("host.lockHolder", "a lock holder on a state that has none");
   if (!ATTEMPT_STATES.includes(known)) {
     if (attempt !== undefined || maxAttempts !== undefined)
       return bad("host", "an attempt on a state that has none");
-    return good({ state: known });
+    return good({ state: known, ...withLock });
   }
   if (!isCount(attempt) || attempt < 1)
     return bad("host.attempt", "not a positive whole number");

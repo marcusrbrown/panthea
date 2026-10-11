@@ -304,7 +304,7 @@ describe("edit-workspace on an edit that is already open", () => {
           durations: [123, 167, 250],
         },
       ]);
-      const owner = studio.owner() as StudioSession;
+      const owner = (await studio.owner()) as StudioSession;
       expect(
         owner.importEdit("e1", edited.png, edited.json, rig.content),
       ).toMatchObject({ ok: true });
@@ -350,7 +350,7 @@ describe("edit-workspace on an edit that is already open", () => {
     const calls: string[] = [];
     const studio = sessionStudio(withEditor, over, calls);
     try {
-      const owner = studio.owner() as StudioSession;
+      const owner = (await studio.owner()) as StudioSession;
       owner.openEdit("e2", "w", ["idle/south"], rig.content);
       expect(owner.discardEdit("e2")).toMatchObject({ ok: true });
       await execute(studio, "open", OPEN());

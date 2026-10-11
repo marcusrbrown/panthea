@@ -124,6 +124,24 @@ pub struct HostStatus {
     /// The process holding the root's writer lock; present only in `read-only`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lock_holder: Option<u32>,
+    /// Who holds the writer lock, as the last polled `status` said: this app,
+    /// nobody (the app gives the lock back when idle and takes it at the next
+    /// write), or another process. Present only while the sidecar runs and its
+    /// reading is one of those three.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lock: Option<RootLock>,
+}
+
+/// The header's three lock states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RootLock {
+    /// Held by this app's sidecar.
+    Held,
+    /// Held by nobody: the sidecar released it, or never took it.
+    Free,
+    /// Held by another process; `lock_holder` names it.
+    Other,
 }
 
 /// The other holder of the root's writer lock, as the sidecar's last polled
@@ -136,6 +154,19 @@ fn other_lock_holder(snapshot: Option<&serde_json::Value>) -> Option<u32> {
     }
     let pid = u32::try_from(lock.get("pid")?.as_u64()?).ok()?;
     (pid > 0).then_some(pid)
+}
+
+/// The lock as the sidecar's last polled `status` reported it, in the header's
+/// three words. A reading that is not one of them (an unknown holder, `other`
+/// without a real pid) is no reading: the header says nothing rather than guess.
+fn root_lock_reading(snapshot: Option<&serde_json::Value>) -> Option<RootLock> {
+    let lock = snapshot?.get("status")?.get("rootLock")?;
+    match lock.get("holder")?.as_str()? {
+        "self" => Some(RootLock::Held),
+        "none" => Some(RootLock::Free),
+        "other" => other_lock_holder(snapshot).map(|_| RootLock::Other),
+        _ => None,
+    }
 }
 
 /// The holder that makes a running sidecar read-only. Only a sidecar that is up
@@ -160,6 +191,11 @@ pub fn host_status<C>(lifecycle: &Lifecycle<C>) -> HostStatus {
         attempt,
         max_attempts: attempt.map(|_| MAX_RESTARTS),
         lock_holder,
+        // Only a sidecar that is up has a lock to report; every other state
+        // outranks a reading left in the cache.
+        lock: (state == HostState::Running)
+            .then(|| root_lock_reading(lifecycle.last_snapshot.as_ref()))
+            .flatten(),
     }
 }
 
@@ -841,6 +877,7 @@ mod tests {
                     attempt: Some(expected),
                     max_attempts: Some(MAX_RESTARTS),
                     lock_holder: None,
+                    lock: None,
                 }
             );
         }
@@ -863,6 +900,7 @@ mod tests {
                 attempt: Some(MAX_RESTARTS),
                 max_attempts: Some(MAX_RESTARTS),
                 lock_holder: None,
+                lock: None,
             }
         );
     }
@@ -898,6 +936,7 @@ mod tests {
                 attempt: Some(2),
                 max_attempts: Some(3),
                 lock_holder: None,
+                lock: None,
             })
             .unwrap(),
             serde_json::json!({ "state": "restarting", "attempt": 2, "maxAttempts": 3 })
@@ -908,6 +947,7 @@ mod tests {
                 attempt: None,
                 max_attempts: None,
                 lock_holder: None,
+                lock: None,
             })
             .unwrap(),
             serde_json::json!({ "state": "running" })
@@ -934,6 +974,7 @@ mod tests {
                 attempt: None,
                 max_attempts: None,
                 lock_holder: Some(4242),
+                lock: Some(RootLock::Other),
             }
         );
     }
@@ -1018,6 +1059,7 @@ mod tests {
                 attempt: None,
                 max_attempts: None,
                 lock_holder: Some(4242),
+                lock: None,
             })
             .unwrap(),
             serde_json::json!({ "state": "read-only", "lockHolder": 4242 })
@@ -1028,9 +1070,152 @@ mod tests {
                 attempt: None,
                 max_attempts: None,
                 lock_holder: None,
+                lock: None,
             })
             .unwrap(),
             serde_json::json!({ "state": "running" })
+        );
+    }
+
+    #[test]
+    fn the_header_names_who_holds_the_lock_this_app_nobody_or_another_process() {
+        let held = host_status(&running_with_lock(
+            serde_json::json!({ "holder": "self", "pid": 77 }),
+        ));
+        assert_eq!(
+            (held.state, held.lock, held.lock_holder),
+            (HostState::Running, Some(RootLock::Held), None)
+        );
+
+        let free = host_status(&running_with_lock(
+            serde_json::json!({ "holder": "none", "pid": null }),
+        ));
+        assert_eq!(
+            (free.state, free.lock, free.lock_holder),
+            (HostState::Running, Some(RootLock::Free), None)
+        );
+
+        let other = host_status(&running_with_lock(
+            serde_json::json!({ "holder": "other", "pid": 4242 }),
+        ));
+        assert_eq!(
+            (other.state, other.lock, other.lock_holder),
+            (HostState::ReadOnly, Some(RootLock::Other), Some(4242))
+        );
+    }
+
+    #[test]
+    fn a_release_is_not_a_crash_the_host_stays_running_and_the_lock_reads_free_then_held_again() {
+        let mut lifecycle = running_with_lock(serde_json::json!({ "holder": "self", "pid": 77 }));
+        let id = lifecycle.launch_id;
+
+        lifecycle.last_snapshot = Some(serde_json::json!({
+            "status": { "rootLock": { "holder": "none", "pid": null } }
+        }));
+        let released = host_status(&lifecycle);
+        assert_eq!(released.state, HostState::Running);
+        assert_eq!(released.lock, Some(RootLock::Free));
+        assert_eq!(released.attempt, None);
+        assert_eq!((lifecycle.restarts, lifecycle.exhausted), (0, false));
+        assert!(is_current(&lifecycle, id));
+
+        lifecycle.last_snapshot = Some(serde_json::json!({
+            "status": { "rootLock": { "holder": "self", "pid": 77 } }
+        }));
+        assert_eq!(host_status(&lifecycle).lock, Some(RootLock::Held));
+    }
+
+    #[test]
+    fn only_a_running_sidecar_has_a_lock_reading_whatever_the_cache_holds() {
+        let free = serde_json::json!({ "holder": "none", "pid": null });
+        assert_eq!(
+            host_status(&Lifecycle::default()).lock,
+            None,
+            "not configured"
+        );
+
+        let mut starting = running_with_lock(free.clone());
+        starting.child = None;
+        assert_eq!(host_status(&starting).lock, None, "starting");
+
+        let mut restarting = running_with_lock(free.clone());
+        restarting.child = None;
+        restarting.restarts = 1;
+        assert_eq!(host_status(&restarting).lock, None, "restarting");
+
+        let mut stopped = running_with_lock(free.clone());
+        stopped.stopped = true;
+        assert_eq!(host_status(&stopped).lock, None, "stopped");
+
+        let mut exhausted = running_with_lock(free);
+        exhausted.exhausted = true;
+        assert_eq!(host_status(&exhausted).lock, None, "unavailable");
+    }
+
+    #[test]
+    fn a_new_launch_forgets_the_last_lock_reading_so_a_stale_held_is_never_shown() {
+        let mut lifecycle = running_with_lock(serde_json::json!({ "holder": "self", "pid": 77 }));
+        assert_eq!(host_status(&lifecycle).lock, Some(RootLock::Held));
+
+        let launch = lifecycle.launch_id;
+        let ended = on_terminated(&mut lifecycle, launch, false);
+        assert!(matches!(ended.outcome, TerminatedOutcome::Retry { .. }));
+        let launch = lifecycle.launch_id;
+        let next = on_retry(&mut lifecycle, launch).unwrap();
+        attach_child(&mut lifecycle, next, "child");
+
+        assert_eq!(host_status(&lifecycle).state, HostState::Running);
+        assert_eq!(host_status(&lifecycle).lock, None);
+    }
+
+    #[test]
+    fn a_reading_that_is_not_one_of_the_three_states_is_no_reading() {
+        for lock in [
+            serde_json::json!({ "holder": "other" }),
+            serde_json::json!({ "holder": "other", "pid": 0 }),
+            serde_json::json!({ "holder": "other", "pid": "4242" }),
+            serde_json::json!({ "holder": "someone", "pid": 4242 }),
+            serde_json::json!({ "pid": 4242 }),
+            serde_json::json!("none"),
+            serde_json::json!(null),
+        ] {
+            assert_eq!(
+                host_status(&running_with_lock(lock.clone())).lock,
+                None,
+                "{lock}"
+            );
+        }
+        let mut no_status = running_with_lock(serde_json::json!(null));
+        no_status.last_snapshot = None;
+        assert_eq!(host_status(&no_status).lock, None);
+    }
+
+    #[test]
+    fn the_lock_serializes_as_a_word_and_is_left_out_when_unknown() {
+        assert_eq!(
+            serde_json::to_value(host_status(&running_with_lock(
+                serde_json::json!({ "holder": "none", "pid": null })
+            )))
+            .unwrap(),
+            serde_json::json!({ "state": "running", "lock": "free" })
+        );
+        assert_eq!(
+            serde_json::to_value(host_status(&running_with_lock(
+                serde_json::json!({ "holder": "self", "pid": 77 })
+            )))
+            .unwrap(),
+            serde_json::json!({ "state": "running", "lock": "held" })
+        );
+        assert_eq!(
+            serde_json::to_value(host_status(&running_with_lock(
+                serde_json::json!({ "holder": "other", "pid": 4242 })
+            )))
+            .unwrap(),
+            serde_json::json!({ "state": "read-only", "lockHolder": 4242, "lock": "other" })
+        );
+        assert_eq!(
+            serde_json::to_value(host_status(&configured())).unwrap(),
+            serde_json::json!({ "state": "starting" })
         );
     }
 

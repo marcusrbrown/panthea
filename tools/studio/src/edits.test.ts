@@ -107,7 +107,7 @@ describe("editing with files and no editor", () => {
     const { rig, config, over } = pickedSet();
     const dir = scratch();
     const open = new Studio(config, depsFor(capture(), over), "oneshot");
-    const session = open.owner();
+    const session = await open.owner();
     if ("ok" in session) throw new Error("busy");
     session.openEdit("e1", "w", ["idle/south"], rig.content);
     await open.teardown();
@@ -167,7 +167,7 @@ describe("editing with files and no editor", () => {
     const { rig, config, over } = pickedSet();
     const dir = scratch();
     const open = new Studio(config, depsFor(capture(), over), "oneshot");
-    const session = open.owner();
+    const session = await open.owner();
     if ("ok" in session) throw new Error("busy");
     session.openEdit("e1", "w", ["idle/south"], rig.content);
     await open.teardown();
@@ -215,7 +215,7 @@ describe("editing with files and no editor", () => {
     const { rig, config, over } = pickedSet();
     const dir = scratch();
     const open = new Studio(config, depsFor(capture(), over), "oneshot");
-    const session = open.owner();
+    const session = await open.owner();
     if ("ok" in session) throw new Error("busy");
     session.openEdit("e1", "w", ["idle/south"], rig.content);
     await open.teardown();
@@ -319,7 +319,7 @@ describe("editing with files and no editor", () => {
     const { rig, config, over } = pickedSet();
     const dir = scratch();
     const open = new Studio(config, depsFor(capture(), over), "oneshot");
-    const session = open.owner();
+    const session = await open.owner();
     if ("ok" in session) throw new Error("busy");
     session.openEdit("e1", "w", ["idle/south"], rig.content);
     await open.teardown();
@@ -431,7 +431,7 @@ describe("editing with files and no editor", () => {
     const { rig, config, over } = pickedSet();
     const dir = scratch();
     const open = new Studio(config, depsFor(capture(), over), "oneshot");
-    const session = open.owner();
+    const session = await open.owner();
     if ("ok" in session) throw new Error("busy");
     session.openEdit("e1", "w", ["idle/south"], rig.content);
     await open.teardown();
@@ -462,7 +462,7 @@ describe("editing with files and no editor", () => {
   test("discard ends the edit and leaves the working set byte-identical", async () => {
     const { rig, config, over } = pickedSet();
     const open = new Studio(config, depsFor(capture(), over), "oneshot");
-    const session = open.owner();
+    const session = await open.owner();
     if ("ok" in session) throw new Error("busy");
     session.openEdit("e1", "w", ["idle/south"], rig.content);
     await open.teardown();

@@ -1,3 +1,4 @@
+import type { StudioOp } from "../host/client";
 import type {
   CandidateSummary,
   EditReport,
@@ -30,6 +31,17 @@ export interface WorkflowState {
   readonly host: HostStatus;
   readonly configured: boolean;
   readonly lockOwner?: number;
+  /** The host's own answer to whether a release would be accepted now (`status.idle`). */
+  readonly idle: boolean;
+  /** Why it is not, when the host said. */
+  readonly idleReason?: string;
+  /** Why the last release failed while the lock was kept, when one did. */
+  readonly releaseFailure?: string;
+  /** The last write another process's lock refused, kept so Retry can send it again. */
+  readonly lockedWrite?: {
+    readonly op: StudioOp;
+    readonly args: Readonly<Record<string, unknown>>;
+  };
   readonly status?: Readonly<Record<string, unknown>> | null;
   readonly requests: readonly SummaryRecord[];
   readonly jobs: readonly QueueJob[];
@@ -50,6 +62,12 @@ export interface WorkflowState {
 export type WorkflowAction =
   | { readonly type: "snapshot"; readonly snapshot: StudioSnapshot }
   | { readonly type: "configured"; readonly configured: boolean }
+  | {
+      readonly type: "write-locked";
+      readonly op: StudioOp;
+      readonly args: Readonly<Record<string, unknown>>;
+    }
+  | { readonly type: "write-unlocked" }
   | { readonly type: "job-aborting"; readonly jobId: string }
   | { readonly type: "job-abort-failed"; readonly jobId: string }
   | { readonly type: "job-cancelled"; readonly jobId: string }
@@ -110,10 +128,39 @@ function queueJob(raw: SummaryRecord, tombstone?: "cancelled" | "removed") {
   } satisfies QueueJob;
 }
 
+/** The header's lock state: held by this app, free, or held by pid N. Nothing before the sidecar has said. */
+export function lockLabel(state: WorkflowState): string | undefined {
+  const { host } = state;
+  if (host.state === "read-only") return `Held by pid ${host.lockHolder}`;
+  if (host.state !== "running") return undefined;
+  if (host.lock === "held") return "Held by this app";
+  return host.lock === "free" ? "Free" : undefined;
+}
+
+/** Release gives back a lock this app holds, and only when the host says it is idle. */
+export function canRelease(state: WorkflowState): boolean {
+  return (
+    state.configured &&
+    state.host.state === "running" &&
+    state.host.lock === "held" &&
+    state.idle
+  );
+}
+
+/** A write another process's lock refused, as opposed to any other refusal. */
+export function refusedByLock(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "root-locked"
+  );
+}
+
 export function initialWorkflowState(): WorkflowState {
   return {
     host: { state: "starting" },
     configured: false,
+    idle: false,
     restartPending: false,
     requests: [],
     jobs: [],
@@ -142,6 +189,9 @@ export function workflowReducer(
         snapshot.host.state === "read-only"
           ? snapshot.host.lockHolder
           : undefined;
+      const status =
+        snapshot.status === undefined ? state.status : snapshot.status;
+      const reported = object(status);
       const tombstones = { ...state.tombstones };
       const jobs = (snapshot.jobs ?? []).map((raw) => {
         const protectedState = tombstones[raw.id];
@@ -154,7 +204,10 @@ export function workflowReducer(
         ...state,
         host: snapshot.host,
         configured: snapshot.host.state !== "not-configured",
-        status: snapshot.status === undefined ? state.status : snapshot.status,
+        status,
+        idle: reported.idle === true,
+        idleReason: text(reported.idleReason),
+        releaseFailure: text(reported.releaseFailure),
         ...(pid === undefined ? { lockOwner: undefined } : { lockOwner: pid }),
         requests: snapshot.requests ?? [],
         jobs,
@@ -169,6 +222,10 @@ export function workflowReducer(
         errors: snapshot.errors ?? {},
       };
     }
+    case "write-locked":
+      return { ...state, lockedWrite: { op: action.op, args: action.args } };
+    case "write-unlocked":
+      return { ...state, lockedWrite: undefined };
     case "job-aborting":
       return {
         ...state,

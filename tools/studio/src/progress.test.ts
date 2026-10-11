@@ -100,7 +100,7 @@ interface Rig {
 }
 
 /** A Studio over a fake session whose full status read costs `statusMs` of virtual time and whose one queued job takes a few I/O turns. */
-function rig(opts: { pollMs: number; statusMs: number }): Rig {
+async function rig(opts: { pollMs: number; statusMs: number }): Promise<Rig> {
   const loop = new VirtualLoop();
   Object.assign(globalThis, {
     setTimeout: loop.setTimeout,
@@ -177,7 +177,7 @@ function rig(opts: { pollMs: number; statusMs: number }): Rig {
     },
   };
   const studio = new Studio(config, deps, "oneshot");
-  const opened = studio.owner();
+  const opened = await studio.owner();
   if ("ok" in opened) throw new Error("no session");
   studio.runtimeFor(opened);
   let idle = false;
@@ -196,7 +196,7 @@ function rig(opts: { pollMs: number; statusMs: number }): Rig {
 
 describe("the progress poll", () => {
   test("a poll whose store read outlasts its period still lets the drain run to completion", async () => {
-    const r = rig({ pollMs: 100, statusMs: 150 });
+    const r = await rig({ pollMs: 100, statusMs: 150 });
 
     const done = await r.loop.run(r.finished);
 
@@ -206,7 +206,7 @@ describe("the progress poll", () => {
   test("it makes progress whatever the poll period and the cost of reading the store", async () => {
     for (const pollMs of [1, 100, 1000])
       for (const statusMs of [0, 150, 5000]) {
-        const r = rig({ pollMs, statusMs });
+        const r = await rig({ pollMs, statusMs });
 
         expect(await r.loop.run(r.finished), `${pollMs}/${statusMs}`).toBe(
           true,
@@ -216,7 +216,7 @@ describe("the progress poll", () => {
   });
 
   test("a tick never reads the whole store, so its cost does not grow with the store", async () => {
-    const r = rig({ pollMs: 100, statusMs: 150 });
+    const r = await rig({ pollMs: 100, statusMs: 150 });
 
     await r.loop.run(r.finished);
 
@@ -224,7 +224,7 @@ describe("the progress poll", () => {
   });
 
   test("the job's transitions are reported in order, each once, ending in its final status", async () => {
-    const r = rig({ pollMs: 100, statusMs: 150 });
+    const r = await rig({ pollMs: 100, statusMs: 150 });
 
     await r.loop.run(r.finished);
 

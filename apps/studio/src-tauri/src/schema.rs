@@ -121,6 +121,10 @@ pub const OPS: &[OpSpec] = &[
         Write,
     ),
     spec("publish", &["id", "confirm"], Write),
+    // Gives the writer lock back when the app is idle; the sidecar refuses it
+    // with `not-idle` otherwise. It takes the lock lazily again at the next
+    // write. No arguments: there is nothing to force.
+    spec("release", &[], Write),
 ];
 
 /// Why a call was refused before the sidecar saw it.
@@ -211,8 +215,25 @@ mod tests {
                 "approve",
                 "approve-with-exception",
                 "publish",
+                "release",
             ]
         );
+    }
+
+    #[test]
+    fn release_is_a_write_that_takes_no_argument_and_gives_the_lock_back() {
+        let row = lookup("release").unwrap();
+        assert_eq!(row.args, [] as [&str; 0]);
+        assert_eq!(row.class, Write);
+        assert!(check("release", &json!({})).is_ok());
+        assert!(check("release", &Value::Null).is_ok());
+        for stray in ["force", "id", "path", "toString"] {
+            assert_eq!(
+                check("release", &json!({ stray: true })),
+                Err(Refusal::UnknownArgument(stray.into())),
+                "{stray}"
+            );
+        }
     }
 
     #[test]
@@ -499,6 +520,7 @@ mod tests {
             "approve",
             "approve-with-exception",
             "publish",
+            "release",
         ] {
             assert_eq!(lookup(op).unwrap().class, OpClass::Write, "{op}");
         }

@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { StudioSnapshot } from "../host/types";
 import { approvalArgsForAsset } from "./actions";
 import {
+  canRelease,
   initialWorkflowState,
+  lockLabel,
+  refusedByLock,
   resolveActiveRecord,
   workflowReducer,
 } from "./model";
@@ -76,6 +79,156 @@ describe("workflowReducer", () => {
       snapshot: snapshot([], { host: { state: "running" } }),
     });
     expect(freed.lockOwner).toBeUndefined();
+  });
+
+  describe("the writer lock the app gives back when idle", () => {
+    const held = (status: Record<string, unknown>, host: object = {}) =>
+      workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot([], {
+          host: { state: "running", lock: "held", ...host } as never,
+          status,
+        }),
+      });
+
+    test("the header has three states: held by this app, free, or held by pid N", () => {
+      expect(lockLabel(held({ idle: true }))).toBe("Held by this app");
+      expect(lockLabel(held({ idle: true }, { lock: "free" }))).toBe("Free");
+      expect(
+        lockLabel(
+          held({}, { state: "read-only", lock: "other", lockHolder: 418 }),
+        ),
+      ).toBe("Held by pid 418");
+    });
+
+    test("no label before the sidecar has said, and none for a host that is not up", () => {
+      expect(lockLabel(initialWorkflowState())).toBeUndefined();
+      expect(
+        lockLabel(
+          held(
+            {},
+            {
+              state: "restarting",
+              lock: undefined,
+              attempt: 1,
+              maxAttempts: 3,
+            },
+          ),
+        ),
+      ).toBeUndefined();
+      expect(lockLabel(held({}, { lock: undefined }))).toBeUndefined();
+    });
+
+    test("read-only is held by pid N even when the host did not send the lock word", () => {
+      const loaded = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot([], {
+          host: { state: "read-only", lockHolder: 418 },
+        }),
+      });
+
+      expect(lockLabel(loaded)).toBe("Held by pid 418");
+    });
+
+    test("release is offered only when this app holds the lock and the host says it is idle", () => {
+      expect(canRelease(held({ idle: true }))).toBe(true);
+      expect(
+        canRelease(
+          held({ idle: false, idleReason: "a job is queued or running" }),
+        ),
+      ).toBe(false);
+      expect(canRelease(held({}))).toBe(false);
+      expect(canRelease(held({ idle: "yes" }))).toBe(false);
+      // Nothing to release when the lock is free or someone else's.
+      expect(canRelease(held({ idle: true }, { lock: "free" }))).toBe(false);
+      expect(
+        canRelease(
+          held(
+            { idle: true },
+            { state: "read-only", lock: "other", lockHolder: 9 },
+          ),
+        ),
+      ).toBe(false);
+      // A host that is not running, or no config.
+      expect(
+        canRelease(
+          held(
+            { idle: true },
+            {
+              state: "restarting",
+              lock: undefined,
+              attempt: 1,
+              maxAttempts: 3,
+            },
+          ),
+        ),
+      ).toBe(false);
+      expect(canRelease(initialWorkflowState())).toBe(false);
+    });
+
+    test("a release that failed and kept the lock can be tried again while idle", () => {
+      const failed = held({
+        idle: true,
+        releaseFailure: "the runtime did not stop",
+      });
+
+      expect(canRelease(failed)).toBe(true);
+      expect(failed.releaseFailure).toBe("the runtime did not stop");
+      expect(held({ idle: true }).releaseFailure).toBeUndefined();
+    });
+
+    test("the host's reason for not being idle is kept for the button's hint", () => {
+      const busy = held({ idle: false, idleReason: "an op is in flight" });
+
+      expect(busy.idleReason).toBe("an op is in flight");
+      expect(held({ idle: true, idleReason: null }).idleReason).toBeUndefined();
+    });
+
+    test("a write refused as root-locked keeps the form's resolution and remembers the write for Retry", () => {
+      const resolved = workflowReducer(held({ idle: true }, { lock: "free" }), {
+        type: "resolution",
+        value: { spec: { subject: "zeus" } },
+      });
+      const args = { id: "zeus-1", subject: "zeus" };
+
+      const refused = workflowReducer(resolved, {
+        type: "write-locked",
+        op: "generate",
+        args,
+      });
+
+      expect(refused.resolution).toEqual({ spec: { subject: "zeus" } });
+      expect(refused.lockedWrite).toEqual({ op: "generate", args });
+      // A poll does not forget it, and does not clear the form either.
+      const polled = workflowReducer(refused, {
+        type: "snapshot",
+        snapshot: snapshot([], {
+          host: { state: "read-only", lockHolder: 4242, lock: "other" },
+        }),
+      });
+      expect(polled.lockedWrite).toEqual({ op: "generate", args });
+      expect(polled.resolution).toEqual({ spec: { subject: "zeus" } });
+
+      expect(
+        workflowReducer(polled, { type: "write-unlocked" }).lockedWrite,
+      ).toBeUndefined();
+    });
+
+    test("only a refusal by the lock is a root-locked refusal", () => {
+      expect(refusedByLock({ code: "root-locked", message: "x" })).toBe(true);
+      expect(
+        refusedByLock(Object.assign(new Error("x"), { code: "root-locked" })),
+      ).toBe(true);
+      for (const other of [
+        { code: "busy" },
+        { code: "not-idle" },
+        new Error("root-locked"),
+        "root-locked",
+        null,
+        undefined,
+      ])
+        expect(refusedByLock(other)).toBe(false);
+    });
   });
 
   test("AE6 cancellation remains marked until the next queued job starts", () => {

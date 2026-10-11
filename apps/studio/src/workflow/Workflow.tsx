@@ -51,11 +51,14 @@ import {
 import { CandidatePixels } from "./CandidatePixelCell";
 import { EditPanel } from "./EditPanel";
 import {
+  canRelease,
   initialWorkflowState,
+  lockLabel,
   type QueueJob,
   recordObject,
   recordText,
   recordValue,
+  refusedByLock,
   resolveActiveRecord,
   type WorkflowAction,
   type WorkflowState,
@@ -554,8 +557,27 @@ export function WorkflowView({
               state.host.state === "restarting"),
       ),
       { label: op, nonBlocking },
-      () => host.call(op, args),
+      async () => {
+        try {
+          const result = await host.call(op, args);
+          if (!readOnly && state.lockedWrite !== undefined)
+            dispatch?.({ type: "write-unlocked" });
+          return result;
+        } catch (error) {
+          // Another process took the lock between polls: the form stays as it
+          // is and the write can be sent again once the holder is gone.
+          if (!readOnly && op !== "release" && refusedByLock(error))
+            dispatch?.({ type: "write-locked", op, args });
+          throw error;
+        }
+      },
     );
+
+  const release = async () => {
+    if (!canRelease(state)) return;
+    const result = await call("release", {}, false, false, true);
+    if (result !== undefined) setMessage("Released the writer lock.");
+  };
 
   const formArgs = () => {
     const id =
@@ -658,6 +680,14 @@ export function WorkflowView({
   const retry = (job: QueueJob) => {
     const args = rerollArgs(job);
     if (args) void call("reroll", args, false, false, true);
+  };
+  // The write the lock refused is sent again. A generate goes back through the
+  // form's own handler, so it ends the way a first try does.
+  const retryLockedWrite = () => {
+    const refused = state.lockedWrite;
+    if (refused === undefined) return;
+    if (refused.op === "generate") void generate();
+    else void call(refused.op, { ...refused.args }, false, false, true);
   };
 
   const runConform = async (jobId: string, how: ConformHow) => {
@@ -950,6 +980,7 @@ export function WorkflowView({
     state.lockOwner === undefined
       ? undefined
       : `Locked by another studio session (pid ${state.lockOwner})`;
+  const lockIndicator = lockLabel(state);
   const restartMessage = state.restartPending
     ? "Image server restarting after abort. Queued jobs can still be removed."
     : state.host.state === "restarting"
@@ -968,6 +999,26 @@ export function WorkflowView({
             <span className={`host-dot host-${state.host.state}`} />
             {hostLabel(state.host)}
           </div>
+          {lockIndicator && (
+            <div className="host-indicator" aria-live="polite">
+              {lockIndicator}
+            </div>
+          )}
+          {state.configured && (
+            <button
+              type="button"
+              disabled={!canRelease(state) || busy}
+              title={
+                canRelease(state)
+                  ? "Give the writer lock back so a CLI step can write"
+                  : (state.idleReason ??
+                    "Nothing to release: this app does not hold the lock")
+              }
+              onClick={() => void release()}
+            >
+              Release
+            </button>
+          )}
           {onConfigChoose && (
             <button
               type="button"
@@ -1005,6 +1056,25 @@ export function WorkflowView({
           {lockMessage && (
             <p className="notice notice-lock" role="status">
               {lockMessage}. This window is read-only.
+            </p>
+          )}
+          {state.lockedWrite && (
+            <p className="notice notice-lock" role="status">
+              The write was refused: another process holds the writer lock. Your
+              form is unchanged.{" "}
+              <button
+                type="button"
+                disabled={!mutationsEnabled}
+                onClick={retryLockedWrite}
+              >
+                Retry
+              </button>
+            </p>
+          )}
+          {state.releaseFailure && (
+            <p className="notice notice-warn" role="status">
+              Releasing the writer lock failed and the lock was kept:{" "}
+              {state.releaseFailure}. Release again, or quit the app.
             </p>
           )}
           {restartMessage && (
@@ -1673,7 +1743,7 @@ function hostLabel(host: WorkflowState["host"]): string {
     case "running":
       return "Connected";
     case "read-only":
-      return `Read-only (held by pid ${host.lockHolder})`;
+      return "Read-only";
     case "restarting":
       return `Restarting ${host.attempt}/${host.maxAttempts}`;
     case "unavailable":
