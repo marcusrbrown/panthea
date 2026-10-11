@@ -195,6 +195,33 @@ describe("a refused first config choice", () => {
 });
 
 describe("WorkflowView controls", () => {
+  test("record options include unique record ids and put the newest draft first", () => {
+    const html = render(
+      stateFor(undefined, {
+        assets: [
+          {
+            id: "record-zeus-sprite-1",
+            assetId: "zeus-sprite",
+            state: "draft",
+          },
+          { id: "zeus-sprite", assetId: "zeus-sprite", state: "canon" },
+          {
+            id: "record-zeus-sprite-2",
+            assetId: "zeus-sprite",
+            state: "draft",
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("zeus-sprite · draft · record-zeus-sprite-1");
+    expect(html).toContain("zeus-sprite · draft · record-zeus-sprite-2");
+    expect(html.indexOf("record-zeus-sprite-2")).toBeLessThan(
+      html.indexOf("record-zeus-sprite-1"),
+    );
+    expect(html).toContain("zeus-sprite · canon · zeus-sprite");
+  });
+
   test("field-to-card gaps use the workflow row rhythm", () => {
     const css = readFileSync(
       new URL("./workflow.css", import.meta.url),

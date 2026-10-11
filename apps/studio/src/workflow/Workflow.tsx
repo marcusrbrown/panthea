@@ -82,6 +82,21 @@ const text = (value: unknown, fallback = "") =>
   typeof value === "string" ? value : fallback;
 const recordState = (record: SummaryRecord) =>
   recordText(record, "state") ?? recordText(record, "status");
+const recordRevision = (record: SummaryRecord) =>
+  Number(record.id.match(/-(\d+)$/)?.[1] ?? -1);
+const orderedAssetRecords = (assets: readonly SummaryRecord[]) =>
+  [...assets].sort((left, right) => {
+    const leftDraft = recordState(left) === "draft";
+    const rightDraft = recordState(right) === "draft";
+    if (leftDraft !== rightDraft) return leftDraft ? -1 : 1;
+
+    const assetOrder = (recordText(left, "assetId") ?? "").localeCompare(
+      recordText(right, "assetId") ?? "",
+    );
+    if (assetOrder !== 0) return assetOrder;
+    if (leftDraft) return recordRevision(right) - recordRevision(left);
+    return left.id.localeCompare(right.id);
+  });
 const candidateChangeCount = (candidate: SummaryRecord) => {
   const count = recordValue(candidate, "pixelsChanged");
   return typeof count === "number" && Number.isFinite(count)
@@ -796,7 +811,16 @@ export function WorkflowView({
   const makeWorkingSet = async (request: SummaryRecord) => loadSheet(request);
   const pack = async () => {
     if (!packArgs) return;
-    await packWorkingSetGuarded(host, guardUi(mayMutate), packArgs);
+    await packWorkingSetGuarded(
+      host,
+      guardUi(mayMutate),
+      packArgs,
+      (recordId) => {
+        setLocalAssetId(recordId);
+        setException("");
+        dispatch?.({ type: "select-asset", assetId: recordId });
+      },
+    );
   };
   const approve = async (withException: boolean) => {
     if (!activeAsset) return;
@@ -1437,10 +1461,12 @@ export function WorkflowView({
                         });
                       }}
                     >
-                      {state.assets.map((asset) => (
+                      {orderedAssetRecords(state.assets).map((asset) => (
                         <option key={asset.id} value={asset.id}>
                           {recordText(asset, "assetId") ?? asset.id} ·{" "}
                           {recordText(asset, "state") ?? "record"}
+                          {" · "}
+                          {asset.id}
                         </option>
                       ))}
                     </select>
