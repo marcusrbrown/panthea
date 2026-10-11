@@ -20,6 +20,7 @@ import {
   withActor,
   withBuilding,
 } from "./state";
+import { testActor } from "./test-actor";
 
 function rules(
   economyBalance: Record<string, number> = {},
@@ -50,43 +51,52 @@ function pack(overrides: Partial<ContentPack> = {}): ContentPack {
 
 test("a dead actor never gets a routine proposal", () => {
   let state = createInitialWorldState(pack());
-  state = withActor(state, {
-    id: toEntityId("ghost"),
-    locationId: toEntityId("square"),
-    alive: false,
-    capabilities: [],
-    inventory: new Map(),
-    drives: { thrift: 1, appetite: 0, greed: 0, piety: 0 },
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("ghost"),
+      locationId: toEntityId("square"),
+      alive: false,
+      capabilities: [],
+      inventory: new Map(),
+      drives: { thrift: 1, appetite: 0, greed: 0, piety: 0 },
+      revision: 0,
+    }),
+  );
   expect(decideRoutineProposal(state, toEntityId("ghost"))).toBeUndefined();
 });
 
 test("an actor with no authored drives is not routine-driven", () => {
   let state = createInitialWorldState(pack());
-  state = withActor(state, {
-    id: toEntityId("wanderer"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("wanderer"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   expect(decideRoutineProposal(state, toEntityId("wanderer"))).toBeUndefined();
 });
 
 test("with nothing else eligible, a gatherer falls back to gathering its own resource", () => {
   let state = createInitialWorldState(pack());
-  state = withActor(state, {
-    id: toEntityId("woodcutter"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    drives: { thrift: 0.5, appetite: 0.1, greed: 0.3, piety: 0 },
-    gathers: "wood",
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("woodcutter"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      drives: { thrift: 0.5, appetite: 0.1, greed: 0.3, piety: 0 },
+      gathers: "wood",
+      revision: 0,
+    }),
+  );
   const result = decideRoutineProposal(state, toEntityId("woodcutter"));
   if (!result) throw new Error("expected a routine result");
   expect(result.proposal).toMatchObject({
@@ -101,25 +111,31 @@ test("with nothing else eligible, a gatherer falls back to gathering its own res
 
 test("a routine never proposes a trade the counterparty's own acceptance rule would decline", () => {
   let state = createInitialWorldState(pack());
-  state = withActor(state, {
-    id: toEntityId("woodcutter"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["wood", 4]]),
-    gathers: "wood",
-    revision: 0,
-    drives: { thrift: 0, appetite: 0, greed: 0.9, piety: 0 },
-  });
-  state = withActor(state, {
-    id: toEntityId("thrifty-buyer"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 100]]),
-    revision: 0,
-    drives: { thrift: 0.9, appetite: 0, greed: 0, piety: 0 },
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("woodcutter"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["wood", 4]]),
+      gathers: "wood",
+      revision: 0,
+      drives: { thrift: 0, appetite: 0, greed: 0.9, piety: 0 },
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("thrifty-buyer"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 100]]),
+      revision: 0,
+      drives: { thrift: 0.9, appetite: 0, greed: 0, piety: 0 },
+    }),
+  );
   const result = decideRoutineProposal(state, toEntityId("woodcutter"));
   if (!result) throw new Error("expected a routine result");
   // The only other actor present would decline this exact trade (its
@@ -131,7 +147,36 @@ test("a routine never proposes a trade the counterparty's own acceptance rule wo
 test("two inhabitants with different dominant drives choose different actions from the same state", () => {
   const base = () => {
     let state = createInitialWorldState(pack());
-    state = withActor(state, {
+    state = withActor(
+      state,
+      testActor({
+        id: toEntityId("self"),
+        locationId: toEntityId("square"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map([["wood", 4]]),
+        gathers: "wood",
+        revision: 0,
+        drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
+      }),
+    );
+    state = withActor(
+      state,
+      testActor({
+        id: toEntityId("buyer"),
+        locationId: toEntityId("square"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map([["currency", 10]]),
+        revision: 0,
+      }),
+    );
+    return state;
+  };
+
+  const appetiteState = withActor(
+    base(),
+    testActor({
       id: toEntityId("self"),
       locationId: toEntityId("square"),
       alive: true,
@@ -139,39 +184,22 @@ test("two inhabitants with different dominant drives choose different actions fr
       inventory: new Map([["wood", 4]]),
       gathers: "wood",
       revision: 0,
-      drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
-    });
-    state = withActor(state, {
-      id: toEntityId("buyer"),
+      drives: { thrift: 0, appetite: 0.9, greed: 0, piety: 0 },
+    }),
+  );
+  const greedState = withActor(
+    base(),
+    testActor({
+      id: toEntityId("self"),
       locationId: toEntityId("square"),
       alive: true,
       capabilities: [],
-      inventory: new Map([["currency", 10]]),
+      inventory: new Map([["wood", 4]]),
+      gathers: "wood",
       revision: 0,
-    });
-    return state;
-  };
-
-  const appetiteState = withActor(base(), {
-    id: toEntityId("self"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["wood", 4]]),
-    gathers: "wood",
-    revision: 0,
-    drives: { thrift: 0, appetite: 0.9, greed: 0, piety: 0 },
-  });
-  const greedState = withActor(base(), {
-    id: toEntityId("self"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["wood", 4]]),
-    gathers: "wood",
-    revision: 0,
-    drives: { thrift: 0, appetite: 0, greed: 0.9, piety: 0 },
-  });
+      drives: { thrift: 0, appetite: 0, greed: 0.9, piety: 0 },
+    }),
+  );
 
   const appetiteChoice = decideRoutineProposal(
     appetiteState,
@@ -188,26 +216,32 @@ test("two inhabitants with different dominant drives choose different actions fr
 
 test("a hungry actor with currency buys food from a co-located seller over gathering", () => {
   let state = createInitialWorldState(pack());
-  state = withActor(state, {
-    id: toEntityId("hungry"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    gathers: "wood",
-    revision: 0,
-    drives: { thrift: 0, appetite: 0.9, greed: 0, piety: 0 },
-  });
-  state = withActor(state, {
-    id: toEntityId("seller"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["food", 5]]),
-    // Only a food producer sells food.
-    gathers: "food",
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("hungry"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      gathers: "wood",
+      revision: 0,
+      drives: { thrift: 0, appetite: 0.9, greed: 0, piety: 0 },
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("seller"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["food", 5]]),
+      // Only a food producer sells food.
+      gathers: "food",
+      revision: 0,
+    }),
+  );
   const result = decideRoutineProposal(state, toEntityId("hungry"));
   expect(result?.proposal).toMatchObject({
     kind: "trade",
@@ -219,15 +253,18 @@ test("a hungry actor with currency buys food from a co-located seller over gathe
 
 test("an actor holding enough food consumes it", () => {
   let state = createInitialWorldState(pack());
-  state = withActor(state, {
-    id: toEntityId("fed"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["food", 2]]),
-    revision: 0,
-    drives: { thrift: 0, appetite: 0.9, greed: 0, piety: 0 },
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("fed"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["food", 2]]),
+      revision: 0,
+      drives: { thrift: 0, appetite: 0.9, greed: 0, piety: 0 },
+    }),
+  );
   const result = decideRoutineProposal(state, toEntityId("fed"));
   expect(result?.proposal).toMatchObject({
     kind: "consume",
@@ -247,16 +284,19 @@ test("an actor holding recipe inputs proposes to produce over gathering", () => 
       },
     }),
   );
-  state = withActor(state, {
-    id: toEntityId("carpenter"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["wood", 2]]),
-    gathers: "wood",
-    revision: 0,
-    drives: { thrift: 0.9, appetite: 0, greed: 0, piety: 0 },
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("carpenter"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["wood", 2]]),
+      gathers: "wood",
+      revision: 0,
+      drives: { thrift: 0.9, appetite: 0, greed: 0, piety: 0 },
+    }),
+  );
   const result = decideRoutineProposal(state, toEntityId("carpenter"));
   expect(result?.proposal).toMatchObject({
     kind: "produce",
@@ -277,25 +317,31 @@ test("an actor holding a recipe's output sells the surplus to a co-located buyer
       },
     }),
   );
-  state = withActor(state, {
-    id: toEntityId("carpenter"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["planks", 2]]),
-    revision: 0,
-    // The carpenter works the recipe: it fells the wood it turns into planks.
-    gathers: "wood",
-    drives: { thrift: 0.6, appetite: 0, greed: 0, piety: 0 },
-  });
-  state = withActor(state, {
-    id: toEntityId("buyer"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("carpenter"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["planks", 2]]),
+      revision: 0,
+      // The carpenter works the recipe: it fells the wood it turns into planks.
+      gathers: "wood",
+      drives: { thrift: 0.6, appetite: 0, greed: 0, piety: 0 },
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("buyer"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      revision: 0,
+    }),
+  );
   const result = decideRoutineProposal(state, toEntityId("carpenter"));
   expect(result?.proposal).toMatchObject({
     kind: "trade",
@@ -317,18 +363,19 @@ test("a buyer who merely holds a recipe's output keeps it: only someone who work
       },
     }),
   );
-  const trader = (id: string, planks: number) => ({
-    id: toEntityId(id),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([
-      ["planks", planks],
-      ["currency", 10],
-    ]),
-    revision: 0,
-    drives: { thrift: 0.6, appetite: 0, greed: 0.6, piety: 0 },
-  });
+  const trader = (id: string, planks: number) =>
+    testActor({
+      id: toEntityId(id),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([
+        ["planks", planks],
+        ["currency", 10],
+      ]),
+      revision: 0,
+      drives: { thrift: 0.6, appetite: 0, greed: 0.6, piety: 0 },
+    });
   state = withActor(state, trader("holder", 2));
   state = withActor(state, trader("other", 0));
   expect(decideRoutineProposal(state, toEntityId("holder"))).toBeUndefined();
@@ -338,19 +385,20 @@ test("a gatherer does not sell its surplus to someone who gathers the same good:
   let state = createInitialWorldState(
     pack({ rules: rules({ value_fish: 2, gatherAmount: 2 }) }),
   );
-  const fisher = (id: string, fish: number) => ({
-    id: toEntityId(id),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([
-      ["fish", fish],
-      ["currency", 10],
-    ]),
-    revision: 0,
-    gathers: "fish",
-    drives: { thrift: 0.1, appetite: 0, greed: 0.6, piety: 0 },
-  });
+  const fisher = (id: string, fish: number) =>
+    testActor({
+      id: toEntityId(id),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([
+        ["fish", fish],
+        ["currency", 10],
+      ]),
+      revision: 0,
+      gathers: "fish",
+      drives: { thrift: 0.1, appetite: 0, greed: 0.6, piety: 0 },
+    });
   state = withActor(state, fisher("kallias", 2));
   state = withActor(state, fisher("melina", 0));
   // Melina has the money and would accept, but she gathers fish herself.
@@ -360,15 +408,18 @@ test("a gatherer does not sell its surplus to someone who gathers the same good:
     kind: "gather",
   });
   // A buyer who does not gather it is another matter.
-  state = withActor(state, {
-    id: toEntityId("ferryman"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    revision: 0,
-    drives: { thrift: 0.1, appetite: 0, greed: 0.6, piety: 0 },
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("ferryman"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      revision: 0,
+      drives: { thrift: 0.1, appetite: 0, greed: 0.6, piety: 0 },
+    }),
+  );
   expect(
     decideRoutineProposal(state, toEntityId("kallias"))?.proposal,
   ).toMatchObject({
@@ -399,15 +450,18 @@ test("an owner holding enough materials proposes to repair its destroyed buildin
   const tavern = state.buildings.get(toEntityId("the-tavern"));
   if (!tavern) throw new Error("expected the tavern fixture building");
   state = withBuilding(state, { ...buildingBase(tavern), status: "destroyed" });
-  state = withActor(state, {
-    id: toEntityId("farmer"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["planks", 3]]),
-    revision: 0,
-    drives: { thrift: 0.1, appetite: 0, greed: 0, piety: 0 },
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("farmer"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["planks", 3]]),
+      revision: 0,
+      drives: { thrift: 0.1, appetite: 0, greed: 0, piety: 0 },
+    }),
+  );
   const result = decideRoutineProposal(state, toEntityId("farmer"));
   expect(result?.proposal).toMatchObject({
     kind: "repair",
@@ -417,15 +471,18 @@ test("an owner holding enough materials proposes to repair its destroyed buildin
 
 test("an actor without a gatherable resource and nothing else eligible gets no proposal", () => {
   let state = createInitialWorldState(pack());
-  state = withActor(state, {
-    id: toEntityId("idle"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-    drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("idle"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+      drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
+    }),
+  );
   expect(decideRoutineProposal(state, toEntityId("idle"))).toBeUndefined();
 });
 
@@ -440,7 +497,7 @@ function mortal(
   inventory: Record<string, number>,
   extra: Partial<ActorState> = {},
 ): ActorState {
-  return {
+  return testActor({
     id: toEntityId(name),
     locationId: toEntityId(at),
     alive: true,
@@ -449,7 +506,7 @@ function mortal(
     revision: 0,
     drives: { thrift: 0, appetite: 0.12, greed: 0, piety: 0 },
     ...extra,
-  };
+  });
 }
 
 /** Square, path and field in a line: two steps from the square to the field. */

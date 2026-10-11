@@ -24,6 +24,7 @@ import {
   type WorldState,
   withActor,
 } from "@panthea/world";
+import { testActor } from "@panthea/world/testing";
 import {
   createServiceStatusRef,
   createSimulationServer,
@@ -331,14 +332,17 @@ function crowdedSeed(crowd: number): WorldState {
   if (!zeus) throw new Error("expected Zeus in the pack");
   state = withActor(state, { ...zeus, locationId: toEntityId("tavern") });
   for (let index = 0; index < crowd; index += 1) {
-    state = withActor(state, {
-      id: toEntityId(`onlooker-${index}`),
-      locationId: toEntityId("tavern"),
-      alive: true,
-      capabilities: [],
-      inventory: new Map(),
-      revision: 0,
-    });
+    state = withActor(
+      state,
+      testActor({
+        id: toEntityId(`onlooker-${index}`),
+        locationId: toEntityId("tavern"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map(),
+        revision: 0,
+      }),
+    );
   }
   return state;
 }

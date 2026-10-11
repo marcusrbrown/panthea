@@ -64,6 +64,7 @@ function fixtureState(): WorldState {
     inhabitants: [
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "tavern",
         deity: true,
@@ -71,12 +72,14 @@ function fixtureState(): WorldState {
       },
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "tavern",
         startingInventory: [{ resource: "currency", amount: 7 }],
       },
       {
         id: "woodcutter",
+        sprite: "placeholder-woodcutter",
         name: "The Woodcutter",
         locationId: "square",
         startingInventory: [{ resource: "currency", amount: 3 }],

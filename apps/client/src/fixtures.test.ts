@@ -69,6 +69,7 @@ test("the preview world keeps the actors, buildings, statuses, and summary the p
       id: "zeus",
       locationId: "olympus-hall",
       alive: true,
+      sprite: "placeholder-zeus",
       isDeity: true,
       inventory: [{ resource: "divinity", amount: 10 }],
     },

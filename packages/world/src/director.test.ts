@@ -62,6 +62,7 @@ function pack(
     inhabitants: [
       ...mortals.map((mortal) => ({
         id: mortal,
+        sprite: `placeholder-${mortal}`,
         name: mortal,
         locationId: "square",
         drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
@@ -72,6 +73,7 @@ function pack(
       })),
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "hall",
         deity: true,
@@ -516,6 +518,7 @@ function townWithGods() {
   const base = pack(10, ["farmer", "woodcutter", "drifter"]);
   const gods = ["athena", "poseidon"].map((name) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "hall",
     deity: true,

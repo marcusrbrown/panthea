@@ -34,6 +34,7 @@ function content(
 ): ContentPack {
   const god = (name: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "hall",
     deity: true as const,
@@ -41,6 +42,7 @@ function content(
   });
   const mortal = (name: string, patron: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "dock",
     drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },

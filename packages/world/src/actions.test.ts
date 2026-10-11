@@ -9,6 +9,7 @@ import {
   type WorldState,
   withActor,
 } from "./state";
+import { testActor } from "./test-actor";
 
 function minimalRules(): ContentPack["rules"] {
   return {
@@ -68,14 +69,17 @@ function walkPack(): ContentPack {
 
 function walkState(): WorldState {
   const state = createInitialWorldState(walkPack());
-  return withActor(state, {
-    id: toEntityId("wanderer"),
-    locationId: toEntityId("wilderness"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  return withActor(
+    state,
+    testActor({
+      id: toEntityId("wanderer"),
+      locationId: toEntityId("wilderness"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
 }
 
 /** Parses a raw fixture payload the way a real fixture/routine would submit it. */
@@ -136,14 +140,17 @@ test("a wilderness-to-town walk commits one entity-moved event per step across t
 });
 
 test("a realm-transition proposal changes realm and location in one event", () => {
-  const state = withActor(walkState(), {
-    id: toEntityId("ferryman"),
-    locationId: toEntityId("ferry-dock"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  const state = withActor(
+    walkState(),
+    testActor({
+      id: toEntityId("ferryman"),
+      locationId: toEntityId("ferry-dock"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
 
   const result = runTick(state, createPrng(1), [
     proposal({
@@ -289,25 +296,31 @@ function economyWalkPack(): ContentPack {
 
 function economyWalkState(): WorldState {
   let state = createInitialWorldState(economyWalkPack());
-  state = withActor(state, {
-    id: toEntityId("woodcutter"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
-    gathers: "wood",
-    revision: 0,
-  });
-  state = withActor(state, {
-    id: toEntityId("farmer"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("woodcutter"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
+      gathers: "wood",
+      revision: 0,
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("farmer"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
+      revision: 0,
+    }),
+  );
   return state;
 }
 
@@ -477,7 +490,12 @@ test("only a building that offers a service earns its owner income: a woodshed t
     ...base,
     buildings: [stocked("shop", ["trade"]), stocked("woodshed", [])],
     inhabitants: [
-      { id: "woodcutter", name: "Woodcutter", locationId: "square" },
+      {
+        id: "woodcutter",
+        sprite: "placeholder-woodcutter",
+        name: "Woodcutter",
+        locationId: "square",
+      },
     ],
     rules: {
       ...base.rules,

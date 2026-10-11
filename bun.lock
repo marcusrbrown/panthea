@@ -15,7 +15,9 @@
       "version": "0.1.0",
       "dependencies": {
         "@panthea/agents": "workspace:*",
+        "@panthea/assets": "workspace:*",
         "@panthea/contracts": "workspace:*",
+        "@panthea/renderer": "workspace:*",
         "@panthea/world": "workspace:*",
         "@tauri-apps/api": "2.12.1",
         "react": "19.3.0",
@@ -55,6 +57,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@panthea/assets": "workspace:*",
+        "@panthea/renderer": "workspace:*",
         "@tauri-apps/api": "2.12.1",
         "react": "19.3.0",
         "react-dom": "19.3.0",
@@ -109,6 +112,18 @@
       "version": "0.1.0",
       "dependencies": {
         "@panthea/contracts": "workspace:*",
+      },
+    },
+    "packages/renderer": {
+      "name": "@panthea/renderer",
+      "version": "0.1.0",
+      "dependencies": {
+        "@panthea/assets": "workspace:*",
+        "three": "0.185.1",
+        "three-flatland": "0.1.0-alpha.10",
+      },
+      "devDependencies": {
+        "@types/three": "0.185.4",
       },
     },
     "packages/telemetry": {
@@ -402,6 +417,8 @@
     "@panthea/desktop": ["@panthea/desktop@workspace:apps/desktop"],
 
     "@panthea/persistence": ["@panthea/persistence@workspace:packages/persistence"],
+
+    "@panthea/renderer": ["@panthea/renderer@workspace:packages/renderer"],
 
     "@panthea/simulation": ["@panthea/simulation@workspace:apps/simulation"],
 

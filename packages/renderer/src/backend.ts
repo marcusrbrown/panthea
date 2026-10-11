@@ -7,6 +7,7 @@
 
 import {
   Color,
+  Group,
   LinearSRGBColorSpace,
   Mesh,
   NearestFilter,
@@ -22,16 +23,28 @@ import { DEPTH_CAMERA_Z, DEPTH_FAR, DEPTH_NEAR } from "./iso";
 import { createSceneLayer } from "./layer";
 import {
   cameraBounds,
-  LOGICAL_HEIGHT,
-  LOGICAL_WIDTH,
+  type LogicalSize,
   type PixelBuffer,
   type PreviewView,
   type RenderBackend,
-} from "./preview";
+} from "./view";
 
 export const DEFAULT_BACKGROUND = [38, 42, 52] as const;
 
+/** A render backend that also holds a group of plain meshes in the same scene and pixel space as the sprite layer. */
+export interface GpuBackend extends RenderBackend {
+  /**
+   * Meshes the sprite layer does not draw (ground, bars, rings), in the same
+   * world space as the layer's sprites: x right, y up, z the depth key. The
+   * owner adds and removes children and disposes their geometry and
+   * materials; the backend only draws them and removes the group on dispose.
+   */
+  readonly decor: Group;
+}
+
 export interface GpuBackendOptions {
+  /** The fixed render-target size; the scene is drawn at 1x into it. */
+  readonly logicalSize: LogicalSize;
   /** Use the WebGL2 backend even where WebGPU exists. */
   readonly forceWebGL?: boolean;
   /** Clear colour as sRGB bytes, written to the target unchanged. */
@@ -52,8 +65,9 @@ function flipRows(buffer: PixelBuffer): PixelBuffer {
 
 export function createGpuBackend(
   canvas: HTMLCanvasElement,
-  options: GpuBackendOptions = {},
-): RenderBackend {
+  options: GpuBackendOptions,
+): GpuBackend {
+  const { width: logicalWidth, height: logicalHeight } = options.logicalSize;
   const renderer = new WebGPURenderer({
     canvas,
     antialias: false,
@@ -72,17 +86,19 @@ export function createGpuBackend(
     LinearSRGBColorSpace,
   );
   const layer = createSceneLayer(scene);
+  const decor = new Group();
+  scene.add(decor);
   const camera = new OrthographicCamera(
     0,
-    LOGICAL_WIDTH,
+    logicalWidth,
     0,
-    -LOGICAL_HEIGHT,
+    -logicalHeight,
     DEPTH_NEAR,
     DEPTH_FAR,
   );
   camera.position.set(0, 0, DEPTH_CAMERA_Z);
 
-  const target = new RenderTarget(LOGICAL_WIDTH, LOGICAL_HEIGHT, {
+  const target = new RenderTarget(logicalWidth, logicalHeight, {
     depthBuffer: true,
     magFilter: NearestFilter,
     minFilter: NearestFilter,
@@ -124,6 +140,7 @@ export function createGpuBackend(
 
   return {
     layer,
+    decor,
     get name() {
       return isWebGL() ? "webgl2" : "webgpu";
     },
@@ -137,7 +154,7 @@ export function createGpuBackend(
         view.metrics.backingHeight,
         false,
       );
-      const bounds = cameraBounds(view.camera);
+      const bounds = cameraBounds(options.logicalSize, view.camera);
       camera.left = bounds.left;
       camera.right = bounds.right;
       camera.top = bounds.top;
@@ -160,8 +177,8 @@ export function createGpuBackend(
         target,
         0,
         0,
-        LOGICAL_WIDTH,
-        LOGICAL_HEIGHT,
+        logicalWidth,
+        logicalHeight,
       );
       const bytes = new Uint8Array(
         data.buffer,
@@ -169,8 +186,8 @@ export function createGpuBackend(
         data.byteLength,
       );
       const buffer = {
-        width: LOGICAL_WIDTH,
-        height: LOGICAL_HEIGHT,
+        width: logicalWidth,
+        height: logicalHeight,
         data: bytes,
       };
       return isWebGL() ? flipRows(buffer) : buffer;
@@ -199,6 +216,7 @@ export function createGpuBackend(
     dispose() {
       if (disposed) return;
       disposed = true;
+      scene.remove(decor);
       layer.dispose();
       target.dispose();
       blitMaterial.dispose();

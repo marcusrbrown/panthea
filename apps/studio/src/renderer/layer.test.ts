@@ -1,23 +1,25 @@
 import { describe, expect, it } from "bun:test";
 import { type RegistrySnapshot, resolveAsset } from "@panthea/assets";
 import { spriteFixture } from "@panthea/assets/fixtures";
-import { Scene, type Texture } from "three";
-import type { Sprite2D } from "three-flatland";
-import { diamondRow, TILE_H, TILE_W } from "./iso";
-import {
-  createSceneLayer,
-  frameIndexAt,
-  type LayerEntry,
-  layerPosition,
-  type SceneLayer,
-} from "./layer";
-import { composeScene, type Instance, type SceneEntity } from "./scene";
 import {
   type AtlasSpec,
+  composeScene,
+  createSceneLayer,
   diamondImage,
+  diamondRow,
+  frameIndexAt,
+  type Instance,
+  type LayerEntry,
+  layerPosition,
   type RawImage,
   rgbaImage,
-} from "./textures";
+  type SceneEntity,
+  type SceneLayer,
+  TILE_H,
+  TILE_W,
+} from "@panthea/renderer";
+import { Scene, type Texture } from "three";
+import type { Sprite2D } from "three-flatland";
 
 const god = spriteFixture("placeholder-zeus");
 const snapshot: RegistrySnapshot = {
@@ -376,6 +378,20 @@ describe("scene layer", () => {
     expect(spriteOf(layer, "zeus").frame?.height).toBe(1);
     expect(spriteOf(layer, "zeus").frame?.name).toBe("64,0,64,80");
     layer.dispose();
+  });
+
+  it("releases its ECS world on dispose, so layers can be made and disposed past koota's 16-world cap", () => {
+    // A layer owns a SpriteGroup, whose world is created with its first sprite
+    // and counted against a process-wide cap of 16. A device-loss remount or an
+    // inspector toggle builds a layer each time, so a dispose that kept the
+    // world would exhaust the cap in the running app.
+    for (let made = 0; made < 40; made += 1) {
+      const { layer } = setup();
+      layer.commit("god", GOD_SPEC, atlasImage(256, 80, 1));
+      layer.apply(entriesFor(instances(godEntity("zeus")), "god"));
+      expect(layer.stats.sprites).toBe(1);
+      layer.dispose();
+    }
   });
 
   it("disposes cleanly, twice, and ignores later calls", () => {

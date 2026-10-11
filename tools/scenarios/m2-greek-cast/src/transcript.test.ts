@@ -455,12 +455,18 @@ const tavernPack = (): ContentPack => ({
   inhabitants: [
     {
       id: "zeus",
+      sprite: "placeholder-zeus",
       name: "Zeus",
       locationId: "tavern",
       deity: true,
       startingInventory: [{ resource: "divinity", amount: 100 }],
     },
-    { id: "farmer", name: "The Farmer", locationId: "tavern" },
+    {
+      id: "farmer",
+      sprite: "placeholder-farmer",
+      name: "The Farmer",
+      locationId: "tavern",
+    },
   ],
   rules: {
     catchUpCapMs: 0,

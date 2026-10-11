@@ -15,7 +15,7 @@ import type { WorldId } from "@panthea/contracts";
 import { createWorldId, type WorldEvent } from "@panthea/contracts";
 import type { PersistedClockState } from "./clock";
 
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 /** Creates every STRICT table the store owns and stamps `user_version`. */
 export function createSchema(db: Database): void {

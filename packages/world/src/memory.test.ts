@@ -72,21 +72,38 @@ function pack(memoryBalance?: Record<string, number>): ContentPack {
     inhabitants: [
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "tavern",
         deity: true,
         startingInventory: [{ resource: "divinity", amount: 100 }],
       },
-      { id: "farmer", name: "The Farmer", locationId: "tavern" },
-      { id: "bard", name: "The Bard", locationId: "tavern" },
+      {
+        id: "farmer",
+        sprite: "placeholder-farmer",
+        name: "The Farmer",
+        locationId: "tavern",
+      },
+      {
+        id: "bard",
+        sprite: "placeholder-bard",
+        name: "The Bard",
+        locationId: "tavern",
+      },
       {
         id: "hera",
+        sprite: "placeholder-hera",
         name: "Hera",
         locationId: "square",
         deity: true,
         startingInventory: [{ resource: "divinity", amount: 10 }],
       },
-      { id: "woodcutter", name: "The Woodcutter", locationId: "square" },
+      {
+        id: "woodcutter",
+        sprite: "placeholder-woodcutter",
+        name: "The Woodcutter",
+        locationId: "square",
+      },
     ],
     rules: {
       catchUpCapMs: 0,

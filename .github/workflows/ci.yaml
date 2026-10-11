@@ -98,6 +98,10 @@ jobs:
       - name: ✅ cargo clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
+      - name: ✅ cargo test
+        # The sidecar integration test spawns the real session through Bun.
+        run: cargo test --locked
+
   rust-studio:
     name: rust-studio
     permissions:

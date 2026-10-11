@@ -29,6 +29,8 @@ export interface ViewActor {
   readonly id: string;
   readonly locationId: string;
   readonly alive: boolean;
+  /** The sprite id the world set for this actor at genesis; the renderer resolves it to art. */
+  readonly sprite: string;
   readonly isDeity: boolean;
   readonly inventory: readonly ViewInventoryLine[];
 }
@@ -98,6 +100,7 @@ function viewActor(actor: ActorState): ViewActor {
     id: actor.id,
     locationId: actor.locationId,
     alive: actor.alive,
+    sprite: actor.sprite,
     isDeity: actor.isDeity === true,
     inventory: inventoryLines(actor.inventory),
   };

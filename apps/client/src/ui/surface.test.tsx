@@ -22,6 +22,7 @@ function view(overrides: Partial<WorldViewModel> = {}): WorldViewModel {
               id: "wanderer",
               locationId: "town-square",
               alive: true,
+              sprite: "placeholder-wanderer",
               isDeity: false,
               inventory: [],
             },
@@ -270,4 +271,29 @@ test("successive model-degraded frames keep the banner as ticks and sequence adv
   expect(html[1]).toContain("Models unavailable — world running");
   expect(html[1]).toContain("Tick 7");
   expect(html[1]).toContain("Event 5");
+});
+
+test("the latest canon art problem is shown as a note", () => {
+  const html = renderToStaticMarkup(
+    <ClientSurface
+      view={view()}
+      observation={{ kind: "idle" }}
+      artProblems={[
+        "blobs/ab.png: bytes do not hash to the file name",
+        "atlas:0fe8: atlas is not in the verified canon set",
+      ]}
+    />,
+  );
+
+  expect(html).toContain("Canon art unavailable");
+  expect(html).toContain("atlas:0fe8: atlas is not in the verified canon set");
+  expect(html).not.toContain("blobs/ab.png");
+});
+
+test("no canon art problem, no note", () => {
+  const html = renderToStaticMarkup(
+    <ClientSurface view={view()} observation={{ kind: "idle" }} />,
+  );
+
+  expect(html).not.toContain("Canon art unavailable");
 });

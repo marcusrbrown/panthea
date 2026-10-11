@@ -2,7 +2,12 @@ import { expect, test } from "bun:test";
 import type { Realm } from "@panthea/contracts";
 
 import type { WorldViewModel } from "../store";
-import { drawScene, startSceneRenderer } from "./lifecycle";
+import {
+  drawScene,
+  type FrameScheduler,
+  startFrameLoop,
+  startSceneRenderer,
+} from "./lifecycle";
 import type { WorldRenderer } from "./scene";
 
 const canvas = {} as HTMLCanvasElement;
@@ -36,9 +41,10 @@ function fakeRenderer(
       return started;
     },
     draw(_view: WorldViewModel, _realm: Realm) {
-      if (options.drawError) throw options.drawError;
-      return options.drawIds ?? [];
+      if (options.drawError) return Promise.reject(options.drawError);
+      return Promise.resolve(options.drawIds ?? []);
     },
+    tick: () => {},
     dispose() {
       disposals += 1;
     },
@@ -61,7 +67,10 @@ function handlers() {
   };
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** Lets every settled promise run its continuation; no timer, no clock. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+}
 
 test("a renderer that starts reports started once", async () => {
   const renderer = fakeRenderer();
@@ -180,7 +189,8 @@ test("a start that throws synchronously is reported as a failure", () => {
     start() {
       throw new Error("start exploded");
     },
-    draw: () => [],
+    draw: () => Promise.resolve([]),
+    tick: () => {},
     dispose: () => {},
   };
   const seen = handlers();
@@ -190,12 +200,12 @@ test("a start that throws synchronously is reported as a failure", () => {
   expect(seen.log).toEqual(["failure:start exploded"]);
 });
 
-test("drawing hands the ids the renderer drew to onDrawn", () => {
+test("drawing hands the ids the renderer drew to onDrawn", async () => {
   const renderer = fakeRenderer({ drawIds: ["fire-1", "trade-1"] });
   const drawn: (readonly string[])[] = [];
   const failures: string[] = [];
 
-  drawScene(renderer, view, "mortal", {
+  await drawScene(renderer, view, "mortal", {
     onDrawn: (ids) => drawn.push(ids),
     onFailure: (message) => failures.push(message),
   });
@@ -204,12 +214,35 @@ test("drawing hands the ids the renderer drew to onDrawn", () => {
   expect(failures).toEqual([]);
 });
 
-test("a draw error is reported as a failure and nothing is receipted", () => {
+test("ids are handed on only once the frame is on screen, not when the draw begins", async () => {
+  let finish: (ids: readonly string[]) => void = () => {};
+  const renderer: WorldRenderer = {
+    ...fakeRenderer(),
+    draw: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  };
+  const drawn: (readonly string[])[] = [];
+
+  const drawing = drawScene(renderer, view, "mortal", {
+    onDrawn: (ids) => drawn.push(ids),
+    onFailure: () => {},
+  });
+  await settle();
+  expect(drawn).toEqual([]);
+
+  finish(["fire-1"]);
+  await drawing;
+  expect(drawn).toEqual([["fire-1"]]);
+});
+
+test("a draw error is reported as a failure and nothing is receipted", async () => {
   const renderer = fakeRenderer({ drawError: new Error("render pass failed") });
   const drawn: (readonly string[])[] = [];
   const failures: string[] = [];
 
-  drawScene(renderer, view, "mortal", {
+  await drawScene(renderer, view, "mortal", {
     onDrawn: (ids) => drawn.push(ids),
     onFailure: (message) => failures.push(message),
   });
@@ -218,13 +251,93 @@ test("a draw error is reported as a failure and nothing is receipted", () => {
   expect(failures).toEqual(["render pass failed"]);
 });
 
-test("drawing with no renderer draws nothing and receipts nothing", () => {
+test("drawing with no renderer draws nothing and receipts nothing", async () => {
   const drawn: (readonly string[])[] = [];
 
-  drawScene(undefined, view, "mortal", {
+  await drawScene(undefined, view, "mortal", {
     onDrawn: (ids) => drawn.push(ids),
     onFailure: () => {},
   });
 
   expect(drawn).toEqual([[]]);
+});
+
+/** A frame scheduler the test drives by hand: no timers, no animation frames. */
+function manualScheduler() {
+  let next: ((nowMs: number) => void) | undefined;
+  let cancelled = 0;
+  const scheduler: FrameScheduler = {
+    request(callback) {
+      next = callback;
+      return 1;
+    },
+    cancel() {
+      cancelled += 1;
+      next = undefined;
+    },
+  };
+  return {
+    scheduler,
+    frame(nowMs: number) {
+      const callback = next;
+      next = undefined;
+      callback?.(nowMs);
+    },
+    pending: () => next !== undefined,
+    cancelled: () => cancelled,
+  };
+}
+
+test("the frame loop ticks the renderer by the delta between frames, starting from zero", () => {
+  const deltas: number[] = [];
+  const renderer: WorldRenderer = {
+    ...fakeRenderer(),
+    tick: (deltaMs) => deltas.push(deltaMs),
+  };
+  const clock = manualScheduler();
+
+  startFrameLoop(renderer, clock.scheduler);
+  clock.frame(1000);
+  clock.frame(1016);
+  clock.frame(1350);
+
+  expect(deltas).toEqual([0, 16, 334]);
+  expect(clock.pending()).toBe(true);
+});
+
+test("stopping the frame loop cancels the pending frame and ticks no more", () => {
+  const deltas: number[] = [];
+  const renderer: WorldRenderer = {
+    ...fakeRenderer(),
+    tick: (deltaMs) => deltas.push(deltaMs),
+  };
+  const clock = manualScheduler();
+
+  const stop = startFrameLoop(renderer, clock.scheduler);
+  clock.frame(10);
+  stop();
+  clock.frame(20);
+  stop();
+
+  expect(deltas).toEqual([0]);
+  expect(clock.pending()).toBe(false);
+  expect(clock.cancelled()).toBeGreaterThanOrEqual(1);
+});
+
+test("a tick that throws does not stop the loop", () => {
+  let calls = 0;
+  const renderer: WorldRenderer = {
+    ...fakeRenderer(),
+    tick: () => {
+      calls += 1;
+      if (calls === 1) throw new Error("tick failed");
+    },
+  };
+  const clock = manualScheduler();
+
+  startFrameLoop(renderer, clock.scheduler);
+  clock.frame(0);
+  clock.frame(16);
+
+  expect(calls).toBe(2);
 });

@@ -237,7 +237,7 @@ flowchart TB
 - **Approach:** CLI and the future app sidecar call the same shared host functions over a single long-lived newline-JSON stdio session; no studio control-plane daemon, socket, HTTP service or token. The owned `sd-server` runtime may still use its existing local loopback HTTP API behind the adapter. The owning session holds an OS-backed SQLite exclusive lock for one authoring root; read-only list/status can inspect another active session, while mutations refuse busy. Resolve content-backed specs; default batch four is per slot, appends rerolls and preserves picked drafts when a request sheet is replaced. Serialize heavy providers and restart the owned subprocess to abort; missing providers report staging and no hosted fallback is wired. Generated keyframes become a local working set, not a valid sprite record. Picked portrait keyframes are auto-conformed native cells unless deliberately edited; multi-frame sprite animations need a complete imported frame set. Aseprite or PNG+JSON import is the hand-edit seam for animation frames. Packing consumes selected draft frame sets and creates the final atlas and manifest; approval applies once to that exact record; publish calls `publishAsset` unchanged after palette, provenance and licence gates. Unit 5 includes the greenfield generated-provenance contract change, selected-profile licence checks, and real selected-runtime cancellation/readiness evidence. Derive reports unsupported operations until Unit 9 rather than fabricating frames.
 - **Patterns:** Probe subprocess adapters; strict contracts; shared library functions for every action.
 - **Test scenarios:** Unknown subject blocks with choices; same seed/spec yields same adapter inputs; reroll appends new seeds; pick/approve/reject/exception exercise legal states. Three-job remove/abort preserves cancellation and starts third after restart, with cancelled late output discarded. Missing editor fails open but export/import works; save/finish/discard preserves or restores edit-session pixels and provenance; deliberate hand-pixel imports store exact bytes and refresh reports. Headless conform on a hand-edited draft where the proposal would replace pixels exits nonzero with a structured diff and leaves hand pixels untouched. Packing rejects incomplete frame sets without manufacturing frames, preserves all source job references/licences/hand edits, and is reproducible; publish rejects unapproved palette, failed source-job cross-check, missing prior canon revision, incompatible licences or stale reports before any write and preserves partial-state fallback.
-- **Verification:** Real local F1/F2/F4 on Zeus idle-south and six-expression portrait set, including installed Aseprite fidelity, real selected-runtime readiness/cancellation/late-output evidence, deterministic pack bytes, complete provenance and explicit owner approval for any canon publication. T1 also needs seated and strike sets before its checkpoint. Owner approvals are explicit; CLI invocation never invents them.
+- **Verification:** Real local F1/F2/F4 on Zeus idle-south and six-expression portrait set, including installed Aseprite fidelity, real selected-runtime readiness/cancellation/late-output evidence, deterministic pack bytes, complete provenance and explicit owner approval for any canon publication. T1 also needs seated and strike sets before its checkpoint. Owner approvals are explicit; CLI invocation never invents them. (2026-10-10: seated and strike no longer gate Unit 8. They are queued studio work, and the game draws placeholders until they are published.)
 
 ### Unit 6. Isometric preview layer
 - [x] Establish representative pixel-exact preview. The child plan `docs/plans/2026-10-08-002-feat-studio-isometric-preview-plan.md` is authoritative. Installed TileMap2D places isometric maps orthogonally, so placement is studio-owned. Browser evidence on the WebGL2 backend is in `docs/evidence/asset-studio/unit6/`; packaged proof stays with Unit 7.
@@ -250,7 +250,7 @@ flowchart TB
 - **Verification:** Actual renderer inspection plus window-only screenshots at integer zoom; placement support is reported from execution, not inferred from a type declaration.
 
 ### Unit 7. Separate Tauri studio
-- [ ] Host pipeline and full owner workflow.
+- [x] Host pipeline and full owner workflow.
 - **Requirements:** R8, R10–R12, R16–R18; AE6, AE9; U08, X02.
 - **Dependencies:** Units 5, 6; approval before capabilities, build pipeline or dependency changes.
 - **Child plan:** `docs/plans/2026-10-08-003-feat-studio-tauri-app-plan.md` is the authoritative Unit 7 implementation plan. Its U1–U5 are done; U6 (packaged evidence, headroom and parity) is recorded in `docs/evidence/asset-studio/unit7/README.md`, which also lists what that run did not prove.
@@ -264,6 +264,12 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 
 ### Unit 8. Packaged game resolution
 - [ ] Draw canon Zeus in packaged client.
+- **Child plan:** `docs/plans/2026-10-10-002-feat-packaged-game-canon-art-plan.md` is authoritative. Dated note (owner, 2026-10-10), with the earlier text below kept as written:
+  - **Sprite id in world state.** It is set at genesis from `GodProfile.sprite`, and from content for other inhabitants. The frame carries it, and the store moves to version 7. This replaces "does not … modify world frames/store" and "no store/observer/settings changes".
+  - **Native loader checks integrity only.** It checks sha256 and keeps reads inside the bundled registry. The webview parses the schema and fetches atlases by verified content hash, not by id.
+  - **Shared pixel core.** The client adopts it, and isometric place layout is deferred.
+  - **Verification scope.** It proves canon idle-south in the live world, the six portraits in the inspection fixture, and seated and strike as placeholders. Seated and strike art and the timed owner sitting are queued studio work. Normal play is idle-only until strike art exists and strike events carry an ability id.
+  - **Zeus's canon id is `zeus-sprite`.** Where the text below says `placeholder-zeus`, read `zeus-sprite`; the placeholder is only the fallback.
 - **Requirements:** R3, R4, R20, R24; AE1; U07, U08, X02.
 - **Dependencies:** Units 4–7, owner canon approval; core agreement and desktop capability/build approval.
 - **Files:** Modify `apps/client/src/renderer/scene.ts`, `markers.ts`, visual-resolution tests; `apps/desktop/src-tauri/src/commands.rs`, permission/capability/config surfaces and native tests; create `tools/scenarios/studio-zeus-scene/README.md`, `src/run.ts`, `src/run.test.ts`; canon manifests/mappings under `content/greek/assets/`; traceability and ADR/index. If extraction is agreed, add `packages/renderer/` exports/tests and both consumers in this unit.
@@ -297,6 +303,7 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 ### Tier 3: World tiles and sound
 
 ### Unit 11. Dual-grid tiles and map preview
+- (2026-10-10) The game client's isometric place layout was deferred from Unit 8 and belongs here, next to the tiles. Unit 8's shared pixel core already carries the isometric math.
 - [ ] Produce seamless map-ready terrain.
 - **Requirements:** R19, R20; F5; X02.
 - **Dependencies:** Tier 2; existing preview layer.

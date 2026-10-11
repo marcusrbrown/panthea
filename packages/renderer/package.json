@@ -1,0 +1,22 @@
+{
+  "name": "@panthea/renderer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@panthea/assets": "workspace:*",
+    "three": "0.185.1",
+    "three-flatland": "0.1.0-alpha.10"
+  },
+  "devDependencies": {
+    "@types/three": "0.185.4"
+  }
+}

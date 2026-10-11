@@ -53,6 +53,7 @@ function pack(
 ): ContentPack {
   const deity = (name: string, locationId: string, rivals?: string[]) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId,
     deity: true,
@@ -64,6 +65,7 @@ function pack(
   });
   const mortal = (name: string, locationId: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId,
     drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
@@ -1062,8 +1064,20 @@ test("standing is kept by god and place as a structure, so ids containing @ neit
     ],
     inhabitants: [
       ...base.inhabitants,
-      { id: "a@b", name: "A at B", locationId: "c", deity: true },
-      { id: "a", name: "A", locationId: "c", deity: true },
+      {
+        id: "a@b",
+        sprite: "placeholder-a@b",
+        name: "A at B",
+        locationId: "c",
+        deity: true,
+      },
+      {
+        id: "a",
+        sprite: "placeholder-a",
+        name: "A",
+        locationId: "c",
+        deity: true,
+      },
     ],
   };
   const town = new Town();
@@ -1178,6 +1192,7 @@ test("a mortal with no patron and no affinity of its own who lives at the place 
       ...base.inhabitants,
       {
         id: "m8",
+        sprite: "placeholder-m8",
         name: "m8",
         locationId: "square",
         drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },

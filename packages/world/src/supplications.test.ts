@@ -53,6 +53,7 @@ function pack(
 ): ContentPack {
   const person = (name: string, wood: number, food: number) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "square",
     drives: {
@@ -89,6 +90,7 @@ function pack(
       },
       ...(["zeus", "hera"] as const).map((god) => ({
         id: god,
+        sprite: `placeholder-${god}`,
         name: god,
         locationId: "hall",
         deity: true,

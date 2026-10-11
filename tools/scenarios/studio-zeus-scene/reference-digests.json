@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "fnv1a32",
+  "background": [
+    96,
+    104,
+    120
+  ],
+  "zooms": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "assets": [
+    {
+      "assetId": "zeus-portrait",
+      "kind": "portrait",
+      "atlas": {
+        "blob": "171d42aa567ba3e06a36b66a5ea9b16b2525a921d85cfa08cc341417e8a7eeea",
+        "width": 576,
+        "height": 96
+      },
+      "selections": [
+        {
+          "key": "expression:angry",
+          "query": {
+            "expression": "angry"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 192,
+                "y": 0,
+                "w": 96,
+                "h": 96
+              },
+              "digests": {
+                "1": "fnv1a32:5d4cc200",
+                "2": "fnv1a32:2ce4df5d",
+                "3": "fnv1a32:14c677d0",
+                "4": "fnv1a32:f4925895"
+              }
+            }
+          ]
+        },
+        {
+          "key": "expression:awed",
+          "query": {
+            "expression": "awed"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 480,
+                "y": 0,
+                "w": 96,
+                "h": 96
+              },
+              "digests": {
+                "1": "fnv1a32:ce0ab7cb",
+                "2": "fnv1a32:fe4a4f15",
+                "3": "fnv1a32:dc58a38f",
+                "4": "fnv1a32:7d3bab35"
+              }
+            }
+          ]
+        },
+        {
+          "key": "expression:grieving",
+          "query": {
+            "expression": "grieving"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 288,
+                "y": 0,
+                "w": 96,
+                "h": 96
+              },
+              "digests": {
+                "1": "fnv1a32:ffda983e",
+                "2": "fnv1a32:a0ba4f7d",
+                "3": "fnv1a32:8cf1aa56",
+                "4": "fnv1a32:23aabc55"
+              }
+            }
+          ]
+        },
+        {
+          "key": "expression:neutral",
+          "query": {
+            "expression": "neutral"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 96,
+                "h": 96
+              },
+              "digests": {
+                "1": "fnv1a32:50ff6788",
+                "2": "fnv1a32:3f11160d",
+                "3": "fnv1a32:f8898164",
+                "4": "fnv1a32:94908315"
+              }
+            }
+          ]
+        },
+        {
+          "key": "expression:pleased",
+          "query": {
+            "expression": "pleased"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 96,
+                "y": 0,
+                "w": 96,
+                "h": 96
+              },
+              "digests": {
+                "1": "fnv1a32:d6483728",
+                "2": "fnv1a32:0825eae5",
+                "3": "fnv1a32:14a42eb0",
+                "4": "fnv1a32:867cf735"
+              }
+            }
+          ]
+        },
+        {
+          "key": "expression:scheming",
+          "query": {
+            "expression": "scheming"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 384,
+                "y": 0,
+                "w": 96,
+                "h": 96
+              },
+              "digests": {
+                "1": "fnv1a32:62d4f1d0",
+                "2": "fnv1a32:ffe2b09d",
+                "3": "fnv1a32:6cef5ef4",
+                "4": "fnv1a32:51cb63d5"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "assetId": "zeus-sprite",
+      "kind": "sprite",
+      "atlas": {
+        "blob": "0fe8067fda22c1704ef491513419c412ec77a1a9ffa05907b593346540ac515e",
+        "width": 256,
+        "height": 80
+      },
+      "selections": [
+        {
+          "key": "idle/south",
+          "query": {
+            "state": "idle",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:ac9ce861",
+                "2": "fnv1a32:d658041d",
+                "3": "fnv1a32:dfdd45c5",
+                "4": "fnv1a32:603fdbd5"
+              }
+            },
+            {
+              "rect": {
+                "x": 64,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:7dccc309",
+                "2": "fnv1a32:574ea6fd",
+                "3": "fnv1a32:1750ab35",
+                "4": "fnv1a32:b2c2c655"
+              }
+            },
+            {
+              "rect": {
+                "x": 128,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:f79774d9",
+                "2": "fnv1a32:e3d194c5",
+                "3": "fnv1a32:c7fe4755",
+                "4": "fnv1a32:396a3675"
+              }
+            },
+            {
+              "rect": {
+                "x": 192,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:4355ef15",
+                "2": "fnv1a32:2c0ae5ed",
+                "3": "fnv1a32:981a5959",
+                "4": "fnv1a32:cf6ba115"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

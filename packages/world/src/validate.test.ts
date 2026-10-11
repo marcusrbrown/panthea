@@ -9,6 +9,7 @@ import {
   withActor,
   withBuilding,
 } from "./state";
+import { testActor } from "./test-actor";
 import { validateProposal } from "./validate";
 
 function minimalRules(): ContentPack["rules"] {
@@ -82,30 +83,39 @@ function fixtureState(): WorldState {
     recipes: {},
   };
   let state = createInitialWorldState(pack);
-  state = withActor(state, {
-    id: toEntityId("npc-1"),
-    locationId: toEntityId("grove"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
-  state = withActor(state, {
-    id: toEntityId("npc-2"),
-    locationId: toEntityId("underworld-shore"),
-    alive: true,
-    capabilities: ["divine"],
-    inventory: new Map(),
-    revision: 0,
-  });
-  state = withActor(state, {
-    id: toEntityId("npc-dead"),
-    locationId: toEntityId("grove"),
-    alive: false,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("npc-1"),
+      locationId: toEntityId("grove"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("npc-2"),
+      locationId: toEntityId("underworld-shore"),
+      alive: true,
+      capabilities: ["divine"],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("npc-dead"),
+      locationId: toEntityId("grove"),
+      alive: false,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   return state;
 }
 
@@ -157,14 +167,17 @@ test("a move to a non-adjacent location is rejected as not-adjacent", () => {
 });
 
 test("a plain move across a realm boundary is rejected as restricted-realm", () => {
-  const state = withActor(fixtureState(), {
-    id: toEntityId("npc-3"),
-    locationId: toEntityId("ferry-dock"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  const state = withActor(
+    fixtureState(),
+    testActor({
+      id: toEntityId("npc-3"),
+      locationId: toEntityId("ferry-dock"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   const outcome = validateProposal(
     state,
     proposal({ actor: "npc-3", kind: "move", to: "underworld-shore" }),
@@ -174,14 +187,17 @@ test("a plain move across a realm boundary is rejected as restricted-realm", () 
 });
 
 test("a move into a location requiring an uncarried capability is rejected as restricted-realm", () => {
-  const state = withActor(fixtureState(), {
-    id: toEntityId("npc-4"),
-    locationId: toEntityId("underworld-shore"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  const state = withActor(
+    fixtureState(),
+    testActor({
+      id: toEntityId("npc-4"),
+      locationId: toEntityId("underworld-shore"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   const outcome = validateProposal(
     state,
     proposal({ actor: "npc-4", kind: "move", to: "judgment-hall" }),
@@ -227,14 +243,17 @@ test("a stale expected revision is rejected as stale-target", () => {
 });
 
 test("a realm-transition using the authored transport element arrives in the Underworld", () => {
-  const state = withActor(fixtureState(), {
-    id: toEntityId("npc-5"),
-    locationId: toEntityId("ferry-dock"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  const state = withActor(
+    fixtureState(),
+    testActor({
+      id: toEntityId("npc-5"),
+      locationId: toEntityId("ferry-dock"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   const outcome = validateProposal(
     state,
     proposal({
@@ -290,14 +309,17 @@ function crossRealmPathFixtureState(): WorldState {
     recipes: {},
   };
   let state = createInitialWorldState(pack);
-  state = withActor(state, {
-    id: toEntityId("npc-6"),
-    locationId: toEntityId("crossing"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("npc-6"),
+      locationId: toEntityId("crossing"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   return state;
 }
 
@@ -354,33 +376,42 @@ function economyFixtureState(): WorldState {
     },
   };
   let state = createInitialWorldState(pack);
-  state = withActor(state, {
-    id: toEntityId("woodcutter"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["wood", 4]]),
-    drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
-    gathers: "wood",
-    revision: 0,
-  });
-  state = withActor(state, {
-    id: toEntityId("farmer"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
-    revision: 0,
-  });
-  state = withActor(state, {
-    id: toEntityId("stranger"),
-    locationId: toEntityId("far-shore"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("woodcutter"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["wood", 4]]),
+      drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
+      gathers: "wood",
+      revision: 0,
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("farmer"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
+      revision: 0,
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("stranger"),
+      locationId: toEntityId("far-shore"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      revision: 0,
+    }),
+  );
   return state;
 }
 
@@ -1190,6 +1221,7 @@ function fireFixtureState(): WorldState {
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "town-square",
         drives: { thrift: 0.5, appetite: 0, greed: 0, piety: 0 },
@@ -1197,6 +1229,7 @@ function fireFixtureState(): WorldState {
       },
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "great-hall",
         deity: true,
@@ -1204,6 +1237,7 @@ function fireFixtureState(): WorldState {
       },
       {
         id: "woodcutter",
+        sprite: "placeholder-woodcutter",
         name: "The Woodcutter",
         locationId: "town-square",
         startingInventory: [],

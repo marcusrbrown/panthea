@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ContentPack } from "@panthea/contracts";
 import { createInitialWorldState, toEntityId } from "./state";
+import { testActor } from "./test-actor";
 import {
   applyWorshipPerformed,
   DIVINE_CAPACITY_RESOURCE,
@@ -24,12 +25,14 @@ function pack(): ContentPack {
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "town-square",
         startingInventory: [{ resource: "wine", amount: 2 }],
       },
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "great-hall",
         startingInventory: [{ resource: "divinity", amount: 1 }],
@@ -97,7 +100,7 @@ test("favorGatherBonusOf reads the content-authored bonus, defaulting to zero", 
 });
 
 test("hasActiveGatherFavor is true only while an active favor with the gather effect is present", () => {
-  const actorWithFavor = {
+  const actorWithFavor = testActor({
     id: toEntityId("woodcutter"),
     locationId: toEntityId("town-square"),
     alive: true,
@@ -107,7 +110,7 @@ test("hasActiveGatherFavor is true only while an active favor with the gather ef
       { source: toEntityId("zeus"), effect: FAVOR_EFFECT, expiresAtTick: 10 },
     ],
     revision: 0,
-  };
+  });
   expect(hasActiveGatherFavor(actorWithFavor, 5)).toBe(true);
   expect(hasActiveGatherFavor(actorWithFavor, 10)).toBe(false);
   expect(hasActiveGatherFavor({ ...actorWithFavor, favors: [] }, 5)).toBe(

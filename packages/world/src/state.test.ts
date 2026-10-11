@@ -15,6 +15,7 @@ import {
   withActor,
   withBuilding,
 } from "./state";
+import { testActor } from "./test-actor";
 
 test("the same PRNG seed produces the same sequence of values", () => {
   let a = createPrng(42);
@@ -65,14 +66,17 @@ test("getEntityRevision looks up both actors and locations by id", () => {
     recipes: {},
   };
   let state = createInitialWorldState(pack);
-  state = withActor(state, {
-    id: toEntityId("npc-1"),
-    locationId: toEntityId("agora"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 3,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("npc-1"),
+      locationId: toEntityId("agora"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 3,
+    }),
+  );
   state = withBuilding(state, {
     id: toEntityId("shed"),
     locationId: toEntityId("agora"),
@@ -113,6 +117,7 @@ test("createInitialWorldState seeds actors from authored inhabitants, with their
     inhabitants: [
       {
         id: "woodcutter",
+        sprite: "placeholder-woodcutter",
         name: "The Woodcutter",
         locationId: "square",
         drives: { thrift: 0.6, appetite: 0.3, greed: 0.4, piety: 0.1 },
@@ -156,6 +161,7 @@ test("createInitialWorldState seeds buildings from authored content, with their 
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "shop",
         drives: { thrift: 0.2, appetite: 0.5, greed: 0.2, piety: 0.1 },
@@ -191,6 +197,7 @@ test("an inhabitant with no authored drives seeds an actor with drives absent", 
     inhabitants: [
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "great-hall",
         startingInventory: [{ resource: "divinity", amount: 10 }],
@@ -245,7 +252,7 @@ test("isFavorActive is true strictly before the expiry tick, and false at or aft
 });
 
 test("activeFavors filters out expired favors without mutating the actor", () => {
-  const actor = {
+  const actor = testActor({
     id: toEntityId("farmer"),
     locationId: toEntityId("town-square"),
     alive: true,
@@ -256,7 +263,7 @@ test("activeFavors filters out expired favors without mutating the actor", () =>
       { source: toEntityId("zeus"), effect: "divine-favor", expiresAtTick: 20 },
     ],
     revision: 0,
-  };
+  });
   expect(activeFavors(actor, 10)).toEqual([
     { source: toEntityId("zeus"), effect: "divine-favor", expiresAtTick: 20 },
   ]);
@@ -336,10 +343,22 @@ test("a deity inhabitant starts with the divine capability; a mortal starts with
     ],
     buildings: [],
     inhabitants: [
-      { id: "zeus", name: "Zeus", locationId: "great-hall", deity: true },
-      { id: "farmer", name: "The Farmer", locationId: "square" },
+      {
+        id: "zeus",
+        sprite: "placeholder-zeus",
+        name: "Zeus",
+        locationId: "great-hall",
+        deity: true,
+      },
+      {
+        id: "farmer",
+        sprite: "placeholder-farmer",
+        name: "The Farmer",
+        locationId: "square",
+      },
       {
         id: "pretender",
+        sprite: "placeholder-pretender",
         name: "Pretender",
         locationId: "square",
         deity: false,
@@ -361,6 +380,7 @@ test("a deity inhabitant starts with the divine capability; a mortal starts with
 function devotionPack(): ContentPack {
   const deity = (id: string) => ({
     id,
+    sprite: `placeholder-${id}`,
     name: id,
     locationId: "altar",
     deity: true,
@@ -376,6 +396,7 @@ function devotionPack(): ContentPack {
       deity("poseidon"),
       {
         id: "fisher",
+        sprite: "placeholder-fisher",
         name: "The Fisher",
         locationId: "altar",
         drives: { thrift: 0.2, appetite: 0.3, greed: 0.3, piety: 0.5 },
@@ -383,6 +404,7 @@ function devotionPack(): ContentPack {
       },
       {
         id: "idler",
+        sprite: "placeholder-idler",
         name: "The Idler",
         locationId: "altar",
         drives: { thrift: 0.2, appetite: 0.3, greed: 0.3, piety: 0.5 },
@@ -466,9 +488,20 @@ test("a pack that parses always yields an initial world that decodes: a devotion
       god: "athena",
       affinity: 1,
     };
+    // A deity authors no sprite: parsing refuses one, and its profile's is folded in before genesis.
+    for (const inhabitant of raw.inhabitants) {
+      if (inhabitant.deity === true) delete inhabitant.sprite;
+    }
     const parsed = parseContentPack(raw);
     if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
-    const state = createInitialWorldState(parsed.value);
+    const folded = {
+      ...parsed.value,
+      inhabitants: parsed.value.inhabitants.map((inhabitant) => ({
+        ...inhabitant,
+        sprite: inhabitant.sprite ?? `placeholder-${inhabitant.id}`,
+      })),
+    };
+    const state = createInitialWorldState(folded);
     // One rule: what the pack parser enforces is what the world's rules and codec enforce.
     expect(memoryBalanceOf(state.rules, "affinityLimit")).toBe(
       affinityLimitOf(parsed.value.rules),
