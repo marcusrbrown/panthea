@@ -172,11 +172,15 @@ export function createHeadlessClient(
         return emitter.present(sessionId, eventId);
       },
       dispose: () => emitter.dispose(),
+      observeSession: (sessionId) => emitter.observeSession(sessionId),
     });
   });
 
   void subscribe(
-    ({ frame, state }) => store.apply(frame, state),
+    ({ frame, state }) => {
+      emitter.observeSession(frame.sessionId);
+      store.apply(frame, state);
+    },
     (error) => errors.push(`${error.kind}: ${error.message}`),
     transport,
   );

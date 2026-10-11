@@ -141,10 +141,14 @@ export function App({
 
   const acceptFrame = useCallback(
     (connected: ConnectedFrame) => {
+      // Before the frame is drawn, and whether or not it draws anything: a
+      // sidecar restart must drop held receipts of the old session even when
+      // the viewed realm presents no event to notice it.
+      receiptEmitter.observeSession(connected.frame.sessionId);
       store.apply(connected.frame, connected.state);
       setEndpointStatuses(connected.frame.modelEndpoints ?? []);
     },
-    [store],
+    [receiptEmitter, store],
   );
 
   useEffect(() => {

@@ -11,8 +11,8 @@
 // in the emitter, already drawn, and drained in the order it was presented as
 // slots free, on the emitter's own schedule: a paused world broadcasts no
 // further frame to present it again. A held event is `deferred`, and
-// presenting it again does not queue it twice. A session change or `dispose`
-// drops what is held.
+// presenting it again does not queue it twice. A session change, noticed by a
+// present or told by `observeSession`, or `dispose` drops what is held.
 
 /** Relays allowed in any second; the service's own limit is 50 (`RECEIPT_LIMIT_PER_WINDOW` in the simulation server), kept clear of by a margin for timing jitter. */
 export const RECEIPT_RATE_PER_SECOND = 40;
@@ -38,6 +38,14 @@ export interface ReceiptEmitter {
   present(sessionId: string, eventId: string): Promise<ReceiptResult>;
   /** Drops the held events and cancels the drain. The emitter stays usable: a later present starts afresh. */
   dispose(): void;
+  /**
+   * Tells the emitter the session now in force, from every accepted frame
+   * whether or not the view draws anything. On a change it resets the dedup
+   * set and drops the held events before any further relay; `present` alone
+   * would notice only when an event is next presented, and the shell stamps
+   * each relay with the sidecar's session at the time it is sent.
+   */
+  observeSession(sessionId: string): void;
 }
 
 export interface ReceiptEmitterDeps {
@@ -122,13 +130,16 @@ export function createReceiptEmitter(deps: ReceiptEmitterDeps): ReceiptEmitter {
     }
   }
 
+  function syncSession(nextSessionId: string): void {
+    if (nextSessionId === sessionId) return;
+    sessionId = nextSessionId;
+    attempted = new Set();
+    dropHeld();
+  }
+
   return {
     async present(nextSessionId, eventId) {
-      if (nextSessionId !== sessionId) {
-        sessionId = nextSessionId;
-        attempted = new Set();
-        dropHeld();
-      }
+      syncSession(nextSessionId);
       if (attempted.has(eventId)) {
         return "duplicate";
       }
@@ -149,5 +160,6 @@ export function createReceiptEmitter(deps: ReceiptEmitterDeps): ReceiptEmitter {
     dispose() {
       dropHeld();
     },
+    observeSession: syncSession,
   };
 }

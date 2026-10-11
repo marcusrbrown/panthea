@@ -210,6 +210,51 @@ test("a session change drops the held events and their timer, and the new sessio
   expect(clock.pending()).toBe(0);
 });
 
+test("observing a new session drops the held events and their timer even when nothing is presented, so no old-session receipt is relayed after it", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await emitter.present("session-1", "evt-1-3");
+  expect(clock.pending()).toBe(1);
+
+  emitter.observeSession("session-2");
+  expect(clock.pending()).toBe(0);
+
+  await clock.advance(5000);
+  expect(sentIds()).toEqual(["evt-1-1"]);
+});
+
+test("observing the session already in force changes nothing", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  emitter.observeSession("session-1");
+  await clock.advance(1001);
+
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("duplicate");
+});
+
+test("a sidecar restart while a burst is held, in a realm that then draws nothing, relays none of the burst under the new session", async () => {
+  // The sequence the view takes: a Mortal burst is held; the view moves to a
+  // realm with no drawable events (the draw hands back none, so nothing is
+  // presented); the sidecar restarts, and the next frame carries a new session.
+  const { emitter, sentIds, clock } = rated(3);
+  const burst = ids(8).map((id) => ({ id: id as RecentEvent["id"] }));
+
+  await receiptDrawnEvents("session-1", burst, emitter);
+  expect(sentIds()).toHaveLength(3);
+
+  emitter.observeSession("session-2"); // the frame is accepted
+  await receiptDrawnEvents("session-2", [], emitter); // and draws nothing
+  await clock.advance(5000);
+
+  expect(sentIds()).toHaveLength(3);
+  expect(clock.pending()).toBe(0);
+});
+
 test("disposal drops the held events and cancels the drain, and later presents start afresh", async () => {
   const { emitter, sentIds, clock } = rated(1);
 
