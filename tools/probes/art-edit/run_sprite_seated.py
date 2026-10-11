@@ -18,6 +18,12 @@ The soles. A front-view seated figure has its feet lowest, so sole anchoring sti
 not the lowest opaque rows (a hem, a seat or a footstool is lower, or the lowest rows are not two separate feet) the
 result entry says so under `anchor` and the candidate gets no cell: nothing is guessed.
 
+The base anchor. A seated figure on a throne can have a plinth or seat base as its lowest rows, so the sole check refuses
+it (the seated run of 2026-10-11 refused all 8 renders for that reason). `--anchor base` (or `"anchor": "base"` in the
+config) is the explicit alternative: the lowest opaque row goes on row 78 (the outline under it on row 79) and the
+extent of the lowest two rows is centred on x=32, as `sprite_downscale.place_feet` does. It does not look for feet. The
+sole verdict is still recorded under `anchor`, with `mode: "base"` and the reason it was not used. `sole` stays the default.
+
 Writes `<repo>/.context/studio-pipeline/seated/<run>/`: `contact-1x.png` and `contact-4x.png` (a row per candidate,
 S1, S2, ... in job order; columns are the methods, M mode and K k-centroid), `cells/<job>/<code>.png`,
 `keyed/<job>.png` (magenta marks transparent) and `results.json`. The studio store is read only. No model runs.
@@ -32,7 +38,7 @@ import math
 import statistics
 import subprocess
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Callable
@@ -56,6 +62,7 @@ from sprite_downscale import (
     measure,
     mode_rect,
     place_by_soles,
+    place_feet,
     snap_to_palette,
     sole_clusters,
     sole_midpoint,
@@ -66,6 +73,7 @@ REPO = Path(__file__).resolve().parents[3]
 PALETTE_JSON = REPO / "content/greek/palette/palette.json"
 OUT_ROOT = REPO / ".context/studio-pipeline/seated"
 METHOD_CODES = {"mode": "M", "kcentroid": "K", "area": "A"}
+ANCHORS = ("sole", "base")
 IDLE_STEP = Fraction(580, 52)  # source pixels per sprite pixel: c2a's M50 tile, 52 interior rows for a 580-row box
 
 Rgb = tuple[int, int, int]
@@ -92,6 +100,7 @@ class Config:
     sole_row_tolerance: int = 6
     source_px_per_sprite_px: str = "145/13"
     methods: tuple[str, ...] = ("mode",)
+    anchor: str = "sole"  # "sole": two feet on row 79, midpoint at x=32 (refuses otherwise); "base": lowest row on row 79
 
 
 def parse_ratio(text: str | int | float) -> Fraction:
@@ -120,6 +129,8 @@ def load_config(source: dict | str | Path | None) -> Config:
             if method not in ("mode", "kcentroid"):
                 raise ValueError(f"unknown method {method!r}: use mode or kcentroid")
     cfg = Config(**data)
+    if cfg.anchor not in ANCHORS:
+        raise ValueError(f"unknown anchor {cfg.anchor!r}: use one of {', '.join(ANCHORS)}")
     parse_ratio(cfg.source_px_per_sprite_px)
     return cfg
 
@@ -271,16 +282,23 @@ def downscale_at_ratio(
     return Raster(columns, rows, bytes(out))
 
 
-def make_cell(final: Raster, method: str, step: Fraction, palette: Palette) -> tuple[Raster, dict]:
-    """A 64x80 cell from a keyed figure: downscale at `step`, place by the soles, add the outline."""
+def make_cell(final: Raster, method: str, step: Fraction, palette: Palette, anchor: str = "sole") -> tuple[Raster, dict]:
+    """A 64x80 cell from a keyed figure: downscale at `step`, place (by the soles, or by the lowest row with
+    `anchor="base"`), add the outline."""
+    if anchor not in ANCHORS:
+        raise ValueError(f"unknown anchor {anchor!r}: use one of {', '.join(ANCHORS)}")
     figure = downscale_at_ratio(final, method, step, palette, foreground_bbox(final))
-    placed = place_by_soles(figure)
+    placed = place_feet(figure) if anchor == "base" else place_by_soles(figure)
     cell = add_outline(placed, palette)
     facts = measure(cell, palette, placed)
     facts.pop("palette_entries")
     clusters = sole_clusters(cell, 2, 2)
+    facts["anchor"] = anchor
     facts["soles"] = [[c["x0"], c["x1"] - 1, c["bottom_row"]] for c in clusters]
-    facts["sole_midpoint"] = sole_midpoint(cell, 2, 2)
+    if anchor == "base":
+        facts["sole_midpoint"] = sole_midpoint(cell, 2, 2) if len(clusters) >= 2 else None
+    else:
+        facts["sole_midpoint"] = sole_midpoint(cell, 2, 2)
     facts["top_row"] = facts["bottom_row"] - facts["height"] + 1
     return cell, facts
 
@@ -339,11 +357,12 @@ def process(raw: Raster, cfg: Config, palette: Palette, step: Fraction) -> tuple
         "rows": math.ceil((bbox[3] - bbox[1]) / float(step) - 1e-9),
     }
     cells: list[tuple[str, Raster, dict]] = []
-    if not anchor["ok"]:
+    anchor["mode"] = cfg.anchor
+    if not anchor["ok"] and cfg.anchor != "base":
         return final, keying, cells, anchor
     for method in cfg.methods:
         try:
-            cell, facts = make_cell(final, method, step, palette)
+            cell, facts = make_cell(final, method, step, palette, cfg.anchor)
         except ValueError as error:
             anchor.setdefault("cell_errors", {})[method] = str(error)
             continue
@@ -438,11 +457,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--request", help="every job of this request id, in job order")
     parser.add_argument("--run", required=True, help="the run name: output goes to .context/studio-pipeline/seated/<run>/")
     parser.add_argument("--out", type=Path, help="override the output folder")
+    parser.add_argument("--anchor", choices=ANCHORS, help="how a cell is placed: sole (default; refuses a figure whose feet are not the lowest rows) or base (the lowest opaque row on row 79)")
     parser.add_argument("--conform", action="store_true", help="also run report-only conformance on each cell (needs bun)")
     args = parser.parse_args(argv)
     if bool(args.job) == bool(args.request):
         parser.error("give --job ids or --request, not both and not neither")
     cfg = load_config(args.config)
+    if args.anchor is not None:
+        cfg = replace(cfg, anchor=args.anchor)
     out = args.out or OUT_ROOT / args.run
     summary = run(args.store, cfg, out, args.job or None, args.request, run_conform=args.conform)
     for job in summary["jobs"]:

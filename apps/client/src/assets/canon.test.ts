@@ -53,13 +53,19 @@ test("Zeus resolves to zeus-sprite idle-south: four frames at 333/167/333/167 ms
   expect(zeus.pivot).toEqual({ x: 32, y: 80 });
 });
 
-test("AE1: seated draws the placeholder with no error, and idle-south is still canon", async () => {
+test("AE1: seated draws canon (two frames, 500 ms each), an unpublished state still draws the placeholder with no error, and idle-south is still canon", async () => {
   const { canon, problems } = client(zeusPayload());
   const { snapshot } = await canon.load();
 
   const seated = resolveAssetPixels(snapshot, {
     spriteId: "zeus-sprite",
     state: "seated",
+    direction: "south",
+  });
+  const walk = resolveAssetPixels(snapshot, {
+    spriteId: "zeus-sprite",
+    state: "walk",
+    direction: "south",
   });
   const idle = resolveAssetPixels(snapshot, {
     spriteId: "zeus-sprite",
@@ -67,7 +73,11 @@ test("AE1: seated draws the placeholder with no error, and idle-south is still c
     direction: "south",
   });
 
-  expect(seated).toMatchObject({
+  if (seated.source !== "canon") throw new Error("expected canon art");
+  expect(seated.frames.map((frame) => frame.durationMs)).toEqual([500, 500]);
+  expect(seated.frames.map((frame) => frame.rect.x)).toEqual([256, 320]);
+  expect(String(seated.atlas.blob)).toBe(ZEUS_ATLAS_HASH);
+  expect(walk).toMatchObject({
     source: "placeholder",
     reason: "missing-state",
   });

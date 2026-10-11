@@ -19,6 +19,7 @@ from pipeline import Raster
 from run_sprite_seated import (
     IDLE_STEP,
     PALETTE_JSON,
+    ANCHORS,
     Config,
     check_feet,
     downscale_at_ratio,
@@ -251,6 +252,103 @@ class CellsLandOnTheTile(unittest.TestCase):
         _, _, cells, anchor = process(render(parts=SEATED), SMALL, PALETTE, Fraction(2))
         self.assertEqual(cells, [])
         self.assertIn("mode", anchor["cell_errors"])
+
+
+# A throne: the lowest rows are a plinth wider than the figure and off its axis; the boots sit above it.
+THRONE = [
+    (70, 20, 91, 60, SKIN),
+    (50, 60, 111, 150, CLOTH),
+    (50, 150, 111, 171, CLOTH),
+    (50, 171, 71, 181, BOOT),
+    (91, 171, 112, 181, BOOT),
+    (40, 181, 131, 191, CLOTH),
+]
+THRONE_CONFIG = Config(min_component=50, shadow_auto_min_pixels=20)
+BASE_CONFIG = Config(min_component=50, shadow_auto_min_pixels=20, anchor="base")
+
+
+def edge_midpoint(cell: Raster, row: int) -> float:
+    columns = [x for x in range(cell.width) if cell.rgba[(row * cell.width + x) * 4 + 3]]
+    return (columns[0] + columns[-1] + 1) / 2
+
+
+class BaseAnchor(unittest.TestCase):
+    def test_sole_is_the_default_and_the_modes_are_named(self) -> None:
+        self.assertEqual(Config().anchor, "sole")
+        self.assertEqual(ANCHORS, ("sole", "base"))
+
+    def test_a_config_names_the_anchor_and_refuses_another(self) -> None:
+        self.assertEqual(load_config({"anchor": "base"}).anchor, "base")
+        self.assertEqual(load_config({}).anchor, "sole")
+        with self.assertRaisesRegex(ValueError, "unknown anchor"):
+            load_config({"anchor": "left"})
+
+    def test_make_cell_refuses_an_unknown_anchor(self) -> None:
+        final, _ = rekey(render(parts=SEATED), SMALL)
+        with self.assertRaisesRegex(ValueError, "unknown anchor"):
+            make_cell(final, "mode", Fraction(5), PALETTE, "left")
+
+    def test_the_sole_anchor_still_refuses_a_throne_base_and_says_why(self) -> None:
+        _, _, cells, anchor = process(render(parts=THRONE, shadow=False), THRONE_CONFIG, PALETTE, Fraction(5))
+        self.assertEqual(cells, [])
+        self.assertFalse(anchor["ok"])
+        self.assertEqual(anchor["mode"], "sole")
+
+    def test_the_base_anchor_places_the_lowest_row_on_79_and_centres_its_extent_on_32(self) -> None:
+        _, _, cells, anchor = process(render(parts=THRONE, shadow=False), BASE_CONFIG, PALETTE, Fraction(5))
+        self.assertEqual([code for code, _, _ in cells], ["M"])
+        _, cell, facts = cells[0]
+        self.assertEqual(facts["anchor"], "base")
+        self.assertEqual(facts["bottom_row"], 79)
+        self.assertEqual(facts["outside_palette"], 0)
+        self.assertEqual({a for a in cell.rgba[3::4]}, {0, 255})
+        # The interior's lowest row is 78 (the outline is under it); its extent is centred on the pivot column.
+        self.assertLessEqual(abs(edge_midpoint(cell, 78) - 32), 0.5)
+
+    def test_the_base_anchor_does_not_hide_that_the_feet_were_not_the_lowest_rows(self) -> None:
+        _, _, cells, anchor = process(render(parts=THRONE, shadow=False), BASE_CONFIG, PALETTE, Fraction(5))
+        self.assertTrue(cells)
+        self.assertFalse(anchor["ok"])
+        self.assertEqual(anchor["mode"], "base")
+        self.assertTrue(anchor["reasons"])
+
+    def test_the_base_anchor_differs_from_the_sole_anchor_where_the_base_is_off_axis(self) -> None:
+        final, _ = rekey(render(parts=SEATED, shadow=False), SMALL)
+        sole, _ = make_cell(final, "mode", Fraction(5), PALETTE, "sole")
+        base, _ = make_cell(final, "mode", Fraction(5), PALETTE, "base")
+        self.assertEqual(len(sole.rgba), len(base.rgba))
+        # Symmetric feet agree to within the pixel the two rules round differently.
+        self.assertLessEqual(abs(edge_midpoint(sole, 78) - edge_midpoint(base, 78)), 1)
+
+    def test_a_run_in_base_mode_writes_the_cell_and_records_the_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "jobs").mkdir()
+            (root / "blobs").mkdir()
+            blob = b"throne render"
+            digest = hashlib.sha256(blob).hexdigest()
+            (root / "blobs" / f"{digest}.png").write_bytes(blob)
+            record = {
+                "job": {"id": "throne-0000", "status": "succeeded", "request": {"seed": 7}, "outputs": [{"hash": digest}]},
+                "engine": {"settings": {"prompt": "seated pose"}},
+            }
+            (root / "jobs" / "throne-0000.json").write_text(json.dumps(record))
+            raster = render(parts=THRONE, shadow=False)
+            saved: dict[str, Raster] = {}
+            for config, expected in ((THRONE_CONFIG, []), (BASE_CONFIG, ["M"])):
+                saved.clear()
+                summary = run(
+                    root,
+                    Config(**{**config.__dict__, "source_px_per_sprite_px": "5"}),
+                    root / "out",
+                    job_ids=["throne-0000"],
+                    load=lambda path: raster,
+                    save=lambda image, path: saved.__setitem__(str(path.relative_to(root / "out")), image),
+                )
+                job = summary["jobs"][0]
+                self.assertEqual([c["tile"] for c in job["cells"]], expected)
+                self.assertEqual(job["anchor"]["mode"], config.anchor)
+                self.assertEqual("cells/throne-0000/M.png" in saved, bool(expected))
 
 
 class TheRun(unittest.TestCase):
