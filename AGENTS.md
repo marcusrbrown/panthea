@@ -65,6 +65,8 @@ Probes live in `tools/probes/<name>/` with a README recording the method and res
 
 Mocks, successful dependency installs, and browser-only renderer demos are not proof of the packaged offline MVP.
 
+Test-only support lives outside production source (an app's `test/` directory or `@panthea/testkit` as a devDependency); no source file name starts with an underscore.
+
 ## Owner interaction
 
 Use the question tool for decisions that need owner input. Finish commentary and document updates first, ask through the tool, then wait for all answers before continuing.
