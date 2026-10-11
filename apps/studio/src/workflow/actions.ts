@@ -7,6 +7,7 @@ import type {
   EditExport,
   EditOpened,
   EditReport,
+  FinishStepInput,
   SummaryRecord,
 } from "../host/types";
 import { recordObject, recordText, recordValue } from "./model";
@@ -33,10 +34,160 @@ export function parseSlotSpecs(
     });
 }
 
+/** The example lines the slot hint shows. Each parses, and a test keeps it so. */
+export const SLOT_EXAMPLES = {
+  sprite: ["idle/south", "walk/east", "act/south/thunderbolt"],
+  portrait: ["neutral", "angry"],
+} as const;
+
 export function slotHint(kind: "sprite" | "portrait"): string {
   return kind === "portrait"
-    ? "one expression per line"
-    : "one state/direction per line";
+    ? `one expression name per line, for example ${SLOT_EXAMPLES.portrait.join(", ")}`
+    : `state/direction[/ability] per line, for example ${SLOT_EXAMPLES.sprite.join(", ")} (act needs an ability)`;
+}
+
+/**
+ * What is wrong with the first bad slot line, in words, or undefined when the
+ * lines are well formed. Whether a state, direction, ability or expression
+ * exists is the host's to say; this catches the shapes that parse into
+ * something other than what was typed (`act//thunderbolt` would otherwise lose
+ * its direction without a word).
+ */
+export function slotProblem(
+  source: string,
+  kind: "sprite" | "portrait",
+): string | undefined {
+  for (const row of source
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)) {
+    if (kind === "portrait") {
+      if (row.includes("/"))
+        return `Slot "${row}": a portrait slot is one expression name, not state/direction. Write one expression name per line, for example neutral.`;
+      continue;
+    }
+    const [state = "", direction, ability] = row
+      .split("/")
+      .map((part) => part.trim());
+    const shape =
+      state === "act"
+        ? "state/direction/ability, for example act/south/thunderbolt"
+        : "state/direction, for example idle/south";
+    if (state === "")
+      return `Slot "${row}": the state is empty. Write ${shape}.`;
+    if (direction === undefined)
+      return `Slot "${row}": ${state} needs a direction. Write ${shape}.`;
+    if (direction === "")
+      return `Slot "${row}": the direction is empty. Write ${shape}.`;
+    if (ability === "")
+      return `Slot "${row}": the ability is empty. Write ${shape}, or drop the last slash.`;
+    if (state === "act" && ability === undefined)
+      return `Slot "${row}": act needs an ability. Write act/${direction}/thunderbolt.`;
+  }
+  return undefined;
+}
+
+/** The highest seed the pinned engine has been exercised on. */
+export const MAX_SEED = 4_294_967_295;
+
+export type BaseSeed =
+  | { readonly ok: true; readonly seed: number | undefined }
+  | { readonly ok: false; readonly message: string };
+
+const jobs = (count: number) => `${count} job${count === 1 ? "" : "s"}`;
+
+/**
+ * Reads the base-seed field. Empty means a seed is drawn; anything else is
+ * ASCII digits only, with no sign, fraction, exponent, space or other digits.
+ * Jobs take the base seed plus their ordinals 0..jobCount-1, and the last of
+ * them must still be at most 2^32-1, so a bad seed is refused here, before any
+ * record is written.
+ */
+export function parseBaseSeed(text: string, jobCount: number): BaseSeed {
+  if (text === "") return { ok: true, seed: undefined };
+  if (!/^\d+$/.test(text))
+    return {
+      ok: false,
+      message: `The base seed is whole digits only, from 0 to ${MAX_SEED}.`,
+    };
+  const count = Math.max(1, jobCount);
+  const last = BigInt(count - 1);
+  const base = BigInt(text);
+  if (base + last > BigInt(MAX_SEED))
+    return {
+      ok: false,
+      message: `The last job's seed would be ${base + last}, past ${MAX_SEED}. Use a base seed of at most ${BigInt(MAX_SEED) - last} for ${jobs(count)}.`,
+    };
+  return { ok: true, seed: Number(base) };
+}
+
+/** A seed the resolve step drew is held to the same range; undefined when it is fine. */
+export function checkResolvedSeed(
+  seed: unknown,
+  jobCount: number,
+): string | undefined {
+  if (typeof seed !== "number" || !Number.isSafeInteger(seed) || seed < 0)
+    return "The resolve step returned no seed. Resolve again.";
+  const count = Math.max(1, jobCount);
+  if (seed + count - 1 > MAX_SEED)
+    return `The drawn seed ${seed} is too high for ${jobs(count)}: the last would pass ${MAX_SEED}. Resolve again.`;
+  return undefined;
+}
+
+/** The number of jobs a request makes: one per slot, `batch` of each. */
+export function requestJobCount(
+  slots: string,
+  kind: "sprite" | "portrait",
+  batch: number,
+): number {
+  return (
+    parseSlotSpecs(slots, kind).length *
+    Math.max(1, Math.floor(Number.isFinite(batch) ? batch : 1))
+  );
+}
+
+export interface RequestForm {
+  readonly subject: string;
+  readonly kind: string;
+  readonly slots: string;
+  readonly batch: number;
+  readonly styleNote: string;
+  readonly seed: string;
+}
+
+/** What the request form said, as one string: a resolve is only for the form it was sent from. */
+export function requestSignature(form: RequestForm): string {
+  return JSON.stringify([
+    form.subject,
+    form.kind,
+    form.slots,
+    form.batch,
+    form.styleNote,
+    form.seed,
+  ]);
+}
+
+/** Generate is ready only while the form still says what the resolve was made from. */
+export function generateReady(
+  resolvedFrom: string | undefined,
+  current: string,
+): boolean {
+  return resolvedFrom !== undefined && resolvedFrom === current;
+}
+
+/**
+ * Handlers that keep their identity for the life of the window while always
+ * calling the latest implementation, so a memoized row is not rendered again
+ * because the window was.
+ */
+export function createStableHandlers<
+  T extends Record<string, (...args: never[]) => unknown>,
+>(latest: { readonly current: T }): T {
+  const stable: Record<string, unknown> = {};
+  for (const key of Object.keys(latest.current))
+    stable[key] = (...args: unknown[]) =>
+      (latest.current[key] as (...inner: unknown[]) => unknown)(...args);
+  return stable as T;
 }
 
 export function rerollArgs(job: {
@@ -643,7 +794,31 @@ export const STALE_REVIEW_MESSAGE =
 export type FinishOutcome =
   | { readonly kind: "finished" }
   | { readonly kind: "cancelled" }
+  | { readonly kind: "refused"; readonly message: string }
   | { readonly kind: "stale"; readonly message: string };
+
+export const SCRIPTED_NEEDS_REVIEW_MESSAGE =
+  "A scripted finish needs the saved version you reviewed. Save in the editor, review the report, then finish.";
+
+export type BuiltStep =
+  | { readonly ok: true; readonly step: FinishStepInput | undefined }
+  | { readonly ok: false; readonly message: string };
+
+/** The step the Scripted toggle and its description make: none when off; when on, words that will be published. */
+export function buildFinishStep(
+  scripted: boolean,
+  description: string,
+): BuiltStep {
+  if (!scripted) return { ok: true, step: undefined };
+  const words = description.trim();
+  if (words === "")
+    return {
+      ok: false,
+      message:
+        "Say what ran: a scripted finish is recorded with this description, and it is published with the asset.",
+    };
+  return { ok: true, step: { method: "script", description: words } };
+}
 
 export function finishOutcomeMessage(
   outcome: FinishOutcome,
@@ -666,13 +841,24 @@ export async function finishReviewedEdit(
   editId: string,
   report: EditReport,
   editorLaunched: boolean | undefined,
+  step?: FinishStepInput,
 ): Promise<FinishOutcome> {
+  // A script's description is published, so a scripted finish only goes ahead
+  // for a version that was reviewed: the report on screen must name its hash.
+  if (step !== undefined && !/^[0-9a-f]{64}$/.test(report.sheetHash))
+    return { kind: "refused", message: SCRIPTED_NEEDS_REVIEW_MESSAGE };
   try {
     if (editorLaunched === false) {
-      const imported = await host.editImport(editId, true);
+      const imported = await host.editImport(editId, true, step);
       if (imported.cancelled) return { kind: "cancelled" };
     } else
-      await host.call("finish", { id: editId, reviewed: report.sheetHash });
+      await host.call("finish", {
+        id: editId,
+        reviewed: report.sheetHash,
+        ...(step === undefined
+          ? {}
+          : { method: step.method, description: step.description }),
+      });
     return { kind: "finished" };
   } catch (error) {
     if (error instanceof HostError && error.code === "stale-review")

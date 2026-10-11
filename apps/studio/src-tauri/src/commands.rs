@@ -199,14 +199,20 @@ pub async fn edit_import(
     config: State<'_, ConfigStore>,
     edit_id: String,
     finish: Option<bool>,
+    method: Option<String>,
+    description: Option<String>,
 ) -> Result<Value, CommandError> {
     let (png_app, json_app) = (app.clone(), app);
     bridge::edit_import(
         &state.mux,
         configured(&config),
         &state.dirty,
-        &edit_id,
-        finish.unwrap_or(false),
+        bridge::ImportRequest {
+            edit_id: &edit_id,
+            finish: finish.unwrap_or(false),
+            method: method.as_deref(),
+            description: description.as_deref(),
+        },
         || pick_file(png_app, "Sheet", "png"),
         || pick_file(json_app, "Sheet metadata", "json"),
     )

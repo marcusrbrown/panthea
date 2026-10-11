@@ -316,6 +316,12 @@ export function parseConfigChoice(value: unknown): Parsed<ConfigChoice> {
   return status.ok ? good({ cancelled: false, ...status.value }) : status;
 }
 
+/** How a finish is recorded when it was made by a script: the words are published with the asset. */
+export interface FinishStepInput {
+  readonly method: "script";
+  readonly description: string;
+}
+
 export interface EditOpened {
   readonly editId: string;
   readonly slots: readonly string[];

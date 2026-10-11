@@ -5,6 +5,7 @@ import {
   canRelease,
   initialWorkflowState,
   lockLabel,
+  queueRowContext,
   refusedByLock,
   resolveActiveRecord,
   workflowReducer,
@@ -228,6 +229,144 @@ describe("workflowReducer", () => {
         undefined,
       ])
         expect(refusedByLock(other)).toBe(false);
+    });
+  });
+
+  describe("a poll that brings the same jobs again", () => {
+    const rows = (n: number, change?: { id: string; status: string }) =>
+      Array.from({ length: n }, (_, i) => {
+        const id = `j${i}`;
+        return {
+          id,
+          requestId: "r1",
+          slotKey: `idle/${i}`,
+          status: change?.id === id ? change.status : "queued",
+          candidate: null,
+        };
+      });
+    const load = (
+      jobs: readonly Record<string, unknown>[],
+      from = initialWorkflowState(),
+    ) => workflowReducer(from, { type: "snapshot", snapshot: snapshot(jobs) });
+
+    test("keeps the identity of every unchanged job, and of the list when nothing changed", () => {
+      const first = load(rows(72));
+      const second = load(rows(72), first);
+
+      expect(second.jobs).toBe(first.jobs);
+      for (const [i, job] of second.jobs.entries())
+        expect(job).toBe(first.jobs[i]);
+    });
+
+    test("a changed job is a new object and the others are still the same ones", () => {
+      const first = load(rows(72));
+      const second = load(rows(72, { id: "j5", status: "running" }), first);
+
+      expect(second.jobs).not.toBe(first.jobs);
+      expect(second.jobs[5]).not.toBe(first.jobs[5]);
+      expect(second.jobs[5]?.status).toBe("running");
+      for (const [i, job] of second.jobs.entries())
+        if (i !== 5) expect(job).toBe(first.jobs[i] as never);
+    });
+
+    test("a job is the same object only while everything the row shows is the same", () => {
+      const first = load([{ id: "j", status: "failed", error: "boom" }]);
+
+      const changedReason = load(
+        [{ id: "j", status: "failed", error: "other" }],
+        first,
+      );
+      const same = load([{ id: "j", status: "failed", error: "boom" }], first);
+
+      expect(changedReason.jobs[0]).not.toBe(first.jobs[0]);
+      expect(changedReason.jobs[0]?.reason).toBe("other");
+      expect(same.jobs[0]).toBe(first.jobs[0] as never);
+    });
+
+    test("a removed, added or reordered job changes the list, not the identity of the rest", () => {
+      const first = load(rows(3));
+      const fewer = load(rows(2), first);
+      const more = load(rows(4), first);
+      const reordered = load([...rows(3)].reverse(), first);
+
+      expect(fewer.jobs).toHaveLength(2);
+      expect(fewer.jobs[0]).toBe(first.jobs[0] as never);
+      expect(more.jobs[2]).toBe(first.jobs[2] as never);
+      expect(reordered.jobs.map((job) => job.id)).toEqual(["j2", "j1", "j0"]);
+      expect(reordered.jobs[0]).toBe(first.jobs[2] as never);
+    });
+
+    test("a tombstone still wins over what the poll says, with the job object kept when nothing changed", () => {
+      const first = load(rows(2));
+      const cancelled = workflowReducer(first, {
+        type: "job-cancelled",
+        jobId: "j0",
+      });
+      const polled = load(rows(2), cancelled);
+      const again = load(rows(2), polled);
+
+      expect(polled.jobs[0]?.status).toBe("cancelled");
+      expect(again.jobs[0]).toBe(polled.jobs[0] as never);
+      expect(again.jobs).toBe(polled.jobs);
+    });
+  });
+
+  describe("what a queue row is given", () => {
+    test("only the few facts that decide its buttons and notes, the same for any unrelated change", () => {
+      const base = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot([{ id: "j1", status: "queued" }], {
+          host: { state: "running", lock: "held" },
+        }),
+      });
+      const other = workflowReducer(base, {
+        type: "snapshot",
+        snapshot: snapshot([{ id: "j1", status: "queued" }], {
+          host: { state: "running", lock: "held" },
+          requests: [{ id: "r1" }],
+          candidates: [{ id: "c1" }],
+          assets: [{ id: "a1" }],
+          status: { idle: true },
+        }),
+      });
+
+      expect(queueRowContext(other)).toEqual(queueRowContext(base));
+      expect(Object.keys(queueRowContext(base)).sort()).toEqual([
+        "attempt",
+        "hostRestarting",
+        "maxAttempts",
+        "mutable",
+        "restartPending",
+        "restartRemovable",
+      ]);
+    });
+
+    test("it follows the lock, the restart and the host state", () => {
+      const locked = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot([], { host: { state: "read-only", lockHolder: 9 } }),
+      });
+      const restarting = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot([], {
+          host: { state: "restarting", attempt: 2, maxAttempts: 3 },
+        }),
+      });
+      const running = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot([]),
+      });
+
+      expect(queueRowContext(running).mutable).toBe(true);
+      expect(queueRowContext(locked).mutable).toBe(false);
+      expect(queueRowContext(locked).restartRemovable).toBe(false);
+      expect(queueRowContext(restarting)).toMatchObject({
+        mutable: false,
+        hostRestarting: true,
+        restartRemovable: true,
+        attempt: 2,
+        maxAttempts: 3,
+      });
     });
   });
 

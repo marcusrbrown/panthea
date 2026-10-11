@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { StudioHost } from "../host/client";
 import type { EditReport, SummaryRecord } from "../host/types";
 import {
+  buildFinishStep,
   exportEditFallback,
   finishOutcomeMessage,
   finishReviewedEdit,
@@ -47,6 +48,9 @@ export function EditPanel({
   readonly onStale?: () => void;
 }) {
   const [confirmed, setConfirmed] = useState(false);
+  // A scripted finish: the toggle and the words recorded (and published) with it.
+  const [scripted, setScripted] = useState(false);
+  const [scriptDescription, setScriptDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const editId = report?.editId ?? edit.id;
@@ -56,16 +60,26 @@ export function EditPanel({
 
   const finish = async () => {
     if (!confirmed || !report || !enabled) return;
+    const built = buildFinishStep(scripted, scriptDescription);
+    if (!built.ok) {
+      setError(built.message);
+      return;
+    }
     setBusy(true);
     setError("");
     try {
+      // A retry after a stale refusal builds the step from the same toggle and
+      // words, so the identical step is sent again.
       const outcome = await finishReviewedEdit(
         host,
         editId,
         report,
         editorLaunched,
+        built.step,
       );
-      if (outcome.kind === "stale") {
+      if (outcome.kind === "refused") {
+        setError(outcome.message);
+      } else if (outcome.kind === "stale") {
         setError(outcome.message);
         setConfirmed(false);
         onStale?.();
@@ -266,11 +280,44 @@ export function EditPanel({
               ? "I confirm importing this version to review."
               : "I reviewed this pixel diff before changing the draft."}
           </label>
+          <div className="edit-script">
+            <label className="edit-confirm">
+              <input
+                type="checkbox"
+                checked={scripted}
+                disabled={!canMutate}
+                onChange={(event) => setScripted(event.target.checked)}
+              />
+              Scripted
+            </label>
+            <p className="muted">
+              A script made this version. Its description is recorded as the
+              step and published with the asset.
+            </p>
+            {scripted && (
+              <label className="workflow-field">
+                Description of what ran{" "}
+                <span className="field-hint">published with the asset</span>
+                <input
+                  className="workflow-control"
+                  value={scriptDescription}
+                  disabled={!canMutate}
+                  placeholder="idle loop (tools/probes/art-edit/idle.py)"
+                  onChange={(event) => setScriptDescription(event.target.value)}
+                />
+              </label>
+            )}
+          </div>
           <div className="edit-actions">
             <button
               type="button"
               className="primary"
-              disabled={!enabled || !confirmed || !report}
+              disabled={
+                !enabled ||
+                !confirmed ||
+                !report ||
+                !buildFinishStep(scripted, scriptDescription).ok
+              }
               onClick={() => void finish()}
             >
               Finish and keep

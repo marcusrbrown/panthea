@@ -283,6 +283,25 @@ describe("edit and config commands", () => {
     ]);
   });
 
+  test("a scripted finish from picked files carries its method and description and nothing else", async () => {
+    const transport = fakeTransport({
+      edit_import: () => ({ editId: "e1", state: "finished", changed: true }),
+    });
+    const host = createStudioHost(transport);
+
+    await host.editImport("e1", true, {
+      method: "script",
+      description: "idle loop",
+    });
+
+    expect(transport.to("edit_import")[0]?.args).toEqual({
+      editId: "e1",
+      finish: true,
+      method: "script",
+      description: "idle loop",
+    });
+  });
+
   test("editReport asks edit-report for the id alone and parses the reply", async () => {
     const reply = {
       editId: "e1",

@@ -5,29 +5,38 @@ import { createStudioHost, HostError } from "../host/client";
 import type { ConformParams } from "../host/types";
 import * as workflowActions from "./actions";
 import {
+  buildFinishStep,
   buildPackArgs,
+  checkResolvedSeed,
   chooseConfigGuarded,
   conformJob,
   createLatest,
+  createStableHandlers,
   editReportSignature,
   editsForReports,
   finishOutcomeMessage,
   finishReviewedEdit,
   type GuardUi,
+  generateReady,
   guardedAction,
   inlineParamsAtScale,
+  MAX_SEED,
   packWorkingSetGuarded,
+  parseBaseSeed,
   parseInlineConformDraft,
   parseSlotSpecs,
   pickCandidateGuarded,
   readEditReport,
   readExistingSheet,
   reopenEditor,
+  requestSignature,
   rerollArgs,
   resolveFlow,
+  SLOT_EXAMPLES,
   STALE_REVIEW_MESSAGE,
   sheetFlow,
   slotHint,
+  slotProblem,
 } from "./actions";
 import { initialWorkflowState, workflowReducer } from "./model";
 
@@ -394,8 +403,53 @@ describe("workflow host actions", () => {
       { state: "idle", direction: "south" },
       { state: "walk", direction: "north" },
     ]);
-    expect(slotHint("portrait")).toBe("one expression per line");
-    expect(slotHint("sprite")).toBe("one state/direction per line");
+  });
+
+  describe("the slot hint", () => {
+    test("sprites take state/direction[/ability] and act needs an ability; portraits take an expression name", () => {
+      expect(slotHint("sprite")).toContain("state/direction[/ability]");
+      expect(slotHint("sprite")).toContain("act needs an ability");
+      expect(slotHint("portrait")).toContain("expression");
+    });
+
+    test("every example line the hint shows parses and has no problem", () => {
+      for (const kind of ["sprite", "portrait"] as const) {
+        expect(SLOT_EXAMPLES[kind].length).toBeGreaterThan(0);
+        for (const example of SLOT_EXAMPLES[kind]) {
+          expect(slotHint(kind), example).toContain(example);
+          const parsed = parseSlotSpecs(example, kind);
+          expect(parsed, example).toHaveLength(1);
+          expect(slotProblem(example, kind), example).toBeUndefined();
+        }
+        expect(
+          slotProblem(SLOT_EXAMPLES[kind].join("\n"), kind),
+        ).toBeUndefined();
+      }
+      expect(parseSlotSpecs("act/south/thunderbolt", "sprite")).toEqual([
+        { state: "act", direction: "south", ability: "thunderbolt" },
+      ]);
+    });
+
+    test("act//thunderbolt says the direction is missing, and act without an ability says it needs one", () => {
+      expect(slotProblem("act//thunderbolt", "sprite")).toBe(
+        'Slot "act//thunderbolt": the direction is empty. Write state/direction/ability, for example act/south/thunderbolt.',
+      );
+      expect(slotProblem("act/south", "sprite")).toBe(
+        'Slot "act/south": act needs an ability. Write act/south/thunderbolt.',
+      );
+      expect(slotProblem("idle/south/", "sprite")).toContain(
+        "ability is empty",
+      );
+      expect(slotProblem("/south", "sprite")).toContain("state is empty");
+      expect(slotProblem("idle", "sprite")).toContain("needs a direction");
+      expect(slotProblem("idle/south\nact//thunderbolt", "sprite")).toContain(
+        "act//thunderbolt",
+      );
+      expect(slotProblem("neutral\nidle/south", "portrait")).toContain(
+        "one expression name",
+      );
+      expect(slotProblem("", "sprite")).toBeUndefined();
+    });
   });
 
   test("reroll targets exactly the failed job request and slot", () => {
@@ -852,6 +906,255 @@ function recordingUi(allowed = true) {
   };
   return { ui, log };
 }
+
+describe("a scripted finish", () => {
+  const report = {
+    editId: "e1",
+    workingSetId: "w1",
+    state: "open",
+    sheetHash: "c".repeat(64),
+    metadataHash: "d".repeat(64),
+    slots: [],
+  } as const;
+  const step = {
+    method: "script",
+    description: "idle loop (art-edit/idle.py)",
+  } as const;
+
+  test("the step is the toggle and the description: off is no step, on needs words that will be published", () => {
+    expect(buildFinishStep(false, "ignored")).toEqual({
+      ok: true,
+      step: undefined,
+    });
+    expect(buildFinishStep(true, "  idle loop  ")).toEqual({
+      ok: true,
+      step: { method: "script", description: "idle loop" },
+    });
+    for (const empty of ["", "   ", "\n"])
+      expect(buildFinishStep(true, empty)).toEqual({
+        ok: false,
+        message:
+          "Say what ran: a scripted finish is recorded with this description, and it is published with the asset.",
+      });
+  });
+
+  test("through the editor path the finish names the reviewed hash and carries the step", async () => {
+    const transport = fakeTransport({
+      studio_call: () => ({ editId: "e1", state: "finished", changed: true }),
+    });
+
+    const outcome = await finishReviewedEdit(
+      createStudioHost(transport),
+      "e1",
+      report,
+      true,
+      step,
+    );
+
+    expect(outcome).toEqual({ kind: "finished" });
+    expect(transport.calls[0]).toEqual({
+      command: "studio_call",
+      args: {
+        op: "finish",
+        args: {
+          id: "e1",
+          reviewed: "c".repeat(64),
+          method: "script",
+          description: step.description,
+        },
+      },
+    });
+  });
+
+  test("through the no-editor path the picked-files finish carries the step", async () => {
+    const transport = fakeTransport({
+      edit_import: () => ({ editId: "e1", state: "finished", changed: true }),
+    });
+
+    const outcome = await finishReviewedEdit(
+      createStudioHost(transport),
+      "e1",
+      report,
+      false,
+      step,
+    );
+
+    expect(outcome).toEqual({ kind: "finished" });
+    expect(transport.calls[0]).toEqual({
+      command: "edit_import",
+      args: {
+        editId: "e1",
+        finish: true,
+        method: "script",
+        description: step.description,
+      },
+    });
+  });
+
+  test("a scripted finish without the reviewed hash is refused before the host is called", async () => {
+    const transport = fakeTransport({});
+    for (const sheetHash of ["", "abc", "C".repeat(64)])
+      for (const editorLaunched of [true, false]) {
+        const outcome = await finishReviewedEdit(
+          createStudioHost(transport),
+          "e1",
+          { ...report, sheetHash },
+          editorLaunched,
+          step,
+        );
+
+        expect(outcome, `${sheetHash} ${editorLaunched}`).toEqual({
+          kind: "refused",
+          message:
+            "A scripted finish needs the saved version you reviewed. Save in the editor, review the report, then finish.",
+        });
+      }
+    expect(transport.calls).toEqual([]);
+  });
+
+  test("a stale hash is refused as a plain message, and the retry resends the identical step", async () => {
+    let attempts = 0;
+    const transport = fakeTransport({
+      studio_call: () => {
+        attempts += 1;
+        if (attempts === 1) throw hostError("stale-review", "saved again");
+        return { editId: "e1", state: "finished", changed: true };
+      },
+    });
+    const host = createStudioHost(transport);
+
+    const first = await finishReviewedEdit(host, "e1", report, true, step);
+    const retry = await finishReviewedEdit(host, "e1", report, true, step);
+
+    expect(first).toEqual({ kind: "stale", message: STALE_REVIEW_MESSAGE });
+    expect(retry).toEqual({ kind: "finished" });
+    expect(transport.calls).toHaveLength(2);
+    expect(transport.calls[1]).toEqual(transport.calls[0]);
+  });
+
+  test("a plain finish sends no method or description", async () => {
+    const transport = fakeTransport({
+      studio_call: () => ({ editId: "e1", state: "finished", changed: true }),
+    });
+
+    await finishReviewedEdit(createStudioHost(transport), "e1", report, true);
+
+    expect(transport.calls[0]?.args).toEqual({
+      op: "finish",
+      args: { id: "e1", reviewed: "c".repeat(64) },
+    });
+  });
+});
+
+describe("the base seed", () => {
+  test("only ASCII digits are a seed; empty means draw one", () => {
+    expect(parseBaseSeed("", 1)).toEqual({ ok: true, seed: undefined });
+    expect(parseBaseSeed("0", 1)).toEqual({ ok: true, seed: 0 });
+    expect(parseBaseSeed("20261007", 3)).toEqual({ ok: true, seed: 20261007 });
+    expect(parseBaseSeed("007", 1)).toEqual({ ok: true, seed: 7 });
+  });
+
+  test("the last job seed, base plus the last ordinal, may reach 2^32-1 and no further", () => {
+    expect(MAX_SEED).toBe(4294967295);
+    // Four jobs have ordinals 0..3.
+    expect(parseBaseSeed("4294967292", 4)).toEqual({
+      ok: true,
+      seed: 4294967292,
+    });
+    expect(parseBaseSeed("4294967295", 1)).toEqual({
+      ok: true,
+      seed: 4294967295,
+    });
+    const over = parseBaseSeed("4294967295", 4);
+    expect(over).toEqual({
+      ok: false,
+      message:
+        "The last job's seed would be 4294967298, past 4294967295. Use a base seed of at most 4294967292 for 4 jobs.",
+    });
+    expect(parseBaseSeed("4294967293", 4).ok).toBe(false);
+    expect(parseBaseSeed("99999999999999999999999", 1).ok).toBe(false);
+  });
+
+  test("anything else is refused with one message: sign, fraction, exponent, whitespace, non-ASCII digits, hex", () => {
+    const message = "The base seed is whole digits only, from 0 to 4294967295.";
+    for (const bad of [
+      "-1",
+      "+1",
+      "1.5",
+      "1e3",
+      " 1",
+      "1 ",
+      "1\n",
+      "\t1",
+      "٣",
+      "１２３",
+      "0x10",
+      "1_000",
+      "abc",
+      "NaN",
+      "1,000",
+    ])
+      expect(parseBaseSeed(bad, 1), JSON.stringify(bad)).toEqual({
+        ok: false,
+        message,
+      });
+  });
+
+  test("a drawn seed is held to the same range, so the resolve step never shows one that would overflow", () => {
+    expect(checkResolvedSeed(12345, 4)).toBeUndefined();
+    expect(checkResolvedSeed(4294967292, 4)).toBeUndefined();
+    expect(checkResolvedSeed(4294967295, 4)).toContain("Resolve again");
+    expect(checkResolvedSeed(undefined, 4)).toContain("no seed");
+    expect(checkResolvedSeed("5", 4)).toContain("no seed");
+    expect(checkResolvedSeed(1.5, 1)).toContain("no seed");
+  });
+
+  test("editing the seed after a resolve makes Generate not ready until the next resolve", () => {
+    const form = {
+      subject: "zeus",
+      kind: "sprite",
+      slots: "idle/south",
+      batch: 1,
+      styleNote: "",
+      seed: "",
+    };
+    const resolvedFrom = requestSignature(form);
+
+    expect(generateReady(resolvedFrom, requestSignature(form))).toBe(true);
+    expect(
+      generateReady(resolvedFrom, requestSignature({ ...form, seed: "5" })),
+    ).toBe(false);
+    expect(
+      generateReady(
+        resolvedFrom,
+        requestSignature({ ...form, subject: "hera" }),
+      ),
+    ).toBe(false);
+    expect(generateReady(undefined, requestSignature(form))).toBe(false);
+    // Resolving again from the edited form makes it ready again.
+    const edited = { ...form, seed: "5" };
+    expect(
+      generateReady(requestSignature(edited), requestSignature(edited)),
+    ).toBe(true);
+  });
+});
+
+describe("stable row handlers", () => {
+  test("a handler keeps its identity while the latest implementation changes under it", () => {
+    const calls: string[] = [];
+    const latest = {
+      current: { remove: (id: string) => calls.push(`old ${id}`) },
+    };
+    const stable = createStableHandlers(latest);
+    const remove = stable.remove;
+
+    latest.current = { remove: (id: string) => calls.push(`new ${id}`) };
+    remove("j1");
+
+    expect(stable.remove).toBe(remove);
+    expect(calls).toEqual(["new j1"]);
+  });
+});
 
 describe("the window's refusal and pending handling", () => {
   test("a refusal's message and details are shown and the pending state ends", async () => {

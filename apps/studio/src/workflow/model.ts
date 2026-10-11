@@ -156,6 +156,77 @@ export function refusedByLock(error: unknown): boolean {
   );
 }
 
+/** Whether the window may write: configured, the sidecar running, and no other process holding the lock. */
+export function canMutate(state: WorkflowState): boolean {
+  return (
+    state.configured &&
+    state.host.state === "running" &&
+    state.lockOwner === undefined
+  );
+}
+
+/**
+ * The few facts of the window a queue row needs, as primitives: the same for
+ * every row, and equal across any change the rows do not show (a candidate, an
+ * asset, a request). A row given only this and its own job is not rendered
+ * again for those changes.
+ */
+export interface QueueRowContext {
+  /** Writes are allowed. */
+  readonly mutable: boolean;
+  /** A queued or aborting job may still be removed: the image server is restarting. */
+  readonly restartRemovable: boolean;
+  readonly restartPending: boolean;
+  readonly hostRestarting: boolean;
+  readonly attempt: number | undefined;
+  readonly maxAttempts: number | undefined;
+}
+
+export function queueRowContext(state: WorkflowState): QueueRowContext {
+  const hostRestarting = state.host.state === "restarting";
+  return {
+    mutable: canMutate(state),
+    restartRemovable:
+      state.lockOwner === undefined && (state.restartPending || hostRestarting),
+    restartPending: state.restartPending,
+    hostRestarting,
+    attempt: state.host.attempt,
+    maxAttempts: state.host.maxAttempts,
+  };
+}
+
+/** The same job, field for field: its record is what the row shows. */
+function sameJob(previous: QueueJob, next: QueueJob): boolean {
+  return (
+    previous.id === next.id &&
+    previous.requestId === next.requestId &&
+    previous.slotKey === next.slotKey &&
+    previous.status === next.status &&
+    previous.reason === next.reason &&
+    JSON.stringify(previous.raw) === JSON.stringify(next.raw)
+  );
+}
+
+/**
+ * The jobs a snapshot brings, reusing the object of every job that did not
+ * change (and the list itself when nothing did), so a memoized row skips the
+ * poll that carries it again.
+ */
+function reuseJobs(
+  previous: readonly QueueJob[],
+  next: readonly QueueJob[],
+): readonly QueueJob[] {
+  const before = new Map(previous.map((job) => [job.id, job]));
+  const kept = next.map((job) => {
+    const old = before.get(job.id);
+    return old !== undefined && sameJob(old, job) ? old : job;
+  });
+  return kept.length === previous.length &&
+    kept.every((job, index) => job === previous[index])
+    ? previous
+    : kept;
+}
+
 export function initialWorkflowState(): WorkflowState {
   return {
     host: { state: "starting" },
@@ -193,13 +264,16 @@ export function workflowReducer(
         snapshot.status === undefined ? state.status : snapshot.status;
       const reported = object(status);
       const tombstones = { ...state.tombstones };
-      const jobs = (snapshot.jobs ?? []).map((raw) => {
-        const protectedState = tombstones[raw.id];
-        const job = queueJob(raw, protectedState);
-        if (job.status === "cancelled" || job.status === "removed")
-          tombstones[job.id] = job.status;
-        return job;
-      });
+      const jobs = reuseJobs(
+        state.jobs,
+        (snapshot.jobs ?? []).map((raw) => {
+          const protectedState = tombstones[raw.id];
+          const job = queueJob(raw, protectedState);
+          if (job.status === "cancelled" || job.status === "removed")
+            tombstones[job.id] = job.status;
+          return job;
+        }),
+      );
       return {
         ...state,
         host: snapshot.host,

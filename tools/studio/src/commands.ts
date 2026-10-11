@@ -1317,11 +1317,6 @@ async function editBring(
   if (isOutcome(files)) return files;
   const step = readStep(a);
   if (isOutcome(step)) return step;
-  if (step !== undefined && files === undefined)
-    return refuse(
-      "invalid-arguments",
-      "--method and --description describe a sheet brought back with --png and --json",
-    );
   let result: EditResult | { ok: false; reason: string; message: string };
   if (files !== undefined)
     result =
@@ -1343,6 +1338,7 @@ async function editBring(
       content,
       mode,
       reviewed as Sha256 | undefined,
+      step,
     );
   }
   if (!result.ok) return refuse(result.reason, safeMessage(result.message));

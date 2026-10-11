@@ -27,9 +27,10 @@ use OpClass::{Long, Read, Write};
 
 /// Argument names are the session's own (`tools/studio/src/commands.ts`). The
 /// masked-edit fields of `generate` (`editBase*`, `editMask`, `editStrength`,
-/// `editCue`) name files by path and stay a CLI path. `finish` takes no files
-/// and no step here, so it can only take back what the editor saved; it may
-/// name the sheet hash it was reviewed at.
+/// `editCue`) name files by path and stay a CLI path. `finish` takes no files:
+/// it takes back what the editor saved. It may name the sheet hash it was
+/// reviewed at, and carry the step it is recorded with (`method` and
+/// `description` are free text published with the asset, not places).
 pub const OPS: &[OpSpec] = &[
     // Reads of durable records.
     spec("status", &[], Read),
@@ -100,7 +101,11 @@ pub const OPS: &[OpSpec] = &[
     // `reviewed` is the sheet hash of the saved version the owner reviewed (an
     // edit report's `sheetHash`), not a place: the session refuses a finish
     // that would take another sheet.
-    spec("finish", &["id", "reviewed"], Write),
+    spec(
+        "finish",
+        &["id", "reviewed", "method", "description"],
+        Write,
+    ),
     spec(
         "pack",
         &[
@@ -180,8 +185,6 @@ mod tests {
         "editBaseDescription",
         "editStrength",
         "editCue",
-        "method",
-        "description",
     ];
 
     #[test]
@@ -450,29 +453,48 @@ mod tests {
             ),
             Err(Refusal::UnknownArgument("json".into()))
         );
-        assert!(matches!(
+        assert_eq!(
             check(
                 "finish",
-                &json!({ "id": "e1", "method": "script", "description": "x" })
+                &json!({ "id": "e1", "method": "script", "description": "x", "png": "/tmp/x.png" })
             ),
-            Err(Refusal::UnknownArgument(_))
-        ));
+            Err(Refusal::UnknownArgument("png".into()))
+        );
     }
 
     #[test]
-    fn finish_may_name_the_reviewed_sheet_hash_and_still_takes_no_file_or_step() {
+    fn finish_names_the_reviewed_hash_and_may_carry_a_script_step_but_takes_no_file() {
         let row = lookup("finish").unwrap();
-        assert_eq!(row.args, ["id", "reviewed"]);
+        assert_eq!(row.args, ["id", "reviewed", "method", "description"]);
         assert_eq!(row.class, Write);
         assert!(check("finish", &json!({ "id": "e1", "reviewed": "ab" })).is_ok());
-        for stray in ["png", "json", "method", "description"] {
+        assert!(check(
+            "finish",
+            &json!({ "id": "e1", "reviewed": "ab", "method": "script", "description": "idle loop" })
+        )
+        .is_ok());
+        for stray in ["png", "json", "dir", "path"] {
             assert_eq!(
                 check("finish", &json!({ "id": "e1", stray: "x" })),
                 Err(Refusal::UnknownArgument(stray.into()))
             );
         }
-        // A hash is not a place: `reviewed` is not one of the path-like names.
-        assert!(!PATHISH.contains(&"reviewed"));
+        // A hash and a step are free text, not places: none of the three is path-like.
+        for free_text in ["reviewed", "method", "description"] {
+            assert!(!PATHISH.contains(&free_text), "{free_text}");
+        }
+    }
+
+    #[test]
+    fn only_finish_takes_a_step_and_no_other_op_has_method_or_description() {
+        for spec in OPS {
+            if spec.op == "finish" {
+                continue;
+            }
+            for arg in ["method", "description"] {
+                assert!(!spec.args.contains(&arg), "{} takes {arg}", spec.op);
+            }
+        }
     }
 
     #[test]

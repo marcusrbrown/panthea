@@ -24,7 +24,7 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Sha256 } from "@panthea/contracts";
 import type { EditResult } from "./edit-session";
-import { parseSheetJson } from "./export-import";
+import { type FinishStep, parseSheetJson } from "./export-import";
 import type { StudioContent } from "./request";
 import EMBEDDED_SCRIPT from "./scripts/export.lua" with { type: "text" };
 import type { StudioSession } from "./session";
@@ -145,6 +145,8 @@ export interface EditorAdapter {
     content: StudioContent,
     mode: "import" | "finish",
     reviewed?: Sha256,
+    /** How a finish is recorded; only a finish takes one. */
+    step?: FinishStep,
   ): Promise<EditResult | EditorFailure>;
   /** The same import path for a sheet and metadata the owner exported by hand. */
   refreshFallback(
@@ -154,6 +156,7 @@ export interface EditorAdapter {
     content: StudioContent,
     mode: "import" | "finish",
     reviewed?: Sha256,
+    step?: FinishStep,
   ): EditResult;
   /** Kills any running editor child and waits for it to be gone. */
   close(): Promise<void>;
@@ -435,7 +438,7 @@ export function createEditorAdapter(
       }
     },
 
-    async refresh(editId, content, mode, reviewed) {
+    async refresh(editId, content, mode, reviewed, step) {
       const editor = resolveAseprite(config);
       if (!editor.ok) return fail("editor-unavailable", editor.message);
       const edit = openEdit(editId);
@@ -485,16 +488,16 @@ export function createEditorAdapter(
         const json = readFileSync(data, "utf8");
         return mode === "import"
           ? session.importEdit(editId, png, json, content)
-          : session.finishEdit(editId, png, json, content, undefined, reviewed);
+          : session.finishEdit(editId, png, json, content, step, reviewed);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
     },
 
-    refreshFallback: (editId, png, json, content, mode, reviewed) =>
+    refreshFallback: (editId, png, json, content, mode, reviewed, step) =>
       mode === "import"
         ? session.importEdit(editId, png, json, content)
-        : session.finishEdit(editId, png, json, content, undefined, reviewed),
+        : session.finishEdit(editId, png, json, content, step, reviewed),
 
     async close() {
       const active = [...running];

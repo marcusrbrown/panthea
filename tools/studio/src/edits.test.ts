@@ -87,8 +87,10 @@ function fakeEditor(
         },
       };
     },
-    refresh: async (id, _content, mode) => {
+    refresh: async (id, _content, mode, reviewed, step) => {
       calls.push(`${mode} ${id}`);
+      if (step !== undefined) calls.push(`step ${JSON.stringify(step)}`);
+      if (reviewed !== undefined) calls.push(`reviewed ${reviewed}`);
       return { ok: true, changed: true };
     },
     refreshFallback: () => ({
@@ -351,7 +353,64 @@ describe("editing with files and no editor", () => {
     expect(step).toMatchObject({ description, method: "script" });
   });
 
-  test("a scripted finish needs a description, an unknown method is refused, and method or description need the files", async () => {
+  test("a scripted finish through the editor passes the step to it, with the reviewed hash; method and description no longer need files", async () => {
+    const { rig, config, over } = pickedSet();
+    const calls: string[] = [];
+    const open = new Studio(config, depsFor(capture(), over), "oneshot");
+    const session = await open.owner();
+    if ("ok" in session) throw new Error("busy");
+    session.openEdit("e1", "w", ["idle/south"], rig.content);
+    await open.teardown();
+    const hash = "a".repeat(64);
+
+    const finished = await run(
+      config,
+      "finish",
+      { id: "e1", method: "script", description: "idle loop", reviewed: hash },
+      { ...over, createEditor: (s) => fakeEditor(s, calls) },
+    );
+
+    expect(finished.outcome).toMatchObject({
+      ok: true,
+      result: { state: "finished" },
+    });
+    expect(calls).toEqual([
+      "finish e1",
+      `step ${JSON.stringify({ method: "script", description: "idle loop" })}`,
+      `reviewed ${hash}`,
+      "close",
+    ]);
+  });
+
+  test("a plain finish through the editor passes no step, and import still takes no method or description", async () => {
+    const { rig, config, over } = pickedSet();
+    const calls: string[] = [];
+    const open = new Studio(config, depsFor(capture(), over), "oneshot");
+    const session = await open.owner();
+    if ("ok" in session) throw new Error("busy");
+    session.openEdit("e1", "w", ["idle/south"], rig.content);
+    await open.teardown();
+    const editor = {
+      ...over,
+      createEditor: (s: StudioSession) => fakeEditor(s, calls),
+    };
+
+    await run(config, "finish", { id: "e1" }, editor);
+    const imported = await run(
+      config,
+      "import",
+      { id: "e1", method: "script", description: "x" },
+      editor,
+    );
+
+    expect(calls).toEqual(["finish e1", "close"]);
+    expect(imported.outcome).toMatchObject({
+      ok: false,
+      error: { code: "invalid-arguments" },
+    });
+  });
+
+  test("a scripted finish needs a description, an unknown method is refused, and an empty description is refused", async () => {
     const { config, over } = pickedSet();
     const files = { png: "/x.png", json: "/x.json" };
 
@@ -367,12 +426,6 @@ describe("editing with files and no editor", () => {
       { id: "e1", ...files, method: "magic", description: "x" },
       over,
     );
-    const noFiles = await run(
-      config,
-      "finish",
-      { id: "e1", method: "script", description: "x" },
-      over,
-    );
     const emptyDescription = await run(
       config,
       "finish",
@@ -380,7 +433,7 @@ describe("editing with files and no editor", () => {
       over,
     );
 
-    for (const result of [noDescription, unknown, noFiles, emptyDescription]) {
+    for (const result of [noDescription, unknown, emptyDescription]) {
       expect(result.outcome).toMatchObject({
         ok: false,
         error: { code: "invalid-arguments" },

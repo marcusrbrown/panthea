@@ -7,7 +7,7 @@ import { fakeTransport } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
 import { approvalArgsForAsset, packWorkingSetGuarded } from "./actions";
 import { initialWorkflowState, workflowReducer } from "./model";
-import { WorkflowView } from "./Workflow";
+import { QueueItem, WorkflowView } from "./Workflow";
 
 const host = createStudioHost(fakeTransport());
 
@@ -766,6 +766,60 @@ describe("WorkflowView controls", () => {
       expect(
         render(workflowReducer(refused, { type: "write-unlocked" })),
       ).not.toContain("another process holds");
+    });
+  });
+
+  describe("the request form", () => {
+    test("Generate has a base seed field that says empty draws one", () => {
+      const html = render(stateFor());
+
+      expect(html).toContain("Base seed");
+      expect(html).toMatch(/<input[^>]*inputMode="numeric"[^>]*>/);
+      expect(html).toContain("empty draws one");
+    });
+
+    test("the slot hint shows examples, including an act with its ability", () => {
+      const html = render(stateFor());
+
+      expect(html).toContain("state/direction[/ability]");
+      expect(html).toContain("act/south/thunderbolt");
+      expect(html).toContain("act needs an ability");
+    });
+  });
+
+  describe("the queue", () => {
+    test("a row is a memoized component, so a keystroke elsewhere does not render it again", () => {
+      expect((QueueItem as unknown as { $$typeof: symbol }).$$typeof).toBe(
+        Symbol.for("react.memo"),
+      );
+    });
+
+    test("72 jobs render as 72 rows", () => {
+      const jobs = Array.from({ length: 72 }, (_, i) => ({
+        id: `j${i}`,
+        requestId: "r1",
+        slotKey: `idle/${i}`,
+        status: i % 2 === 0 ? "queued" : "succeeded",
+        candidate: i % 4 === 1 ? null : { id: `c${i}` },
+      }));
+      const state = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: {
+          host: { state: "running", lock: "held" },
+          status: { idle: false, conformSets: ["standard"] },
+          requests: [],
+          jobs: jobs as never,
+          candidates: [{ id: "c3", status: "done" }],
+          edits: [],
+          workingSets: [],
+          assets: [],
+        },
+      });
+
+      const html = render(state);
+
+      expect(html.match(/class="queue-row /g)).toHaveLength(72);
+      expect(html).toContain("72 jobs");
     });
   });
 

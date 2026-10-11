@@ -1,6 +1,7 @@
 import {
   type Dispatch,
   type FormEvent,
+  memo,
   type ReactNode,
   useEffect,
   useMemo,
@@ -20,9 +21,11 @@ import type {
 import {
   approvalArgsForAsset,
   buildPackArgs,
+  checkResolvedSeed,
   chooseConfigGuarded,
   conformJob,
   createLatest,
+  createStableHandlers,
   detailText,
   type EditorSession,
   editableSlotsForSet,
@@ -32,29 +35,37 @@ import {
   editsForReports,
   readEditReport as fetchEditReport,
   type GuardUi,
+  generateReady,
   guardedAction,
   openWorkingSetEdit,
   packNeedsOriginalWork,
   packNeedsStillFrameMs,
   packWorkingSetGuarded,
+  parseBaseSeed,
   parseInlineConformDraft,
   parseSlotSpecs,
   pickCandidateGuarded,
   readExistingSheet,
   reopenEditor,
   reopenWorkingSetEdit,
+  requestJobCount,
+  requestSignature,
   rerollArgs,
   resolveFlow,
   sheetFlow,
   slotHint,
+  slotProblem,
 } from "./actions";
 import { CandidatePixels } from "./CandidatePixelCell";
 import { EditPanel } from "./EditPanel";
 import {
+  canMutate,
   canRelease,
   initialWorkflowState,
   lockLabel,
   type QueueJob,
+  type QueueRowContext,
+  queueRowContext,
   recordObject,
   recordText,
   recordValue,
@@ -119,23 +130,24 @@ const label = (status: string) =>
     : status === "unavailable"
       ? "Unavailable / staging"
       : status[0]?.toUpperCase() + status.slice(1);
+const sameRowContext = (left: QueueRowContext, right: QueueRowContext) =>
+  (Object.keys(left) as (keyof QueueRowContext)[]).every(
+    (key) => left[key] === right[key],
+  );
 const slug = (value: string) =>
   value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
-function canMutate(state: WorkflowState) {
-  return (
-    state.configured &&
-    state.host.state === "running" &&
-    state.lockOwner === undefined
-  );
-}
-
-function QueueItem({
+/**
+ * One queue row. It is given its own job and a few primitives (`ctx`), never
+ * the window's state, and its handlers are stable, so typing in the form or a
+ * poll that changes nothing about this job does not render it again.
+ */
+export const QueueItem = memo(function QueueItem({
   job,
-  state,
+  ctx,
   busy,
   onRemove,
   onAbort,
@@ -146,7 +158,7 @@ function QueueItem({
   conformBusy,
 }: {
   job: QueueJob;
-  state: WorkflowState;
+  ctx: QueueRowContext;
   busy: boolean;
   onRemove: (id: string) => void;
   onAbort: (id: string) => void;
@@ -158,10 +170,9 @@ function QueueItem({
 }) {
   const candidateSummary = candidate as CandidateSummary | undefined;
   const restartRemoval =
-    state.lockOwner === undefined &&
-    (state.restartPending || state.host.state === "restarting") &&
+    ctx.restartRemovable &&
     (job.status === "queued" || job.status === "aborting");
-  const enabled = (canMutate(state) || restartRemoval) && !busy;
+  const enabled = (ctx.mutable || restartRemoval) && !busy;
   const canRemove = job.status === "queued" || job.status === "aborting";
   const reason = job.reason;
   const progress =
@@ -179,16 +190,16 @@ function QueueItem({
         {job.requestId ? ` · ${job.requestId}` : ""}
       </small>
       {(job.status === "aborting" ||
-        (state.restartPending &&
+        (ctx.restartPending &&
           (job.status === "cancelled" || job.status === "queued"))) && (
         <p className="queue-note">
           Restarting the image server. The next job reloads the model.
         </p>
       )}
-      {state.host.state === "restarting" && job.status === "queued" && (
+      {ctx.hostRestarting && job.status === "queued" && (
         <p className="queue-note">
-          Waiting for server restart, attempt {state.host.attempt} of{" "}
-          {state.host.maxAttempts}.
+          Waiting for server restart, attempt {ctx.attempt} of {ctx.maxAttempts}
+          .
         </p>
       )}
       {reason && (
@@ -256,7 +267,7 @@ function QueueItem({
       )}
     </li>
   );
-}
+});
 
 function ScaleConformForm({
   candidate,
@@ -437,8 +448,11 @@ export function WorkflowView({
   const [slots, setSlots] = useState("idle/south\nwalk/south");
   const [batch, setBatch] = useState(1);
   const [styleNote, setStyleNote] = useState("");
+  const [seedText, setSeedText] = useState("");
   const [requestId, setRequestId] = useState("");
   const [resolvedArgs, setResolvedArgs] = useState<Record<string, unknown>>();
+  /** The form text the resolve on screen was made from. */
+  const [resolvedFrom, setResolvedFrom] = useState<string>();
   const [workingSetId, setWorkingSetId] = useState("");
   const [assetId, setAssetId] = useState("");
   const [styleTag, setStyleTag] = useState("");
@@ -585,6 +599,14 @@ export function WorkflowView({
     const parsedSlots = parseSlotSpecs(slots, kind);
     if (!slug(subject) || parsedSlots.length === 0)
       throw new Error("Enter a subject and at least one slot.");
+    // Bad input is refused here, before the host sees it and before any record.
+    const problem = slotProblem(slots, kind);
+    if (problem !== undefined) throw new Error(problem);
+    const baseSeed = parseBaseSeed(
+      seedText,
+      requestJobCount(slots, kind, batch),
+    );
+    if (!baseSeed.ok) throw new Error(baseSeed.message);
     const args: Record<string, unknown> = {
       id,
       subject: slug(subject),
@@ -592,6 +614,7 @@ export function WorkflowView({
       slots: parsedSlots,
       batch: Math.max(1, Math.floor(batch)),
     };
+    if (baseSeed.seed !== undefined) args.seed = baseSeed.seed;
     if (styleNote.trim()) args.styleNote = styleNote.trim();
     return args;
   };
@@ -599,13 +622,14 @@ export function WorkflowView({
   // A resolve reply is only for the form it was sent from: the form's current
   // text is compared with the text it had at the click.
   const formSignature = useRef("");
-  formSignature.current = JSON.stringify([
+  formSignature.current = requestSignature({
     subject,
     kind,
     slots,
     batch,
     styleNote,
-  ]);
+    seed: seedText,
+  });
   const latestResolve = useRef(createLatest());
   const latestSheet = useRef(createLatest());
   const workingSetIdRef = useRef(workingSetId);
@@ -623,12 +647,27 @@ export function WorkflowView({
         isCurrent: () => formSignature.current === sentFrom,
         call: async () => call("resolve", args, true),
         onResolved: (result) => {
+          // A seed the host drew is held to the same range as one typed.
+          const drawn = checkResolvedSeed(
+            object(object(result).request).seed,
+            requestJobCount(slots, kind, batch),
+          );
+          if (drawn !== undefined) {
+            setResolvedArgs(undefined);
+            setResolvedFrom(undefined);
+            dispatch?.({ type: "refusal", message: drawn });
+            return;
+          }
+          setResolvedFrom(sentFrom);
           dispatch?.({ type: "resolution", value: result });
           setMessage(
             "Request resolved. Review the specification before generating.",
           );
         },
-        onRefused: () => setResolvedArgs(undefined),
+        onRefused: () => {
+          setResolvedArgs(undefined);
+          setResolvedFrom(undefined);
+        },
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -642,6 +681,7 @@ export function WorkflowView({
 
   const generate = async () => {
     if (!resolvedSpec || !resolvedArgs) return;
+    if (!generateReady(resolvedFrom, formSignature.current)) return;
     const args = { ...resolvedArgs };
     const resolved = object(resolvedRequest);
     if (typeof resolved.seed === "number") args.seed = resolved.seed;
@@ -649,6 +689,7 @@ export function WorkflowView({
     if (result !== undefined) {
       dispatch?.({ type: "resolution", value: undefined });
       setResolvedArgs(undefined);
+      setResolvedFrom(undefined);
       setRequestId("");
       setMessage("Request added to the queue.");
     }
@@ -705,6 +746,32 @@ export function WorkflowView({
       setConformBusy((previous) => ({ ...previous, [jobId]: false }));
     }
   };
+
+  // The rows get handlers that never change identity and always call the
+  // latest of these, and the few facts they need as one object that changes
+  // only when one of those facts does.
+  const rowLatest = useRef({
+    onRemove: (_id: string): void => undefined,
+    onAbort: (_id: string): void => undefined,
+    onRetry: (_job: QueueJob): void => undefined,
+    onConform: (_jobId: string, _how: ConformHow): void => undefined,
+  });
+  rowLatest.current = {
+    onRemove: (id) => void remove(id),
+    onAbort: (id) => void abort(id),
+    onRetry: retry,
+    onConform: (jobId, how) => void runConform(jobId, how),
+  };
+  const rowHandlers = useMemo(() => createStableHandlers(rowLatest), []);
+  const nextRowContext = queueRowContext(state);
+  const rowContext = useRef(nextRowContext);
+  if (!sameRowContext(rowContext.current, nextRowContext))
+    rowContext.current = nextRowContext;
+  const candidatesById = useMemo(
+    () =>
+      new Map(state.candidates.map((candidate) => [candidate.id, candidate])),
+    [state.candidates],
+  );
 
   const loadSheet = async (request: SummaryRecord) => {
     if (!readsEnabled) return;
@@ -1166,6 +1233,27 @@ export function WorkflowView({
                   />
                 </label>
                 <label className="workflow-field">
+                  Base seed{" "}
+                  <span className="field-hint">
+                    digits only, 0 to 4294967295; empty draws one
+                  </span>
+                  <input
+                    className="workflow-control"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="draw one"
+                    value={seedText}
+                    onChange={(event) => {
+                      setSeedText(event.target.value);
+                      setRequestId("");
+                      dispatch?.({ type: "resolution", value: undefined });
+                      setResolvedArgs(undefined);
+                      setResolvedFrom(undefined);
+                    }}
+                  />
+                </label>
+                <label className="workflow-field">
                   Style note <span className="field-hint">optional</span>
                   <textarea
                     className="workflow-control"
@@ -1186,7 +1274,11 @@ export function WorkflowView({
                   <button
                     type="button"
                     className="primary"
-                    disabled={!mutationsEnabled || resolvedArgs === undefined}
+                    disabled={
+                      !mutationsEnabled ||
+                      resolvedArgs === undefined ||
+                      !generateReady(resolvedFrom, formSignature.current)
+                    }
                     onClick={() => void generate()}
                   >
                     Generate
@@ -1200,6 +1292,13 @@ export function WorkflowView({
                     Review this input. Generation uses the resolved seed and
                     request.
                   </p>
+                  {typeof object(resolvedRequest).seed === "number" && (
+                    <p className="resolved-seed">
+                      Base seed:{" "}
+                      <strong>{String(object(resolvedRequest).seed)}</strong>
+                      {seedText === "" ? " (drawn for this request)" : ""}
+                    </p>
+                  )}
                   <pre>{detailText(resolvedSpec)}</pre>
                 </section>
               )}
@@ -1251,16 +1350,14 @@ export function WorkflowView({
                     <QueueItem
                       key={job.id}
                       job={job}
-                      state={state}
+                      ctx={rowContext.current}
                       busy={queueBusy[job.id] === true}
-                      onRemove={(id) => void remove(id)}
-                      onAbort={(id) => void abort(id)}
-                      onRetry={retry}
+                      onRemove={rowHandlers.onRemove}
+                      onAbort={rowHandlers.onAbort}
+                      onRetry={rowHandlers.onRetry}
                       conformSet={conformSet}
-                      onConform={(jobId, how) => void runConform(jobId, how)}
-                      candidate={state.candidates.find(
-                        (candidate) => candidate.id === job.id,
-                      )}
+                      onConform={rowHandlers.onConform}
+                      candidate={candidatesById.get(job.id)}
                       conformBusy={conformBusy[job.id] === true}
                     />
                   ))}
