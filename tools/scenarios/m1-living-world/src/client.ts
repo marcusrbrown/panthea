@@ -132,8 +132,22 @@ export function createHeadlessClient(
     }
   }
 
+  // The emitter paces receipts and drains a burst on its own schedule, so a
+  // receipt may go out long after the draw that presented it: it is recorded
+  // when the relay succeeds, with the session and realm of that draw.
+  const drawnAt = new Map<string, { sessionId: string; realm: Realm }>();
   const emitter = createReceiptEmitter({
-    presentEvent: (eventId) => transport.presentEvent(eventId),
+    presentEvent: async (eventId) => {
+      await transport.presentEvent(eventId);
+      const at = drawnAt.get(eventId);
+      if (at === undefined) return;
+      presented.push({
+        eventId,
+        kind: kindsById.get(eventId) ?? "unknown",
+        sessionId: at.sessionId,
+        realm: at.realm,
+      });
+    },
     onError: (error) =>
       errors.push(`receipt ${error.eventId}: ${error.message}`),
   });
@@ -153,18 +167,11 @@ export function createHeadlessClient(
       kindsById.set(event.id, event.kind);
     }
     void receiptDrawnEvents(view.sessionId, events, {
-      async present(sessionId, eventId) {
-        const result = await emitter.present(sessionId, eventId);
-        if (result === "sent") {
-          presented.push({
-            eventId,
-            kind: kindsById.get(eventId) ?? "unknown",
-            sessionId,
-            realm,
-          });
-        }
-        return result;
+      present(sessionId, eventId) {
+        drawnAt.set(eventId, { sessionId, realm });
+        return emitter.present(sessionId, eventId);
       },
+      dispose: () => emitter.dispose(),
     });
   });
 

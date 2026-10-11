@@ -134,6 +134,10 @@ export function App({
       }),
     [dependencies.presentEvent, fixtureMode, transport],
   );
+  // Held receipts belong to the emitter that drew them: drop them, and the
+  // drain's timer, when it is replaced or the app unmounts. (Disposal leaves the
+  // emitter usable, so a development remount that reuses it is unharmed.)
+  useEffect(() => () => receiptEmitter.dispose(), [receiptEmitter]);
 
   const acceptFrame = useCallback(
     (connected: ConnectedFrame) => {

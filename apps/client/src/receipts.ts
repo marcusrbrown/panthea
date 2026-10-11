@@ -5,14 +5,25 @@
 // same event again, which relays it again.
 //
 // Relays are paced. A frame carries a ten-tick window of drawable events and
-// the service answers 429 past 50 receipts in a second, yet a draw that finds
+// the service answers 429 past 50 receipts in a window, yet a draw that finds
 // the whole window unreceipted (a realm switched back to, the first frame
-// after a stall) presents all of it at once. An event over the pace is
-// `deferred`: not relayed, not marked, not an error. It is relayed when it is
-// presented again, which the next frame does while it is still in the window.
+// after a stall) presents all of it at once. An event over the pace is held
+// in the emitter, already drawn, and drained in the order it was presented as
+// slots free, on the emitter's own schedule: a paused world broadcasts no
+// further frame to present it again. A held event is `deferred`, and
+// presenting it again does not queue it twice. A session change or `dispose`
+// drops what is held.
 
 /** Relays allowed in any second; the service's own limit is 50 (`RECEIPT_LIMIT_PER_WINDOW` in the simulation server), kept clear of by a margin for timing jitter. */
 export const RECEIPT_RATE_PER_SECOND = 40;
+
+/**
+ * The service counts in a fixed window that opens at its first request and
+ * resets at the first request more than this long after, so a request exactly
+ * this long after the opener is still counted in it. A relay therefore counts
+ * against the pace until it is more than this old; any service window then
+ * spans at most this long and holds at most the pace.
+ */
 const RATE_WINDOW_MS = 1000;
 
 export interface ReceiptError {
@@ -25,6 +36,8 @@ export type ReceiptResult = "sent" | "duplicate" | "deferred" | "failed";
 
 export interface ReceiptEmitter {
   present(sessionId: string, eventId: string): Promise<ReceiptResult>;
+  /** Drops the held events and cancels the drain. The emitter stays usable: a later present starts afresh. */
+  dispose(): void;
 }
 
 export interface ReceiptEmitterDeps {
@@ -32,51 +45,109 @@ export interface ReceiptEmitterDeps {
   onError(error: ReceiptError): void;
   /** The clock the pace is measured on, in milliseconds; defaults to `Date.now`. */
   now?(): number;
+  /** Runs `run` once after `delayMs` and returns a function that cancels it; defaults to `setTimeout`. */
+  schedule?(run: () => void, delayMs: number): () => void;
   /** Relays allowed in any second; defaults to `RECEIPT_RATE_PER_SECOND`. */
   maxPerSecond?: number;
+}
+
+function defaultSchedule(run: () => void, delayMs: number): () => void {
+  const handle = setTimeout(run, delayMs);
+  return () => clearTimeout(handle);
 }
 
 export function createReceiptEmitter(deps: ReceiptEmitterDeps): ReceiptEmitter {
   let sessionId: string | undefined;
   let attempted = new Set<string>();
   const now = deps.now ?? Date.now;
+  const schedule = deps.schedule ?? defaultSchedule;
   const limit = deps.maxPerSecond ?? RECEIPT_RATE_PER_SECOND;
-  // When each relay in the last second started; failures count, as the
-  // service counts every request it receives.
+  // When each relay still counted against the pace started, oldest first;
+  // failures count, as the service counts every request it receives.
   let relayed: number[] = [];
+  // Drawn events waiting for a slot, in the order they were presented.
+  let held: string[] = [];
+  let heldSet = new Set<string>();
+  let cancelDrain: (() => void) | undefined;
+
+  function prune(at: number): void {
+    relayed = relayed.filter((started) => at - started <= RATE_WINDOW_MS);
+  }
+
+  function dropHeld(): void {
+    held = [];
+    heldSet = new Set();
+    cancelDrain?.();
+    cancelDrain = undefined;
+  }
+
+  async function relay(
+    forSessionId: string,
+    eventId: string,
+  ): Promise<ReceiptResult> {
+    relayed.push(now());
+    const forSession = attempted;
+    forSession.add(eventId);
+    try {
+      await deps.presentEvent(eventId);
+      return "sent";
+    } catch (error) {
+      // Unmark only inside the session set this attempt started in, so a
+      // late failure from an earlier session never touches a later one.
+      forSession.delete(eventId);
+      deps.onError({
+        sessionId: forSessionId,
+        eventId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return "failed";
+    }
+  }
+
+  /** Relays held events while slots are free, then arms the next drain for when one frees. */
+  function drain(): void {
+    cancelDrain?.();
+    cancelDrain = undefined;
+    const at = now();
+    prune(at);
+    while (held.length > 0 && relayed.length < limit && sessionId) {
+      const eventId = held.shift() as string;
+      heldSet.delete(eventId);
+      void relay(sessionId, eventId);
+    }
+    const oldest = relayed[0];
+    if (held.length > 0 && oldest !== undefined) {
+      const frees = oldest + RATE_WINDOW_MS + 1;
+      cancelDrain = schedule(drain, Math.max(1, frees - at));
+    }
+  }
 
   return {
     async present(nextSessionId, eventId) {
       if (nextSessionId !== sessionId) {
         sessionId = nextSessionId;
         attempted = new Set();
+        dropHeld();
       }
       if (attempted.has(eventId)) {
         return "duplicate";
       }
-      const at = now();
-      relayed = relayed.filter((started) => at - started < RATE_WINDOW_MS);
-      if (relayed.length >= limit) {
+      if (heldSet.has(eventId)) {
         return "deferred";
       }
-      relayed.push(at);
-      const forSession = attempted;
-      forSession.add(eventId);
-
-      try {
-        await deps.presentEvent(eventId);
-        return "sent";
-      } catch (error) {
-        // Unmark only inside the session set this attempt started in, so a
-        // late failure from an earlier session never touches a later one.
-        forSession.delete(eventId);
-        deps.onError({
-          sessionId: nextSessionId,
-          eventId,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return "failed";
+      // Anything already held goes first: a new event never jumps the queue.
+      drain();
+      prune(now());
+      if (held.length === 0 && relayed.length < limit) {
+        return relay(nextSessionId, eventId);
       }
+      held.push(eventId);
+      heldSet.add(eventId);
+      drain();
+      return "deferred";
+    },
+    dispose() {
+      dropHeld();
     },
   };
 }

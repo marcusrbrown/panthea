@@ -361,6 +361,10 @@ function buildFrame(
 
 // --- Receipt rate limiting ----------------------------------------------
 
+// A fixed window that opens at the first request after a reset and resets on
+// the first request more than RECEIPT_WINDOW_MS later: a request exactly
+// RECEIPT_WINDOW_MS after the opener is still in it. The client paces against
+// exactly this (`RATE_WINDOW_MS` in apps/client/src/receipts.ts).
 const RECEIPT_WINDOW_MS = 1000;
 const RECEIPT_LIMIT_PER_WINDOW = 50;
 
@@ -404,6 +408,8 @@ export interface SimulationServerOptions {
   readonly port?: number;
   readonly commitTick?: TickDeps["commitTick"];
   readonly catchUpControl?: CatchUpControl;
+  /** The clock `/receipts` rate limiting reads, in milliseconds; defaults to `Date.now`. A seam for tests. */
+  readonly receiptClock?: () => number;
 }
 
 export interface SimulationServerHandle {
@@ -431,6 +437,7 @@ export function createSimulationServer(
   const catchUpControl = options.catchUpControl ?? NOOP_CATCH_UP_CONTROL;
   const eventSource = createEventSource(store);
   const receiptLimited = createReceiptLimiter();
+  const receiptClock = options.receiptClock ?? Date.now;
   // One session identity for this launch's whole lifetime -- reused by
   // every broadcast, `/frame` response, and WS connection until restart,
   // never re-minted per request or per connection.
@@ -888,7 +895,7 @@ export function createSimulationServer(
   }
 
   async function handleReceipt(request: Request): Promise<Response> {
-    if (receiptLimited(Date.now())) {
+    if (receiptLimited(receiptClock())) {
       return jsonResponse({ ok: false, error: "rate limited" }, 429);
     }
     let body: unknown;

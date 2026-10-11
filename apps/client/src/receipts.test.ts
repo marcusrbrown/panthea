@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { RecentEvent } from "@panthea/contracts";
+import { fakeClock } from "../test/fake-clock";
 import {
   createReceiptEmitter,
   RECEIPT_RATE_PER_SECOND,
@@ -124,100 +125,166 @@ test("a failure from an earlier session does not unmark the current session's re
 });
 
 function rated(maxPerSecond?: number) {
-  const sent: string[] = [];
+  const sent: { id: string; at: number }[] = [];
   const errors: ReceiptError[] = [];
-  let clock = 0;
+  const clock = fakeClock();
   const emitter = createReceiptEmitter({
     presentEvent: async (eventId) => {
-      sent.push(eventId);
+      sent.push({ id: eventId, at: clock.now() });
     },
     onError: (error) => errors.push(error),
-    now: () => clock,
+    now: clock.now,
+    schedule: clock.schedule,
     ...(maxPerSecond === undefined ? {} : { maxPerSecond }),
   });
   return {
     emitter,
     sent,
+    sentIds: () => sent.map((relay) => relay.id),
     errors,
-    advance: (ms: number) => {
-      clock += ms;
-    },
+    clock,
   };
 }
 
 const ids = (count: number, from = 0) =>
   Array.from({ length: count }, (_, index) => `evt-1-${from + index}`);
 
-test("a burst past the per-second rate defers the surplus unsent and unreported, and each goes out once the window moves on", async () => {
-  const { emitter, sent, errors, advance } = rated(3);
+test("a burst past the per-second rate is held, and the emitter drains it on its own as slots free, with no further draw", async () => {
+  const { emitter, sentIds, errors, clock } = rated(3);
   const burst = ids(5);
 
   const first = await Promise.all(
     burst.map((id) => emitter.present("session-1", id)),
   );
   expect(first).toEqual(["sent", "sent", "sent", "deferred", "deferred"]);
-  expect(sent).toEqual(burst.slice(0, 3));
+  expect(sentIds()).toEqual(burst.slice(0, 3));
 
-  // Still inside the second: nothing more may go out.
-  advance(999);
-  expect(await emitter.present("session-1", "evt-1-3")).toBe("deferred");
-  expect(sent).toHaveLength(3);
+  // A slot frees only when a relay is more than a second old.
+  await clock.advance(1000);
+  expect(sentIds()).toEqual(burst.slice(0, 3));
 
-  advance(1);
-  const later = await Promise.all(
-    burst.map((id) => emitter.present("session-1", id)),
-  );
-  expect(later).toEqual([
-    "duplicate",
-    "duplicate",
-    "duplicate",
-    "sent",
-    "sent",
-  ]);
-  expect(sent).toEqual(burst);
+  await clock.advance(1);
+  expect(sentIds()).toEqual(burst);
+  expect(clock.pending()).toBe(0);
   expect(errors).toEqual([]);
 });
 
-test("a deferred event is not marked attempted, so presenting it again later sends it", async () => {
-  const { emitter, sent, advance } = rated(1);
+test("a held event presented again is not sent twice, and once drained it is a duplicate", async () => {
+  const { emitter, sentIds, clock } = rated(1);
 
   await emitter.present("session-1", "evt-1-1");
   expect(await emitter.present("session-1", "evt-1-2")).toBe("deferred");
-  advance(1000);
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("deferred");
 
-  expect(await emitter.present("session-1", "evt-1-2")).toBe("sent");
-  expect(sent).toEqual(["evt-1-1", "evt-1-2"]);
+  await clock.advance(1001);
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("duplicate");
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2"]);
 });
 
-test("frames that each re-present a ten-tick window of drawable events never send more than the service accepts in a second, and send every event once", async () => {
-  // The service answers 429 past 50 receipts in a second. A realm switch back
-  // to a realm that was not drawing receipts, or the first frame after a
-  // stall, presents the whole window at once.
+test("held events go out in the order they were drawn, and a new one never jumps the queue", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await emitter.present("session-1", "evt-1-3");
+  await clock.advance(1001);
+  await emitter.present("session-1", "evt-1-4");
+  await clock.advance(1001);
+  await clock.advance(1001);
+
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2", "evt-1-3", "evt-1-4"]);
+});
+
+test("a session change drops the held events and their timer, and the new session relays its own", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  expect(clock.pending()).toBe(1);
+
+  expect(await emitter.present("session-2", "evt-2-1")).toBe("deferred");
+  await clock.advance(1001);
+
+  expect(sentIds()).toEqual(["evt-1-1", "evt-2-1"]);
+  expect(clock.pending()).toBe(0);
+});
+
+test("disposal drops the held events and cancels the drain, and later presents start afresh", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  emitter.dispose();
+  expect(clock.pending()).toBe(0);
+
+  await clock.advance(5000);
+  expect(sentIds()).toEqual(["evt-1-1"]);
+
+  // The emitter is memoised across a development remount, so it must work after.
+  expect(await emitter.present("session-1", "evt-1-3")).toBe("sent");
+});
+
+test("a held relay that fails is reported with its event and session, and is not retried until presented again", async () => {
+  const errors: ReceiptError[] = [];
+  const attempts: string[] = [];
+  const failing = new Set(["evt-1-2"]);
+  const clock = fakeClock();
+  const emitter = createReceiptEmitter({
+    presentEvent: async (eventId) => {
+      attempts.push(eventId);
+      if (failing.has(eventId)) throw new Error("rate limited");
+    },
+    onError: (error) => errors.push(error),
+    now: clock.now,
+    schedule: clock.schedule,
+    maxPerSecond: 1,
+  });
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await clock.advance(1001);
+  await clock.advance(5000);
+
+  expect(attempts).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(errors).toEqual([
+    { sessionId: "session-1", eventId: "evt-1-2", message: "rate limited" },
+  ]);
+
+  failing.clear();
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("sent");
+});
+
+test("a window of drawn events drawn once is delivered in full by the drain alone, never more than the pace in any second", async () => {
+  // A realm switched back to presents its whole window at once, and when the
+  // world is paused no later frame presents it again.
   const SERVICE_LIMIT = 50;
-  const { emitter, sent, errors, advance } = rated();
+  const { emitter, sent, sentIds, errors, clock } = rated();
   const window = ids(120);
 
-  const frames = [0, 1, 2, 3];
-  for (const frame of frames) {
-    await receiptDrawnEvents(
-      "session-1",
-      window.map((id) => ({ id: id as RecentEvent["id"] })),
-      emitter,
-    );
-    expect(sent.length).toBeLessThanOrEqual((frame + 1) * (SERVICE_LIMIT - 1));
-    advance(1000);
-  }
+  await receiptDrawnEvents(
+    "session-1",
+    window.map((id) => ({ id: id as RecentEvent["id"] })),
+    emitter,
+  );
+  for (let second = 0; second < 4; second += 1) await clock.advance(1001);
 
-  expect(sent).toEqual(window);
-  expect(new Set(sent).size).toBe(sent.length);
+  expect(sentIds()).toEqual(window);
+  expect(new Set(sentIds()).size).toBe(window.length);
+  for (const relay of sent) {
+    const inSecond = sent.filter(
+      (other) => other.at >= relay.at && other.at <= relay.at + 1000,
+    );
+    expect(inSecond.length).toBeLessThan(SERVICE_LIMIT);
+  }
   expect(errors).toEqual([]);
 });
 
 test("the default rate leaves headroom under the service's 50 per second", async () => {
-  const { emitter, sent } = rated();
+  const { emitter, sentIds } = rated();
 
   await Promise.all(ids(80).map((id) => emitter.present("session-1", id)));
 
-  expect(sent.length).toBe(RECEIPT_RATE_PER_SECOND);
+  expect(sentIds()).toHaveLength(RECEIPT_RATE_PER_SECOND);
   expect(RECEIPT_RATE_PER_SECOND).toBeLessThan(50);
 });

@@ -33,7 +33,9 @@ import {
   submitProposal,
   toEntityId,
 } from "@panthea/world";
+import { createReceiptEmitter } from "../../client/src/receipts";
 import { toViewModel } from "../../client/src/store";
+import { fakeClock } from "../../client/test/fake-clock";
 import { runCatchUp } from "./catchup";
 import { recordPartialSummary } from "./catchup-summary";
 import { refreshStatusAfterCatchUp } from "./index";
@@ -67,7 +69,10 @@ interface Harness {
 }
 
 function startHarness(
-  options: { readonly commitTick?: TickDeps["commitTick"] } = {},
+  options: {
+    readonly commitTick?: TickDeps["commitTick"];
+    readonly receiptClock?: () => number;
+  } = {},
 ): Harness {
   const storeDir = tempDir("panthea-sim-server-");
   const slotsDir = tempDir("panthea-sim-server-slots-");
@@ -119,6 +124,7 @@ function startHarness(
     statusRef,
     port: 0,
     ...(options.commitTick ? { commitTick: options.commitTick } : {}),
+    ...(options.receiptClock ? { receiptClock: options.receiptClock } : {}),
   });
 
   return {
@@ -404,6 +410,95 @@ test("POST /receipts: idempotent per (event, session), duplicates are not persis
       }
     }
     expect(sawRateLimited).toBe(true);
+  } finally {
+    harness.stop();
+  }
+});
+
+test("POST /receipts limits receipts in a fixed window that resets only after more than a second: 50 are accepted, the 51st is refused, and so is every one up to and at T+1000", async () => {
+  const clock = fakeClock(10_000);
+  const harness = startHarness({ receiptClock: clock.now });
+  try {
+    const post = () =>
+      authed(harness, "/receipts", {
+        method: "POST",
+        body: JSON.stringify({
+          eventId: harness.committedEventId,
+          sessionId: createSessionId(),
+        }),
+      }).then((response) => response.status);
+
+    const atStart: number[] = [];
+    for (let sent = 0; sent < 51; sent += 1) atStart.push(await post());
+    expect(atStart.slice(0, 50).every((status) => status === 200)).toBe(true);
+    expect(atStart[50]).toBe(429);
+
+    await clock.advance(1000);
+    expect(await post()).toBe(429);
+
+    await clock.advance(1);
+    expect(await post()).toBe(200);
+  } finally {
+    harness.stop();
+  }
+});
+
+test("the client's receipt pace never draws a 429 from the real handler, at T, T+1000 and T+1001, and delivers every receipt", async () => {
+  const clock = fakeClock(10_000);
+  const harness = startHarness({ receiptClock: clock.now });
+  try {
+    const statuses: number[] = [];
+    // The drain's relays are not awaited by anyone; a test waits for them.
+    const relays: Promise<unknown>[] = [];
+    const settled = () => Promise.all(relays);
+    const emitter = createReceiptEmitter({
+      presentEvent: (_eventId) => {
+        const relay = authed(harness, "/receipts", {
+          method: "POST",
+          body: JSON.stringify({
+            eventId: harness.committedEventId,
+            sessionId: createSessionId(),
+          }),
+        }).then((response) => {
+          statuses.push(response.status);
+          if (!response.ok) throw new Error(`status ${response.status}`);
+        });
+        relays.push(relay.catch(() => undefined));
+        return relay;
+      },
+      onError: (error) => {
+        throw new Error(error.message);
+      },
+      now: clock.now,
+      schedule: clock.schedule,
+    });
+    const present = (from: number, count: number) =>
+      Promise.all(
+        Array.from({ length: count }, (_, index) =>
+          emitter.present("session-1", `evt-1-${from + index}`),
+        ),
+      );
+
+    // 40 at T, 40 more at T+1000: the service's window has not reset, so a
+    // client that freed its slots at exactly 1000 ms would send 80 in it.
+    await present(0, 40);
+    await clock.advance(1000);
+    await present(40, 40);
+    expect(statuses).toHaveLength(40);
+
+    await clock.advance(1);
+    await settled();
+    expect(statuses).toHaveLength(80);
+    expect(statuses.every((status) => status === 200)).toBe(true);
+
+    // A whole window drawn at once, then no frame: the drain alone delivers it.
+    await present(100, 120);
+    for (let second = 0; second < 4; second += 1) {
+      await clock.advance(1001);
+      await settled();
+    }
+    expect(statuses).toHaveLength(200);
+    expect(statuses.every((status) => status === 200)).toBe(true);
   } finally {
     harness.stop();
   }
