@@ -121,8 +121,8 @@ test("Zeus draws canon idle-south from the real atlas, and animates by the manif
 
   const zeus = spriteOf(backend, "actor:zeus");
   const expected = await decodeFixture(ZEUS_ATLAS_BYTES);
-  // the atlas holds idle's four cells, then seated's two
-  expect(zeus.texture?.image).toMatchObject({ width: 384, height: 80 });
+  // the atlas holds idle's four cells, seated's two, then act's five
+  expect(zeus.texture?.image).toMatchObject({ width: 704, height: 80 });
   expect(pixelsOf(zeus)).toEqual((expected.image as { data: Uint8Array }).data);
   expect(zeus.frame?.name).toBe(IDLE_FRAMES[0]);
 

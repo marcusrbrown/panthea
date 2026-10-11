@@ -160,11 +160,91 @@
       "assetId": "zeus-sprite",
       "kind": "sprite",
       "atlas": {
-        "blob": "9060ecc772da1fe4ed75d0f05ae6ae9e4b5fe3f2939dfa841097769e16fff6f8",
-        "width": 384,
+        "blob": "9976a62d051e1f0349a1f61d5f1cf2e3e673b8b06e97760290c8b99f5c626a69",
+        "width": 704,
         "height": 80
       },
       "selections": [
+        {
+          "key": "act/south/thunderbolt",
+          "query": {
+            "state": "act",
+            "direction": "south",
+            "ability": "thunderbolt"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 384,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:c5cb974a",
+                "2": "fnv1a32:60d0574d",
+                "3": "fnv1a32:3a9f33f2",
+                "4": "fnv1a32:560b95d5"
+              }
+            },
+            {
+              "rect": {
+                "x": 448,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:f680b736",
+                "2": "fnv1a32:7d65277d",
+                "3": "fnv1a32:6b62d2f2",
+                "4": "fnv1a32:c789e355"
+              }
+            },
+            {
+              "rect": {
+                "x": 512,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:74a71645",
+                "2": "fnv1a32:f9077915",
+                "3": "fnv1a32:aba95b45",
+                "4": "fnv1a32:ccecda35"
+              }
+            },
+            {
+              "rect": {
+                "x": 576,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:29a53d2a",
+                "2": "fnv1a32:36e5d535",
+                "3": "fnv1a32:4d152b2e",
+                "4": "fnv1a32:68fc48b5"
+              }
+            },
+            {
+              "rect": {
+                "x": 640,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:ac9ce861",
+                "2": "fnv1a32:d658041d",
+                "3": "fnv1a32:dfdd45c5",
+                "4": "fnv1a32:603fdbd5"
+              }
+            }
+          ]
+        },
         {
           "key": "idle/south",
           "query": {

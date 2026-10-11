@@ -1,11 +1,10 @@
-"""The committed Zeus act spec (`act_spec_zeus.json`) rebuilt from repository files alone.
+"""The committed Zeus act spec (`act_spec_zeus.json`) against the published canon atlas, from repository files alone.
 
-The five frames of `act/south/thunderbolt` (83/100/83/83/100 ms, 449 ms; key pose 1 is the release frame) are assembled by `sprite_act_composite.py` from the
-committed spec and the canon idle frame 0. The act is not published yet, so there is no published atlas to compare against;
-this checks what repository files can: the spec builds and verifies against the published idle frame 0 (the idle cell of the
-canon atlas), every rule of the composite holds, and the last frame is idle itself. Where the authoring scratch (the C2c frame
-and the five source PNGs under `.context/`) exists, every frame is also compared byte for byte with its source. Once the act is
-published, add a test that compares these frames with the published atlas cells.
+The five frames of `act/south/thunderbolt` (83/100/83/83/100 ms, 449 ms; key pose 1 is the release frame) were assembled by
+`sprite_act_composite.py` from the committed spec and canon idle frame 0, and published in `zeus-sprite` revision 1382b7f7...
+(atlas 9976a62d...). The spec is rebuilt here from the published idle cell, every rule of the composite is checked, and the five
+published act cells are compared with the rebuilt frames. Where the authoring scratch (the C2c frame and the source PNGs under
+`.context/`) exists, every frame is also compared with its source.
 """
 
 from __future__ import annotations
@@ -28,8 +27,8 @@ from sprite_act_composite import (
 from sprite_seated_composite import opaque_cells
 
 REPO = Path(__file__).resolve().parents[3]
-ATLAS = REPO / "content/greek/assets/registry/blobs/9060ecc772da1fe4ed75d0f05ae6ae9e4b5fe3f2939dfa841097769e16fff6f8.png"
-MANIFEST = REPO / "content/greek/assets/registry/manifests/1b14d579023e5f6a46d8052fa6d067a72ee97d6e9019157e2282bb8c143d4b3a.json"
+ATLAS = REPO / "content/greek/assets/registry/blobs/9976a62d051e1f0349a1f61d5f1cf2e3e673b8b06e97760290c8b99f5c626a69.png"
+MANIFEST = REPO / "content/greek/assets/registry/manifests/1382b7f7604f3fed64721f7f1bb4ee99f474d1ddafed5bde2aa7a1487230a56d.json"
 SPEC = Path(__file__).parent / "act_spec_zeus.json"
 DURATIONS = [83, 100, 83, 83, 100]
 CELL_W, CELL_H = 64, 80
@@ -55,8 +54,12 @@ class CommittedActSpec(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         manifest = json.loads(MANIFEST.read_text())
+        cls.manifest = manifest
         animations = {a["state"]: a["frames"] for a in manifest["animations"]}
-        cls.idle0 = cell_of(decode_png(ATLAS), animations["idle"][0]["rect"]["x"])
+        atlas = decode_png(ATLAS)
+        cls.animations = animations
+        cls.idle0 = cell_of(atlas, animations["idle"][0]["rect"]["x"])
+        cls.published = [cell_of(atlas, f["rect"]["x"]) for f in animations["act"]]
         cls.spec = load_act_spec(SPEC)
         cls.frames, cls.reports = build_frames(cls.idle0, cls.spec)
 
@@ -65,6 +68,19 @@ class CommittedActSpec(unittest.TestCase):
         self.assertEqual([f["name"] for f in self.spec["frames"]], ["anticipation", "high-wind-up", "release-key-pose", "follow-through", "recover-idle"])
         self.assertEqual(duration_problems(DURATIONS, 5), [])
         self.assertEqual(sum(DURATIONS), 449)
+
+    def test_the_published_act_is_five_frames_beside_idle_and_seated(self) -> None:
+        act = self.animations["act"]
+        self.assertEqual([a["state"] for a in self.manifest["animations"]], ["idle", "seated", "act"])
+        self.assertEqual(self.manifest["animations"][2]["ability"], "thunderbolt")
+        self.assertEqual([f["durationMs"] for f in act], DURATIONS)
+        self.assertEqual([f["rect"]["x"] for f in act], [384, 448, 512, 576, 640])
+        self.assertEqual([f["durationMs"] for f in self.animations["idle"]], [333, 167, 333, 167])
+        self.assertEqual([f["durationMs"] for f in self.animations["seated"]], [500, 500])
+
+    def test_the_published_act_cells_are_the_frames_the_committed_spec_builds(self) -> None:
+        for index, (built, published) in enumerate(zip(self.frames, self.published)):
+            self.assertEqual(built.rgba, published.rgba, f"act frame {index} differs from the published cell")
 
     def test_every_frame_builds_and_verifies_against_the_published_idle_frame(self) -> None:
         self.assertEqual(len(self.frames), 5)
