@@ -343,3 +343,26 @@ test("the Tauri source calls the two named commands and sends no path", async ()
     { command: "canon_atlas", args: { hash: ZEUS_ATLAS_HASH } },
   ]);
 });
+
+test("the parsed vocabulary comes with the snapshot, for pickers that offer states and expressions", async () => {
+  const { canon } = client(zeusPayload());
+
+  const { vocabulary } = await canon.load();
+
+  expect(vocabulary?.states.map((state) => state.id)).toEqual([
+    "idle",
+    "seated",
+    "act",
+    "walk",
+    "hurt",
+    "down",
+  ]);
+  expect(vocabulary?.directions).toEqual(["south", "north", "east", "west"]);
+  expect(vocabulary?.expressions).toHaveLength(6);
+});
+
+test("with no vocabulary there is none to offer", async () => {
+  const { canon } = client({ ...zeusPayload(), vocabulary: null });
+
+  expect((await canon.load()).vocabulary).toBeUndefined();
+});

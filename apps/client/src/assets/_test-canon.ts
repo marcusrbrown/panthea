@@ -22,6 +22,12 @@ export const ZEUS_MANIFEST_TEXT = fixture("zeus-sprite.manifest.json").toString(
 export const ZEUS_ATLAS_BYTES = new Uint8Array(
   fixture("zeus-sprite.atlas.png"),
 );
+export const PORTRAIT_MANIFEST_TEXT = fixture(
+  "zeus-portrait.manifest.json",
+).toString("utf8");
+export const PORTRAIT_ATLAS_BYTES = new Uint8Array(
+  fixture("zeus-portrait.atlas.png"),
+);
 export const VOCABULARY_TEXT = fixture("vocabulary.json").toString("utf8");
 
 /** The names the committed registry gives these files; a copy that drifted fails here. */
@@ -35,6 +41,19 @@ if (
 ) {
   throw new Error(
     "the Zeus fixture no longer matches the committed canon copy",
+  );
+}
+
+export const PORTRAIT_REVISION = sha256(PORTRAIT_MANIFEST_TEXT);
+export const PORTRAIT_ATLAS_HASH = sha256(PORTRAIT_ATLAS_BYTES);
+if (
+  PORTRAIT_REVISION !==
+    "7cbaf7aa67a604b70b9c721dd0b31123d984c1e3034f10cba70c84e277c09c2d" ||
+  PORTRAIT_ATLAS_HASH !==
+    "171d42aa567ba3e06a36b66a5ea9b16b2525a921d85cfa08cc341417e8a7eeea"
+) {
+  throw new Error(
+    "the portrait fixture no longer matches the committed canon copy",
   );
 }
 
@@ -60,6 +79,26 @@ export function zeusPayload(): RegistryPayload {
     problems: [],
   };
 }
+
+/** Zeus's sprite and portrait, the whole of what the committed canon publishes. */
+export function zeusCanonPayload(): RegistryPayload {
+  return {
+    ...zeusPayload(),
+    index: indexText([
+      { assetId: "zeus-portrait", revision: PORTRAIT_REVISION },
+      { assetId: "zeus-sprite", revision: ZEUS_REVISION },
+    ]),
+    manifests: [
+      { hash: PORTRAIT_REVISION, text: PORTRAIT_MANIFEST_TEXT },
+      { hash: ZEUS_REVISION, text: ZEUS_MANIFEST_TEXT },
+    ],
+  };
+}
+
+export const ZEUS_CANON_ATLASES: ReadonlyMap<string, Uint8Array> = new Map([
+  [ZEUS_ATLAS_HASH, ZEUS_ATLAS_BYTES],
+  [PORTRAIT_ATLAS_HASH, PORTRAIT_ATLAS_BYTES],
+]);
 
 export interface FakeSource extends CanonSource {
   readonly registryCalls: () => number;

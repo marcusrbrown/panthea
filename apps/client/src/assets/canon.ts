@@ -66,6 +66,8 @@ export interface CanonLoad {
   readonly snapshot: RegistrySnapshot;
   /** Where the shell read the registry from; absent when there was no shell. */
   readonly rootKind?: RootKind;
+  /** The parsed vocabulary, for anything that offers states, directions or expressions. */
+  readonly vocabulary?: AssetVocabulary;
 }
 
 export interface CanonClient {
@@ -168,14 +170,14 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false } {
 function buildSnapshot(
   payload: RegistryPayload,
   report: (problem: CanonProblem) => void,
-): RegistrySnapshot {
+): { snapshot: RegistrySnapshot; vocabulary?: AssetVocabulary } {
   for (const problem of payload.problems) {
     report({ scope: problem.path, message: problem.reason });
   }
 
   if (payload.vocabulary === null) {
     report({ scope: "vocabulary.json", message: "vocabulary is missing" });
-    return EMPTY_SNAPSHOT;
+    return { snapshot: EMPTY_SNAPSHOT };
   }
   const vocabularyJson = parseJson(payload.vocabulary);
   const vocabulary: AssetVocabulary | undefined = (() => {
@@ -193,21 +195,21 @@ function buildSnapshot(
     }
     return parsed.value;
   })();
-  if (vocabulary === undefined) return EMPTY_SNAPSHOT;
+  if (vocabulary === undefined) return { snapshot: EMPTY_SNAPSHOT };
 
   if (payload.index === null) {
     report({ scope: "index.json", message: "index is missing" });
-    return EMPTY_SNAPSHOT;
+    return { snapshot: EMPTY_SNAPSHOT, vocabulary };
   }
   const indexJson = parseJson(payload.index);
   if (!indexJson.ok) {
     report({ scope: "index.json", message: "not JSON" });
-    return EMPTY_SNAPSHOT;
+    return { snapshot: EMPTY_SNAPSHOT, vocabulary };
   }
   const index = parseRegistryIndex(indexJson.value);
   if (!index.ok) {
     report({ scope: "index.json", message: `${index.path}: ${index.message}` });
-    return EMPTY_SNAPSHOT;
+    return { snapshot: EMPTY_SNAPSHOT, vocabulary };
   }
 
   // The shell checked each manifest's bytes against the hash it names, so an
@@ -254,7 +256,7 @@ function buildSnapshot(
     }
     entries.set(assetId, { assetId, revision, manifest });
   }
-  return { entries };
+  return { snapshot: { entries }, vocabulary };
 }
 
 export function createCanonClient(
@@ -291,11 +293,15 @@ export function createCanonClient(
       report({ scope: "canon_registry", message: payload.message });
       return { snapshot: EMPTY_SNAPSHOT };
     }
-    const snapshot = buildSnapshot(payload.payload, report);
+    const { snapshot, vocabulary } = buildSnapshot(payload.payload, report);
     named = new Set(
       [...snapshot.entries.values()].map((entry) => entry.manifest.atlas.blob),
     );
-    return { snapshot, rootKind: payload.payload.rootKind };
+    return {
+      snapshot,
+      ...(vocabulary === undefined ? {} : { vocabulary }),
+      rootKind: payload.payload.rootKind,
+    };
   }
 
   async function fetchAtlas(hash: string): Promise<Uint8Array | undefined> {

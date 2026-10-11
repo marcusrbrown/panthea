@@ -16,6 +16,7 @@
       "!docs",
       "!content/greek/assets/registry",
       "!apps/client/src/assets/fixtures",
+      "!tools/scenarios/studio-zeus-scene/reference-digests.json",
       "!tools/probes/sandbox/src/fixtures/quickjs",
       "!tools/probes/sandbox/src/fixtures/lua",
       "!tools/probes/sandbox/results",
