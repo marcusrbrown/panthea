@@ -105,7 +105,7 @@ describe("packing", () => {
     ]);
   });
 
-  test("a sprite needs its footprint and a bad footprint, carried params or original work are usage errors", async () => {
+  test("a sprite needs its footprint and a bad footprint, carried-cell settings (cells are carried, not re-conformed) or original work are usage errors", async () => {
     const rig = assetRig();
     spriteSet(rig);
     const { cli } = setup(rig);
@@ -120,19 +120,14 @@ describe("packing", () => {
       ...PACK,
       footprint: { w: 1, h: 1, d: 2 },
     });
-    const scaled = await cli("pack", {
+    const carriedSettings = await cli("pack", {
       ...PACK,
-      carriedParams: {
-        background: { type: "alpha" },
-        alphaCutoff: 128,
-        grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
-        scale: 2,
-      },
+      carriedParams: { background: { type: "alpha" }, alphaCutoff: 128 },
     });
     const work = await cli("pack", { ...PACK, originalWork: { licence: "" } });
 
     expect(code(noFootprint)).toBe("wrong-state");
-    expect([badFootprint, extraKey, scaled, work].map(code)).toEqual([
+    expect([badFootprint, extraKey, carriedSettings, work].map(code)).toEqual([
       "invalid-arguments",
       "invalid-arguments",
       "invalid-arguments",

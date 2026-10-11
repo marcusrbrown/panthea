@@ -303,6 +303,45 @@ describe("conformance reports", () => {
   });
 });
 
+describe("conformance reports of carried cells", () => {
+  const revision = "a".repeat(64);
+
+  it("names the cells carried from a published revision, apart from the checks", () => {
+    const report = {
+      ...pass,
+      carried: [{ key: "idle/south", revision }],
+    };
+    const parsed = parseConformanceReport(report);
+    expect(parsed.ok).toBe(true);
+    expect<unknown>(parsed.ok && parsed.value.carried).toEqual(report.carried);
+  });
+
+  it("takes its status from the checks alone, whatever is carried", () => {
+    const carried = [{ key: "idle/south", revision }];
+    expect(parseConformanceReport({ ...pass, carried }).ok).toBe(true);
+    expect(parseConformanceReport({ ...failing, carried }).ok).toBe(true);
+    expect(
+      parseConformanceReport({ ...pass, checks: failing.checks, carried }).ok,
+    ).toBe(false);
+  });
+
+  it("rejects a carried entry without a key or a valid revision, with extra fields, or twice", () => {
+    for (const carried of [
+      "idle/south",
+      [{ key: "idle/south" }],
+      [{ revision }],
+      [{ key: "idle/south", revision: "nope" }],
+      [{ key: "idle/south", revision: `sha256:${revision}` }],
+      [{ key: "idle/south", revision, extra: 1 }],
+      [
+        { key: "idle/south", revision },
+        { key: "idle/south", revision },
+      ],
+    ])
+      expect(parseConformanceReport({ ...pass, carried }).ok).toBe(false);
+  });
+});
+
 describe("asset lifecycle", () => {
   const original = manifest();
   const candidate = newCandidate(original, pass);

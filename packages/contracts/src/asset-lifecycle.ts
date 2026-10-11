@@ -386,10 +386,21 @@ export interface ConformanceCheck {
   readonly message?: string;
 }
 
+/** A cell the report did not measure: it was carried, pixel for pixel, from a published revision. */
+export interface CarriedCell {
+  /** The cell's logical key: `state/direction[/ability]` or an expression. */
+  readonly key: string;
+  /** The revision of the asset the cell was taken from, which is the one that vouched for it. */
+  readonly revision: Sha256;
+}
+
 export interface ConformanceReport {
   readonly schemaVersion: number;
+  /** Over `checks` alone: carried cells are neither passing nor failing here. */
   readonly status: "pass" | "fail";
   readonly checks: readonly ConformanceCheck[];
+  /** Absent when nothing was carried. */
+  readonly carried?: readonly CarriedCell[];
 }
 
 export function parseConformanceReport(
@@ -399,7 +410,7 @@ export function parseConformanceReport(
   return parseStrictRecord(
     input,
     path,
-    ["schemaVersion", "status", "checks"],
+    ["schemaVersion", "status", "checks", "carried"],
     (record) => {
       const schemaVersion = parseSchemaVersion(
         record.schemaVersion,
@@ -451,10 +462,38 @@ export function parseConformanceReport(
             : "a failing report names a failed check",
         );
       }
+      const carried =
+        record.carried === undefined
+          ? ok(undefined)
+          : parseArray(
+              record.carried,
+              `${path}.carried`,
+              (value, carriedPath) =>
+                parseStrictRecord(
+                  value,
+                  carriedPath,
+                  ["key", "revision"],
+                  (item) => {
+                    const key = parseString(item.key, `${carriedPath}.key`);
+                    if (!key.ok) return key;
+                    const revision = parseSha256(
+                      item.revision,
+                      `${carriedPath}.revision`,
+                    );
+                    if (!revision.ok) return revision;
+                    return ok({ key: key.value, revision: revision.value });
+                  },
+                ),
+            );
+      if (!carried.ok) return carried;
+      const keys = carried.value?.map((cell) => cell.key) ?? [];
+      if (new Set(keys).size !== keys.length)
+        return fail(`${path}.carried`, "a cell is carried once");
       return ok({
         schemaVersion: schemaVersion.value,
         status: status.value,
         checks: checks.value,
+        ...(carried.value === undefined ? {} : { carried: carried.value }),
       });
     },
   );

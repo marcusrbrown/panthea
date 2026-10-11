@@ -26,7 +26,6 @@ import {
   type AssetRig,
   assetRig,
   finishSheet,
-  PROVISIONAL_TEST_PARAMS,
   paintFigure,
   pngOf,
   removeTempRoots,
@@ -55,11 +54,6 @@ const packInput = (over: Partial<PackInput> = {}): PackInput => ({
   originalWork: { licence: "MIT", attribution: "the owner" },
   ...over,
 });
-const params = {
-  background: PROVISIONAL_TEST_PARAMS.background,
-  alphaCutoff: PROVISIONAL_TEST_PARAMS.alphaCutoff,
-  grid: PROVISIONAL_TEST_PARAMS.grid,
-};
 
 const doPack = (rig: AssetRig, over: Partial<PackInput> = {}) =>
   rig.session.pack(packInput(over), rig.content, rig.palette, rig.registryRoot);
@@ -985,7 +979,6 @@ describe("carrying published cells through to canon", () => {
     doPack(rig, {
       id: "zeus-pack-2",
       workingSetId: "w2",
-      carriedParams: params,
       ...over,
     });
 
@@ -1122,7 +1115,6 @@ describe("carrying published cells through to canon", () => {
       doPack(rig, {
         id: "zeus-pack-3",
         workingSetId: "w3",
-        carriedParams: params,
       }).ok,
     ).toBe(true);
     expect(approve(rig, "zeus-pack-3").ok).toBe(true);
@@ -1506,7 +1498,6 @@ describe("a portrait through to canon", () => {
 
     const result = portraitPack(rig, {
       id: "face-pack-2",
-      carriedParams: params,
     });
 
     expect(result.ok).toBe(true);
@@ -1584,7 +1575,6 @@ describe("a partial portrait set needs verified canon for the rest", () => {
         assetId: "zeus-portrait",
         styleTag: "draft",
         stillFrameMs: 1000,
-        carriedParams: params,
         originalWork: { licence: "MIT" },
         ...over,
       },
@@ -1669,7 +1659,7 @@ describe("a partial portrait set needs verified canon for the rest", () => {
     );
     first.session.openWorkingSet("wp", "zeus-faces", first.content);
     for (const id of jobs) first.session.pick("wp", id);
-    const drafted = partialPack(first, { carriedParams: undefined });
+    const drafted = partialPack(first);
     if (!drafted.ok) throw new Error(drafted.message);
     const old = first.session.approveAsset(
       "face-pack",
@@ -1891,7 +1881,6 @@ describe("carrying cells from a published atlas laid out in two rows", () => {
       packInput({
         id: "zeus-pack-2",
         workingSetId: "w2",
-        carriedParams: params,
       }),
       rig.content,
       rig.palette,

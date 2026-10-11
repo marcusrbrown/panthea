@@ -110,7 +110,6 @@ pub const OPS: &[OpSpec] = &[
             "styleTag",
             "footprint",
             "stillFrameMs",
-            "carriedParams",
             "originalWork",
         ],
         Write,
