@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from pipeline import Raster, decode_png
 from sprite_act_composite import (
+    PROTECTED_ROWS,
     SLOT,
     NeedsRulings,
     SpecError,
@@ -361,6 +362,111 @@ class IdenticalFramesAndCrossFrameRules(unittest.TestCase):
         frames, _ = build_good()
         frames[0] = Raster(2, 2, bytes(16))
         self.assertTrue(any("is 2x2" in p for p in cross_frame_problems(frames, idle_arm(), settled())))
+
+
+class OcclusionLetsAPatchOverwriteTheRobe(unittest.TestCase):
+    """`occlude`: boxes where a frame's patches may overwrite kept idle pixels (an arm in front of the robe)."""
+
+    BOX = [30, 50, 36, 56]  # inside the synthetic body's cloth, below the protected head-to-beard rows
+
+    def spec(self, box=None, patch=(33, 53), colour_=C1, frame=0) -> dict:
+        spec = settled()
+        spec["frames"][frame]["occlude"] = [box or self.BOX]
+        spec["frames"][frame]["patches"].append([patch[0], patch[1], hexed(colour_)])
+        spec["frames"][frame]["budget"]["new_pixels"] += 1
+        return spec
+
+    def test_without_occlude_a_patch_on_the_robe_is_refused(self) -> None:
+        spec = self.spec()
+        del spec["frames"][0]["occlude"]
+        with self.assertRaisesRegex(SpecError, "lies on a kept pixel"):
+            build_frames(idle_arm(), spec)
+
+    def test_inside_an_occlude_box_a_patch_overwrites_the_kept_pixel(self) -> None:
+        frames, reports = build_frames(idle_arm(), self.spec())
+        self.assertEqual(colour(idle_arm(), (33, 53)), tuple(C2))
+        self.assertEqual(colour(frames[0], (33, 53)), tuple(C1))
+        self.assertEqual(reports[0]["occluded_pixels"], 1)
+        self.assertEqual(reports[1]["occluded_pixels"], 0)
+
+    def test_the_rest_of_the_box_keeps_idles_own_pixels(self) -> None:
+        frames, _ = build_frames(idle_arm(), self.spec())
+        idle = idle_arm()
+        for x in range(30, 37):
+            for y in range(50, 57):
+                if (x, y) != (33, 53):
+                    self.assertEqual(colour(frames[0], (x, y)), colour(idle, (x, y)), (x, y))
+
+    def test_a_patch_on_the_robe_outside_every_occlude_box_is_still_refused(self) -> None:
+        with self.assertRaisesRegex(SpecError, "lies on a kept pixel"):
+            build_frames(idle_arm(), self.spec(patch=(27, 60)))
+
+    def test_occlusion_belongs_to_its_own_frame(self) -> None:
+        spec = self.spec()
+        spec["frames"][1]["patches"].append([33, 53, hexed(C1)])
+        spec["frames"][1]["budget"]["new_pixels"] += 1
+        with self.assertRaisesRegex(SpecError, r"frames\[1\].*lies on a kept pixel"):
+            build_frames(idle_arm(), spec)
+
+    def test_the_occluding_pixel_counts_against_the_budget(self) -> None:
+        spec = self.spec()
+        spec["frames"][0]["budget"]["new_pixels"] = len(spec["frames"][0]["patches"]) - 1
+        with self.assertRaisesRegex(SpecError, "new_pixels"):
+            build_frames(idle_arm(), spec)
+
+    def test_a_box_touching_the_head_beard_or_shoulder_rows_is_refused(self) -> None:
+        for y0, y1 in ((20, 30), (47, 60), (30, 47), (40, 41)):
+            spec = self.spec(box=[30, y0, 36, y1])
+            with self.assertRaisesRegex(SpecError, "protected rows"):
+                load_act_spec(spec)
+
+    def test_a_box_touching_the_feet_rows_is_refused(self) -> None:
+        for y0, y1 in ((60, 76), (76, 79), (79, 79)):
+            with self.assertRaisesRegex(SpecError, "protected rows"):
+                load_act_spec(self.spec(box=[30, y0, 36, y1]))
+
+    def test_boxes_between_the_protected_rows_are_accepted(self) -> None:
+        load_act_spec(self.spec(box=[30, 48, 36, 75]))
+        self.assertEqual(PROTECTED_ROWS, ((30, 47), (76, 79)))
+
+    def test_an_identical_frame_takes_no_occlude(self) -> None:
+        spec = good_spec()
+        spec["frames"][3]["occlude"] = [self.BOX]
+        with self.assertRaises(SpecError):
+            load_act_spec(spec)
+
+    def test_occlude_must_be_a_list_of_boxes(self) -> None:
+        for bad in ("x", [[1, 2, 3]], [[40, 50, 30, 56]], [[0, 50, 64, 56]]):
+            spec = good_spec()
+            spec["frames"][0]["occlude"] = bad
+            with self.assertRaises(SpecError):
+                load_act_spec(spec)
+
+    def test_cross_frame_allows_changes_inside_the_declared_occlude_only(self) -> None:
+        spec = self.spec()
+        frames, _ = build_frames(idle_arm(), spec)
+        self.assertEqual(cross_frame_problems(frames, idle_arm(), spec), [])
+        data = bytearray(frames[0].rgba)
+        data[(60 * 64 + 27) * 4 : (60 * 64 + 27) * 4 + 3] = bytes(C0)  # robe pixel outside the box
+        tampered = [Raster(64, 80, bytes(data)), *frames[1:]]
+        problems = cross_frame_problems(tampered, idle_arm(), spec)
+        self.assertTrue(any("(27, 60)" in p and "outside the regions" in p for p in problems), problems)
+
+    def test_cross_frame_reports_an_unpatched_change_inside_the_box(self) -> None:
+        spec = self.spec()
+        frames, _ = build_frames(idle_arm(), spec)
+        data = bytearray(frames[0].rgba)
+        data[(52 * 64 + 31) * 4 : (52 * 64 + 31) * 4 + 3] = bytes(C0)
+        problems = cross_frame_problems([Raster(64, 80, bytes(data)), *frames[1:]], idle_arm(), spec)
+        self.assertTrue(any("(31, 52)" in p and "not patched" in p for p in problems), problems)
+
+    def test_cross_frame_reports_a_pixel_erased_inside_the_box(self) -> None:
+        spec = self.spec()
+        frames, _ = build_frames(idle_arm(), spec)
+        data = bytearray(frames[0].rgba)
+        data[(52 * 64 + 31) * 4 + 3] = 0
+        problems = cross_frame_problems([Raster(64, 80, bytes(data)), *frames[1:]], idle_arm(), spec)
+        self.assertTrue(any("(31, 52)" in p and "erased" in p for p in problems), problems)
 
 
 class DurationsAreChecked(unittest.TestCase):

@@ -771,7 +771,7 @@ The studio steps that followed (conform with the idle lineage's settings, create
 
 ## Sprite act (prep)
 
-Status: tooling only, written before the sitting; no act art is committed yet. Zeus's `act/south/thunderbolt` is planned as 6 frames at 85/100/100/85/85/85 ms (540 ms), played once, with no lightning effect (Unit 10).
+Status: assembled, not yet published. Zeus's `act/south/thunderbolt` shipped for review as an abbreviated throw of 5 frames at 83/100/83/83/100 ms (449 ms), with no lightning effect (Unit 10): anticipation, high wind-up, a release key pose, follow-through, and canon idle frame 0. `act_spec_zeus.json` rebuilds all five frames byte for byte through `sprite_act_composite.py` (idle frame 0 is the only input; no reference cell is adopted). Only the release frame uses `occlude` (the arm and bolt cross the robe on rows 48 to 75); the generated key-pose candidate supplied lineage only. `test_act_published.py` rebuilds the frames from repository files (the published idle cell) and, where the authoring scratch exists, compares each with its source PNG; once the act is published it should also compare with the published atlas.
 
 **Method.** Same priority as seated: consistency with canon idle frame 0 (C2c). In every frame the body (head, crown, beard, torso, robe, feet) is idle frame 0's pixels, untouched and in place; only the bolt arm and bolt are redrawn per frame inside boxes the reviewer's spec declares. A frame may instead be exactly idle frame 0 (the plan's last frame).
 

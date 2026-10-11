@@ -40,6 +40,12 @@ one of the colours idle frame 0 uses. Keys not listed here are refused.
           "name": "anticipation",                    // optional label for reports, a string
           "identical_to_idle": false,                // optional, default false. true = this frame is exactly idle
                                                      //   frame 0 (byte for byte); it then takes NO other key
+          "occlude": [[x0, y0, x1, y1]],             // optional; boxes where THIS frame's patches may overwrite KEPT idle
+                                                     //   pixels (an arm in front of the robe). Inside a box every
+                                                     //   pixel is idle's own or a patched one: nothing is erased to
+                                                     //   transparent, adopted pixels still may not land on kept ones.
+                                                     //   A box may not touch the protected rows (see rule 8). Boxes
+                                                     //   count as regions for this frame only, never for others.
           "adopt": [                                 // optional, needs the reference cell (--reference)
             {"box": [x0, y0, x1, y1], "dx": 0, "dy": 0}   // box is in REFERENCE-CELL coordinates; the opaque pixels
           ],                                         //   (alpha >= 128) of the box are copied to (x + dx, y + dy)
@@ -67,10 +73,15 @@ Rules `build_frames` enforces, each with a test that fails when it is broken:
   3. Every colour is one of idle's; adopted pixels are snapped to them; alpha is binary.
   4. C2c's outline rules apply to each frame's new pixels (see `sprite_seated_composite.py`).
   5. Feet on row 79, two feet, midpoint at x=32 (kept from idle, rechecked per frame).
-  6. Cross-frame: outside `regions` every frame equals idle frame 0 (opaque cells and colours), and an
-     `identical_to_idle` frame equals it byte for byte.
+  6. Cross-frame: outside `regions` (and the frame's own `occlude` boxes) every frame equals idle frame 0 (opaque
+     cells and colours), and an `identical_to_idle` frame equals it byte for byte. Inside an `occlude` box a pixel may
+     differ from idle only where the frame patches it, and an idle pixel is never erased.
   7. Durations (`--durations`, not in the spec): one whole number of milliseconds per frame, each from 83 to 100,
      the `act` state's 10 to 12 fps as the manifest contract measures it (`durationBounds`).
+  8. `occlude` boxes never touch the protected rows of idle frame 0, `PROTECTED_ROWS`: rows 30 to 47 (the crown's top
+     pixel is on row 30 and the beard's last on row 47, with the head and shoulders between) and rows 76 to 79 (the
+     feet, soles on 79). A box that overlaps either range, at any columns, is refused. The kept head, beard,
+     shoulders and feet therefore cannot be covered; the arm crosses the robe on rows 48 to 75 only.
 
 Outputs of the CLI (`--out`): `act-f<i>.png` per frame, `sheet.png` and `sheet.json` (the studio's import files, slot
 `act/south/thunderbolt`, exact milliseconds), `act-1x.png`/`act-4x.png` (the transparent strip), `vs-idle-1x.png`/
@@ -96,6 +107,7 @@ from sprite_seated_composite import (
     NeedsRulings,
     SpecError,
     _box,
+    _cells,
     _in_box,
     build_with_report,
     colour_at,
@@ -107,8 +119,11 @@ from sprite_seated_composite import (
 
 SLOT = "act/south/thunderbolt"
 SPEC_KEYS = {"schema", "slot", "keep", "regions", "frames"}
-FRAME_KEYS = {"name", "identical_to_idle", "adopt", "patches", "rulings", "budget"}
+FRAME_KEYS = {"name", "identical_to_idle", "occlude", "adopt", "patches", "rulings", "budget"}
 MIN_FRAMES, MAX_FRAMES = 4, 6
+# Rows of idle frame 0 an `occlude` box may never touch: the head, crown, beard and shoulders (the crown's top pixel is
+# on row 30, the beard's last pixel on row 47) and the feet (rows 76 to 79, the soles on 79).
+PROTECTED_ROWS = ((30, 47), (76, 79))
 MIN_MS, MAX_MS = 83, 100  # floor(1000 / 12), ceil(1000 / 10): `durationBounds` of the act state
 GROUND = (96, 104, 120)
 
@@ -154,6 +169,18 @@ def load_act_spec(spec: dict | str | Path) -> dict:
                 raise SpecError(f"frames[{index}] is identical_to_idle and cannot take {extra}")
         elif "budget" not in frame:
             raise SpecError(f"frames[{index}] needs a budget")
+        occlude = frame.get("occlude", [])
+        if not isinstance(occlude, list):
+            raise SpecError(f"frames[{index}].occlude must be a list of boxes")
+        for box in occlude:
+            x0, y0, x1, y1 = _box(box, f"frames[{index}].occlude")
+            for first, last in PROTECTED_ROWS:
+                if y0 <= last and y1 >= first:
+                    raise SpecError(
+                        f"frames[{index}].occlude box {[x0, y0, x1, y1]} touches the protected rows {first}-{last} "
+                        f"(head, beard and shoulders are rows {PROTECTED_ROWS[0][0]}-{PROTECTED_ROWS[0][1]}, "
+                        f"the feet rows {PROTECTED_ROWS[1][0]}-{PROTECTED_ROWS[1][1]})"
+                    )
     keep = data.get("keep")
     if not isinstance(keep, dict):
         raise SpecError("spec.keep must be an object")
@@ -167,6 +194,11 @@ def load_act_spec(spec: dict | str | Path) -> dict:
 
 def regions_of(spec: dict) -> list[tuple[int, int, int, int]]:
     return [_box(b, "spec.regions") for b in spec["regions"]]
+
+
+def occlude_of(spec: dict, index: int) -> list[tuple[int, int, int, int]]:
+    """The boxes where frame `index`'s patches may overwrite kept idle pixels."""
+    return [_box(b, "occlude") for b in spec["frames"][index].get("occlude", [])]
 
 
 def projected_keep(idle: Raster, spec: dict) -> dict:
@@ -195,15 +227,26 @@ def kept_of(idle: Raster, spec: dict) -> set[Point]:
     return kept
 
 
-def frame_spec(idle: Raster, spec: dict, index: int) -> dict:
+def frame_spec(idle: Raster, spec: dict, index: int, kept: set[Point] | None = None) -> dict:
     """The `sprite_seated_composite` spec of frame `index`: dy 0, the shared keep and regions, the frame's own block."""
     spec = load_act_spec(spec)
     frame = spec["frames"][index]
+    keep = projected_keep(idle, spec)
+    occlude = occlude_of(spec, index)
+    if occlude:
+        kept = kept if kept is not None else kept_of(idle, spec)
+        over = [
+            [x, y]
+            for (x, y), _ in _cells(frame.get("patches", []), f"frames[{index}].patches")
+            if (x, y) in kept and any(_in_box((x, y), b) for b in occlude)
+        ]
+        if over:
+            keep = {**keep, "exclude": [*keep.get("exclude", []), *over]}
     projected = {
         "schema": 1,
         "dy": 0,
-        "keep": projected_keep(idle, spec),
-        "regions": spec["regions"],
+        "keep": keep,
+        "regions": [*spec["regions"], *[list(b) for b in occlude]],
         "adopt": frame.get("adopt", []),
         "patches": frame.get("patches", []),
         "rulings": frame.get("rulings", []),
@@ -221,13 +264,13 @@ def build_frame(idle: Raster, spec: dict | str | Path, index: int, reference: Ra
     frame = spec["frames"][index]
     label = f"frames[{index}]" + (f" ({frame['name']})" if "name" in frame else "")
     if frame.get("identical_to_idle", False):
-        return Raster(idle.width, idle.height, bytes(idle.rgba)), {"identical_to_idle": True, "new_pixels": 0}
-    kept_of(idle, spec)
+        return Raster(idle.width, idle.height, bytes(idle.rgba)), {"identical_to_idle": True, "new_pixels": 0, "occluded_pixels": 0}
+    kept = kept_of(idle, spec)
     if frame.get("adopt") and reference is None:
         raise SpecError(f"{label} adopts pixels and needs the reference cell (--reference)")
     blank = Raster(CELL[0], CELL[1], bytes(CELL[0] * CELL[1] * 4))
     try:
-        built, report = build_with_report(reference or blank, idle, frame_spec(idle, spec, index))
+        built, report = build_with_report(reference or blank, idle, frame_spec(idle, spec, index, kept))
     except SpecError as error:
         raise SpecError(f"{label}: {error}") from error
     except NeedsRulings as error:
@@ -236,6 +279,9 @@ def build_frame(idle: Raster, spec: dict | str | Path, index: int, reference: Ra
     except ValueError as error:
         raise ValueError(f"{label}: {error}") from error
     report["identical_to_idle"] = False
+    patched = {p for p, _ in _cells(frame.get("patches", []), "patches")}
+    occluded = {p for p in patched if p in kept and any(_in_box(p, b) for b in occlude_of(spec, index))}
+    report["occluded_pixels"] = len(occluded)
     return built, report
 
 
@@ -265,8 +311,16 @@ def cross_frame_problems(frames: list[Raster], idle: Raster, spec: dict) -> list
         if declared[index].get("identical_to_idle", False) and frame.rgba != idle.rgba:
             problems.append(f"frame {index} is declared identical_to_idle but its bytes differ from idle frame 0")
         here, was = opaque_cells(frame), opaque_cells(idle)
+        occlude = occlude_of(spec, index)
+        patched = {p for p, _ in _cells(declared[index].get("patches", []), "patches")}
         for p in sorted(here | was, key=lambda p: (p[1], p[0])):
             if any(_in_box(p, box) for box in regions):
+                continue
+            if any(_in_box(p, box) for box in occlude):
+                if p in was and p not in here:
+                    problems.append(f"frame {index}: pixel {p} inside an occlude box was erased")
+                elif p not in patched and ((p in here) != (p in was) or colour_at(frame, p) != colour_at(idle, p)):
+                    problems.append(f"frame {index}: pixel {p} inside an occlude box differs from idle but is not patched")
                 continue
             if (p in here) != (p in was):
                 problems.append(f"frame {index}: pixel {p} outside the regions is {'drawn' if p in here else 'missing'} against idle")
