@@ -138,12 +138,31 @@ class Figure:
         return tuple(self.image.pixel(*p)[:3])  # type: ignore[return-value]
 
 
-def plan(image: Raster) -> dict[Point, tuple[str, tuple[int, int, int]]]:
-    """Maps each pixel the rules recolour to (rule, colour). The reviewer's override tables are not in it."""
-    figure, shades, frozen = Figure(image), ramps(), frozen_points()
+def plan(
+    image: Raster,
+    *,
+    only: set[Point] | None = None,
+    frozen: set[Point] | None = None,
+    overridden: set[Point] | None = None,
+    unresolved: list[Point] | None = None,
+) -> dict[Point, tuple[str, tuple[int, int, int]]]:
+    """Maps each pixel the rules recolour to (rule, colour). The reviewer's override tables are not in it.
+
+    By default it plans the C2b frame with C2c's own frozen pixels and rulings. `only` limits the rules to those
+    pixels (the seated composite applies them to its new pixels alone), and `frozen` and `overridden` replace
+    the C2c tables with the caller's own. Where the rules cannot decide a pixel and it has no ruling, the plan
+    raises; with `unresolved` given it appends every such pixel to that list and carries on, so a caller can ask
+    for all the rulings at once.
+    """
+    figure, shades = Figure(image), ramps()
+    frozen = frozen_points() if frozen is None else frozen
     palette = load_palette(PALETTE_JSON)
     dark = {shade[0] for shade in shades.values()}
-    overridden = {(x, y) for table in OVERRIDES.values() for x, y, _ in table}
+    if overridden is None:
+        overridden = {(x, y) for table in OVERRIDES.values() for x, y, _ in table}
+
+    def wanted(p: Point) -> bool:
+        return only is None or p in only
 
     def ramp_of(colour: tuple[int, int, int]) -> str:
         return GOLD_RAMP if palette.ramp_of[colour] == GOLD_RAMP else "cloud"
@@ -174,18 +193,20 @@ def plan(image: Raster) -> dict[Point, tuple[str, tuple[int, int, int]]]:
     result: dict[Point, tuple[str, tuple[int, int, int]]] = {}
     exterior_ramp: dict[Point, str] = {}
     for p in sorted(figure.opaque, key=lambda q: (q[1], q[0])):
-        if figure.distance[p] != 1 or p in frozen:
+        if figure.distance[p] != 1 or p in frozen or not wanted(p):
             continue
         ramp = majority(inward(p)[0])
         if ramp is None:
             if p not in overridden:
-                raise ValueError(f"exterior pixel {p} has no majority ramp and no ruling")
+                if unresolved is None:
+                    raise ValueError(f"exterior pixel {p} has no majority ramp and no ruling")
+                unresolved.append(p)
             continue
         exterior_ramp[p] = ramp
         result[p] = ("R1", shades[ramp][0])
 
     for p in sorted(figure.opaque, key=lambda q: (q[1], q[0])):
-        if figure.distance[p] != 2 or p in frozen or figure.colour(p) not in dark:
+        if figure.distance[p] != 2 or p in frozen or not wanted(p) or figure.colour(p) not in dark:
             continue
         outer = [
             (p[0] + dx, p[1] + dy)
@@ -206,13 +227,15 @@ def plan(image: Raster) -> dict[Point, tuple[str, tuple[int, int, int]]]:
         ramp = majority(ahead)
         if ramp is None:
             if p not in overridden:
-                raise ValueError(f"band pixel {p} has no majority ramp and no ruling")
+                if unresolved is None:
+                    raise ValueError(f"band pixel {p} has no majority ramp and no ruling")
+                unresolved.append(p)
             continue
         result[p] = ("R3", shades[ramp][1])
 
     settled = {p: c for p, (_, c) in result.items()}
     for p in sorted(figure.opaque, key=lambda q: (q[1], q[0])):
-        if p in frozen or p in result or p in overridden or figure.distance[p] < 2:
+        if p in frozen or p in result or p in overridden or not wanted(p) or figure.distance[p] < 2:
             continue
         if figure.colour(p) not in dark:
             continue
@@ -223,7 +246,10 @@ def plan(image: Raster) -> dict[Point, tuple[str, tuple[int, int, int]]]:
             and settled.get((p[0] + dx, p[1] + dy), figure.colour((p[0] + dx, p[1] + dy))) not in dark
         )
         if not around:
-            raise ValueError(f"interior dark pixel {p} has no form beside it and no ruling")
+            if unresolved is None:
+                raise ValueError(f"interior dark pixel {p} has no form beside it and no ruling")
+            unresolved.append(p)
+            continue
         if len(around) > 1:
             front = next(r for r in FRONT_ORDER if r in around)
             result[p] = ("R4-overlap", shades[front][0])
