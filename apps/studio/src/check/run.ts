@@ -2,8 +2,8 @@
 // the render target and the canvas back, and judges them with the pure
 // comparisons in pixels.ts. Browser only; it needs a real renderer.
 
+import { DEFAULT_BACKGROUND, type Instance } from "@panthea/renderer";
 import { HARNESS_CAMERA, harnessItems } from "../harness/layout";
-import { DEFAULT_BACKGROUND } from "../renderer/gpu";
 import {
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
@@ -12,7 +12,6 @@ import {
   ZOOMS,
   type Zoom,
 } from "../renderer/preview";
-import type { Instance } from "../renderer/scene";
 import type {
   AssetSource,
   Listing,

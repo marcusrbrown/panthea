@@ -13,6 +13,7 @@ import {
   type GodProfile,
   loadContentPack,
   loadGodProfiles,
+  withGodSprites,
 } from "@panthea/content";
 import type { WorldEvent } from "@panthea/contracts";
 import {
@@ -39,6 +40,10 @@ const pack = loadedPack.value;
 const loadedGods = loadGodProfiles(join(GREEK, "gods"), pack);
 if (!loadedGods.ok) throw new Error(loadedGods.message);
 const gods = loadedGods.value;
+// A deity's sprite id is its profile's: fold it in, as pack assembly does, before genesis.
+const foldedResult = withGodSprites(pack, gods);
+if (!foldedResult.ok) throw new Error(foldedResult.message);
+const foldedPack = foldedResult.value;
 const profileOf = (god: string): GodProfile => {
   const found = gods.find((profile) => profile.id === god);
   if (!found) throw new Error(god);
@@ -46,7 +51,7 @@ const profileOf = (god: string): GodProfile => {
 };
 
 class World {
-  state: WorldState = createInitialWorldState(pack);
+  state: WorldState = createInitialWorldState(foldedPack);
   readonly events: WorldEvent[] = [];
   readonly requests: RealRequest[] = [];
   readonly proposals: RealProposal[] = [];

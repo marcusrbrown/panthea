@@ -28,6 +28,7 @@ function pack(): ContentPack {
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "Farmer",
         locationId: "square",
         drives: { thrift: 0.2, appetite: 0.5, greed: 0.2, piety: 0.1 },
@@ -40,6 +41,7 @@ function pack(): ContentPack {
       },
       {
         id: "woodcutter",
+        sprite: "placeholder-woodcutter",
         name: "Woodcutter",
         locationId: "yard",
         drives: { thrift: 0.6, appetite: 0.3, greed: 0.4, piety: 0.1 },

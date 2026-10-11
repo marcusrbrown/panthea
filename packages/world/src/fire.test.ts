@@ -84,6 +84,7 @@ function townPack(fireBalance: Record<string, number> = {}): ContentPack {
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "town-square",
       },
@@ -135,6 +136,7 @@ function lifecyclePack(): ContentPack {
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "town-square",
         drives: { thrift: 0.9, appetite: 0, greed: 0, piety: 0 },
@@ -142,6 +144,7 @@ function lifecyclePack(): ContentPack {
       },
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "great-hall",
         deity: true,

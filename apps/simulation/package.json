@@ -18,5 +18,8 @@
     "@panthea/persistence": "workspace:*",
     "@panthea/telemetry": "workspace:*",
     "@panthea/world": "workspace:*"
+  },
+  "devDependencies": {
+    "@panthea/testkit": "workspace:*"
   }
 }

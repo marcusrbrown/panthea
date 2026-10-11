@@ -2,6 +2,7 @@
 // root (default content/greek) without the studio. Layout:
 //
 //   <root>/gods/*.json                     core god profiles (read only)
+//   <root>/world/inhabitants.json          inhabitants' sprite ids (read only)
 //   <root>/assets/vocabulary.json          versioned vocabulary
 //   <root>/assets/subjects/*.json          visual profiles, joined by god id
 //   <root>/assets/registry/                index.json, manifests/, blobs/
@@ -70,6 +71,78 @@ function located(label: string, failure: ParseFailure): AssetDiagnostic {
     file: label,
     message: `${within === "" ? "" : `${within}: `}${failure.message}`,
   };
+}
+
+/** The prefix of the ids an inhabitant draws as until the studio publishes art for it. */
+const PLACEHOLDER_PREFIX = "placeholder-";
+
+/**
+ * Each non-deity inhabitant's sprite id, in `world/inhabitants.json`, is a valid asset id that is either
+ * `placeholder-*` or a sprite published in the registry. A deity authors none (its god profile's sprite is
+ * the only source, checked with the gods above), and the content parser refuses a deity that does.
+ */
+function validateInhabitantSprites(
+  contentRoot: string,
+  published: ReadonlyMap<
+    string,
+    { readonly manifest: { readonly kind: string } }
+  >,
+  report: (file: string, message: string) => void,
+): void {
+  const file = "world/inhabitants.json";
+  const json = readJson(join(contentRoot, file));
+  if (!json.ok) {
+    report(file, json.message);
+    return;
+  }
+  const inhabitants = isRecordWithArray(json.value, "inhabitants");
+  if (inhabitants === undefined) {
+    report(file, "expected an object with an inhabitants array");
+    return;
+  }
+  for (const [index, entry] of inhabitants.entries()) {
+    if (typeof entry !== "object" || entry === null) {
+      report(file, `inhabitants[${index}]: expected an inhabitant entry`);
+      continue;
+    }
+    const inhabitant = entry as Record<string, unknown>;
+    if (inhabitant.deity === true) continue;
+    const who = `inhabitants[${index}]${typeof inhabitant.id === "string" ? ` (${inhabitant.id})` : ""}`;
+    const sprite = inhabitant.sprite;
+    if (typeof sprite !== "string" || sprite === "") {
+      report(file, `${who}: sprite must be a non-empty asset id`);
+      continue;
+    }
+    if (!parseAssetId(sprite, "sprite").ok) {
+      report(
+        file,
+        `${who}: sprite "${sprite}" is not a valid asset id (lowercase, hyphenated)`,
+      );
+      continue;
+    }
+    if (sprite.startsWith(PLACEHOLDER_PREFIX)) continue;
+    const entryInRegistry = published.get(sprite);
+    if (entryInRegistry === undefined) {
+      report(
+        file,
+        `${who}: sprite "${sprite}" is neither published in the registry nor a ${PLACEHOLDER_PREFIX}* id`,
+      );
+    } else if (entryInRegistry.manifest.kind !== "sprite") {
+      report(
+        file,
+        `${who}: sprite "${sprite}" is published as a ${entryInRegistry.manifest.kind}, not a sprite`,
+      );
+    }
+  }
+}
+
+function isRecordWithArray(
+  value: unknown,
+  key: string,
+): readonly unknown[] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const found = (value as Record<string, unknown>)[key];
+  return Array.isArray(found) ? found : undefined;
 }
 
 export function validateAssets(contentRoot: string): AssetValidation {
@@ -169,6 +242,8 @@ export function validateAssets(contentRoot: string): AssetValidation {
   for (const problem of registry.problems) {
     report(`assets/registry/${problem.file}`, problem.message);
   }
+
+  validateInhabitantSprites(contentRoot, registry.snapshot.entries, report);
 
   const godById = new Map(gods.map((god) => [god.id, god]));
   const portraitOwners = new Map(

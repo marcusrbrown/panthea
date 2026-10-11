@@ -41,6 +41,7 @@ function pack(): ContentPack {
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "town-square",
         startingInventory: [{ resource: "planks", amount: 3 }],

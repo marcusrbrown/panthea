@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ContentPack } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import {
   applyRecipe,
   creditActorInventory,
@@ -52,22 +53,28 @@ function twoActorPack(): ContentPack {
 
 function stateWithTwoActors() {
   let state = createInitialWorldState(twoActorPack());
-  state = withActor(state, {
-    id: toEntityId("a"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["wood", 4]]),
-    revision: 0,
-  });
-  state = withActor(state, {
-    id: toEntityId("b"),
-    locationId: toEntityId("square"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map([["currency", 10]]),
-    revision: 0,
-  });
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("a"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["wood", 4]]),
+      revision: 0,
+    }),
+  );
+  state = withActor(
+    state,
+    testActor({
+      id: toEntityId("b"),
+      locationId: toEntityId("square"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map([["currency", 10]]),
+      revision: 0,
+    }),
+  );
   return state;
 }
 

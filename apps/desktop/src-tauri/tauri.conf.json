@@ -42,6 +42,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/panthea-sim"]
+    "externalBin": ["binaries/panthea-sim"],
+    "resources": {
+      "../../../content/greek/assets/registry/": "registry/",
+      "../../../content/greek/assets/vocabulary.json": "vocabulary.json"
+    }
   }
 }

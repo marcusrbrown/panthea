@@ -4,6 +4,7 @@
 // renderer), and exposes pause, resume, and stop-background as
 // tray-menu operator controls.
 
+pub mod canon;
 mod commands;
 pub mod keys;
 pub mod launch;
@@ -15,6 +16,7 @@ mod tray;
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
+use canon::CanonStore;
 use commands::KeyVault;
 use settings::SettingsStore;
 use state::SidecarState;
@@ -41,12 +43,20 @@ pub fn run() {
             commands::set_endpoint_key,
             commands::delete_endpoint_key,
             commands::endpoint_key_status,
+            commands::canon_registry,
+            commands::canon_atlas,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             // Same directory the sidecar resolves for world saves
             // (`ai.panthe.desktop` under the platform app data dir).
             app.manage(SettingsStore::new(app.path().app_data_dir()?));
+            // Verify the bundled canon registry once. A bad or missing
+            // registry becomes problems in the payload, never a failed start.
+            app.manage(CanonStore::load_for(
+                app.path().resource_dir().ok(),
+                cfg!(debug_assertions),
+            ));
             let tray = tray::build_tray(&handle)?;
             *handle
                 .state::<SidecarState>()

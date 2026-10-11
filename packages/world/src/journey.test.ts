@@ -68,10 +68,32 @@ function pack(): ContentPack {
     ],
     buildings: [],
     inhabitants: [
-      { id: "zeus", name: "Zeus", locationId: "tavern", deity: true },
-      { id: "hera", name: "Hera", locationId: "tavern", deity: true },
-      { id: "farmer", name: "The Farmer", locationId: "tavern" },
-      { id: "bard", name: "The Bard", locationId: "lane" },
+      {
+        id: "zeus",
+        sprite: "placeholder-zeus",
+        name: "Zeus",
+        locationId: "tavern",
+        deity: true,
+      },
+      {
+        id: "hera",
+        sprite: "placeholder-hera",
+        name: "Hera",
+        locationId: "tavern",
+        deity: true,
+      },
+      {
+        id: "farmer",
+        sprite: "placeholder-farmer",
+        name: "The Farmer",
+        locationId: "tavern",
+      },
+      {
+        id: "bard",
+        sprite: "placeholder-bard",
+        name: "The Bard",
+        locationId: "lane",
+      },
     ],
     rules: {
       catchUpCapMs: 0,

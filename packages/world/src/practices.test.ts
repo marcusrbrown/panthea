@@ -36,6 +36,7 @@ function pack(
 ): ContentPack {
   const deity = (name: string, locationId: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId,
     deity: true,
@@ -80,6 +81,7 @@ function pack(
       deity("athena", "tavern"),
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "Farmer",
         locationId: "altar",
         drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },
@@ -87,6 +89,7 @@ function pack(
       },
       {
         id: "woodcutter",
+        sprite: "placeholder-woodcutter",
         name: "Woodcutter",
         locationId: "square",
         drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import { type RegistrySnapshot, resolveAsset } from "@panthea/assets";
 import { spriteFixture } from "@panthea/assets/fixtures";
+import {
+  createSceneLayer,
+  type DecodedImage,
+  type RawImage,
+  rgbaImage,
+} from "@panthea/renderer";
 import { Scene, type Texture } from "three";
 import type { Sprite2D } from "three-flatland";
 import type {
@@ -11,11 +17,8 @@ import type {
   SourceChange,
   SourceResolution,
 } from "../source/port";
-import { createSceneLayer } from "./layer";
 import {
   type BackendFactory,
-  cameraBounds,
-  canvasMetrics,
   createPreview,
   LOGICAL_HEIGHT,
   LOGICAL_WIDTH,
@@ -24,9 +27,7 @@ import {
   type PreviewHost,
   type PreviewItem,
   type RenderBackend,
-  roundCamera,
 } from "./preview";
-import { type DecodedImage, type RawImage, rgbaImage } from "./textures";
 
 const god = spriteFixture("placeholder-zeus");
 const snapshot: RegistrySnapshot = {
@@ -365,60 +366,6 @@ function sprite(record: BackendRecord, id: string): Sprite2D {
 
 const pixel0 = (texture: Texture | null) =>
   texture === null ? undefined : (texture.image as RawImage).data[0];
-
-describe("canvas sizing", () => {
-  it.each([
-    [2, 1, 960, 540, 960, 540],
-    [3, 1, 1440, 810, 1440, 810],
-    [4, 1, 1920, 1080, 1920, 1080],
-    [2, 2, 960, 540, 480, 270],
-    [4, 2, 1920, 1080, 960, 540],
-    [2, 1.5, 960, 540, 640, 360],
-    [3, 1.5, 1440, 810, 960, 540],
-    [4, 1.5, 1920, 1080, 1280, 720],
-  ])(
-    "zoom %d at devicePixelRatio %d: backing %dx%d, CSS %dx%d",
-    (zoom, dpr, bw, bh, cw, ch) => {
-      expect(canvasMetrics(zoom as 2 | 3 | 4, dpr)).toEqual({
-        backingWidth: bw,
-        backingHeight: bh,
-        cssWidth: cw,
-        cssHeight: ch,
-      });
-    },
-  );
-
-  it("keeps the backing store an exact integer multiple at a fractional ratio, with only the CSS size fractional", () => {
-    const metrics = canvasMetrics(3, 1.25);
-    expect(metrics.backingWidth).toBe(LOGICAL_WIDTH * 3);
-    expect(metrics.backingHeight).toBe(LOGICAL_HEIGHT * 3);
-    expect(Number.isInteger(metrics.backingWidth)).toBe(true);
-    expect(metrics.cssWidth).toBeCloseTo(1152, 9);
-    expect(metrics.cssWidth * 1.25).toBeCloseTo(metrics.backingWidth, 9);
-  });
-
-  it("treats a missing or invalid devicePixelRatio as 1", () => {
-    for (const dpr of [0, -2, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(canvasMetrics(2, dpr).cssWidth).toBe(960);
-    }
-  });
-});
-
-describe("camera", () => {
-  it("rounds to whole logical pixels", () => {
-    expect(roundCamera({ x: 10.4, y: -3.6 })).toEqual({ x: 10, y: -4 });
-    expect(roundCamera({ x: 0, y: 0 })).toEqual({ x: 0, y: 0 });
-  });
-
-  it("frames the fixed logical viewport from its top-left in screen space", () => {
-    expect(cameraBounds({ x: -240, y: 20 })).toEqual({
-      left: -240,
-      right: 240,
-      top: -20,
-      bottom: -290,
-    });
-  });
-});
 
 describe("preview lifecycle", () => {
   it("starts a backend on a fresh canvas sized exactly logical size x zoom, then reports started once", async () => {

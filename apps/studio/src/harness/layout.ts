@@ -3,7 +3,7 @@
 // for scale, a placeholder 2x2 structure two depth steps behind the subject on its column, so the subject covers part of it, and a flat
 // portrait panel. Coordinates assume HARNESS_CAMERA.
 
-import type { Point } from "../renderer/iso";
+import type { Point } from "@panthea/renderer";
 import type { PreviewItem } from "../renderer/preview";
 import type { ListingEntry, Selection } from "../source/port";
 

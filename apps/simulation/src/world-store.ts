@@ -7,7 +7,7 @@
 // packages/persistence never imports packages/world; this file is the
 // only place both are imported together.
 
-import type { LabeledProfileInput } from "@panthea/content";
+import { type LabeledProfileInput, withGodSprites } from "@panthea/content";
 import type {
   ClockRow,
   ProjectionCodec,
@@ -54,7 +54,14 @@ export function loadGreekWorldState(
       `world-store: failed to parse the embedded Greek god profiles (${gods.path}): ${gods.message}`,
     );
   }
-  return createInitialWorldState(result.value);
+  // A deity's sprite id is its profile's alone: fold it into the pack, so genesis keeps its signature.
+  const folded = withGodSprites(result.value, gods.value);
+  if (!folded.ok) {
+    throw new Error(
+      `world-store: failed to fold the god profiles' sprites into the embedded Greek content pack (${folded.path}): ${folded.message}`,
+    );
+  }
+  return createInitialWorldState(folded.value);
 }
 
 /**

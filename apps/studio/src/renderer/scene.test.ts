@@ -9,8 +9,14 @@ import {
   portraitFixture,
   spriteFixture,
 } from "@panthea/assets/fixtures";
-import { type Cell, ENTITY_SLOTS, type Layer } from "./iso";
-import { composeScene, type Instance, type SceneEntity } from "./scene";
+import {
+  type Cell,
+  composeScene,
+  ENTITY_SLOTS,
+  type Instance,
+  type Layer,
+  type SceneEntity,
+} from "@panthea/renderer";
 
 const cell = (x: number, y: number, z = 0): Cell => ({ x, y, z });
 

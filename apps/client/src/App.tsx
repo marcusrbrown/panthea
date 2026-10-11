@@ -1,6 +1,13 @@
 import type { ModelEndpointStatus, Realm } from "@panthea/contracts";
+import { isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import {
+  type CanonProblem,
+  type CanonSource,
+  createCanonClient,
+  createTauriCanonSource,
+} from "./assets/canon";
 import {
   type ConnectedFrame,
   type ConnectionError,
@@ -21,7 +28,10 @@ import { createRecovery } from "./recovery";
 import { drawableEvents, receiptDrawnEvents } from "./renderer/presentation";
 import { rebuildAfterDeviceLoss } from "./renderer/recovery";
 import { SceneHost } from "./renderer/SceneHost";
-import type { RendererFactory } from "./renderer/scene";
+import {
+  createWorldRendererFactory,
+  type RendererFactory,
+} from "./renderer/scene";
 import { createWorldStore, type WorldViewModel } from "./store";
 import {
   browserDismissalStorage,
@@ -39,6 +49,12 @@ export interface ClientDependencies {
     onError: (error: ConnectionError) => void,
   ) => Promise<void>;
   readonly presentEvent?: (eventId: string) => Promise<void>;
+  /**
+   * Where canon art comes from: the verified registry and its atlases. By
+   * default the shell's two canon commands; with no shell (browser dev) or in
+   * fixture mode, none, and every actor draws as its placeholder.
+   */
+  readonly canon?: CanonSource;
   readonly rendererFactory?: RendererFactory;
   readonly initialView?: WorldViewModel;
   readonly fixture?: boolean;
@@ -76,11 +92,31 @@ export function App({
   // lives in `summaryDismissal` and its storage.
   const [, setDismissals] = useState(0);
   const [rendererEpoch, setRendererEpoch] = useState(0);
+  const [artProblems, setArtProblems] = useState<readonly string[]>([]);
   const fixtureMode =
     dependencies.fixture ??
     (import.meta.env.DEV &&
       typeof window !== "undefined" &&
       new URLSearchParams(window.location.search).get("fixture") === "1");
+  // One registry client for the app's life, so the registry and every atlas
+  // are fetched once and survive a device-loss remount of the renderer.
+  const canon = useMemo(() => {
+    const source =
+      dependencies.canon ??
+      (!fixtureMode && isTauri() ? createTauriCanonSource() : undefined);
+    return createCanonClient({
+      ...(source === undefined ? {} : { source }),
+      onProblem: (problem: CanonProblem) =>
+        setArtProblems((problems) => [
+          ...problems.slice(-3),
+          `${problem.scope}: ${problem.message}`,
+        ]),
+    });
+  }, [dependencies.canon, fixtureMode]);
+  const rendererFactory = useMemo(
+    () => dependencies.rendererFactory ?? createWorldRendererFactory({ canon }),
+    [canon, dependencies.rendererFactory],
+  );
   const transport = useMemo(
     () => dependencies.transport ?? createTauriTransport(),
     [dependencies.transport],
@@ -204,6 +240,7 @@ export function App({
       }}
       dismissedSummary={dismissedSummary}
       receiptErrors={receiptErrors}
+      artProblems={artProblems}
       settingsOpen={settingsOpen}
       onOpenSettings={() => setSettingsOpen(true)}
       onCloseSettings={() => setSettingsOpen(false)}
@@ -214,7 +251,7 @@ export function App({
           key={rendererEpoch}
           view={view}
           realm={realm}
-          rendererFactory={dependencies.rendererFactory}
+          rendererFactory={rendererFactory}
           onDrawn={onDrawn}
           onDeviceLost={onDeviceLost}
         />

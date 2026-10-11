@@ -5,6 +5,7 @@
 
 import { expect, test } from "bun:test";
 import type { EventId, WorldEvent } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import {
   applyEvent,
   createPrng,
@@ -667,15 +668,18 @@ test("each move parses only against the threads it is legal on: the exact (move,
 test("an accept for a thread this god is not party to is refused at parse", () => {
   const run = new Run();
   // A third god, and a thread between Hera and her.
-  run.state = withActor(run.state, {
-    id: id("athena"),
-    locationId: id("great-hall"),
-    alive: true,
-    isDeity: true,
-    capabilities: ["divine"],
-    inventory: new Map([["divinity", 10]]),
-    revision: 0,
-  });
+  run.state = withActor(
+    run.state,
+    testActor({
+      id: id("athena"),
+      locationId: id("great-hall"),
+      alive: true,
+      isDeity: true,
+      capabilities: ["divine"],
+      inventory: new Map([["divinity", 10]]),
+      revision: 0,
+    }),
+  );
   const cause = run.hears("hera");
   const stranger = run.demand(cause, {
     from: "hera",

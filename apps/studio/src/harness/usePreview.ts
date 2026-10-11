@@ -1,3 +1,4 @@
+import { createGpuBackend, decodePng } from "@panthea/renderer";
 import {
   type RefObject,
   useCallback,
@@ -6,10 +7,10 @@ import {
   useState,
 } from "react";
 import { inTauri, tauriHost } from "../host/tauri";
-import { createDomHost, decodePng } from "../renderer/browser";
-import { createGpuBackend } from "../renderer/gpu";
+import { createDomHost } from "../renderer/browser";
 import {
   createPreview,
+  LOGICAL_SIZE,
   type Preview,
   type RenderBackend,
   type Zoom,
@@ -83,7 +84,10 @@ export function usePreview(
       source,
       host: createDomHost(element),
       createBackend: (canvas) => {
-        latest = createGpuBackend(canvas, { forceWebGL: options.forceWebGL });
+        latest = createGpuBackend(canvas, {
+          logicalSize: LOGICAL_SIZE,
+          forceWebGL: options.forceWebGL,
+        });
         return latest;
       },
       decode: decodePng,

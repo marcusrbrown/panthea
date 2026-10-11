@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { spriteFixture } from "@panthea/assets/fixtures";
+import { renderPlaceholderPixels } from "@panthea/assets/browser";
 import {
   ClampToEdgeWrapping,
   DataTexture,
@@ -15,6 +15,7 @@ import {
   decideReload,
   diamondImage,
   pixelTexture,
+  placeholderImage,
   type RawImage,
   rgbaImage,
   swapImage,
@@ -128,24 +129,6 @@ describe("decideReload", () => {
 });
 
 describe("atlasFrame", () => {
-  it("maps a real manifest frame to normalised UVs on the atlas grid", () => {
-    const { manifest } = spriteFixture();
-    const second = manifest.animations[0]?.frames[1];
-    expect(second?.rect).toEqual({ x: 64, y: 0, w: 64, h: 80 });
-    const frame = atlasFrame(
-      second?.rect ?? { x: 0, y: 0, w: 0, h: 0 },
-      manifest.atlas,
-    );
-    expect(frame).toMatchObject({
-      x: 0.25,
-      y: 0,
-      width: 0.25,
-      height: 1,
-      sourceWidth: 64,
-      sourceHeight: 80,
-    });
-  });
-
   it("samples exactly the rect's texel rows and columns, counted from the top of the image", () => {
     const atlas = { width: 128, height: 64 };
     const rect = { x: 64, y: 16, w: 64, h: 32 };
@@ -349,5 +332,46 @@ describe("texture store", () => {
     store.commit("a", spec(), solid(4, 2, 1));
     store.dispose();
     expect(() => store.dispose()).not.toThrow();
+  });
+});
+
+describe("placeholderImage", () => {
+  it("holds the shared placeholder pixels bottom-row-first, bytes otherwise unchanged", () => {
+    const pixels = renderPlaceholderPixels({ palette: [], parts: {} });
+    const image = placeholderImage(pixels);
+    expect([image.width, image.height]).toEqual([pixels.width, pixels.height]);
+    const raw = image.image as RawImage;
+    const stride = pixels.width * 4;
+    for (let row = 0; row < pixels.height; row += 1) {
+      expect(
+        Array.from(
+          raw.data.subarray(
+            (pixels.height - 1 - row) * stride,
+            (pixels.height - row) * stride,
+          ),
+        ),
+      ).toEqual(
+        Array.from(pixels.rgba.subarray(row * stride, (row + 1) * stride)),
+      );
+    }
+    expect(raw.data.some((byte) => byte !== 0)).toBe(true);
+  });
+
+  it("matches rgbaImage on the same bytes and does not alias the input", () => {
+    const pixels = renderPlaceholderPixels({ palette: ["#4a6fa5"], parts: {} });
+    const image = placeholderImage(pixels);
+    expect(image).toEqual(rgbaImage(pixels.width, pixels.height, pixels.rgba));
+    const before = (image.image as RawImage).data[0];
+    pixels.rgba.fill(1);
+    expect((image.image as RawImage).data[0]).toBe(before);
+  });
+
+  it("builds a nearest, uncoloured texture from the pixels", () => {
+    const texture = pixelTexture(
+      placeholderImage(renderPlaceholderPixels({ palette: [], parts: {} })),
+    );
+    expect(texture.colorSpace).toBe(NoColorSpace);
+    expect(texture.magFilter).toBe(NearestFilter);
+    texture.dispose();
   });
 });

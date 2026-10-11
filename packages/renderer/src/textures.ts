@@ -8,6 +8,7 @@
 // decoder flips bitmaps with `imageOrientation: "flipY"` and raw RGBA goes
 // through `rgbaImage`.
 
+import type { PlaceholderPixels } from "@panthea/assets/browser";
 import {
   DataTexture,
   NearestFilter,
@@ -64,6 +65,15 @@ export function rgbaImage(
     );
   }
   return { width, height, image: { width, height, data } };
+}
+
+/**
+ * The shared placeholder pixels (`@panthea/assets/browser`) as a texture image.
+ * The game draws placeholders from these; the studio still receives its
+ * placeholder as PNG bytes through the source port and decodes them.
+ */
+export function placeholderImage(pixels: PlaceholderPixels): DecodedImage {
+  return rgbaImage(pixels.width, pixels.height, pixels.rgba);
 }
 
 export function pixelTexture(decoded: DecodedImage): Texture {

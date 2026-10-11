@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadContentPack, loadGodProfiles } from "./load";
+import { loadContentPack, loadGodProfiles, withGodSprites } from "./load";
 
 const GREEK_WORLD_DIR = join(
   import.meta.dir,
@@ -93,12 +93,18 @@ test("optional buildings.json and inhabitants.json are picked up when present", 
         inhabitants: [
           {
             id: "npc-1",
+            sprite: "placeholder-npc-1",
             name: "Tavernkeeper",
             locationId: "tavern",
             drives: { thrift: 0.5, appetite: 0.2, greed: 0.1, piety: 0.3 },
             devotion: { god: "zeus", affinity: 2 },
           },
-          { id: "zeus", name: "Zeus", locationId: "tavern", deity: true },
+          {
+            id: "zeus",
+            name: "Zeus",
+            locationId: "tavern",
+            deity: true,
+          },
         ],
       }),
     );
@@ -306,6 +312,54 @@ test("the Greek pack parses with the seven gods' profiles", () => {
   expect(hera?.relationships).toEqual(
     expect.arrayContaining([expect.objectContaining({ target: "zeus" })]),
   );
+});
+
+test("the Greek pack's deities take their sprite id from their god profile, and its mortals from inhabitants.json", () => {
+  const packResult = loadContentPack(GREEK_WORLD_DIR);
+  if (!packResult.ok) {
+    throw new Error(`${packResult.path}: ${packResult.message}`);
+  }
+  const profiles = loadGodProfiles(GREEK_GODS_DIR, packResult.value);
+  if (!profiles.ok) throw new Error(`${profiles.path}: ${profiles.message}`);
+  const folded = withGodSprites(packResult.value, profiles.value);
+  if (!folded.ok) throw new Error(`${folded.path}: ${folded.message}`);
+
+  const sprites = new Map(
+    folded.value.inhabitants.map((inhabitant) => [
+      inhabitant.id,
+      inhabitant.sprite,
+    ]),
+  );
+  expect(sprites.get("zeus")).toBe("zeus-sprite");
+  for (const god of profiles.value) {
+    expect(sprites.get(god.id)).toBe(god.sprite);
+  }
+  for (const inhabitant of packResult.value.inhabitants) {
+    if (inhabitant.deity) {
+      // Parsing leaves a deity's sprite to the profile.
+      expect(inhabitant.sprite).toBeUndefined();
+    } else {
+      expect(inhabitant.sprite).toBe(`placeholder-${inhabitant.id}`);
+    }
+  }
+  expect(sprites.get("woodcutter")).toBe("placeholder-woodcutter");
+  // Folding leaves everything else alone.
+  expect(folded.value.locations).toBe(packResult.value.locations);
+  expect(folded.value.rules).toBe(packResult.value.rules);
+});
+
+test("folding refuses a deity that has no god profile, and a profile whose sprite is empty is never invented", () => {
+  const packResult = loadContentPack(GREEK_WORLD_DIR);
+  if (!packResult.ok) throw new Error(packResult.message);
+  const profiles = loadGodProfiles(GREEK_GODS_DIR, packResult.value);
+  if (!profiles.ok) throw new Error(profiles.message);
+  const withoutZeus = profiles.value.filter((god) => god.id !== "zeus");
+  const refused = withGodSprites(packResult.value, withoutZeus);
+  expect(refused.ok).toBe(false);
+  if (!refused.ok) {
+    expect(refused.path).toContain("zeus");
+    expect(refused.message).toContain("profile");
+  }
 });
 
 test("a missing gods directory yields no profiles", () => {

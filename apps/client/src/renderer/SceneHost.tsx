@@ -2,17 +2,22 @@ import type { Realm } from "@panthea/contracts";
 import { useEffect, useRef, useState } from "react";
 
 import type { WorldViewModel } from "../store";
-import { drawScene, startSceneRenderer } from "./lifecycle";
 import {
-  createWorldRenderer,
-  type RendererFactory,
-  type WorldRenderer,
-} from "./scene";
+  animationFrames,
+  drawScene,
+  type FrameScheduler,
+  startFrameLoop,
+  startSceneRenderer,
+} from "./lifecycle";
+import type { RendererFactory, WorldRenderer } from "./scene";
 
 export interface SceneHostProps {
   readonly view?: WorldViewModel;
   readonly realm: Realm;
-  readonly rendererFactory?: RendererFactory;
+  /** Must be stable: a new factory restarts the renderer. */
+  readonly rendererFactory: RendererFactory;
+  /** Drives animation; defaults to the browser's animation frames. */
+  readonly frames?: FrameScheduler;
   readonly onDrawn?: (eventIds: readonly string[]) => void;
   readonly onDeviceLost?: () => void;
 }
@@ -20,7 +25,8 @@ export interface SceneHostProps {
 export function SceneHost({
   view,
   realm,
-  rendererFactory = createWorldRenderer,
+  rendererFactory,
+  frames = animationFrames,
   onDrawn,
   onDeviceLost,
 }: SceneHostProps) {
@@ -55,11 +61,17 @@ export function SceneHost({
 
   useEffect(() => {
     if (!started || !view) return;
-    drawScene(rendererRef.current, view, realm, {
+    void drawScene(rendererRef.current, view, realm, {
       onDrawn: (eventIds) => onDrawnRef.current?.(eventIds),
       onFailure: setFailure,
     });
   }, [realm, started, view]);
+
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!started || !renderer) return;
+    return startFrameLoop(renderer, frames, setFailure);
+  }, [frames, started]);
 
   return (
     <>

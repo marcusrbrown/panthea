@@ -125,8 +125,10 @@ test("the studio subpath is a package export", () => {
     readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"),
   ) as { exports: Record<string, string> };
   expect(manifest.exports["./studio"]).toBe("./src/studio/index.ts");
+  expect(manifest.exports["./browser"]).toBe("./src/browser.ts");
   expect(Object.keys(manifest.exports).sort()).toEqual([
     ".",
+    "./browser",
     "./fixtures",
     "./registry",
     "./studio",
