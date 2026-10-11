@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ContentPack, EventId, Proposal } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import { submitProposal } from "./actions";
 import {
   buildingBase,
@@ -9,7 +10,6 @@ import {
   withActor,
   withBuilding,
 } from "./state";
-import { testActor } from "./test-actor";
 import { validateProposal } from "./validate";
 
 function minimalRules(): ContentPack["rules"] {

@@ -26,6 +26,7 @@
         "three-flatland": "0.1.0-alpha.10",
       },
       "devDependencies": {
+        "@panthea/testkit": "workspace:*",
         "@types/react": "19.3.0",
         "@types/react-dom": "19.3.0",
         "@types/three": "0.185.4",
@@ -50,6 +51,9 @@
         "@panthea/persistence": "workspace:*",
         "@panthea/telemetry": "workspace:*",
         "@panthea/world": "workspace:*",
+      },
+      "devDependencies": {
+        "@panthea/testkit": "workspace:*",
       },
     },
     "apps/studio": {
@@ -82,6 +86,9 @@
         "@panthea/contracts": "workspace:*",
         "@panthea/world": "workspace:*",
         "ai": "7.0.127",
+      },
+      "devDependencies": {
+        "@panthea/testkit": "workspace:*",
       },
     },
     "packages/assets": {
@@ -133,11 +140,26 @@
         "@panthea/contracts": "workspace:*",
       },
     },
+    "packages/testkit": {
+      "name": "@panthea/testkit",
+      "version": "0.1.0",
+      "dependencies": {
+        "@panthea/renderer": "workspace:*",
+        "@panthea/world": "workspace:*",
+        "three": "0.185.1",
+      },
+      "devDependencies": {
+        "@types/three": "0.185.4",
+      },
+    },
     "packages/world": {
       "name": "@panthea/world",
       "version": "0.1.0",
       "dependencies": {
         "@panthea/contracts": "workspace:*",
+      },
+      "devDependencies": {
+        "@panthea/testkit": "workspace:*",
       },
     },
     "tools/content": {
@@ -425,6 +447,8 @@
     "@panthea/studio": ["@panthea/studio@workspace:apps/studio"],
 
     "@panthea/telemetry": ["@panthea/telemetry@workspace:packages/telemetry"],
+
+    "@panthea/testkit": ["@panthea/testkit@workspace:packages/testkit"],
 
     "@panthea/tools-content": ["@panthea/tools-content@workspace:tools/content"],
 

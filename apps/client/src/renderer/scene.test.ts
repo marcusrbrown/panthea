@@ -2,9 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { EMPTY_SNAPSHOT, resolveAssetPixels } from "@panthea/assets/browser";
 import type { Realm } from "@panthea/contracts";
 import { type DecodedImage, placeholderImage } from "@panthea/renderer";
+import { testBackend } from "@panthea/testkit/renderer";
 import type { Mesh, MeshBasicMaterial } from "three";
 import type { Sprite2D, SpriteGroup } from "three-flatland";
-
 import {
   decodeFixture,
   type FakeSource,
@@ -12,7 +12,8 @@ import {
   ZEUS_ATLAS_BYTES,
   ZEUS_ATLAS_HASH,
   zeusPayload,
-} from "../assets/_test-canon";
+} from "../../test/canon-fixture";
+import { viewWithZeus } from "../../test/view-fixture";
 import {
   type CanonClient,
   type CanonProblem,
@@ -20,8 +21,6 @@ import {
 } from "../assets/canon";
 import { previewView } from "../fixtures";
 import type { WorldViewModel } from "../store";
-import { testBackend } from "./_test-backend";
-import { viewWithZeus } from "./_test-view";
 import { CAMERA_ORIGIN } from "./layout";
 import { drawableEvents } from "./presentation";
 import { createWorldRenderer, type WorldRenderer } from "./scene";

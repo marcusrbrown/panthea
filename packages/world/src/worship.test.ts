@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ContentPack } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import { createInitialWorldState, toEntityId } from "./state";
-import { testActor } from "./test-actor";
 import {
   applyWorshipPerformed,
   DIVINE_CAPACITY_RESOURCE,

@@ -15,6 +15,7 @@ import {
   listEvents,
   openStore,
 } from "@panthea/persistence";
+import { testActor } from "@panthea/testkit/world";
 import {
   createPrng,
   type PrngState,
@@ -24,7 +25,6 @@ import {
   type WorldState,
   withActor,
 } from "@panthea/world";
-import { testActor } from "@panthea/world/testing";
 import {
   createServiceStatusRef,
   createSimulationServer,

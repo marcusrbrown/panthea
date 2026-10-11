@@ -153,7 +153,7 @@ test("a sprite survives a tick and the codec: the world carries it unchanged", (
 });
 
 test("no world rule reads an actor's sprite: only genesis writes it and the codec carries it", () => {
-  const carriers = new Set(["state.ts", "codec.ts", "test-actor.ts"]);
+  const carriers = new Set(["state.ts", "codec.ts"]);
   const sources = readdirSync(import.meta.dir).filter(
     (name) =>
       name.endsWith(".ts") && !name.endsWith(".test.ts") && !carriers.has(name),

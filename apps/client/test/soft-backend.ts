@@ -13,7 +13,7 @@ import {
 } from "@panthea/renderer";
 import { Group, Scene } from "three";
 
-import { INSPECT_BACKGROUND, type Rgba, upscale } from "./digest";
+import { INSPECT_BACKGROUND, type Rgba, upscale } from "../src/inspect/digest";
 
 export interface SoftBackend extends GpuBackend {
   readonly log: string[];

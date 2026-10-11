@@ -43,6 +43,7 @@ import {
   followEvent,
   getProposalOutcomeByProposalId,
 } from "@panthea/telemetry";
+import { testActor } from "@panthea/testkit/world";
 import {
   createPrng,
   DEFAULT_MEMORY_BALANCE,
@@ -60,7 +61,6 @@ import {
   type WorldState,
   withActor,
 } from "@panthea/world";
-import { testActor } from "@panthea/world/testing";
 import {
   loadEmbeddedGreekGodProfiles,
   loadEmbeddedGreekWorldPack,

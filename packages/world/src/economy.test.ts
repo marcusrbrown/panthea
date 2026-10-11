@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ContentPack } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import {
   applyRecipe,
   creditActorInventory,
@@ -17,7 +18,6 @@ import {
   type WorldState,
   withActor,
 } from "./state";
-import { testActor } from "./test-actor";
 
 function mustGetActor(state: WorldState, id: string): ActorState {
   const actor = state.actors.get(toEntityId(id));

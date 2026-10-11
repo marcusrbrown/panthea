@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { fakeSource, zeusCanonPayload } from "../assets/_test-canon";
+import { fakeSource, zeusCanonPayload } from "../../test/canon-fixture";
 import { createCanonClient } from "../assets/canon";
 import {
   defaultSelection,

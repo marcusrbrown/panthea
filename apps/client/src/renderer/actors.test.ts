@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { EMPTY_SNAPSHOT } from "@panthea/assets/browser";
-import { fakeSource, zeusPayload } from "../assets/_test-canon";
+import { fakeSource, zeusPayload } from "../../test/canon-fixture";
+import { viewWithZeus } from "../../test/view-fixture";
 import { createCanonClient } from "../assets/canon";
 import type { ViewActor } from "../store";
-import { viewWithZeus } from "./_test-view";
 import { type ActorItem, actorInstances, planActors } from "./actors";
 import { locationPoints } from "./layout";
 

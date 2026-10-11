@@ -7,6 +7,7 @@
 
 import { expect, test } from "bun:test";
 import type { EventId, WorldEvent } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import {
   applyEvent,
   createPrng,
@@ -17,7 +18,6 @@ import {
   type WorldState,
   withActor,
 } from "@panthea/world";
-import { testActor } from "@panthea/world/testing";
 import {
   buildGodContext,
   godAvailableActions,

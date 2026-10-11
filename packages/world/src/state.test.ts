@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ContentPack, EventId } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import {
   activeFavors,
   type BuildingState,
@@ -15,7 +16,6 @@ import {
   withActor,
   withBuilding,
 } from "./state";
-import { testActor } from "./test-actor";
 
 test("the same PRNG seed produces the same sequence of values", () => {
   let a = createPrng(42);

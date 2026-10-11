@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ContentPack } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import {
   createInitialWorldState,
   createPrng,
@@ -8,7 +9,6 @@ import {
   toEntityId,
   withActor,
 } from "./index";
-import { testActor } from "./test-actor";
 
 test("the barrel export wires state, geography, validate, and actions together", () => {
   const pack: ContentPack = {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ContentPack, Proposal } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import { applyEvents, runTick, submitProposal } from "./actions";
 import { decode, encode } from "./codec";
 import {
@@ -9,7 +10,6 @@ import {
   type WorldState,
   withActor,
 } from "./state";
-import { testActor } from "./test-actor";
 
 function minimalRules(): ContentPack["rules"] {
   return {

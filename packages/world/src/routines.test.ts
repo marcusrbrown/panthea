@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { ContentPack, EventId, WorldEvent } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import { runTick } from "./actions";
 import { recordCauses } from "./petitions";
 import {
@@ -20,7 +21,6 @@ import {
   withActor,
   withBuilding,
 } from "./state";
-import { testActor } from "./test-actor";
 
 function rules(
   economyBalance: Record<string, number> = {},

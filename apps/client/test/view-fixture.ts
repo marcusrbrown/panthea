@@ -4,8 +4,8 @@
 import { parseSyncFrame } from "@panthea/contracts";
 import { decode, toEntityId, withActor } from "@panthea/world";
 
-import { baseState, framePayload } from "../fixtures";
-import { toViewModel, type WorldViewModel } from "../store";
+import { baseState, framePayload } from "../src/fixtures";
+import { toViewModel, type WorldViewModel } from "../src/store";
 
 export function viewWithZeus(
   options: Parameters<typeof framePayload>[1] = {},

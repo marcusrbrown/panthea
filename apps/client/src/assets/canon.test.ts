@@ -10,7 +10,7 @@ import {
   ZEUS_MANIFEST_TEXT,
   ZEUS_REVISION,
   zeusPayload,
-} from "./_test-canon";
+} from "../../test/canon-fixture";
 import {
   type CanonProblem,
   createCanonClient,

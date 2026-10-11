@@ -8,10 +8,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { decodePng as decodeNodePng } from "@panthea/assets/studio";
 import { type DecodedImage, rgbaImage } from "@panthea/renderer";
-import type { CanonSource } from "./canon";
+import type { CanonSource } from "../src/assets/canon";
 
 const fixture = (name: string): Buffer =>
-  readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
+  readFileSync(new URL(`../src/assets/fixtures/${name}`, import.meta.url));
 
 export const sha256 = (bytes: Uint8Array | string): string =>
   createHash("sha256").update(bytes).digest("hex");

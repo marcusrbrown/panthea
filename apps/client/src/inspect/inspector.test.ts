@@ -8,13 +8,13 @@ import {
   ZEUS_ATLAS_HASH,
   ZEUS_CANON_ATLASES,
   zeusCanonPayload,
-} from "../assets/_test-canon";
+} from "../../test/canon-fixture";
+import { type SoftBackend, softBackend } from "../../test/soft-backend";
 import {
   type CanonClient,
   type CanonProblem,
   createCanonClient,
 } from "../assets/canon";
-import { type SoftBackend, softBackend } from "./_test-soft-backend";
 import { evaluate, summarize } from "./check";
 import { REFERENCE } from "./expected";
 import { createInspector, INSPECT_SIZE, placeFrames } from "./inspector";
