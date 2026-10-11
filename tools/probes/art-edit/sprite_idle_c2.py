@@ -27,6 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -68,26 +69,61 @@ CHEST_DOWN: list[Edit] = [
 ]
 
 
+@dataclass(frozen=True)
+class Rise:
+    """The fixed rows of an upper-body rise: the movable cluster is the opaque pixels in rows `top_row` to
+    `bottom_row` right of `left_column`, without the right arm (x >= `arm_column` from `arm_from_row`, when set).
+    The idle loop's values are `IDLE_RISE`; the seated frame takes its own from the spec."""
+
+    top_row: int
+    bottom_row: int
+    left_column: int
+    arm_column: int | None = None
+    arm_from_row: int | None = None
+    rise: int = 1
+
+
+IDLE_RISE = Rise(TOP_ROW, BOTTOM_ROW, LEFT_COLUMN, ARM_COLUMN, ARM_FROM_ROW, RISE)
+
+
+def movable(image: Raster, region: Rise, x: int, y: int) -> bool:
+    if not image.pixel(x, y)[3] or not region.top_row <= y <= region.bottom_row or x < region.left_column:
+        return False
+    if region.arm_column is None or region.arm_from_row is None:
+        return True
+    return not (y >= region.arm_from_row and x >= region.arm_column)
+
+
+def movable_in(image: Raster, region: Rise) -> set[Point]:
+    return {(x, y) for y in range(image.height) for x in range(image.width) if movable(image, region, x, y)}
+
+
+def vacated_in(image: Raster, region: Rise) -> set[Point]:
+    moved = movable_in(image, region)
+    return {(x, y) for x, y in moved if (x, y + region.rise) not in moved}
+
+
+def cells_of_move_in(image: Raster, region: Rise) -> set[Point]:
+    moved = movable_in(image, region)
+    return moved | {(x, y - region.rise) for x, y in moved}
+
+
 def is_movable(image: Raster, x: int, y: int) -> bool:
     """The head, hair, crown, beard, shoulders and upper chest, down to just above the belt, without the left
     arm column (x < 25) or the right arm below the shoulder (x >= 38 from row 43)."""
-    if not image.pixel(x, y)[3] or not TOP_ROW <= y <= BOTTOM_ROW or x < LEFT_COLUMN:
-        return False
-    return not (y >= ARM_FROM_ROW and x >= ARM_COLUMN)
+    return movable(image, IDLE_RISE, x, y)
 
 
 def movable_cells(image: Raster) -> set[Point]:
-    return {(x, y) for y in range(image.height) for x in range(image.width) if is_movable(image, x, y)}
+    return movable_in(image, IDLE_RISE)
 
 
 def vacated_cells(image: Raster) -> set[Point]:
-    moved = movable_cells(image)
-    return {(x, y) for x, y in moved if (x, y + RISE) not in moved}
+    return vacated_in(image, IDLE_RISE)
 
 
 def cells_of_move(image: Raster) -> set[Point]:
-    moved = movable_cells(image)
-    return moved | {(x, y - RISE) for x, y in moved}
+    return cells_of_move_in(image, IDLE_RISE)
 
 
 def repair_cells(image: Raster) -> set[Point]:
@@ -125,16 +161,22 @@ def frame_inhale(base: Raster) -> Raster:
     return _recolour(base, CHEST_UP)
 
 
-def frame_peak(base: Raster) -> Raster:
-    moved = movable_cells(base)
+def raise_cluster(base: Raster, region: Rise, edits: list[Edit]) -> Raster:
+    """The movable cluster of `region` moved up by `region.rise` with its outline, the cells it vacates filled from
+    the fixed pixel below, then `edits` recoloured."""
+    moved = movable_in(base, region)
     pixels = bytearray(base.rgba)
     for x, y in moved:
         _write(pixels, base.width, x, y, bytes((0, 0, 0, 0)))
     for x, y in moved:
-        _write(pixels, base.width, x, y - RISE, bytes(base.pixel(x, y)))
-    for x, y in vacated_cells(base):
-        _write(pixels, base.width, x, y, bytes(base.pixel(x, y + RISE)))
-    return _recolour(Raster(base.width, base.height, bytes(pixels)), [*REPAIRS, *F2_CHEST_HOLD])
+        _write(pixels, base.width, x, y - region.rise, bytes(base.pixel(x, y)))
+    for x, y in vacated_in(base, region):
+        _write(pixels, base.width, x, y, bytes(base.pixel(x, y + region.rise)))
+    return _recolour(Raster(base.width, base.height, bytes(pixels)), edits)
+
+
+def frame_peak(base: Raster) -> Raster:
+    return raise_cluster(base, IDLE_RISE, [*REPAIRS, *F2_CHEST_HOLD])
 
 
 def frame_exhale(base: Raster) -> Raster:

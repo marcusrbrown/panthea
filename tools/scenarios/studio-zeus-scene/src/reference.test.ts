@@ -55,9 +55,15 @@ test("the committed digests cover every published asset, state and expression", 
 
   expect([...byId.keys()]).toEqual(["zeus-portrait", "zeus-sprite"]);
   const sprite = byId.get("zeus-sprite");
-  expect(sprite?.selections.map((s) => s.key)).toEqual(["idle/south"]);
+  expect(sprite?.selections.map((s) => s.key)).toEqual([
+    "idle/south",
+    "seated/south",
+  ]);
   expect(sprite?.selections[0]?.frames.map((f) => f.rect.x)).toEqual([
     0, 64, 128, 192,
+  ]);
+  expect(sprite?.selections[1]?.frames.map((f) => f.rect.x)).toEqual([
+    256, 320,
   ]);
   const portrait = byId.get("zeus-portrait");
   expect(portrait?.selections.map((s) => s.key)).toEqual([
@@ -76,7 +82,7 @@ test("the committed digests cover every published asset, state and expression", 
     }
   }
   expect(sprite?.atlas.blob).toBe(
-    "0fe8067fda22c1704ef491513419c412ec77a1a9ffa05907b593346540ac515e",
+    "9060ecc772da1fe4ed75d0f05ae6ae9e4b5fe3f2939dfa841097769e16fff6f8",
   );
 });
 

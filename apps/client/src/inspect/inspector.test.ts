@@ -124,7 +124,39 @@ test("all six portrait expressions are reachable, each canon from the portrait a
   expect(source.atlasCalls()).toEqual([PORTRAIT_ATLAS_HASH]);
 });
 
-test("seated and act are reachable and draw the shared placeholder, labelled as placeholders", async () => {
+const seated: Selection = { ...idle, state: "seated" };
+
+test("seated draws canon through the shared layer: two frames at 500 ms from the same atlas, and every check passes at every zoom", async () => {
+  const { inspector, backend, source } = await mount();
+
+  const measurement = await inspector.measure(seated);
+  const results = evaluate(measurement, REFERENCE);
+
+  expect(measurement.resolution).toMatchObject({
+    source: "canon",
+    assetId: "zeus-sprite",
+  });
+  if (measurement.resolution.source !== "canon")
+    throw new Error("expected canon art");
+  expect(measurement.resolution.frames.map((f) => f.durationMs)).toEqual([
+    500, 500,
+  ]);
+  expect(measurement.resolution.frames.map((f) => f.rect.x)).toEqual([
+    256, 320,
+  ]);
+  expect(String(measurement.resolution.atlas.blob)).toBe(ZEUS_ATLAS_HASH);
+  expect(measurement.placements).toHaveLength(2);
+  expect(backend.layerStats()).toEqual({ sprites: 2, textures: 1 });
+  expect(results.filter((r) => !r.ok)).toEqual([]);
+  // source, atlas, frames; then per frame: the 1x target and four canvases.
+  expect(results).toHaveLength(3 + 2 * 5);
+  expect(results.find((r) => r.id.endsWith(":source"))?.label).toContain(
+    "source is canon",
+  );
+  expect(source.atlasCalls()).toEqual([ZEUS_ATLAS_HASH]);
+});
+
+test("states nothing publishes are reachable and draw the shared placeholder, labelled as placeholders", async () => {
   const { inspector } = await mount();
   const placeholder = resolveAssetPixels(
     { entries: new Map() },
@@ -134,9 +166,9 @@ test("seated and act are reachable and draw the shared placeholder, labelled as 
     throw new Error("expected a placeholder");
 
   for (const selection of [
-    { ...idle, state: "seated" },
     { ...idle, state: "act" },
     { ...idle, state: "act", ability: "thunderbolt" },
+    { ...idle, state: "walk" },
   ] satisfies Selection[]) {
     const measurement = await inspector.measure(selection);
     const results = evaluate(measurement, REFERENCE);
@@ -177,7 +209,7 @@ test("an off-by-one placeholder fails its pixel comparison too", async () => {
   const { inspector } = await mount({ offset: { x: 1, y: 0 } });
 
   const results = evaluate(
-    await inspector.measure({ ...idle, state: "seated" }),
+    await inspector.measure({ ...idle, state: "act" }),
     REFERENCE,
   );
 
@@ -190,7 +222,7 @@ test("with the registry withheld every canon check fails, whatever the placehold
   const suite = await inspector.runAll();
 
   const canon = suite.results.filter((r) => r.id.startsWith("canon:"));
-  expect(canon).toHaveLength(71);
+  expect(canon).toHaveLength(84);
   expect(canon.filter((r) => r.ok)).toEqual([]);
   expect(suite.results.find((r) => r.id === "root-kind")?.ok).toBe(false);
   expect(summarize(suite.results).ok).toBe(false);
@@ -211,7 +243,7 @@ test("a placeholder-only snapshot (a registry holding only unrelated ids) fails 
   const suite = await inspector.runAll();
 
   const canon = suite.results.filter((r) => r.id.startsWith("canon:"));
-  expect(canon).toHaveLength(23);
+  expect(canon).toHaveLength(36);
   expect(canon.filter((r) => r.ok)).toEqual([]);
 });
 
@@ -239,7 +271,7 @@ test("a canon frame with no reference digest fails rather than passing unchecked
   expect(results[0]?.detail).toContain("no reference digest");
 });
 
-test("the suite covers every committed selection and the unpublished controls, and a correct draw passes it all", async () => {
+test("the suite covers every committed selection and the unpublished control, and a correct draw passes it all", async () => {
   const { inspector } = await mount({ webGpuPresent: false });
 
   const suite = await inspector.runAll();
@@ -260,7 +292,8 @@ test("the suite covers every committed selection and the unpublished controls, a
       true,
     );
   }
-  expect(ids.has("placeholder:zeus-sprite:seated/south:source")).toBe(true);
+  expect(ids.has("canon:zeus-sprite:seated/south:source")).toBe(true);
+  expect(ids.has("placeholder:zeus-sprite:seated/south:source")).toBe(false);
   expect(ids.has("placeholder:zeus-sprite:act/south:source")).toBe(true);
   expect(suite.results.find((r) => r.id === "root-kind")).toMatchObject({
     ok: true,

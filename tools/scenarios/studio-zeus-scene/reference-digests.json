@@ -160,8 +160,8 @@
       "assetId": "zeus-sprite",
       "kind": "sprite",
       "atlas": {
-        "blob": "0fe8067fda22c1704ef491513419c412ec77a1a9ffa05907b593346540ac515e",
-        "width": 256,
+        "blob": "9060ecc772da1fe4ed75d0f05ae6ae9e4b5fe3f2939dfa841097769e16fff6f8",
+        "width": 384,
         "height": 80
       },
       "selections": [
@@ -226,6 +226,43 @@
                 "2": "fnv1a32:2c0ae5ed",
                 "3": "fnv1a32:981a5959",
                 "4": "fnv1a32:cf6ba115"
+              }
+            }
+          ]
+        },
+        {
+          "key": "seated/south",
+          "query": {
+            "state": "seated",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 256,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:341bab47",
+                "2": "fnv1a32:52562345",
+                "3": "fnv1a32:f03d9e67",
+                "4": "fnv1a32:3f0f40f5"
+              }
+            },
+            {
+              "rect": {
+                "x": 320,
+                "y": 0,
+                "w": 64,
+                "h": 80
+              },
+              "digests": {
+                "1": "fnv1a32:74838a17",
+                "2": "fnv1a32:1f1f128d",
+                "3": "fnv1a32:a3c85007",
+                "4": "fnv1a32:dd3b6b95"
               }
             }
           ]
