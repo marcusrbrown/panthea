@@ -1,7 +1,7 @@
 ---
 title: "feat: Packaged game draws canon art (asset studio Unit 8)"
 type: feat
-status: active
+status: completed
 date: 2026-10-10
 origin: docs/brainstorms/2026-10-03-asset-studio-requirements.md
 ---
@@ -392,7 +392,7 @@ U1, U3 and U4 are independent and may run in parallel lanes with separate worktr
 
 **Verification:** client tests pass, and the dev app shows canon Zeus and placeholders.
 
-- [ ] **U6: Client scene visual pass**
+- [x] **U6: Client scene visual pass**
 
 **Goal:** the scene reads well at pixel scale, with logical size, zoom, backdrop, places and rings designed for the new core.
 
@@ -414,7 +414,7 @@ U1, U3 and U4 are independent and may run in parallel lanes with separate worktr
 
 **Verification:** window-cropped screenshots, confirmed by the owner through the question tool before the unit counts as done.
 
-- [ ] **U7: Packaged inspection, evidence and docs**
+- [x] **U7: Packaged inspection, evidence and docs**
 
 **Goal:** prove the packaged path and record the decisions.
 

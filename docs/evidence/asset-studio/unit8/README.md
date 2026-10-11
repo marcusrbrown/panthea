@@ -44,7 +44,7 @@ The packaged game draws actors as sprites resolved by the sprite id each actor c
 - `live-olympus-zeus.png`: the Olympus realm, following Zeus in the observer. Zeus draws as the canon `zeus-sprite` idle-south, animated by the manifest's own frame durations; Hera, standing in the same place, draws the shared placeholder because her god profile's sprite id (`placeholder-hera`) is not published.
 - `live-mortal.png`: the Mortal realm. Every inhabitant draws the shared placeholder (Zeus is on Olympus). Places, paths and buildings are the U6 pixel-scale meshes, not canon art.
 
-In the Olympus capture the "Current location" label overlaps the "Observed realm / Olympus" heading at this window size. It is a layout defect in the scene column's CSS, not part of this unit's change, and the capture shows it as it was.
+The first Olympus capture showed the "Current location" label overlapping the "Observed realm" heading, which the U6 overlay change had introduced. `f2131cc` moves the label below the heading. The Olympus capture here is a later release build with that fix, taken at tick 311 after about 3.5 minutes and two realm switches. That build also carried a client receipt-pacing fix, which ships separately because the receipt burst it fixes predates this unit.
 
 ## Positive controls
 
@@ -83,7 +83,7 @@ All are window-only captures, reduced from the 2Ã— Retina backing store to 1024Ã
 
 | File | Bytes | Shows |
 | --- | --- | --- |
-| `live-olympus-zeus.png` | 32,923 | The live Olympus realm with canon Zeus and placeholder Hera |
+| `live-olympus-zeus.png` | 44,015 | The live Olympus realm with canon Zeus and placeholder Hera |
 | `live-mortal.png` | 54,593 | The live Mortal realm, every inhabitant a placeholder |
 | `inspect-zeus-sprite-idle-south-report-1.png` | 51,426 | The fixture on `zeus-sprite` idle/south: four canon frames, "CANON", 23 passed, 0 failed |
 | `inspect-portrait-neutral-report.png` | 53,510 | The fixture on `zeus-portrait` neutral: the canon portrait, 8 passed, 0 failed |
@@ -97,10 +97,10 @@ The other five portrait expressions and the act placeholder were captured in the
 - **Real foreground-window compile timing.** The scene presents first and compiles behind it ([ADR-0011](../../../decisions/0011-game-canon-art-loading.md)); how long that compile takes in a foreground packaged window, and how many frames show before it settles, was not measured. The captures show settled frames, and nothing here says how long the first frame after a scene change lacked its materials.
 - **Device loss in the packaged app.** Not run. The window has no devtools and the fixture has no loss hook. Recovery (a fresh canvas and renderer rebuilt from cached bytes, with no refetch and no leaked textures or groups across three remounts) is covered by `apps/client/src/renderer/scene.test.ts` against a software backend, not by the packaged app.
 - **Seated and strike art.** They do not exist; those states draw placeholders. Publishing them, and the timed owner sitting for the origin's success criterion 1, is queued studio work and not a gate here (owner, 2026-10-10).
-- **The packaged window after `a264e81`.** The captures predate that CSS-only fix.
+- **The inspection captures after `a264e81`.** They predate that CSS-only fix to the report's scrolling and button colour.
 - **The positive controls in the packaged app.** They are unit tests only.
 - **WebGPU and other hosts.** One host, one sitting, the WebGL2 baseline (ADR-0002). A host where WKWebView exposes WebGPU would fail the backend check by design.
-- **The scene's visual design.** U6 owns it. The live captures are U5/U6 as built, including the label overlap noted above.
+- **The scene's visual design.** U6 owns it. The live captures are U5/U6 as built.
 - **An event-driven strike act.** Strike events carry no ability id and no strike art exists, so normal play never selects an act.
 - **Startup verify time inside the app.** The 0.31 ms median in ADR-0011 is from a standalone harness over the committed registry, not a timing taken in the app.
 - No hosted provider, purchase or publication was involved. The living world ran against a throwaway data directory that was deleted afterwards.
