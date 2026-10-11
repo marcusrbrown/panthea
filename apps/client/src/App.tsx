@@ -48,7 +48,7 @@ export interface ClientDependencies {
     onFrame: (connected: ConnectedFrame) => void,
     onError: (error: ConnectionError) => void,
   ) => Promise<void>;
-  readonly presentEvent?: (eventId: string) => Promise<void>;
+  readonly presentEvent?: (eventId: string, sessionId: string) => Promise<void>;
   /**
    * Where canon art comes from: the verified registry and its atlases. By
    * default the shell's two canon commands; with no shell (browser dev) or in
@@ -128,19 +128,28 @@ export function App({
           dependencies.presentEvent ??
           (fixtureMode
             ? async () => {}
-            : (eventId) => presentEvent(eventId, transport)),
+            : (eventId, sessionId) =>
+                presentEvent(eventId, sessionId, transport)),
         onError: (error) =>
           setReceiptErrors((errors) => [...errors.slice(-3), error.message]),
       }),
     [dependencies.presentEvent, fixtureMode, transport],
   );
+  // Held receipts belong to the emitter that drew them: drop them, and the
+  // drain's timer, when it is replaced or the app unmounts. (Disposal leaves the
+  // emitter usable, so a development remount that reuses it is unharmed.)
+  useEffect(() => () => receiptEmitter.dispose(), [receiptEmitter]);
 
   const acceptFrame = useCallback(
     (connected: ConnectedFrame) => {
+      // Before the frame is drawn, and whether or not it draws anything: a
+      // sidecar restart must drop held receipts of the old session even when
+      // the viewed realm presents no event to notice it.
+      receiptEmitter.observeSession(connected.frame.sessionId);
       store.apply(connected.frame, connected.state);
       setEndpointStatuses(connected.frame.modelEndpoints ?? []);
     },
-    [store],
+    [receiptEmitter, store],
   );
 
   useEffect(() => {

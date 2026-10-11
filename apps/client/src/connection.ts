@@ -9,6 +9,7 @@
 import { parseSyncFrame, type SyncFrame } from "@panthea/contracts";
 import { decode, type WorldState } from "@panthea/world";
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { receiptFailure } from "./receipts";
 
 export interface ConnectedFrame {
   readonly frame: SyncFrame;
@@ -29,7 +30,8 @@ export type ConnectionError =
 export interface Transport {
   /** Subscribes to committed-state frames; replaces any earlier subscription, and the shell sends the latest frame right away. */
   subscribeWorld(onPayload: (payload: unknown) => void): Promise<void>;
-  presentEvent(eventId: string): Promise<void>;
+  /** Relays a receipt for `eventId`, attributed to `sessionId`; rejects with a `StaleSessionError` when the shell says that session has ended. */
+  presentEvent(eventId: string, sessionId: string): Promise<void>;
 }
 
 export interface ModelSettingsTransport {
@@ -49,8 +51,12 @@ export function createTauriTransport(): Transport & ModelSettingsTransport {
       frames.onmessage = onPayload;
       await invoke("subscribe_world", { frames });
     },
-    async presentEvent(eventId) {
-      await invoke("present_event", { eventId });
+    async presentEvent(eventId, sessionId) {
+      try {
+        await invoke("present_event", { eventId, sessionId });
+      } catch (error) {
+        throw receiptFailure(error);
+      }
     },
     async readModelSettings() {
       return invoke<string | null>("read_model_settings");
@@ -132,7 +138,8 @@ export async function subscribe(
 /** Relays a presentation receipt for a committed event the renderer drew; rejects if the shell cannot relay it. */
 export function presentEvent(
   eventId: string,
+  sessionId: string,
   transport: Transport = createTauriTransport(),
 ): Promise<void> {
-  return transport.presentEvent(eventId);
+  return transport.presentEvent(eventId, sessionId);
 }
