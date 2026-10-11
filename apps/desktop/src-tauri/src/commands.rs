@@ -116,11 +116,18 @@ pub fn subscribe_world(state: State<SidecarState>, frames: Channel<Value>) {
     crate::proxy::apply_subscribe(&mut lifecycle, frames);
 }
 
-/// Relays a presentation receipt for `event_id`, attributed to the
-/// current sidecar session. Fails if no sidecar session is active yet.
+/// Relays a presentation receipt for `event_id`, attributed to `session_id`,
+/// the session the webview drew the event under. Refused with `stale-session`
+/// (and never relayed) unless that is the current sidecar session, so a
+/// receipt held across a sidecar restart is never stamped with the new one.
+/// Fails if no sidecar session is active yet.
 #[tauri::command]
-pub async fn present_event(app: AppHandle, event_id: String) -> Result<(), String> {
-    let (session, session_id) = {
+pub async fn present_event(
+    app: AppHandle,
+    event_id: String,
+    session_id: String,
+) -> Result<(), String> {
+    let (session, current_session) = {
         let state = app.state::<SidecarState>();
         let lifecycle = state
             .lifecycle
@@ -130,14 +137,20 @@ pub async fn present_event(app: AppHandle, event_id: String) -> Result<(), Strin
             .session
             .clone()
             .ok_or_else(|| "no active sidecar session".to_string())?;
-        let session_id = lifecycle
+        let current_session = lifecycle
             .last_frame
             .as_ref()
-            .map(|frame| frame.session_id.clone())
-            .ok_or_else(|| "no frame received yet".to_string())?;
-        (session, session_id)
+            .map(|frame| frame.session_id.clone());
+        (session, current_session)
     };
-    crate::proxy::present_event(session.port, &session.token, &session_id, &event_id).await
+    crate::proxy::relay_receipt(
+        session.port,
+        &session.token,
+        current_session.as_deref(),
+        &session_id,
+        &event_id,
+    )
+    .await
 }
 
 fn canon_registry_of(store: &CanonStore) -> CanonRegistry {

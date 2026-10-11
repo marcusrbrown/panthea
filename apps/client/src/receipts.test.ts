@@ -5,6 +5,7 @@ import {
   createReceiptEmitter,
   RECEIPT_RATE_PER_SECOND,
   type ReceiptError,
+  StaleSessionError,
 } from "./receipts";
 import { receiptDrawnEvents } from "./renderer/presentation";
 
@@ -332,4 +333,100 @@ test("the default rate leaves headroom under the service's 50 per second", async
 
   expect(sentIds()).toHaveLength(RECEIPT_RATE_PER_SECOND);
   expect(RECEIPT_RATE_PER_SECOND).toBeLessThan(50);
+});
+
+function staling(staleFor: ReadonlySet<string>) {
+  const attempts: { id: string; session: string }[] = [];
+  const errors: ReceiptError[] = [];
+  const clock = fakeClock();
+  const emitter = createReceiptEmitter({
+    presentEvent: async (eventId, sessionId) => {
+      attempts.push({ id: eventId, session: sessionId });
+      if (staleFor.has(eventId)) throw new StaleSessionError();
+    },
+    onError: (error) => errors.push(error),
+    now: clock.now,
+    schedule: clock.schedule,
+    maxPerSecond: 1,
+  });
+  return { emitter, attempts, errors, clock };
+}
+
+test("every relay carries the session the event was drawn under", async () => {
+  const { emitter, attempts, clock } = staling(new Set());
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2"); // held, drained later
+  await clock.advance(1001);
+  await emitter.present("session-2", "evt-2-1"); // held: the pace is shared
+  await clock.advance(1001);
+
+  expect(attempts).toEqual([
+    { id: "evt-1-1", session: "session-1" },
+    { id: "evt-1-2", session: "session-1" },
+    { id: "evt-2-1", session: "session-2" },
+  ]);
+});
+
+test("a held receipt the shell refuses as stale is dropped: not reported, not retried, and not relayed again when presented", async () => {
+  const { emitter, attempts, errors, clock } = staling(new Set(["evt-1-2"]));
+
+  await emitter.present("session-1", "evt-1-1");
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("deferred");
+  await clock.advance(1001);
+  await clock.advance(5000);
+
+  expect(attempts.map((attempt) => attempt.id)).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(errors).toEqual([]);
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("duplicate");
+  expect(attempts).toHaveLength(2);
+});
+
+test("a stale refusal of the session in force drops the rest of the held events, which would all be refused", async () => {
+  const { emitter, attempts, errors, clock } = staling(new Set(["evt-1-2"]));
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await emitter.present("session-1", "evt-1-3");
+  await emitter.present("session-1", "evt-1-4");
+  await clock.advance(1001);
+  await clock.advance(5000);
+
+  expect(attempts.map((attempt) => attempt.id)).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(errors).toEqual([]);
+  expect(clock.pending()).toBe(0);
+});
+
+test("a stale refusal reaching a relay drawn under an earlier session leaves the current session's held events alone", async () => {
+  let release: (() => void) | undefined;
+  const attempts: string[] = [];
+  const errors: ReceiptError[] = [];
+  const clock = fakeClock();
+  const emitter = createReceiptEmitter({
+    presentEvent: (eventId) => {
+      attempts.push(eventId);
+      if (eventId === "evt-1-1") {
+        return new Promise<void>((_resolve, reject) => {
+          release = () => reject(new StaleSessionError());
+        });
+      }
+      return Promise.resolve();
+    },
+    onError: (error) => errors.push(error),
+    now: clock.now,
+    schedule: clock.schedule,
+    maxPerSecond: 1,
+  });
+
+  const inFlight = emitter.present("session-1", "evt-1-1");
+  emitter.observeSession("session-2");
+  await emitter.present("session-2", "evt-2-1");
+  await emitter.present("session-2", "evt-2-2");
+  release?.();
+  await inFlight;
+  await clock.advance(1001);
+  await clock.advance(1001);
+
+  expect(attempts).toEqual(["evt-1-1", "evt-2-1", "evt-2-2"]);
+  expect(errors).toEqual([]);
 });

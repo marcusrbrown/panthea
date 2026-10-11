@@ -48,7 +48,7 @@ export interface ClientDependencies {
     onFrame: (connected: ConnectedFrame) => void,
     onError: (error: ConnectionError) => void,
   ) => Promise<void>;
-  readonly presentEvent?: (eventId: string) => Promise<void>;
+  readonly presentEvent?: (eventId: string, sessionId: string) => Promise<void>;
   /**
    * Where canon art comes from: the verified registry and its atlases. By
    * default the shell's two canon commands; with no shell (browser dev) or in
@@ -128,7 +128,8 @@ export function App({
           dependencies.presentEvent ??
           (fixtureMode
             ? async () => {}
-            : (eventId) => presentEvent(eventId, transport)),
+            : (eventId, sessionId) =>
+                presentEvent(eventId, sessionId, transport)),
         onError: (error) =>
           setReceiptErrors((errors) => [...errors.slice(-3), error.message]),
       }),

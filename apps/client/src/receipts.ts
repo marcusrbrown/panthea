@@ -13,6 +13,11 @@
 // further frame to present it again. A held event is `deferred`, and
 // presenting it again does not queue it twice. A session change, noticed by a
 // present or told by `observeSession`, or `dispose` drops what is held.
+//
+// Every relay names the session its event was drawn under, and the shell
+// refuses one that is not the sidecar's current session (`stale-session`): a
+// receipt held across a sidecar restart is dropped there, never stamped with
+// the new session. The emitter treats that refusal as a drop, not an error.
 
 /** Relays allowed in any second; the service's own limit is 50 (`RECEIPT_LIMIT_PER_WINDOW` in the simulation server), kept clear of by a margin for timing jitter. */
 export const RECEIPT_RATE_PER_SECOND = 40;
@@ -26,13 +31,34 @@ export const RECEIPT_RATE_PER_SECOND = 40;
  */
 const RATE_WINDOW_MS = 1000;
 
+/** What the shell rejects a receipt with when its session is no longer the sidecar's. */
+export const STALE_SESSION = "stale-session";
+
+/** A receipt the shell refused because the session it was drawn under is no longer in force. */
+export class StaleSessionError extends Error {
+  constructor() {
+    super(STALE_SESSION);
+    this.name = "StaleSessionError";
+  }
+}
+
+/** Gives the shell's stale-session rejection its type; any other failure passes through unchanged. */
+export function receiptFailure(error: unknown): unknown {
+  return error === STALE_SESSION ? new StaleSessionError() : error;
+}
+
 export interface ReceiptError {
   readonly sessionId: string;
   readonly eventId: string;
   readonly message: string;
 }
 
-export type ReceiptResult = "sent" | "duplicate" | "deferred" | "failed";
+export type ReceiptResult =
+  | "sent"
+  | "duplicate"
+  | "deferred"
+  | "dropped"
+  | "failed";
 
 export interface ReceiptEmitter {
   present(sessionId: string, eventId: string): Promise<ReceiptResult>;
@@ -49,7 +75,12 @@ export interface ReceiptEmitter {
 }
 
 export interface ReceiptEmitterDeps {
-  presentEvent(eventId: string): Promise<void>;
+  /**
+   * Relays one receipt, stamped by the shell with `sessionId`, the session the
+   * event was drawn under; rejects with a `StaleSessionError` when that is no
+   * longer the sidecar's session.
+   */
+  presentEvent(eventId: string, sessionId: string): Promise<void>;
   onError(error: ReceiptError): void;
   /** The clock the pace is measured on, in milliseconds; defaults to `Date.now`. */
   now?(): number;
@@ -97,9 +128,16 @@ export function createReceiptEmitter(deps: ReceiptEmitterDeps): ReceiptEmitter {
     const forSession = attempted;
     forSession.add(eventId);
     try {
-      await deps.presentEvent(eventId);
+      await deps.presentEvent(eventId, forSessionId);
       return "sent";
     } catch (error) {
+      if (error instanceof StaleSessionError) {
+        // The session this was drawn under has ended. Not an error and never
+        // retried: it stays marked, and the session's remaining held events,
+        // all drawn under it, would be refused the same way.
+        if (forSessionId === sessionId) dropHeld();
+        return "dropped";
+      }
       // Unmark only inside the session set this attempt started in, so a
       // late failure from an earlier session never touches a later one.
       forSession.delete(eventId);

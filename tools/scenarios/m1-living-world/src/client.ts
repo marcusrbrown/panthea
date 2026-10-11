@@ -11,7 +11,10 @@ import {
   createObserver,
   type ObserverTarget,
 } from "@panthea/client/src/observer";
-import { createReceiptEmitter } from "@panthea/client/src/receipts";
+import {
+  createReceiptEmitter,
+  StaleSessionError,
+} from "@panthea/client/src/receipts";
 import {
   drawableEvents,
   receiptDrawnEvents,
@@ -87,10 +90,13 @@ export function createHeadlessClient(
       timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
       void poll();
     },
-    async presentEvent(eventId) {
-      const sessionId = latestSessionId;
-      if (sessionId === undefined) {
+    async presentEvent(eventId, sessionId) {
+      // The shell's rule: a receipt is relayed only under the session in force.
+      if (latestSessionId === undefined) {
         throw new Error("no frame received yet");
+      }
+      if (sessionId !== latestSessionId) {
+        throw new StaleSessionError();
       }
       const response = await target.request("POST", "/receipts", {
         eventId,
@@ -137,8 +143,8 @@ export function createHeadlessClient(
   // when the relay succeeds, with the session and realm of that draw.
   const drawnAt = new Map<string, { sessionId: string; realm: Realm }>();
   const emitter = createReceiptEmitter({
-    presentEvent: async (eventId) => {
-      await transport.presentEvent(eventId);
+    presentEvent: async (eventId, sessionId) => {
+      await transport.presentEvent(eventId, sessionId);
       const at = drawnAt.get(eventId);
       if (at === undefined) return;
       presented.push({
