@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { fakeTransport } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
-import { approvalArgsForAsset } from "./actions";
+import { approvalArgsForAsset, packWorkingSetGuarded } from "./actions";
 import { initialWorkflowState, workflowReducer } from "./model";
 import { WorkflowView } from "./Workflow";
 
@@ -195,6 +195,33 @@ describe("a refused first config choice", () => {
 });
 
 describe("WorkflowView controls", () => {
+  test("record options include unique record ids and put the newest draft first", () => {
+    const html = render(
+      stateFor(undefined, {
+        assets: [
+          {
+            id: "record-zeus-sprite-1",
+            assetId: "zeus-sprite",
+            state: "draft",
+          },
+          { id: "zeus-sprite", assetId: "zeus-sprite", state: "canon" },
+          {
+            id: "record-zeus-sprite-2",
+            assetId: "zeus-sprite",
+            state: "draft",
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("zeus-sprite · draft · record-zeus-sprite-1");
+    expect(html).toContain("zeus-sprite · draft · record-zeus-sprite-2");
+    expect(html.indexOf("record-zeus-sprite-2")).toBeLessThan(
+      html.indexOf("record-zeus-sprite-1"),
+    );
+    expect(html).toContain("zeus-sprite · canon · zeus-sprite");
+  });
+
   test("field-to-card gaps use the workflow row rhythm", () => {
     const css = readFileSync(
       new URL("./workflow.css", import.meta.url),
@@ -717,3 +744,132 @@ describe("WorkflowView controls", () => {
 function labelFor(status: string) {
   return status[0]?.toUpperCase() + status.slice(1);
 }
+
+describe("a selected record that has not reached the snapshot", () => {
+  const draft = (n: number) => ({
+    id: `record-zeus-sprite-${n}`,
+    assetId: "zeus-sprite",
+    state: "draft",
+    kind: "sprite",
+    workingSetId: "w",
+    manifestRevision: `rev-${n}`,
+    report: { status: "pass", failedChecks: [] },
+  });
+  const LIFECYCLE = [
+    "Edit draft",
+    "Approve",
+    "Approve with exception",
+    "Reject",
+    "Publish this revision",
+  ];
+
+  function view(state: ReturnType<typeof stateFor>) {
+    const previews: unknown[] = [];
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state,
+        host,
+        renderPreview: (selection) => {
+          previews.push(selection);
+          return null;
+        },
+      }),
+    );
+    return { html, previews };
+  }
+  const buttonLabel = (html: string, label: string) =>
+    [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].filter(
+      (m) => m[2] === label,
+    );
+
+  test("the panel waits, previews nothing, and no lifecycle action is live", () => {
+    const state = workflowReducer(stateFor(undefined, { assets: [draft(1)] }), {
+      type: "select-asset",
+      assetId: "record-zeus-sprite-2",
+    });
+
+    const { html, previews } = view(state);
+
+    expect(html).toContain("Waiting for record-zeus-sprite-2");
+    expect(previews).toEqual([]);
+    expect(html).not.toContain("rev-1");
+    expect(html).not.toContain("Record record-zeus-sprite-1 · revision");
+    for (const label of LIFECYCLE) {
+      const found = buttonLabel(html, label);
+      expect(found.length).toBeGreaterThan(0);
+      expect(found.every((m) => /\bdisabled\b/.test(m[1] ?? ""))).toBe(true);
+    }
+  });
+
+  test("a pack that succeeds before the next poll leaves the old draft untouched, then the snapshot makes the new one live", async () => {
+    let state = stateFor(undefined, { assets: [draft(1)] });
+    const transport = fakeTransport({
+      studio_call: () => ({ id: "record-zeus-sprite-2", state: "draft" }),
+    });
+    const noop = {
+      allowed: () => true,
+      setBusy: () => undefined,
+      setMessage: () => undefined,
+      setRefusalDetails: () => undefined,
+    };
+
+    await packWorkingSetGuarded(
+      createStudioHost(transport),
+      noop,
+      {
+        id: "record-zeus-sprite-2",
+        workingSetId: "w",
+        assetId: "zeus-sprite",
+        styleTag: "t",
+      },
+      (recordId) => {
+        state = workflowReducer(state, {
+          type: "select-asset",
+          assetId: recordId,
+        });
+      },
+    );
+    const before = view(state);
+
+    expect(before.html).toContain("Waiting for record-zeus-sprite-2");
+    expect(before.previews).toEqual([]);
+
+    state = workflowReducer(state, {
+      type: "snapshot",
+      snapshot: {
+        host: { state: "running" },
+        status: { owner: null },
+        requests: [],
+        jobs: [],
+        candidates: [],
+        edits: [],
+        workingSets: [],
+        assets: [draft(1), draft(2)] as never,
+      },
+    });
+    const after = view(state);
+
+    expect(after.previews).toEqual([
+      { source: "draft", id: "record-zeus-sprite-2", kind: "sprite" },
+    ]);
+    expect(after.html).toContain("Record record-zeus-sprite-2 · revision");
+    expect(after.html).not.toContain("Waiting for");
+    expect(
+      buttonLabel(after.html, "Approve").every(
+        (m) => !/\bdisabled\b/.test(m[1] ?? ""),
+      ),
+    ).toBe(true);
+  });
+
+  test("a record that was selected and then leaves the snapshot waits too, instead of showing another", () => {
+    const state = workflowReducer(stateFor(undefined, { assets: [draft(2)] }), {
+      type: "select-asset",
+      assetId: "record-zeus-sprite-1",
+    });
+
+    const { html, previews } = view(state);
+
+    expect(html).toContain("Waiting for record-zeus-sprite-1");
+    expect(previews).toEqual([]);
+  });
+});

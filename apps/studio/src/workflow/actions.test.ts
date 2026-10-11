@@ -29,6 +29,7 @@ import {
   sheetFlow,
   slotHint,
 } from "./actions";
+import { initialWorkflowState, workflowReducer } from "./model";
 
 const configure = (
   studioCall: (args: Readonly<Record<string, unknown>> | undefined) => unknown,
@@ -910,7 +911,7 @@ describe("the window's refusal and pending handling", () => {
     expect(log).toEqual([]);
   });
 
-  test("Pack draft on an incomplete set shows the host's refusal and clears pending", async () => {
+  test("Pack draft on an incomplete set leaves the selected record unchanged", async () => {
     const transport = fakeTransport({
       studio_call: () => {
         throw hostError("wrong-state", "working set w is not complete");
@@ -918,6 +919,11 @@ describe("the window's refusal and pending handling", () => {
     });
     const { ui, log } = recordingUi();
 
+    const initial = workflowReducer(initialWorkflowState(), {
+      type: "select-asset",
+      assetId: "previous-record",
+    });
+    let state = initial;
     const result = await packWorkingSetGuarded(
       createStudioHost(transport),
       ui,
@@ -926,6 +932,12 @@ describe("the window's refusal and pending handling", () => {
         workingSetId: "w",
         assetId: "zeus",
         styleTag: "u5",
+      },
+      (recordId) => {
+        state = workflowReducer(state, {
+          type: "select-asset",
+          assetId: recordId,
+        });
       },
     );
 
@@ -937,6 +949,7 @@ describe("the window's refusal and pending handling", () => {
     expect(log).toContain("message working set w is not complete");
     expect(log.at(0)).toBe("busy true");
     expect(log.at(-1)).toBe("busy false");
+    expect(state.selectedAssetId).toBe(initial.selectedAssetId);
   });
 
   test("Pick on a refused candidate shows the host's refusal and clears pending", async () => {
@@ -975,19 +988,38 @@ describe("the window's refusal and pending handling", () => {
     expect(log).toEqual([]);
   });
 
-  test("a successful Pack draft reports it", async () => {
-    const transport = fakeTransport({ studio_call: () => ({ id: "r" }) });
+  test("a successful Pack draft selects its returned record id", async () => {
+    const transport = fakeTransport({
+      studio_call: () => ({ id: "record-zeus-sprite-1" }),
+    });
     const { ui, log } = recordingUi();
-
-    await packWorkingSetGuarded(createStudioHost(transport), ui, {
-      id: "record-zeus-1",
-      workingSetId: "w",
-      assetId: "zeus",
-      styleTag: "u5",
+    let state = workflowReducer(initialWorkflowState(), {
+      type: "select-asset",
+      assetId: "placeholder-zeus",
     });
 
-    expect(log).toContain("message pack complete");
-    expect(log.at(-1)).toBe("busy false");
+    await packWorkingSetGuarded(
+      createStudioHost(transport),
+      ui,
+      {
+        id: "record-zeus-sprite-1",
+        workingSetId: "w",
+        assetId: "zeus-sprite",
+        styleTag: "u5",
+      },
+      (recordId) => {
+        state = workflowReducer(state, {
+          type: "select-asset",
+          assetId: recordId,
+        });
+      },
+    );
+
+    expect(state.selectedAssetId).toBe("record-zeus-sprite-1");
+    expect(log).toContain(
+      "message Packed draft record-zeus-sprite-1 for zeus-sprite. Review it, then approve.",
+    );
+    expect(log).toContain("busy false");
   });
 });
 

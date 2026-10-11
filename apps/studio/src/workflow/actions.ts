@@ -217,8 +217,25 @@ export function packWorkingSetGuarded(
   host: StudioHost,
   ui: GuardUi,
   args: PackDraftArgs,
+  onPacked?: (recordId: string) => void,
 ): Promise<unknown> {
-  return guardedAction(ui, { label: "pack" }, () => packWorkingSet(host, args));
+  return guardedAction(ui, { label: "pack" }, () =>
+    packWorkingSet(host, args),
+  ).then((result) => {
+    const recordId =
+      typeof result === "object" &&
+      result !== null &&
+      typeof (result as { id?: unknown }).id === "string"
+        ? (result as { id: string }).id
+        : undefined;
+    if (recordId !== undefined) {
+      onPacked?.(recordId);
+      ui.setMessage(
+        `Packed draft ${recordId} for ${args.assetId}. Review it, then approve.`,
+      );
+    }
+    return result;
+  });
 }
 
 /** The action behind the candidate's Pick button. */
