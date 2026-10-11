@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PackInput } from "@panthea/assets/studio";
@@ -13,6 +13,7 @@ import {
   sheetOf,
   spriteSet,
 } from "../../../../packages/assets/src/studio/_test-fixtures";
+import { decodePng } from "../../../../packages/assets/src/studio/png/decode";
 import { editReport as sdkEditReport } from "../../../../packages/assets/src/studio/reports";
 import { fakeTransport, hostError } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
@@ -478,5 +479,167 @@ describe("pack form arguments against an in-process StudioSession", () => {
     expect(first.input.id).toBe("record-placeholder-zeus-1");
     expect(second.input.id).toBe("record-placeholder-zeus-2");
     expect(second.asset.assetId).toBe(first.asset.assetId);
+  });
+});
+
+/** The published zeus-sprite in the registry copy the rig packs against. */
+function canonSprite(rig: AssetRig) {
+  const index = JSON.parse(
+    readFileSync(join(rig.registryRoot, "index.json"), "utf8"),
+  ) as { entries: { assetId: string; revision: string }[] };
+  const revision = index.entries.find((e) => e.assetId === "zeus-sprite")
+    ?.revision as string;
+  const manifest = JSON.parse(
+    readFileSync(
+      join(rig.registryRoot, "manifests", `${revision}.json`),
+      "utf8",
+    ),
+  );
+  const atlas = decodePng(
+    new Uint8Array(
+      readFileSync(
+        join(rig.registryRoot, "blobs", `${manifest.atlas.blob}.png`),
+      ),
+    ),
+  );
+  if (!atlas.ok) throw new Error("the canon atlas does not decode");
+  return { revision, manifest, atlas: atlas.image };
+}
+
+function cellBytes(image: { rgba: Uint8Array; width: number }, x: number) {
+  const cell = { w: 64, h: 80 };
+  const out = new Uint8Array(cell.w * cell.h * 4);
+  for (let row = 0; row < cell.h; row += 1)
+    out.set(
+      image.rgba.subarray(
+        (row * image.width + x) * 4,
+        (row * image.width + x + cell.w) * 4,
+      ),
+      row * cell.w * 4,
+    );
+  return out;
+}
+
+/** A finished seated/south working set of two frames: a new state for the published zeus-sprite. */
+function seatedSet(rig: AssetRig) {
+  const [jobId] = runSlots(rig, "zeus-seated", "sprite", [
+    { state: "seated", direction: "south" },
+  ]);
+  if (!jobId) throw new Error("seated request has no job");
+  if (!rig.session.openWorkingSet("seated-set", "zeus-seated", rig.content).ok)
+    throw new Error("seated working set could not be opened");
+  if (!rig.session.pick("seated-set", jobId).ok) throw new Error("pick");
+  const cell = { w: 64, h: 80 };
+  finishSheet(
+    rig,
+    "seated-edit",
+    "seated-set",
+    cell,
+    [
+      {
+        slot: "seated/south",
+        frames: [0, 1].map((marker) => paintFigure(rig.content, cell, marker)),
+        durations: [500, 500],
+        pivot: { x: 32, y: 80 },
+      },
+    ],
+    { method: "script", description: "stand-in for a scripted composite" },
+  );
+}
+
+describe("adding a state to a published asset through the window's pack args", () => {
+  test("the carried idle cells and timings are byte-identical to canon and the report credits the published revision", () => {
+    const rig = newRig();
+    seatedSet(rig);
+    const canon = canonSprite(rig);
+
+    const { input, asset } = packThroughSession(rig, "seated-set", {
+      assetId: "zeus-sprite",
+      styleTag: "panthea-pixel-v1",
+    });
+
+    expect(Object.keys(input).sort()).toEqual([
+      "assetId",
+      "footprint",
+      "id",
+      "originalWork",
+      "styleTag",
+      "workingSetId",
+    ]);
+    expect<string | null>(asset.prior).toBe(canon.revision);
+    const manifest = asset.record.manifest;
+    if (manifest.kind !== "sprite") throw new Error("expected a sprite");
+    expect<unknown>(manifest.provenance.sourceAssets).toEqual([
+      { assetId: "zeus-sprite", revision: canon.revision },
+    ]);
+    const idle = manifest.animations.find((a) => a.state === "idle");
+    const was = canon.manifest.animations.find(
+      (a: { state: string }) => a.state === "idle",
+    );
+    expect(idle?.frames.map((f) => f.durationMs)).toEqual([333, 167, 333, 167]);
+    expect(idle?.frames.map((f) => f.durationMs)).toEqual(
+      was.frames.map((f: { durationMs: number }) => f.durationMs),
+    );
+    const atlas = decodePng(
+      rig.session.store.readBlob(manifest.atlas.blob) as Uint8Array,
+    );
+    if (!atlas.ok) throw new Error("the packed atlas does not decode");
+    idle?.frames.forEach((frame, index) => {
+      expect(cellBytes(atlas.image, frame.rect.x)).toEqual(
+        cellBytes(canon.atlas, was.frames[index].rect.x),
+      );
+    });
+    expect(
+      manifest.animations.find((a) => a.state === "seated")?.frames,
+    ).toHaveLength(2);
+
+    const report =
+      asset.record.state === "draft" ? asset.record.report : undefined;
+    if (!report) throw new Error("the packed record has no report");
+    expect<unknown>(report.carried).toEqual([
+      { key: "idle/south", revision: canon.revision },
+    ]);
+    const names = report.checks.map((c) => c.check);
+    expect(names.some((n) => n.startsWith("seated/south#0:"))).toBe(true);
+    expect(names.some((n) => n.startsWith("idle/south"))).toBe(false);
+  });
+
+  test("the pack command sends no conformance settings for the carried cells", async () => {
+    const rig = newRig();
+    seatedSet(rig);
+    const transport = fakeTransport();
+    transport.answer("studio_call", (callArgs) => {
+      const result = rig.session.pack(
+        (callArgs?.args ?? {}) as unknown as PackInput,
+        rig.content,
+        rig.palette,
+        rig.registryRoot,
+      );
+      if (!result.ok) throw hostError(result.reason, result.message);
+      return result;
+    });
+    const host = createStudioHost(transport);
+    const args = buildPackArgs?.({
+      selectedSet: setSummary(rig, "seated-set"),
+      assets: [],
+      assetId: "zeus-sprite",
+      styleTag: "panthea-pixel-v1",
+      footprintWidth: "1",
+      footprintHeight: "1",
+      originalWorkLicence: "MIT",
+      originalWorkAttribution: "",
+    });
+    if (!args || !windowActions.packWorkingSet)
+      throw new Error("the window produced no pack args");
+
+    await windowActions.packWorkingSet(host, args);
+
+    const sent = transport.to("studio_call")[0]?.args as {
+      op: string;
+      args: Record<string, unknown>;
+    };
+    expect(sent.op).toBe("pack");
+    expect("carriedParams" in sent.args).toBe(false);
+    expect(rig.session.store.status().assets).toHaveLength(1);
   });
 });

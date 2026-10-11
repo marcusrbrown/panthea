@@ -8,6 +8,7 @@ import {
   type Sha256,
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
+import { encodeRgbaPng } from "../placeholder";
 import {
   type AssetRig,
   assetRig,
@@ -892,18 +893,12 @@ describe("carrying cells from the published revision", () => {
     ]);
     return { first, prior };
   }
-  const params = {
-    background: PROVISIONAL_TEST_PARAMS.background,
-    alphaCutoff: PROVISIONAL_TEST_PARAMS.alphaCutoff,
-    grid: PROVISIONAL_TEST_PARAMS.grid,
-  };
-
-  test("a new state packs beside the carried one, whose cells and durations are byte-identical, and names its real source revision", () => {
+  test("a new state packs beside the carried one, whose cells and durations are byte-identical, and the report credits the source revision", () => {
     const rig = assetRig();
     const { first, prior } = twoStates(rig);
 
     const result = packAsset(
-      input({ workingSetId: "w2", carriedParams: params }),
+      input({ workingSetId: "w2" }),
       sources(rig, "w2", prior),
     );
 
@@ -927,41 +922,55 @@ describe("carrying cells from the published revision", () => {
       { assetId: "placeholder-zeus", revision: prior.revision },
     ]);
     expect(result.value.carried).toEqual(["idle/south"]);
-    expect(result.value.report.checks.map((c) => c.check)).toContain(
-      "idle/south#0:grid",
-    );
-    expect(result.value.report.checks.map((c) => c.check)).toContain(
-      "idle/north#3:grid",
-    );
+    expect<unknown>(result.value.report.carried).toEqual([
+      { key: "idle/south", revision: prior.revision },
+    ]);
+    const names = result.value.report.checks.map((c) => c.check);
+    expect(names).toContain("idle/north#3:grid");
+    expect(names.some((n) => n.startsWith("idle/south"))).toBe(false);
   });
 
-  test("carrying needs the conformance settings to be given", () => {
+  test("a carried cell is never conformed: one that would fail every check does not touch the status or the checks", () => {
     const rig = assetRig();
     const { prior } = twoStates(rig);
+    const atlas = decodePng(prior.atlas);
+    if (!atlas.ok) throw new Error("the prior atlas does not decode");
+    // A half-transparent pixel off the palette: binary alpha and palette both fail if the cell is ever checked.
+    const rgba = new Uint8Array(atlas.image.rgba);
+    rgba.set([1, 2, 3, 128], 0);
+    const poisoned: PriorRevision = {
+      ...prior,
+      atlas: encodeRgbaPng(rgba, atlas.image.width, atlas.image.height),
+    };
 
-    const refused = packAsset(
+    const result = packAsset(
       input({ workingSetId: "w2" }),
-      sources(rig, "w2", prior),
+      sources(rig, "w2", poisoned),
     );
 
-    expect(!refused.ok && refused.message).toMatch(
-      /idle\/south.*conformance settings/s,
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.report.status).toBe("pass");
+    expect(result.value.report.checks.every((c) => c.status === "pass")).toBe(
+      true,
     );
+    expect(
+      result.value.report.checks.some((c) => c.check.startsWith("idle/south")),
+    ).toBe(false);
+    sameBytes(cellOf(result.value.atlas, 0), cellOf(poisoned.atlas, 0));
   });
 
   test("replacing the same state carries nothing and names no source revision", () => {
     const rig = assetRig();
     const { prior } = twoStates(rig);
 
-    const result = packAsset(
-      input({ carriedParams: params }),
-      sources(rig, "w", prior),
-    );
+    const result = packAsset(input(), sources(rig, "w", prior));
 
     expect(result.ok && result.value.manifest.provenance.sourceAssets).toEqual(
       [],
     );
     expect(result.ok && result.value.carried).toEqual([]);
+    expect(result.ok && result.value.report.carried).toBeUndefined();
   });
 
   test("a published revision of another kind, cell size, pivot or footprint is refused", () => {
@@ -973,10 +982,7 @@ describe("carrying cells from the published revision", () => {
       return { ...prior, manifest: m };
     };
     const tryPrior = (p: PriorRevision) =>
-      packAsset(
-        input({ workingSetId: "w2", carriedParams: params }),
-        sources(rig, "w2", p),
-      );
+      packAsset(input({ workingSetId: "w2" }), sources(rig, "w2", p));
 
     expect(
       tryPrior(

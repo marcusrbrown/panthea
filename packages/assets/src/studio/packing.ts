@@ -44,12 +44,6 @@ export interface PackInput {
   readonly footprint?: { readonly w: number; readonly h: number };
   /** Portraits only: how long a picked, auto-conformed expression shows. */
   readonly stillFrameMs?: number;
-  /** The conformance settings cells carried from an earlier revision are reported with. */
-  readonly carriedParams?: {
-    readonly background: BackgroundSpec;
-    readonly alphaCutoff: number;
-    readonly grid: GridParams;
-  };
   /** The licence and attribution of the owner's own hand work; required when the asset has hand edits. */
   readonly originalWork?: {
     readonly licence: string;
@@ -92,7 +86,12 @@ interface Cell {
   readonly slot: string;
   readonly image: RgbaImage;
   readonly durationMs: number;
-  readonly params: NonNullable<PackInput["carriedParams"]>;
+  /** What the cell was conformed with. Absent for a cell carried from the published revision, which is not measured again. */
+  readonly params?: {
+    readonly background: BackgroundSpec;
+    readonly alphaCutoff: number;
+    readonly grid: GridParams;
+  };
 }
 
 interface SlotKey {
@@ -433,10 +432,6 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     atlasOfPrior = decodedPrior.image;
     for (const entry of priorEntries) {
       if (set.required.includes(entry.key)) continue;
-      if (input.carriedParams === undefined)
-        return refuse(
-          `${entry.key} is carried from the published revision: its conformance settings must be given`,
-        );
       carriedKeys.push(entry.key);
       carriedCells.set(
         entry.key,
@@ -459,7 +454,6 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         slot: key,
         image: carried.image,
         durationMs: carried.durationMs,
-        params: input.carriedParams as NonNullable<PackInput["carriedParams"]>,
       });
 
   const allKeys = [...new Set(cells.map((c) => c.slot))].sort(order);
@@ -507,10 +501,13 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     }
   }
 
-  // Fresh report-only conformance per final cell.
+  // Fresh report-only conformance for the cells this pack takes from the working
+  // set. A carried cell keeps the pixels and timings its published revision
+  // vouched for; it is not measured again, and the report names it instead.
   const checks: { check: string; status: "pass" | "fail"; message?: string }[] =
     [];
   for (const [index, entry] of ordered.entries()) {
+    if (entry.params === undefined) continue;
     const result = conformImage({
       rgba: entry.image.rgba,
       width: entry.image.width,
@@ -545,6 +542,14 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     schemaVersion: 1,
     status: checks.some((c) => c.status === "fail") ? "fail" : "pass",
     checks,
+    ...(prior === undefined || carriedKeys.length === 0
+      ? {}
+      : {
+          carried: carriedKeys
+            .slice()
+            .sort(order)
+            .map((key) => ({ key, revision: prior.revision })),
+        }),
   };
 
   // The atlas: one untrimmed row of native cells, pixels copied as they are.

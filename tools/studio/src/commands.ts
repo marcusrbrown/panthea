@@ -1127,7 +1127,6 @@ const OPS: Record<string, OpDef> = {
       ...str("styleTag", true),
       footprint: { t: "json" },
       stillFrameMs: { t: "int" },
-      carriedParams: { t: "json" },
       originalWork: { t: "json" },
     },
     run: (studio, a) => {
@@ -1160,17 +1159,6 @@ const OPS: Record<string, OpDef> = {
       }
       if (a.stillFrameMs !== undefined)
         input.stillFrameMs = a.stillFrameMs as number;
-      if (a.carriedParams !== undefined) {
-        const p = parseConformParams(a.carriedParams, "carriedParams");
-        if (!p.ok) return refuse("invalid-arguments", p.message);
-        if (p.value.scale !== undefined)
-          return refuse("invalid-arguments", "carriedParams takes no scale");
-        input.carriedParams = {
-          background: p.value.background,
-          alphaCutoff: p.value.alphaCutoff,
-          grid: p.value.grid,
-        };
-      }
       if (a.originalWork !== undefined) {
         const w = strictObject(a.originalWork, "originalWork", [
           "licence",
