@@ -156,6 +156,55 @@ test("seated draws canon through the shared layer: two frames at 500 ms from the
   expect(source.atlasCalls()).toEqual([ZEUS_ATLAS_HASH]);
 });
 
+const act: Selection = { ...idle, state: "act", ability: "thunderbolt" };
+
+test("act with its ability draws canon through the shared layer: five frames at 83/100/83/83/100 ms from the same atlas, and every check passes at every zoom", async () => {
+  const { inspector, backend, source } = await mount();
+
+  const measurement = await inspector.measure(act);
+  const results = evaluate(measurement, REFERENCE);
+
+  expect(measurement.resolution).toMatchObject({
+    source: "canon",
+    assetId: "zeus-sprite",
+  });
+  if (measurement.resolution.source !== "canon")
+    throw new Error("expected canon art");
+  expect(measurement.resolution.frames.map((f) => f.durationMs)).toEqual([
+    83, 100, 83, 83, 100,
+  ]);
+  expect(measurement.resolution.frames.map((f) => f.rect.x)).toEqual([
+    384, 448, 512, 576, 640,
+  ]);
+  expect(String(measurement.resolution.atlas.blob)).toBe(ZEUS_ATLAS_HASH);
+  expect(measurement.placements).toHaveLength(5);
+  expect(backend.layerStats()).toEqual({ sprites: 5, textures: 1 });
+  expect(results.filter((r) => !r.ok)).toEqual([]);
+  // source, atlas, frames; then per frame: the 1x target and four canvases.
+  expect(results).toHaveLength(3 + 5 * 5);
+  expect(results.find((r) => r.id.endsWith(":source"))?.label).toContain(
+    "source is canon",
+  );
+  expect(source.atlasCalls()).toEqual([ZEUS_ATLAS_HASH]);
+});
+
+test("act without an ability, and an ability nothing publishes, stay placeholders beside the canon act", async () => {
+  const { inspector } = await mount();
+
+  for (const selection of [
+    { ...idle, state: "act" },
+    { ...idle, state: "act", ability: "pronouncement" },
+  ] satisfies Selection[]) {
+    const measurement = await inspector.measure(selection);
+
+    expect(measurement.resolution).toMatchObject({
+      source: "placeholder",
+      reason: "missing-state",
+    });
+    expect(evaluate(measurement, REFERENCE).filter((r) => !r.ok)).toEqual([]);
+  }
+});
+
 test("states nothing publishes are reachable and draw the shared placeholder, labelled as placeholders", async () => {
   const { inspector } = await mount();
   const placeholder = resolveAssetPixels(
@@ -167,7 +216,6 @@ test("states nothing publishes are reachable and draw the shared placeholder, la
 
   for (const selection of [
     { ...idle, state: "act" },
-    { ...idle, state: "act", ability: "thunderbolt" },
     { ...idle, state: "walk" },
   ] satisfies Selection[]) {
     const measurement = await inspector.measure(selection);
@@ -222,7 +270,7 @@ test("with the registry withheld every canon check fails, whatever the placehold
   const suite = await inspector.runAll();
 
   const canon = suite.results.filter((r) => r.id.startsWith("canon:"));
-  expect(canon).toHaveLength(84);
+  expect(canon).toHaveLength(112);
   expect(canon.filter((r) => r.ok)).toEqual([]);
   expect(suite.results.find((r) => r.id === "root-kind")?.ok).toBe(false);
   expect(summarize(suite.results).ok).toBe(false);
@@ -243,7 +291,7 @@ test("a placeholder-only snapshot (a registry holding only unrelated ids) fails 
   const suite = await inspector.runAll();
 
   const canon = suite.results.filter((r) => r.id.startsWith("canon:"));
-  expect(canon).toHaveLength(36);
+  expect(canon).toHaveLength(64);
   expect(canon.filter((r) => r.ok)).toEqual([]);
 });
 

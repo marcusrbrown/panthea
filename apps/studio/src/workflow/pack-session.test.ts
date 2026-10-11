@@ -596,12 +596,32 @@ describe("adding a state to a published asset through the window's pack args", (
     const report =
       asset.record.state === "draft" ? asset.record.report : undefined;
     if (!report) throw new Error("the packed record has no report");
+    // canon now also holds the thunderbolt act: it is carried beside idle, and the set's own seated replaces canon's
     expect<unknown>(report.carried).toEqual([
       { key: "idle/south", revision: canon.revision },
+      { key: "act/south/thunderbolt", revision: canon.revision },
     ]);
+    const act = manifest.animations.find((a) => a.state === "act");
+    const wasAct = canon.manifest.animations.find(
+      (a: { state: string }) => a.state === "act",
+    );
+    expect(act?.frames.map((f) => f.durationMs)).toEqual([
+      83, 100, 83, 83, 100,
+    ]);
+    expect(act?.frames.map((f) => f.durationMs)).toEqual(
+      wasAct.frames.map((f: { durationMs: number }) => f.durationMs),
+    );
+    act?.frames.forEach((frame, index) => {
+      expect(cellBytes(atlas.image, frame.rect.x)).toEqual(
+        cellBytes(canon.atlas, wasAct.frames[index].rect.x),
+      );
+    });
     const names = report.checks.map((c) => c.check);
     expect(names.some((n) => n.startsWith("seated/south#0:"))).toBe(true);
     expect(names.some((n) => n.startsWith("idle/south"))).toBe(false);
+    expect(names.some((n) => n.startsWith("act/south/thunderbolt"))).toBe(
+      false,
+    );
   });
 
   test("the pack command sends no conformance settings for the carried cells", async () => {

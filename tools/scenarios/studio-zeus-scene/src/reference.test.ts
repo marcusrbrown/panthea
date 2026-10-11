@@ -55,14 +55,24 @@ test("the committed digests cover every published asset, state and expression", 
 
   expect([...byId.keys()]).toEqual(["zeus-portrait", "zeus-sprite"]);
   const sprite = byId.get("zeus-sprite");
+  // selections sort by key, so the act (with its ability) comes first
   expect(sprite?.selections.map((s) => s.key)).toEqual([
+    "act/south/thunderbolt",
     "idle/south",
     "seated/south",
   ]);
+  expect(sprite?.selections[0]?.query).toEqual({
+    state: "act",
+    direction: "south",
+    ability: "thunderbolt",
+  });
   expect(sprite?.selections[0]?.frames.map((f) => f.rect.x)).toEqual([
-    0, 64, 128, 192,
+    384, 448, 512, 576, 640,
   ]);
   expect(sprite?.selections[1]?.frames.map((f) => f.rect.x)).toEqual([
+    0, 64, 128, 192,
+  ]);
+  expect(sprite?.selections[2]?.frames.map((f) => f.rect.x)).toEqual([
     256, 320,
   ]);
   const portrait = byId.get("zeus-portrait");
@@ -82,7 +92,7 @@ test("the committed digests cover every published asset, state and expression", 
     }
   }
   expect(sprite?.atlas.blob).toBe(
-    "9060ecc772da1fe4ed75d0f05ae6ae9e4b5fe3f2939dfa841097769e16fff6f8",
+    "9976a62d051e1f0349a1f61d5f1cf2e3e673b8b06e97760290c8b99f5c626a69",
   );
 });
 
@@ -95,7 +105,8 @@ test("the file's constants are the client's, so both sides digest the same way",
 
 test("a frame's digest at each zoom is the digest of its decoded pixels, composited over the background and enlarged", () => {
   const sprite = REFERENCE.assets.find((a) => a.assetId === "zeus-sprite");
-  const frame = sprite?.selections[0]?.frames[2];
+  const frame = sprite?.selections.find((s) => s.key === "idle/south")
+    ?.frames[2];
   if (frame === undefined || sprite === undefined) throw new Error("no frame");
   const blob = readFileSync(
     new URL(

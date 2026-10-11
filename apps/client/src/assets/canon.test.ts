@@ -53,7 +53,7 @@ test("Zeus resolves to zeus-sprite idle-south: four frames at 333/167/333/167 ms
   expect(zeus.pivot).toEqual({ x: 32, y: 80 });
 });
 
-test("AE1: seated draws canon (two frames, 500 ms each), an unpublished state still draws the placeholder with no error, and idle-south is still canon", async () => {
+test("AE1: seated and act draw canon (500 ms x2, and 83/100/83/83/100 ms with the ability), an unpublished state still draws the placeholder with no error, and idle-south is still canon", async () => {
   const { canon, problems } = client(zeusPayload());
   const { snapshot } = await canon.load();
 
@@ -73,6 +73,30 @@ test("AE1: seated draws canon (two frames, 500 ms each), an unpublished state st
     direction: "south",
   });
 
+  const act = resolveAssetPixels(snapshot, {
+    spriteId: "zeus-sprite",
+    state: "act",
+    direction: "south",
+    ability: "thunderbolt",
+  });
+  const actNoAbility = resolveAssetPixels(snapshot, {
+    spriteId: "zeus-sprite",
+    state: "act",
+    direction: "south",
+  });
+  if (act.source !== "canon") throw new Error("expected canon art");
+  expect(act.frames.map((frame) => frame.durationMs)).toEqual([
+    83, 100, 83, 83, 100,
+  ]);
+  expect(act.frames.map((frame) => frame.rect.x)).toEqual([
+    384, 448, 512, 576, 640,
+  ]);
+  expect(String(act.atlas.blob)).toBe(ZEUS_ATLAS_HASH);
+  // an act is bound to its ability: the key without one is a placeholder
+  expect(actNoAbility).toMatchObject({
+    source: "placeholder",
+    reason: "missing-state",
+  });
   if (seated.source !== "canon") throw new Error("expected canon art");
   expect(seated.frames.map((frame) => frame.durationMs)).toEqual([500, 500]);
   expect(seated.frames.map((frame) => frame.rect.x)).toEqual([256, 320]);

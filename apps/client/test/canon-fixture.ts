@@ -35,9 +35,9 @@ export const ZEUS_REVISION = sha256(ZEUS_MANIFEST_TEXT);
 export const ZEUS_ATLAS_HASH = sha256(ZEUS_ATLAS_BYTES);
 if (
   ZEUS_REVISION !==
-    "1b14d579023e5f6a46d8052fa6d067a72ee97d6e9019157e2282bb8c143d4b3a" ||
+    "1382b7f7604f3fed64721f7f1bb4ee99f474d1ddafed5bde2aa7a1487230a56d" ||
   ZEUS_ATLAS_HASH !==
-    "9060ecc772da1fe4ed75d0f05ae6ae9e4b5fe3f2939dfa841097769e16fff6f8"
+    "9976a62d051e1f0349a1f61d5f1cf2e3e673b8b06e97760290c8b99f5c626a69"
 ) {
   throw new Error(
     "the Zeus fixture no longer matches the committed canon copy",

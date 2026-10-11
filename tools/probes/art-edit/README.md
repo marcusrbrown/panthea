@@ -768,3 +768,26 @@ python3 -m unittest discover tools/probes/art-edit
 ```
 
 The studio steps that followed (conform with the idle lineage's settings, create the working set, pick, open and export, import, `finish --method script`, pack, approve, publish) are in `docs/evidence/asset-studio/seated/README.md`.
+
+## Sprite act (prep)
+
+Status: assembled, not yet published. Zeus's `act/south/thunderbolt` shipped for review as an abbreviated throw of 5 frames at 83/100/83/83/100 ms (449 ms), with no lightning effect (Unit 10): anticipation, high wind-up, a release key pose, follow-through, and canon idle frame 0. `act_spec_zeus.json` rebuilds all five frames byte for byte through `sprite_act_composite.py` (idle frame 0 is the only input; no reference cell is adopted). Only the release frame uses `occlude` (the arm and bolt cross the robe on rows 48 to 75); the generated key-pose candidate supplied lineage only. `test_act_published.py` rebuilds the frames from repository files (the published idle cell) and, where the authoring scratch exists, compares each with its source PNG; once the act is published it should also compare with the published atlas.
+
+**Method.** Same priority as seated: consistency with canon idle frame 0 (C2c). In every frame the body (head, crown, beard, torso, robe, feet) is idle frame 0's pixels, untouched and in place; only the bolt arm and bolt are redrawn per frame inside boxes the reviewer's spec declares. A frame may instead be exactly idle frame 0 (the plan's last frame).
+
+1. **Key pose.** One studio request supplies a front-view pose and a reference for the throwing arm: slot `act/south/thunderbolt` (the app form and the CLI both read the third part as the ability), batch 8, a style note with no scenery and no effect. `run_sprite_seated.py` keys, downscales and places the candidates at idle's ratio. A standing figure needs no special mode: the default `--anchor sole` is idle's own placement, and the output folder is chosen with `--out`.
+2. **`sprite_act_composite.py`** builds N frames from the spec, the idle frame and an optional reference cell. It projects one `sprite_seated_composite` spec per frame (shared `keep` with `dy` 0 and the arm boxes cut out, shared `regions`, the frame's own `adopt`/`patches`/`rulings`/`budget`) and builds and verifies each through `build_with_report`, so every seated rule holds per frame: kept pixels identical, new pixels only inside the regions and within the frame's budget, idle's colours only, binary alpha, C2c's outline rules on new pixels, feet on row 79 with midpoint x=32. It adds the cross-frame rule (outside the regions every frame equals idle frame 0; an `identical_to_idle` frame is byte-identical to it), a check that no opaque idle pixel is lost, and the duration check (83 to 100 ms each, the act state's 10 to 12 fps). The exact spec schema is in the module header. The seated spec schema and its tests are unchanged.
+3. **The studio.** Conform the picked candidate with the idle lineage's settings, create the working set for `act/south/thunderbolt`, pick, open and export, then import the built `sheet.png`/`sheet.json` and `finish --method script --description "<what ran>"`, as for seated. Pack carries `idle/south` and `seated/south` forward without settings; the app cannot record a scripted finish, so the CLI does that step.
+
+```sh
+# 1. key, downscale and place every candidate of the request (read only)
+python3 tools/probes/art-edit/run_sprite_seated.py --store <studio-root> \
+  --request <request-id> --run r1 --out .context/studio-pipeline/act/r1
+# 2. build the frames, the sheet and its metadata, the strips and a GIF preview from the spec
+python3 tools/probes/art-edit/sprite_act_composite.py --spec <act-spec.json> [--reference <cells/<job>/M.png>] \
+  --durations 85,100,100,85,85,85 --out <out-dir>
+# 3. unit tests
+python3 -m unittest discover tools/probes/art-edit
+```
+
+The preview GIF stores delays in whole centiseconds, so 85 ms is written as 9 cs there only; `sheet.json` keeps the exact milliseconds.
