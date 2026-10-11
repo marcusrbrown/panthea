@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { EMPTY_SNAPSHOT, resolveAssetPixels } from "@panthea/assets/browser";
 import type { Realm } from "@panthea/contracts";
 import { type DecodedImage, placeholderImage } from "@panthea/renderer";
@@ -55,6 +55,14 @@ function setup(
   return { source, canon, problems, options };
 }
 
+// A renderer's sprite layer owns an ECS world, and koota caps worlds at 16 per
+// process, so every renderer a test mounts is disposed when the test ends
+// (dispose is idempotent, and a test may dispose its own sooner).
+const mounted: WorldRenderer[] = [];
+afterEach(() => {
+  for (const renderer of mounted.splice(0)) renderer.dispose();
+});
+
 async function mount(
   canon: CanonClient,
   options: {
@@ -73,6 +81,7 @@ async function mount(
     devicePixelRatio: () => options.devicePixelRatio ?? 1,
     available: () => options.available ?? { width: 1200, height: 1300 },
   });
+  mounted.push(renderer);
   await renderer.start(() => lost.push("lost"));
   return { renderer, backend, element, lost };
 }

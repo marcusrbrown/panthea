@@ -380,6 +380,20 @@ describe("scene layer", () => {
     layer.dispose();
   });
 
+  it("releases its ECS world on dispose, so layers can be made and disposed past koota's 16-world cap", () => {
+    // A layer owns a SpriteGroup, whose world is created with its first sprite
+    // and counted against a process-wide cap of 16. A device-loss remount or an
+    // inspector toggle builds a layer each time, so a dispose that kept the
+    // world would exhaust the cap in the running app.
+    for (let made = 0; made < 40; made += 1) {
+      const { layer } = setup();
+      layer.commit("god", GOD_SPEC, atlasImage(256, 80, 1));
+      layer.apply(entriesFor(instances(godEntity("zeus")), "god"));
+      expect(layer.stats.sprites).toBe(1);
+      layer.dispose();
+    }
+  });
+
   it("disposes cleanly, twice, and ignores later calls", () => {
     const { scene, layer } = setup();
     layer.commit("god", GOD_SPEC, atlasImage(256, 80, 1));
