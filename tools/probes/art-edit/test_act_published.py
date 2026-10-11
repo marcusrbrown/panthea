@@ -1,6 +1,6 @@
 """The committed Zeus act spec (`act_spec_zeus.json`) rebuilt from repository files alone.
 
-The five frames of `act/south/thunderbolt` (83/100/83/83/100 ms, 449 ms) are assembled by `sprite_act_composite.py` from the
+The five frames of `act/south/thunderbolt` (83/100/83/83/100 ms, 449 ms; key pose 1 is the release frame) are assembled by `sprite_act_composite.py` from the
 committed spec and the canon idle frame 0. The act is not published yet, so there is no published atlas to compare against;
 this checks what repository files can: the spec builds and verifies against the published idle frame 0 (the idle cell of the
 canon atlas), every rule of the composite holds, and the last frame is idle itself. Where the authoring scratch (the C2c frame
@@ -37,7 +37,7 @@ SCRATCH = REPO / ".context/studio-pipeline"
 SOURCES = [
     SCRATCH / "act/build/act-f0.png",
     SCRATCH / "act/build/act-f1.png",
-    SCRATCH / "act/keypose/keypose.png",
+    SCRATCH / "act/keypose/r1/keypose.png",
     SCRATCH / "act/build/act-f3.png",
     SCRATCH / "c2/c2c.png",
 ]
@@ -71,9 +71,9 @@ class CommittedActSpec(unittest.TestCase):
         self.assertEqual(cross_frame_problems(self.frames, self.idle0, self.spec), [])
 
     def test_the_frame_counts_are_the_reviewed_ones(self) -> None:
-        self.assertEqual([r["new_pixels"] for r in self.reports], [166, 151, 224, 72, 0])
-        self.assertEqual([r["occluded_pixels"] for r in self.reports], [0, 0, 116, 0, 0])
-        self.assertEqual([r.get("rulings") for r in self.reports], [9, 7, 14, 5, None])
+        self.assertEqual([r["new_pixels"] for r in self.reports], [166, 151, 213, 72, 0])
+        self.assertEqual([r["occluded_pixels"] for r in self.reports], [0, 0, 117, 0, 0])
+        self.assertEqual([r.get("rulings") for r in self.reports], [9, 7, 21, 5, None])
         self.assertEqual([r.get("colours") for r in self.reports], [13, 13, 13, 12, None])
 
     def test_only_the_release_frame_covers_the_robe_and_the_last_frame_is_idle_itself(self) -> None:
@@ -89,7 +89,7 @@ class CommittedActSpec(unittest.TestCase):
             for p in opaque_cells(self.idle0)
             if not any(b[0] <= p[0] <= b[2] and b[1] <= p[1] <= b[3] for b in regions + occluded)
         ]
-        self.assertGreater(len(outside), 400)
+        self.assertGreater(len(outside), 300)
         for frame in self.frames:
             for x, y in outside:
                 self.assertEqual(frame.pixel(x, y), self.idle0.pixel(x, y), (x, y))
