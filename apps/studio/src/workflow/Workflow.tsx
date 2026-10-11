@@ -56,6 +56,7 @@ import {
   recordObject,
   recordText,
   recordValue,
+  resolveActiveRecord,
   type WorkflowAction,
   type WorkflowState,
   workflowReducer,
@@ -461,9 +462,6 @@ export function WorkflowView({
   >({});
   const reopenedEdits = useRef(new Set<string>());
 
-  const selectedAsset =
-    state.assets.find((asset) => asset.id === state.selectedAssetId) ??
-    state.assets[0];
   const selectedSet =
     state.workingSets.find((set) => set.id === workingSetId) ??
     state.workingSets[0];
@@ -724,8 +722,16 @@ export function WorkflowView({
   const [localAssetId, setLocalAssetId] = useState<string | undefined>(
     state.selectedAssetId,
   );
+  // A requested record that is not in the snapshot yet (a pack just returned its id) is pending; it never falls back
+  // to another record, so no lifecycle action can reach one the owner did not select.
+  const activeRecord = resolveActiveRecord(
+    state.assets,
+    localAssetId ?? state.selectedAssetId,
+  );
   const activeAsset =
-    state.assets.find((asset) => asset.id === localAssetId) ?? selectedAsset;
+    activeRecord.kind === "record" ? activeRecord.asset : undefined;
+  const pendingAssetId =
+    activeRecord.kind === "pending" ? activeRecord.id : undefined;
   const activeReport = activeAsset ? recordObject(activeAsset, "report") : {};
   const activeReportStatus = text(activeReport.status);
   const activeFailedChecks = entries(activeReport.failedChecks)
@@ -1441,7 +1447,7 @@ export function WorkflowView({
                   <p>Review the record, then confirm each lifecycle change.</p>
                 </div>
               </div>
-              {state.assets.length === 0 ? (
+              {state.assets.length === 0 && pendingAssetId === undefined ? (
                 <p className="empty-state">
                   Packed drafts and approved records will appear here.
                 </p>
@@ -1451,7 +1457,7 @@ export function WorkflowView({
                     Record
                     <select
                       className="workflow-control"
-                      value={activeAsset?.id ?? ""}
+                      value={pendingAssetId ?? activeAsset?.id ?? ""}
                       onChange={(event) => {
                         setLocalAssetId(event.target.value);
                         setException("");
@@ -1461,6 +1467,11 @@ export function WorkflowView({
                         });
                       }}
                     >
+                      {pendingAssetId !== undefined && (
+                        <option value={pendingAssetId} disabled>
+                          Waiting for {pendingAssetId}…
+                        </option>
+                      )}
                       {orderedAssetRecords(state.assets).map((asset) => (
                         <option key={asset.id} value={asset.id}>
                           {recordText(asset, "assetId") ?? asset.id} ·{" "}
@@ -1471,6 +1482,27 @@ export function WorkflowView({
                       ))}
                     </select>
                   </label>
+                  {pendingAssetId !== undefined && (
+                    <div className="asset-record asset-pending">
+                      <p role="status">
+                        Waiting for {pendingAssetId}… It is not in the studio's
+                        lists yet; nothing is shown or changed until it is.
+                      </p>
+                      <div className="asset-actions">
+                        {[
+                          "Edit draft",
+                          "Approve",
+                          "Approve with exception",
+                          "Reject",
+                          "Publish this revision",
+                        ].map((label) => (
+                          <button key={label} type="button" disabled>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {activeAsset && (
                     <div className="asset-record">
                       <div className="asset-title">
@@ -1596,7 +1628,9 @@ export function WorkflowView({
                   renderPreview(activePreviewWithKind)
                 ) : (
                   <p className="muted">
-                    Select a draft or approved record to preview it.
+                    {pendingAssetId === undefined
+                      ? "Select a draft or approved record to preview it."
+                      : `Waiting for ${pendingAssetId}; no other record is previewed.`}
                   </p>
                 )}
               </section>

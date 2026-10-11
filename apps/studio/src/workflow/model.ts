@@ -259,3 +259,30 @@ export const recordObject = (
   record: SummaryRecord,
   key: string,
 ): Record<string, unknown> => object(recordValue(record, key));
+
+/**
+ * The record the asset panel acts on. A requested id that is not in `assets` is pending, never another record: the
+ * lists arrive on the next poll, so a record the window just selected (a fresh pack) may not be there yet, and falling
+ * back to the first or the previous record would let Approve, Reject or Publish act on one the owner did not choose.
+ * With nothing requested the first record is shown.
+ */
+export type ActiveRecord =
+  | { readonly kind: "none" }
+  | { readonly kind: "pending"; readonly id: string }
+  | { readonly kind: "record"; readonly asset: SummaryRecord };
+
+export function resolveActiveRecord(
+  assets: readonly SummaryRecord[],
+  requestedId: string | undefined,
+): ActiveRecord {
+  if (requestedId === undefined) {
+    const first = assets[0];
+    return first === undefined
+      ? { kind: "none" }
+      : { kind: "record", asset: first };
+  }
+  const found = assets.find((asset) => asset.id === requestedId);
+  return found === undefined
+    ? { kind: "pending", id: requestedId }
+    : { kind: "record", asset: found };
+}
