@@ -1,6 +1,7 @@
 ---
 title: WebGPURenderer render-target previews need a flipped blit and compiled materials
 date: 2026-10-08
+last_updated: 2026-10-10
 category: integration-issues
 module: studio-preview
 problem_type: integration_issue
@@ -56,6 +57,8 @@ Before the fix, the blit sampled the target without flipping `v`, and a scene ch
    ```
 
    The preview calls it after each scene change and after device-loss recovery, never on animation ticks or zoom changes.
+
+   (2026-10-10) Studio preview only. The game client presents first; see [Client scene presents first and compiles behind](client-scene-presents-before-compile-2026-10-10.md).
 
 The settings that keep output exact:
 
