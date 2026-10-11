@@ -40,6 +40,10 @@ Rules `build` enforces (each has a test that fails when it is broken):
      `sprite_cleanup_c2c.py`, limited to the new pixels). A tie needs a ruling. Rulings are the reviewer's
      explicit pixels and win over the rules, as in C2c.
   5. The feet stay put: the lowest opaque row is 79, there are two foot clusters on it, and their midpoint is x=32.
+
+`verify(frame, idle, spec, seated_cell=None)` rechecks these on a finished frame. It holds the budget (`new_pixels`
+and `rulings` from the frame and the spec; `adopted` only when the seated cell is given, since only that tells an adopted
+pixel from a patched one) and every ruled pixel's colour. See its docstring for what it does not re-derive.
 """
 
 from __future__ import annotations
@@ -268,13 +272,38 @@ def alpha_and_colour_problems(frame: Raster, allowed: set[Colour]) -> list[str]:
     return problems
 
 
-def verify(frame: Raster, idle: Raster, spec: dict) -> list[str]:
-    """Every rule of the module docstring, checked on a finished frame 0 from the spec alone. Empty when it holds."""
+def adopted_cells(seated_cell: Raster, spec: dict) -> set[Point]:
+    """The output pixels the spec adopts from the seated cell: opaque seated pixels of each `adopt` box, moved by its
+    dx and dy, less the cells a patch then overwrote. The same cells `build` counts as adopted."""
+    adopted: set[Point] = set()
+    for index, entry in enumerate(spec.get("adopt", [])):
+        if not isinstance(entry, dict) or "box" not in entry:
+            continue
+        x0, y0, x1, y1 = _box(entry["box"], f"adopt[{index}].box")
+        shift_x, shift_y = _int(entry.get("dx", 0), "adopt.dx"), _int(entry.get("dy", 0), "adopt.dy")
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                if seated_cell.pixel(x, y)[3] >= ALPHA_CUTOFF:
+                    adopted.add((x + shift_x, y + shift_y))
+    return adopted - {p for p, _ in _cells(spec.get("patches", []), "spec.patches")}
+
+
+def verify(frame: Raster, idle: Raster, spec: dict, seated_cell: Raster | None = None) -> list[str]:
+    """The rules of the module docstring, checked on a finished frame 0 from the spec alone. Empty when they hold.
+
+    From `frame`, `idle` and the spec it checks: kept pixels identical after the offset and not exposed; new pixels (the
+    frame's opaque pixels that are not moved kept ones) inside the declared regions and no more than `budget.new_pixels`;
+    the number of rulings no more than `budget.rulings`, and every ruled pixel drawn, new, and in the ruling's colour;
+    binary alpha and idle's colours; C2c's outline rules; and the feet. Given `seated_cell` it also recovers the adopted
+    pixels from the spec's `adopt` boxes and checks `budget.adopted`. Without it that ceiling is not checked: an adopted
+    pixel and a patched one are both just new pixels in the frame, and only the seated cell tells them apart. It does
+    not re-derive how an adopted pixel was snapped, only that its colour is one of idle's."""
     spec = load_spec(spec)
     dy = _int(spec.get("dy"), "spec.dy")
     kept = keep_cells(idle, spec.get("keep"))
     regions = [_box(b, "spec.regions") for b in spec.get("regions", [])]
-    rulings = {p for p, _ in _cells(spec.get("rulings", []), "spec.rulings")}
+    ruling_cells = _cells(spec.get("rulings", []), "spec.rulings")
+    rulings = {p for p, _ in ruling_cells}
     problems = []
     moved = {(x, y + dy) for x, y in kept}
     here, was = opaque_cells(frame), opaque_cells(idle)
@@ -292,6 +321,14 @@ def verify(frame: Raster, idle: Raster, spec: dict) -> list[str]:
     for p in sorted(new):
         if not any(_in_box(p, box) for box in regions):
             problems.append(f"new pixel {p} is outside the declared regions")
+    problems += budget_problems(spec, new, rulings, adopted_cells(seated_cell, spec) if seated_cell is not None else None)
+    for p, colour in ruling_cells:
+        if p not in new:
+            problems.append(f"ruling at {p} is not on a new pixel of the frame")
+        elif colour_at(frame, p) != colour:
+            problems.append(
+                f"ruling at {p} is #%02x%02x%02x, the spec rules #%02x%02x%02x" % (*colour_at(frame, p), *colour)  # type: ignore[misc]
+            )
     problems += alpha_and_colour_problems(frame, colour_set(idle))
     problems += feet_problems(frame)
     try:
@@ -303,6 +340,21 @@ def verify(frame: Raster, idle: Raster, spec: dict) -> list[str]:
         if colour_at(frame, p) != colour:
             problems.append(f"outline {rule} at {p}: expected #%02x%02x%02x" % colour)
     return problems
+
+
+def budget_problems(spec: dict, new: set[Point], rulings: set[Point], adopted: set[Point] | None) -> list[str]:
+    """Each ceiling of `spec.budget` against the count. `adopted` is None when it cannot be recovered."""
+    budget = spec.get("budget")
+    if not isinstance(budget, dict) or set(budget) - BUDGET_KEYS or "new_pixels" not in budget:
+        return ["spec.budget needs new_pixels and may have adopted and rulings"]
+    counts = {"new_pixels": len(new), "rulings": len(rulings)}
+    if adopted is not None:
+        counts["adopted"] = len(adopted)
+    return [
+        f"{key}: {counts[key]} is over the budget of {ceiling}"
+        for key, ceiling in budget.items()
+        if key in counts and counts[key] > _int(ceiling, f"budget.{key}")
+    ]
 
 
 # --- frame 0 ----------------------------------------------------------------------------------------------------
@@ -380,7 +432,7 @@ def build_with_report(seated_cell: Raster, idle_frame0: Raster, spec: dict | str
         pixels[p] = colour
     frame = _raster(pixels)
 
-    problems = verify(frame, idle_frame0, spec)
+    problems = verify(frame, idle_frame0, spec, seated_cell)
     if problems:
         raise ValueError("the composite breaks the rules:\n  " + "\n  ".join(problems))
     clusters = sole_clusters(frame, 2, 2)

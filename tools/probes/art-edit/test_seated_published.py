@@ -55,6 +55,12 @@ class PublishedSeated(unittest.TestCase):
         self.assertEqual(frame2(self.f0, self.spec).rgba, self.f1.rgba)
         self.assertEqual(rise_problems(self.f0, self.f1, self.spec), [])
 
+    def test_the_published_frame_sits_exactly_at_the_new_pixel_ceiling(self) -> None:
+        self.assertEqual(self.spec["budget"]["new_pixels"], 560)
+        tight = {**self.spec, "budget": {**self.spec["budget"], "new_pixels": 559}}
+        problems = verify(self.f0, self.idle0, tight)
+        self.assertEqual(problems, ["new_pixels: 560 is over the budget of 559"])
+
     def test_a_pixel_changed_in_the_kept_head_breaks_the_rules(self) -> None:
         data = bytearray(self.f0.rgba)
         # idle row 31 (the head top) moved down by dy sits in the kept region; recolour its first opaque pixel

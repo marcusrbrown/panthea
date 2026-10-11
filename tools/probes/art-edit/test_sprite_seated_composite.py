@@ -244,6 +244,73 @@ class Budget(unittest.TestCase):
         self.assertEqual(report["rulings"], 6)
 
 
+class VerifyChecksTheBudgetAndTheRulings(unittest.TestCase):
+    """`verify` is the independent check of a finished frame, so it must hold the spec's ceilings and rulings too."""
+
+    def setUp(self) -> None:
+        self.spec = good_spec()
+        self.frame, self.report = build_with_report(seated_cell(), idle_cell(), self.spec)
+        self.seated = seated_cell()
+
+    def with_budget(self, **budget) -> dict:
+        spec = copy.deepcopy(self.spec)
+        spec["budget"] = budget
+        return spec
+
+    def test_new_pixels_over_the_budget_are_reported(self) -> None:
+        for ceiling in (0, self.report["new_pixels"] - 1):
+            problems = verify(self.frame, idle_cell(), self.with_budget(new_pixels=ceiling))
+            self.assertTrue(
+                any("new_pixels" in p and f"{self.report['new_pixels']} is over the budget of {ceiling}" in p for p in problems),
+                problems,
+            )
+
+    def test_adopted_pixels_over_the_budget_are_reported_when_the_seated_cell_is_given(self) -> None:
+        ceiling = self.report["adopted_pixels"] - 1
+        spec = self.with_budget(new_pixels=500, adopted=ceiling)
+        problems = verify(self.frame, idle_cell(), spec, self.seated)
+        self.assertTrue(any(f"adopted: {self.report['adopted_pixels']} is over the budget of {ceiling}" in p for p in problems), problems)
+
+    def test_rulings_over_the_budget_are_reported(self) -> None:
+        ceiling = self.report["rulings"] - 1
+        problems = verify(self.frame, idle_cell(), self.with_budget(new_pixels=500, rulings=ceiling))
+        self.assertTrue(any(f"rulings: {self.report['rulings']} is over the budget of {ceiling}" in p for p in problems), problems)
+
+    def test_a_ruled_pixel_whose_colour_is_not_the_rulings_is_reported(self) -> None:
+        out = bytearray(self.frame.rgba)
+        at = (79 * 64 + 24) * 4  # a foot corner the spec rules #76572f
+        self.assertEqual(tuple(out[at : at + 3]), G0)
+        out[at : at + 3] = bytes(G1)
+        problems = verify(Raster(64, 80, bytes(out)), idle_cell(), self.spec)
+        self.assertTrue(any("ruling" in p and "(24, 79)" in p and "#76572f" in p for p in problems), problems)
+
+    def test_a_ruling_on_a_pixel_the_frame_does_not_draw_is_reported(self) -> None:
+        out = bytearray(self.frame.rgba)
+        at = (79 * 64 + 24) * 4
+        out[at : at + 4] = bytes(4)
+        problems = verify(Raster(64, 80, bytes(out)), idle_cell(), self.spec)
+        self.assertTrue(any("ruling" in p and "(24, 79)" in p for p in problems), problems)
+
+    def test_exactly_at_every_ceiling_still_passes(self) -> None:
+        spec = self.with_budget(
+            new_pixels=self.report["new_pixels"], adopted=self.report["adopted_pixels"], rulings=self.report["rulings"]
+        )
+        self.assertEqual(verify(self.frame, idle_cell(), spec, self.seated), [])
+        self.assertEqual(verify(self.frame, idle_cell(), spec), [])
+        self.assertEqual(len(build(self.seated, idle_cell(), spec).rgba), len(self.frame.rgba))
+
+    def test_the_adopted_ceiling_needs_the_seated_cell_and_is_not_claimed_without_it(self) -> None:
+        # Adopted and patched pixels are both just new pixels in the frame; only the seated cell tells them apart.
+        spec = self.with_budget(new_pixels=500, adopted=0)
+        self.assertEqual(verify(self.frame, idle_cell(), spec), [])
+        self.assertTrue(verify(self.frame, idle_cell(), spec, self.seated))
+
+    def test_a_budget_without_new_pixels_is_reported(self) -> None:
+        spec = copy.deepcopy(self.spec)
+        del spec["budget"]
+        self.assertTrue(any("budget" in p for p in verify(self.frame, idle_cell(), spec)))
+
+
 class ColoursAndAlpha(unittest.TestCase):
     def test_adopted_colours_are_snapped_to_idles_colours(self) -> None:
         out = built()
