@@ -1,6 +1,7 @@
 ---
 title: Build the Tauri sidecar before clippy
 date: 2026-10-04
+last_updated: 2026-10-11
 category: workflow-issues
 module: desktop-lifecycle
 problem_type: workflow_issue
@@ -9,7 +10,7 @@ severity: low
 applies_when:
   - "Running Rust compilation checks for the desktop shell"
   - "Preparing a clean checkout without generated sidecar binaries"
-tags: [tauri, rust, clippy, sidecar, external-bin, build]
+tags: [tauri, rust, clippy, sidecar, external-bin, build, all-targets]
 ---
 
 # Build the Tauri sidecar before clippy
@@ -34,6 +35,8 @@ bash tools/probes/backend-lifecycle/scripts/build-sidecar.sh &&
 ```
 
 Formatting alone does not compile the crate. Clippy does, so it triggers the Tauri build script.
+
+Run clippy exactly as CI does, with `--locked --all-targets` (`.github/workflows/ci.yaml`, in both the desktop job and `rust-studio`). Without `--all-targets`, clippy skips test code. CI lints tests too, so a lint that only appears in a test fails CI and nowhere else. The studio crate (`apps/studio/src-tauri`) has the same sidecar prerequisite: build it with `bash apps/studio/scripts/build-sidecar.sh`.
 
 ## Why This Matters
 

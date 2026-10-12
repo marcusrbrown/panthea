@@ -112,10 +112,10 @@ interface Watch {
 }
 
 /**
- * How long an idle session keeps the writer lock. Measured in
- * tools/probes/studio-release: with artifact verification cached a release
- * followed by a re-acquire costs about 2 s (the session acquire is 0.17 s, the
- * server's cold start the rest), 8 s without the cache. The grace has to outlast
+ * How long an idle session keeps the writer lock. From tools/probes/studio-release:
+ * a release followed by a re-acquire comes to about 8 s without the artifact
+ * verification cache and about 2 s with it (derived from the measured parts: the
+ * session acquire is 0.17 s, the server's cold start the rest). The grace has to outlast
  * an automatic burst (drain, conform, the poll's next list) and a review's
  * clicks, and bounds how long a CLI step finds the root locked after the app's
  * last write.

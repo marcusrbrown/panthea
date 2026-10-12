@@ -1,6 +1,7 @@
 ---
 title: Scripted art edits record method script in provenance
 date: 2026-10-08
+last_updated: 2026-10-11
 category: best-practices
 module: assets
 problem_type: convention
@@ -29,7 +30,7 @@ The studio recorded every `finish` as `hand edit <id>`. The r10c Zeus portrait c
     --method script --description "<what ran, naming the scripts>"
   ```
 
-  `--method` is `hand` or `script` and defaults to `hand`. `--description` is required for `script` and must not be empty. Both need `--png` and `--json`, so the Aseprite workspace flow is unchanged (`tools/studio/src/commands.ts`, `readStep`).
+  `--method` is `hand` or `script` and defaults to `hand`. `--description` is required for `script` and must not be empty (`tools/studio/src/commands.ts`, `readStep`). Both also apply on the Aseprite workspace path. The studio app's Finish has a Scripted toggle, and its description is published with the asset.
 - **Contract.** `HandEditStep` has an optional `method: "hand" | "script"`, and a missing `method` means hand (`packages/contracts/src/assets.ts`). The parser accepts the old shape and adds nothing to it. That keeps content-addressed canon manifests, such as `zeus-portrait`, parsing to the same bytes, and nothing gets rewritten.
 - **Packing** builds each step with `handStepOf(edit)` (`packages/assets/src/studio/export-import.ts`):
   - a scripted finish gives `{description, method: "script", hash}`;
