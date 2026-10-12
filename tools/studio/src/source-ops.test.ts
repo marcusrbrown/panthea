@@ -22,6 +22,7 @@ import {
   firstBlob,
   manualClock,
   publishCanon,
+  variantSprite,
   writeDraft,
 } from "../../../packages/assets/src/studio/_test-preview";
 import {
@@ -192,6 +193,85 @@ describe("source-resolve", () => {
       error: { code: "invalid-arguments" },
     });
     expect(exitOf(outcome)).toBe(64);
+    await r.studio.teardown();
+  });
+});
+
+describe("a realm variant through the source ops", () => {
+  const draftWithVariant = async () => {
+    const r = rig();
+    const v = variantSprite("placeholder-zeus", 3);
+    writeDraft(r.studioRoot, "zeus-take", v.asset);
+    r.touchDraft("zeus-take");
+    return { r, v };
+  };
+
+  test("source-resolve with a realm names the variant, and source-bytes serves the variant's atlas under the variant's key", async () => {
+    const { r, v } = await draftWithVariant();
+
+    const base = ok(
+      await r.call("source-resolve", { source: "draft", id: "zeus-take" }),
+    );
+    const variant = ok(
+      await r.call("source-resolve", {
+        source: "draft",
+        id: "zeus-take",
+        realm: "underworld",
+      }),
+    );
+    const reply = ok(
+      await r.call("source-bytes", {
+        source: "draft",
+        id: "zeus-take",
+        realm: "underworld",
+        v: variant.bytes.pixelKey,
+      }),
+    );
+
+    expect(variant.selection).toEqual({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+    expect(variant.bytes.pixelKey).not.toBe(base.bytes.pixelKey);
+    expect(sha256Hex(new Uint8Array(Buffer.from(reply.base64, "base64")))).toBe(
+      v.variantHash,
+    );
+    expect(reply.realm).toBe("underworld");
+    // The base selection never serves the variant's key.
+    const stale = await r.call("source-bytes", {
+      source: "draft",
+      id: "zeus-take",
+      v: variant.bytes.pixelKey,
+    });
+    expect(stale.ok).toBe(false);
+    await r.studio.teardown();
+  });
+
+  test("a realm the asset does not publish is refused as no validated atlas, and a malformed realm as invalid arguments", async () => {
+    const { r } = await draftWithVariant();
+
+    const resolved = await r.call("source-resolve", {
+      source: "draft",
+      id: "zeus-take",
+      realm: "town",
+    });
+    const missing = await r.call("source-bytes", {
+      source: "draft",
+      id: "zeus-take",
+      realm: "town",
+      v: "x",
+    });
+    const malformed = await r.call("source-bytes", {
+      source: "draft",
+      id: "zeus-take",
+      realm: "../x",
+      v: "x",
+    });
+
+    expect(ok(resolved).kind).toBe("placeholder");
+    expect(JSON.stringify(missing)).toContain("not-found");
+    expect(JSON.stringify(malformed)).toContain("invalid-arguments");
     await r.studio.teardown();
   });
 });

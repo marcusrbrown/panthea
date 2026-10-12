@@ -371,6 +371,25 @@ export function createPlaybackClock(
   };
 }
 
+/**
+ * The subject to draw: the chosen one, on the realm the previewed record asks
+ * for. The realm applies only when the chosen subject is that record itself; any
+ * other chosen subject is drawn from its base atlas.
+ */
+export function harnessSubject(
+  chosen: Selection | undefined,
+  selected: Selection | undefined,
+): Selection | undefined {
+  if (
+    chosen === undefined ||
+    selected?.realm === undefined ||
+    selected.source !== chosen.source ||
+    selected.id !== chosen.id
+  )
+    return chosen;
+  return { source: chosen.source, id: chosen.id, realm: selected.realm };
+}
+
 export function harnessItems(selection: HarnessSelection): PreviewItem[] {
   const items: PreviewItem[] = [];
   for (let x = 0; x < PATCH; x += 1) {

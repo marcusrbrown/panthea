@@ -416,8 +416,9 @@ export interface GenerationSlot {
 
 /**
  * What a masked edit starts from: an earlier job's output, named by the job and
- * the output hash used; or a hand-authored image imported as a studio blob,
- * which no job made and which provenance records as hand work.
+ * the output hash used; a hand-authored image imported as a studio blob,
+ * which no job made and which provenance records as hand work; or one frame
+ * of a published revision (a frame ref), which repair edits from.
  */
 export type EditBase =
   | { readonly kind: "job"; readonly jobId: string; readonly output: Sha256 }
@@ -425,6 +426,14 @@ export type EditBase =
       readonly kind: "hand";
       readonly image: Sha256;
       readonly description: string;
+    }
+  | {
+      readonly kind: "published";
+      readonly assetId: AssetId;
+      readonly revision: Sha256;
+      readonly slotKey: string;
+      readonly frameIndex: number;
+      readonly frameHash: Sha256;
     };
 
 /**
@@ -543,6 +552,12 @@ export interface GenerationRef {
 export interface GeneratedProvenance extends ProvenanceCommon {
   readonly method: "generated";
   readonly generations: readonly GenerationRef[];
+  /**
+   * The steps of the derived cells and realm variants this revision carries
+   * from its prior revision, so a drawn or repaired revision does not lose their
+   * lineage. Absent when it carries none; when present, non-empty.
+   */
+  readonly steps?: readonly DerivedStep[];
 }
 
 export interface HandProvenance extends ProvenanceCommon {
@@ -550,10 +565,40 @@ export interface HandProvenance extends ProvenanceCommon {
   readonly editor?: string;
 }
 
+/** JSON a recipe takes as parameters: integers only, so canonical text is stable. */
+export type CanonicalJson =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly CanonicalJson[]
+  | { readonly [key: string]: CanonicalJson };
+
+/** The published slot a derived slot was computed from. */
+export interface DerivedSource {
+  readonly assetId: AssetId;
+  readonly revision: Sha256;
+  readonly slotKey: string;
+  /** SHA-256 over the source slot's frames' RGBA, in order, plus its duration list. */
+  readonly slotHash: Sha256;
+}
+
+/** One recipe application: a slot listed here is derived; any other slot is carried or a hand step. */
+export interface DerivedStep {
+  readonly recipe: string;
+  readonly version: number;
+  readonly params: { readonly [key: string]: CanonicalJson };
+  readonly source: DerivedSource;
+  readonly outputSlot: string;
+  readonly resultHash: Sha256;
+}
+
 export interface DerivedProvenance extends ProvenanceCommon {
   readonly method: "derived";
   readonly operation: string;
   readonly runtime: RuntimeRef;
+  /** Non-empty: `method: "derived"` applies exactly when a manifest has steps. */
+  readonly steps: readonly DerivedStep[];
   readonly resultHashes: readonly Sha256[];
 }
 
@@ -611,9 +656,28 @@ export interface SpriteAnimation {
   readonly frames: readonly Frame[];
 }
 
+/** A shade of a palette ramp. */
+export interface RampShade {
+  readonly ramp: string;
+  readonly index: number;
+}
+
+/** One source shade and the shade it becomes in the variant's palette. */
+export interface ColourMapping {
+  readonly source: RampShade;
+  readonly target: RampShade;
+}
+
+/**
+ * A realm recolour of the whole asset: its own atlas (same size as the source
+ * atlas, alpha preserved) and the map `(sourceRamp, index) → (targetRamp, index)`
+ * it was recoloured under, so publish can rerun it from the source atlas.
+ */
 export interface RealmVariant {
   readonly paletteFamily: string;
   readonly paletteId: string;
+  readonly atlas: Atlas;
+  readonly map: readonly ColourMapping[];
 }
 
 export interface SpriteManifest extends ManifestCommon {
@@ -692,8 +756,42 @@ function parseSlot(value: unknown, path: string): ParseResult<GenerationSlot> {
 
 function parseEditBase(value: unknown, path: string): ParseResult<EditBase> {
   if (!isRecord(value)) return fail(path, "expected an object");
-  const kind = parseEnum(value.kind, `${path}.kind`, ["job", "hand"] as const);
+  const kind = parseEnum(value.kind, `${path}.kind`, [
+    "job",
+    "hand",
+    "published",
+  ] as const);
   if (!kind.ok) return kind;
+  if (kind.value === "published")
+    return parseStrictRecord<EditBase>(
+      value,
+      path,
+      ["kind", "assetId", "revision", "slotKey", "frameIndex", "frameHash"],
+      (record) => {
+        const assetId = parseAssetId(record.assetId, `${path}.assetId`);
+        if (!assetId.ok) return assetId;
+        const revision = parseSha256(record.revision, `${path}.revision`);
+        if (!revision.ok) return revision;
+        const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+        if (!slotKey.ok) return slotKey;
+        const frameIndex = parseIntegerAtLeast(
+          record.frameIndex,
+          `${path}.frameIndex`,
+          0,
+        );
+        if (!frameIndex.ok) return frameIndex;
+        const frameHash = parseSha256(record.frameHash, `${path}.frameHash`);
+        if (!frameHash.ok) return frameHash;
+        return ok({
+          kind: "published",
+          assetId: assetId.value,
+          revision: revision.value,
+          slotKey: slotKey.value,
+          frameIndex: frameIndex.value,
+          frameHash: frameHash.value,
+        });
+      },
+    );
   if (kind.value === "job")
     return parseStrictRecord<EditBase>(
       value,
@@ -978,6 +1076,107 @@ export function parseModelRef(
   });
 }
 
+function parseCanonicalJson(
+  value: unknown,
+  path: string,
+): ParseResult<CanonicalJson> {
+  if (value === null || typeof value === "boolean") return ok(value);
+  if (typeof value === "string") {
+    if (URL_VALUE.test(value))
+      return fail(path, "params never carry credentials or endpoints");
+    return ok(value);
+  }
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value)
+      ? ok(value)
+      : fail(path, "expected an integer");
+  }
+  if (Array.isArray(value)) return parseArray(value, path, parseCanonicalJson);
+  if (isRecord(value)) return parseCanonicalParams(value, path);
+  return fail(path, "expected JSON");
+}
+
+function parseCanonicalParams(
+  value: unknown,
+  path: string,
+): ParseResult<{ readonly [key: string]: CanonicalJson }> {
+  if (!isRecord(value)) return fail(path, "expected an object");
+  const params: { [key: string]: CanonicalJson } = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const entryPath = `${path}.${key}`;
+    // `params["__proto__"] = x` would reparent the object and drop the key, so the
+    // canonical bytes would no longer cover what was recorded.
+    if (key === "__proto__")
+      return fail(entryPath, "params never carry a __proto__ key");
+    if (SECRET_KEY.test(key))
+      return fail(entryPath, "params never carry credentials or endpoints");
+    const parsed = parseCanonicalJson(entry, entryPath);
+    if (!parsed.ok) return parsed;
+    params[key] = parsed.value;
+  }
+  return ok(params);
+}
+
+function parseDerivedSource(
+  value: unknown,
+  path: string,
+): ParseResult<DerivedSource> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["assetId", "revision", "slotKey", "slotHash"],
+    (record) => {
+      const assetId = parseAssetId(record.assetId, `${path}.assetId`);
+      if (!assetId.ok) return assetId;
+      const revision = parseSha256(record.revision, `${path}.revision`);
+      if (!revision.ok) return revision;
+      const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+      if (!slotKey.ok) return slotKey;
+      const slotHash = parseSha256(record.slotHash, `${path}.slotHash`);
+      if (!slotHash.ok) return slotHash;
+      return ok({
+        assetId: assetId.value,
+        revision: revision.value,
+        slotKey: slotKey.value,
+        slotHash: slotHash.value,
+      });
+    },
+  );
+}
+
+export function parseDerivedStep(
+  value: unknown,
+  path: string,
+): ParseResult<DerivedStep> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["recipe", "version", "params", "source", "outputSlot", "resultHash"],
+    (record) => {
+      const recipe = parseString(record.recipe, `${path}.recipe`);
+      if (!recipe.ok) return recipe;
+      const version = parsePositiveInteger(record.version, `${path}.version`);
+      if (!version.ok) return version;
+      const params = parseCanonicalParams(record.params, `${path}.params`);
+      if (!params.ok) return params;
+      const source = parseDerivedSource(record.source, `${path}.source`);
+      if (!source.ok) return source;
+      const outputSlot = parseString(record.outputSlot, `${path}.outputSlot`);
+      if (!outputSlot.ok) return outputSlot;
+      const resultHash = parseSha256(record.resultHash, `${path}.resultHash`);
+      if (!resultHash.ok) return resultHash;
+      return ok({
+        recipe: recipe.value,
+        version: version.value,
+        params: params.value,
+        source: source.value,
+        outputSlot: outputSlot.value,
+        resultHash: resultHash.value,
+      });
+    },
+  );
+}
+
 export function parseRuntimeRef(
   value: unknown,
   path: string,
@@ -1035,6 +1234,42 @@ const COMMON_PROVENANCE_KEYS = [
 
 const PROVENANCE_METHODS = ["generated", "hand", "derived"] as const;
 
+/**
+ * The steps of a provenance record: each a valid step, one per slot (a palette
+ * swap also names its realm, so a slot keeps its own step and one swap per
+ * realm), each with its source among the record's source assets.
+ */
+function parseStepList(
+  value: unknown,
+  path: string,
+  sourceAssets: readonly AssetRevisionRef[],
+): ParseResult<readonly DerivedStep[]> {
+  const steps = parseArray(value, `${path}.steps`, parseDerivedStep);
+  if (!steps.ok) return steps;
+  const duplicateSlot = uniqueBy(
+    steps.value,
+    (step) =>
+      step.recipe === "palette-swap"
+        ? `palette-swap:${String(step.params.targetFamily)}:${step.outputSlot}`
+        : step.outputSlot,
+    `${path}.steps`,
+  );
+  if (duplicateSlot) return duplicateSlot;
+  for (const [index, step] of steps.value.entries()) {
+    const { assetId, revision } = step.source;
+    if (
+      !sourceAssets.some(
+        (ref) => ref.assetId === assetId && ref.revision === revision,
+      )
+    )
+      return fail(
+        `${path}.steps[${index}].source`,
+        `the step's source ${assetId} ${revision} is not among sourceAssets`,
+      );
+  }
+  return ok(steps.value);
+}
+
 export function parseProvenance(
   input: unknown,
   path = "provenance",
@@ -1043,9 +1278,9 @@ export function parseProvenance(
   const method = parseEnum(input.method, `${path}.method`, PROVENANCE_METHODS);
   if (!method.ok) return { ...method, reason: "unknown-kind" };
   const extraKeys = {
-    generated: ["generations"],
+    generated: ["generations", "steps"],
     hand: ["editor"],
-    derived: ["operation", "runtime", "resultHashes"],
+    derived: ["operation", "runtime", "steps", "resultHashes"],
   }[method.value];
   const unknown = rejectUnknownKeys(
     input,
@@ -1135,10 +1370,15 @@ export function parseProvenance(
     }
     const operation = parseString(input.operation, `${path}.operation`);
     if (!operation.ok) return operation;
+    const steps = parseStepList(input.steps, path, sourceAssets.value);
+    if (!steps.ok) return steps;
+    if (steps.value.length === 0)
+      return fail(`${path}.steps`, "a derived asset records at least one step");
     return ok({
       method: "derived",
       operation: operation.value,
       runtime: runtime.value,
+      steps: steps.value,
       resultHashes: resultHashes.value,
       ...common,
     });
@@ -1158,6 +1398,14 @@ export function parseProvenance(
     `${path}.generations`,
   );
   if (duplicate) return duplicate;
+  let carried: readonly DerivedStep[] | undefined;
+  if (input.steps !== undefined) {
+    const steps = parseStepList(input.steps, path, sourceAssets.value);
+    if (!steps.ok) return steps;
+    if (steps.value.length === 0)
+      return fail(`${path}.steps`, "expected at least one step, or none");
+    carried = steps.value;
+  }
   for (const [index, generation] of generations.value.entries()) {
     const at = `${path}.generations[${index}]`;
     const job = relatedJobs.value.find((ref) => ref.jobId === generation.jobId);
@@ -1198,6 +1446,18 @@ export function parseProvenance(
           `base output ${output} is not an output of job "${jobId}"`,
         );
     }
+    if (edit?.base.kind === "published") {
+      const { assetId, revision } = edit.base;
+      if (
+        !sourceAssets.value.some(
+          (ref) => ref.assetId === assetId && ref.revision === revision,
+        )
+      )
+        return fail(
+          `${at}.request.edit.base.revision`,
+          `the published base ${assetId} ${revision} is not among sourceAssets`,
+        );
+    }
     if (edit?.base.kind === "hand") {
       const { image } = edit.base;
       if (!handEdits.value.some((step) => step.hash === image))
@@ -1232,6 +1492,7 @@ export function parseProvenance(
   return ok({
     method: "generated",
     generations: generations.value,
+    ...(carried === undefined ? {} : { steps: carried }),
     ...common,
   });
 }
@@ -1473,16 +1734,74 @@ function parsePalette(
   return ok({ paletteFamily: paletteFamily.value, paletteId: paletteId.value });
 }
 
+export function parseColourMapping(
+  value: unknown,
+  path: string,
+): ParseResult<ColourMapping> {
+  return parseStrictRecord(value, path, ["source", "target"], (record) => {
+    const source = parseRampShade(record.source, `${path}.source`);
+    if (!source.ok) return source;
+    const target = parseRampShade(record.target, `${path}.target`);
+    if (!target.ok) return target;
+    return ok({ source: source.value, target: target.value });
+  });
+}
+
+function parseRampShade(value: unknown, path: string): ParseResult<RampShade> {
+  return parseStrictRecord(value, path, ["ramp", "index"], (record) => {
+    const ramp = parseSlug(record.ramp, `${path}.ramp`);
+    if (!ramp.ok) return ramp;
+    const index = parseIntegerAtLeast(record.index, `${path}.index`, 0);
+    if (!index.ok) return index;
+    return ok({ ramp: ramp.value, index: index.value });
+  });
+}
+
 function parseRealmVariant(
   vocabulary: AssetVocabulary,
+  sourceAtlas: Atlas,
 ): (value: unknown, path: string) => ParseResult<RealmVariant> {
   return (value, path) =>
-    parseStrictRecord(value, path, ["paletteFamily", "paletteId"], (record) =>
-      parsePalette(record, path, vocabulary),
+    parseStrictRecord(
+      value,
+      path,
+      ["paletteFamily", "paletteId", "atlas", "map"],
+      (record) => {
+        const palette = parsePalette(record, path, vocabulary);
+        if (!palette.ok) return palette;
+        const atlas = parseAtlas(record.atlas, `${path}.atlas`);
+        if (!atlas.ok) return atlas;
+        if (
+          atlas.value.width !== sourceAtlas.width ||
+          atlas.value.height !== sourceAtlas.height
+        ) {
+          return fail(
+            `${path}.atlas`,
+            `expected the source atlas size ${sourceAtlas.width}x${sourceAtlas.height}`,
+          );
+        }
+        const map = parseArray(record.map, `${path}.map`, parseColourMapping);
+        if (!map.ok) return map;
+        if (map.value.length === 0)
+          return fail(`${path}.map`, "expected at least one colour mapping");
+        const duplicate = uniqueBy(
+          map.value,
+          (entry) => `${entry.source.ramp}/${entry.source.index}`,
+          `${path}.map`,
+        );
+        if (duplicate) return duplicate;
+        return ok({
+          paletteFamily: palette.value.paletteFamily,
+          paletteId: palette.value.paletteId,
+          atlas: atlas.value,
+          map: map.value,
+        });
+      },
     );
 }
 
-function durationBounds(fps: Range): Range {
+/** The frame durations, in ms, a state's frame rate range allows. */
+export function durationBounds(fps: Range): Range {
   return { min: Math.floor(1000 / fps.max), max: Math.ceil(1000 / fps.min) };
 }
 
@@ -1616,7 +1935,7 @@ function parseSpriteBody(
   const realmVariants = parseArray(
     record.realmVariants,
     `${path}.realmVariants`,
-    parseRealmVariant(vocabulary),
+    parseRealmVariant(vocabulary, atlas),
   );
   if (!realmVariants.ok) return realmVariants;
   const duplicateRealm = uniqueBy(
@@ -1904,28 +2223,63 @@ export function parseAssetManifest(
     provenance: provenance.value,
   };
   const context: FrameContext = { cell: cell.value, atlas: atlas.value };
-  switch (manifestKind) {
+  const body = (): ParseResult<AssetManifest> => {
+    switch (manifestKind) {
+      case "sprite":
+        return parseSpriteBody(
+          input,
+          path,
+          vocabulary,
+          cell.value,
+          cellClass,
+          atlas.value,
+          common,
+        );
+      case "portrait":
+        return parsePortraitBody(input, path, vocabulary, context, common);
+      case "effect":
+        return parseEffectBody(
+          input,
+          path,
+          vocabulary,
+          cell.value,
+          context,
+          common,
+        );
+    }
+  };
+  const manifest = body();
+  if (!manifest.ok) return manifest;
+  const recorded = manifest.value.provenance;
+  const carried =
+    recorded.method === "derived" || recorded.method === "generated"
+      ? recorded.steps
+      : undefined;
+  if (carried === undefined) return manifest;
+  const slots = new Set(slotKeys(manifest.value));
+  for (const [index, step] of carried.entries()) {
+    if (!slots.has(step.outputSlot)) {
+      return fail(
+        `${path}.provenance.steps[${index}].outputSlot`,
+        `slot "${step.outputSlot}" is not in the manifest's animations`,
+      );
+    }
+  }
+  return manifest;
+}
+
+/** The slot keys a manifest holds: `state/direction[/ability]`, an expression, or an effect animation's name. */
+export function slotKeys(manifest: AssetManifest): readonly string[] {
+  switch (manifest.kind) {
     case "sprite":
-      return parseSpriteBody(
-        input,
-        path,
-        vocabulary,
-        cell.value,
-        cellClass,
-        atlas.value,
-        common,
+      return manifest.animations.map(
+        (a) =>
+          `${a.state}/${a.direction}${a.ability === undefined ? "" : `/${a.ability}`}`,
       );
     case "portrait":
-      return parsePortraitBody(input, path, vocabulary, context, common);
+      return manifest.expressions.map((e) => e.expression);
     case "effect":
-      return parseEffectBody(
-        input,
-        path,
-        vocabulary,
-        cell.value,
-        context,
-        common,
-      );
+      return manifest.animations.map((a) => a.name);
   }
 }
 

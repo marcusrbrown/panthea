@@ -264,17 +264,36 @@ describe("reading without the writer lock", () => {
     expect(codeOf(outcome)).toBe("invalid-arguments");
   });
 
-  test("derive is explicitly unsupported and writes nothing", async () => {
+  test("derive is a write op: it refuses an unknown op name and arguments it does not take, and writes nothing", async () => {
     const root = tempRoot();
-    const { outcome } = await run({ studioRoot: root }, "derive", {});
-
-    expect(outcome).toMatchObject({
-      ok: false,
-      error: { code: "unsupported", verb: "derive" },
+    const stray = await run({ studioRoot: root }, "derive", {
+      asset: "zeus-sprite",
+      op: "mirror",
+      from: "idle/east",
+      slots: [],
     });
-    expect(exitOf(outcome)).toBe(1);
+    expect(codeOf(stray.outcome)).toBe("invalid-arguments");
+    const missing = await run({ studioRoot: root }, "derive", {});
+    expect(codeOf(missing.outcome)).toBe("invalid-arguments");
     expect(readStudioStatus(root).requests).toEqual([]);
     expect(openStudioSession(root).kind).toBe("opened");
+  });
+
+  test("derive of an op that does not exist is a typed refusal, not an unknown command", async () => {
+    const rig = assetRig();
+    const { outcome } = await run({ studioRoot: rig.root }, "derive", {
+      asset: "zeus-sprite",
+      op: "rotate",
+      from: "idle/east",
+    });
+    expect(outcome.ok).toBe(false);
+    expect(codeOf(outcome)).not.toBe("unknown-op");
+    rig.session.close();
+  });
+
+  test("an unknown command name is refused as unknown-op", async () => {
+    const { outcome } = await run({ studioRoot: tempRoot() }, "frobnicate", {});
+    expect(codeOf(outcome)).toBe("unknown-op");
   });
 
   test("a mutating command against a root another process owns is refused as busy, while reads still work", async () => {

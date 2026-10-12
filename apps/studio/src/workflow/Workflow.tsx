@@ -19,6 +19,7 @@ import type {
   SummaryRecord,
 } from "../host/types";
 import {
+  activeDeriveChoiceKey,
   approvalArgsForAsset,
   buildPackArgs,
   buildRequestArgs,
@@ -28,6 +29,8 @@ import {
   conformJob,
   createLatest,
   createStableHandlers,
+  deriveChoices,
+  deriveGuarded,
   detailText,
   type EditorSession,
   editableSlotsForSet,
@@ -84,6 +87,10 @@ export interface PreviewSelection {
   readonly source: "canon" | "draft" | "approved";
   readonly id: string;
   readonly kind?: "sprite" | "portrait";
+  readonly state?: string;
+  readonly direction?: string;
+  readonly ability?: string;
+  readonly realm?: string;
   /** The record that replaced the selected canon record; the preview draws nothing of the selected one. */
   readonly supersededBy?: string;
 }
@@ -123,6 +130,81 @@ const candidateChangeCount = (candidate: SummaryRecord) => {
     ? count
     : Number.POSITIVE_INFINITY;
 };
+interface SlotSelection {
+  readonly state: string;
+  readonly direction: string;
+  readonly ability?: string;
+}
+
+interface DerivationComparison {
+  readonly recipe: "mirror" | "bob" | "palette-swap";
+  readonly sourceAssetId: string;
+  readonly sourceRevision?: string;
+  readonly sourceSlot: SlotSelection;
+  readonly outputSlot: SlotSelection;
+  readonly targetFamily?: string;
+}
+
+const slotSelection = (value: string): SlotSelection | undefined => {
+  const parts = value.split("/");
+  if (
+    (parts.length !== 2 && parts.length !== 3) ||
+    parts.some((part) => part.length === 0)
+  )
+    return undefined;
+  const [state, direction, ability] = parts;
+  if (state === undefined || direction === undefined) return undefined;
+  return {
+    state,
+    direction,
+    ...(ability === undefined ? {} : { ability }),
+  };
+};
+
+const derivationComparison = (
+  asset: SummaryRecord,
+): DerivationComparison | undefined => {
+  const firstStep = entries(recordValue(asset, "provenanceSteps"))[0];
+  if (firstStep === undefined) return undefined;
+  const step = object(firstStep);
+  const recipe = text(step.recipe);
+  if (recipe !== "mirror" && recipe !== "bob" && recipe !== "palette-swap")
+    return undefined;
+  const source = object(step.source);
+  const sourceAssetId = text(source.assetId);
+  const sourceSlotKey = text(source.slotKey);
+  const outputSlotKey = text(step.outputSlot);
+  const sourceSlot = sourceSlotKey && slotSelection(sourceSlotKey);
+  const outputSlot = outputSlotKey && slotSelection(outputSlotKey);
+  if (!sourceAssetId || !sourceSlot || !outputSlot) return undefined;
+
+  if (
+    recipe === "mirror" &&
+    (sourceSlot.state !== outputSlot.state ||
+      sourceSlot.direction !== "east" ||
+      outputSlot.direction !== "west")
+  )
+    return undefined;
+  if (
+    recipe === "bob" &&
+    (sourceSlotKey !== outputSlotKey ||
+      sourceSlot.direction !== outputSlot.direction)
+  )
+    return undefined;
+  const targetFamily = text(step.targetFamily);
+  if (recipe === "palette-swap" && !targetFamily) return undefined;
+
+  return {
+    recipe,
+    sourceAssetId,
+    ...(typeof source.revision === "string"
+      ? { sourceRevision: source.revision }
+      : {}),
+    sourceSlot,
+    outputSlot,
+    ...(recipe === "palette-swap" ? { targetFamily } : {}),
+  };
+};
 const object = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
@@ -140,6 +222,57 @@ const slug = (value: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+
+export function DerivePanel({
+  choices,
+  selectedKey,
+  busy,
+  result,
+  resultDetails,
+  onChoiceChange,
+  onDerive,
+}: {
+  choices: ReturnType<typeof deriveChoices>;
+  selectedKey: string;
+  busy: boolean;
+  result: string;
+  resultDetails: string;
+  onChoiceChange: (key: string) => void;
+  onDerive: () => void;
+}) {
+  return (
+    <div className="derive-panel">
+      <h3>Derive from this revision</h3>
+      <p className="muted">
+        Makes a working set from the published pixels. Nothing is changed until
+        you pack, approve and publish it.
+      </p>
+      <label className="workflow-field">
+        Derivation
+        <select
+          className="workflow-control"
+          value={selectedKey}
+          onChange={(event) => onChoiceChange(event.target.value)}
+        >
+          {choices.map((choice) => (
+            <option key={choice.key} value={choice.key}>
+              {choice.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" disabled={busy} onClick={onDerive}>
+        Derive
+      </button>
+      {(result || resultDetails) && (
+        <div className="derive-result" role="status" aria-live="polite">
+          {result && <p>{result}</p>}
+          {resultDetails && <pre>{resultDetails}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * One queue row. It is given its own job and a few primitives (`ctx`), never
@@ -464,6 +597,12 @@ export function WorkflowView({
   const [originalWorkAttribution, setOriginalWorkAttribution] = useState("");
   const [exception, setException] = useState("");
   const [rejectReason, setRejectReason] = useState("");
+  const [deriveSelection, setDeriveSelection] = useState({
+    recordId: "",
+    key: "",
+  });
+  const [deriveMessage, setDeriveMessage] = useState("");
+  const [deriveRefusalDetails, setDeriveRefusalDetails] = useState("");
   const [busy, setBusy] = useState(false);
   const [conformBusy, setConformBusy] = useState<Record<string, boolean>>({});
   const [conformSet, setConformSet] = useState("");
@@ -834,6 +973,29 @@ export function WorkflowView({
           kind: activeAssetKind as "portrait" | "sprite",
         }
       : activePreview;
+  const comparison =
+    activeAsset &&
+    activeAssetState === "draft" &&
+    recordText(activeAsset, "method") === "derived"
+      ? derivationComparison(activeAsset)
+      : undefined;
+  const comparisonSource = comparison
+    ? state.assets.find(
+        (record) =>
+          recordState(record) === "canon" &&
+          (recordText(record, "assetId") ?? record.id) ===
+            comparison.sourceAssetId &&
+          (comparison.sourceRevision === undefined ||
+            recordText(record, "manifestRevision") ===
+              comparison.sourceRevision),
+      )
+    : undefined;
+  const hasComparison =
+    comparison !== undefined && comparisonSource !== undefined;
+  const slotName = (slot: SlotSelection) =>
+    `${slot.state}/${slot.direction}${
+      slot.ability === undefined ? "" : `/${slot.ability}`
+    }`;
 
   const activeEdit =
     state.edits.find((edit) => edit.id === activeEditId) ??
@@ -890,6 +1052,28 @@ export function WorkflowView({
         setLocalAssetId(recordId);
         setException("");
         dispatch?.({ type: "select-asset", assetId: recordId });
+      },
+    );
+  };
+  const derive = async (
+    choices: ReturnType<typeof deriveChoices>,
+    selectedKey: string,
+  ) => {
+    const choice = choices.find((c) => c.key === selectedKey) ?? choices[0];
+    if (!choice) return;
+    await deriveGuarded(
+      host,
+      {
+        ...guardUi(mayMutate),
+        setMessage: setDeriveMessage,
+        setRefusalDetails: setDeriveRefusalDetails,
+      },
+      choice.args,
+      (reply) => {
+        // The derived set is the one the pack form acts on next, packed over the same asset.
+        setWorkingSetId(reply.workingSetId);
+        setAssetId(choice.args.asset);
+        setStillFrameMs("");
       },
     );
   };
@@ -1587,7 +1771,57 @@ export function WorkflowView({
                   <h3>Isometric preview</h3>
                   <span>integer zoom · nearest pixels</span>
                 </div>
-                {activePreviewWithKind && renderPreview ? (
+                {activePreviewWithKind &&
+                renderPreview &&
+                activeAsset &&
+                activeAssetState === "draft" &&
+                hasComparison &&
+                comparison &&
+                activeAsset &&
+                activePreviewWithKind ? (
+                  <div className="derive-compare">
+                    <p className="derive-compare-summary">
+                      {comparison.recipe === "palette-swap"
+                        ? `${slotName(comparison.sourceSlot)} → ${comparison.targetFamily}`
+                        : `${comparison.sourceSlot.state}: ${comparison.sourceSlot.direction} → ${comparison.outputSlot.direction}`}
+                    </p>
+                    <figure>
+                      <figcaption>
+                        Source: published {comparison.sourceAssetId} ·{" "}
+                        {slotName(comparison.sourceSlot)}
+                      </figcaption>
+                      {renderPreview({
+                        source: "canon",
+                        id: comparison.sourceAssetId,
+                        kind: "sprite",
+                        state: comparison.sourceSlot.state,
+                        direction: comparison.sourceSlot.direction,
+                        ...(comparison.sourceSlot.ability === undefined
+                          ? {}
+                          : { ability: comparison.sourceSlot.ability }),
+                      })}
+                    </figure>
+                    <figure>
+                      <figcaption>
+                        Derived: this draft ·{" "}
+                        {comparison.recipe === "palette-swap"
+                          ? comparison.targetFamily
+                          : slotName(comparison.outputSlot)}
+                      </figcaption>
+                      {renderPreview({
+                        ...activePreviewWithKind,
+                        state: comparison.outputSlot.state,
+                        direction: comparison.outputSlot.direction,
+                        ...(comparison.outputSlot.ability === undefined
+                          ? {}
+                          : { ability: comparison.outputSlot.ability }),
+                        ...(comparison.targetFamily === undefined
+                          ? {}
+                          : { realm: comparison.targetFamily }),
+                      })}
+                    </figure>
+                  </div>
+                ) : activePreviewWithKind && renderPreview ? (
                   renderPreview(activePreviewWithKind)
                 ) : (
                   <p className="muted">
@@ -1611,6 +1845,9 @@ export function WorkflowView({
                       onChange={(event) => {
                         setLocalAssetId(event.target.value);
                         setException("");
+                        setDeriveSelection({ recordId: "", key: "" });
+                        setDeriveMessage("");
+                        setDeriveRefusalDetails("");
                         dispatch?.({
                           type: "select-asset",
                           assetId: event.target.value,
@@ -1681,6 +1918,30 @@ export function WorkflowView({
                           )}
                         </div>
                       )}
+                      {activeAssetState === "canon" &&
+                        (() => {
+                          const choices = deriveChoices(activeAsset);
+                          if (choices.length === 0) return null;
+                          const assetKey = activeAsset.id;
+                          const selectedKey = activeDeriveChoiceKey(
+                            choices,
+                            deriveSelection,
+                            assetKey,
+                          );
+                          return (
+                            <DerivePanel
+                              choices={choices}
+                              selectedKey={selectedKey}
+                              busy={!mutationsEnabled}
+                              result={deriveMessage}
+                              resultDetails={deriveRefusalDetails}
+                              onChoiceChange={(key) =>
+                                setDeriveSelection({ recordId: assetKey, key })
+                              }
+                              onDerive={() => void derive(choices, selectedKey)}
+                            />
+                          );
+                        })()}
                       {activeAssetState === "draft" && (
                         <div className="asset-actions">
                           <button

@@ -277,6 +277,25 @@ export function validateAssets(contentRoot: string): AssetValidation {
         `"${entry.assetId}" is ${owner.file}'s stable sprite id but the manifest is a ${manifest.kind}`,
       );
     }
+    if (manifest.kind === "sprite" && manifest.asymmetry !== undefined) {
+      // The subject is authoritative. A manifest that predates its declaration may
+      // carry none; one that carries a feature must carry the subject's.
+      const declared =
+        owner === undefined
+          ? undefined
+          : visuals.find((v) => v.godId === owner.god.id)?.asymmetry;
+      if (declared === undefined) {
+        report(
+          file,
+          `asymmetry "${manifest.asymmetry.feature}" on "${entry.assetId}", whose subject declares no asymmetry`,
+        );
+      } else if (declared.feature !== manifest.asymmetry.feature) {
+        report(
+          file,
+          `asymmetry "${manifest.asymmetry.feature}" is not the subject's "${declared.feature}"`,
+        );
+      }
+    }
     if (manifest.kind === "sprite") {
       for (const animation of manifest.animations) {
         if (animation.ability === undefined) continue;

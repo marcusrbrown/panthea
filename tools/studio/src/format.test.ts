@@ -200,6 +200,34 @@ describe("asset summaries", () => {
         state: "draft",
         manifest: {
           id: "zeus-sprite",
+          kind: "sprite",
+          paletteFamily: "olympus",
+          provenance: {
+            method: "derived",
+            steps: [
+              {
+                recipe: "palette-swap",
+                source: {
+                  assetId: "zeus-sprite",
+                  revision: hash,
+                  slotKey: "idle/east",
+                  slotHash: hash,
+                },
+                outputSlot: "idle/east",
+                params: { targetFamily: "underworld" },
+              },
+            ],
+          },
+          realmVariants: [{ paletteFamily: "underworld" }],
+          animations: [
+            { state: "idle", direction: "east", frames: [] },
+            {
+              state: "act",
+              direction: "south",
+              ability: "thunderbolt",
+              frames: [],
+            },
+          ],
           styleTag: "SECRET STYLE",
           atlas: { blob: hash },
         },
@@ -246,6 +274,23 @@ describe("asset summaries", () => {
       manifestRevision: hash,
       prior: null,
       published: null,
+      kind: "sprite",
+      method: "derived",
+      provenanceSteps: [
+        {
+          recipe: "palette-swap",
+          source: {
+            assetId: "zeus-sprite",
+            revision: hash,
+            slotKey: "idle/east",
+          },
+          outputSlot: "idle/east",
+          targetFamily: "underworld",
+        },
+      ],
+      slots: ["idle/east", "act/south/thunderbolt"],
+      realms: ["underworld"],
+      paletteFamily: "olympus",
       report: { status: "fail", failedChecks: ["idle/south#0:palette"] },
       licences: [{ subject: "m", role: "model", status: "compatible" }],
     });

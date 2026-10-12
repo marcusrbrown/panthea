@@ -20,6 +20,7 @@ import {
   type Rig,
   removeTempRoots,
   rig,
+  variantSprite,
   vocabulary,
   withManifest,
   world,
@@ -106,6 +107,63 @@ describe("canon", () => {
   });
 });
 
+describe("a realm variant", () => {
+  test("a realm request resolves the variant, and its atlas URL serves the variant's bytes, not the base's", () => {
+    const w = world();
+    const v = variantSprite("placeholder-zeus", 3);
+    writeDraft(w.studioRoot, "zeus-take-1", v.asset);
+    const r = rig(w);
+
+    const base = resolve(r, { source: "draft", id: "zeus-take-1" });
+    const variant = resolve(r, {
+      source: "draft",
+      id: "zeus-take-1",
+      realm: "underworld",
+    });
+
+    expect(variant).toMatchObject({
+      kind: "frames",
+      selection: { source: "draft", id: "zeus-take-1", realm: "underworld" },
+    });
+    if (base.kind !== "frames" || variant.kind !== "frames") return;
+    expect(variant.bytes.pixelKey).not.toBe(base.bytes.pixelKey);
+    const fetched = atlasBytes(r, variant.bytes);
+    expect(fetched.status).toBe(200);
+    expect(sha256Hex(fetched.body as Uint8Array)).toBe(v.variantHash);
+    expect(sha256Hex(atlasBytes(r, base.bytes).body as Uint8Array)).toBe(
+      sha256Hex(v.baseBytes),
+    );
+  });
+
+  test("a realm the asset does not publish is a placeholder, and a malformed realm in the atlas path is refused", () => {
+    const w = world();
+    writeDraft(
+      w.studioRoot,
+      "zeus-take-1",
+      variantSprite("placeholder-zeus", 3).asset,
+    );
+    const r = rig(w);
+
+    const unknown = resolve(r, {
+      source: "draft",
+      id: "zeus-take-1",
+      realm: "town",
+    });
+
+    expect(unknown.kind).toBe("placeholder");
+    expect(
+      r.bridge.handle("GET", `${BRIDGE_PREFIX}/atlas/draft/zeus-take-1/..?v=x`)
+        .status,
+    ).toBe(400);
+    expect(
+      r.bridge.handle(
+        "GET",
+        `${BRIDGE_PREFIX}/atlas/draft/zeus-take-1/Under%20World?v=x`,
+      ).status,
+    ).toBe(400);
+  });
+});
+
 describe("one source per selection", () => {
   test("a packed draft resolves under draft by record id, and its asset id under canon resolves only from the registry", () => {
     const w = world();
@@ -186,6 +244,7 @@ describe("one source per selection", () => {
             "scheming",
             "awed",
           ],
+          realms: [],
           ok: true,
         },
         {
@@ -196,6 +255,7 @@ describe("one source per selection", () => {
           state: "draft",
           animations: [{ state: "idle", direction: "south" }],
           expressions: [],
+          realms: [],
           ok: true,
         },
         {
@@ -206,6 +266,7 @@ describe("one source per selection", () => {
           state: "draft",
           animations: [{ state: "idle", direction: "south" }],
           expressions: [],
+          realms: [],
           ok: true,
         },
         {
@@ -216,6 +277,7 @@ describe("one source per selection", () => {
           state: "approved",
           animations: [{ state: "idle", direction: "south" }],
           expressions: [],
+          realms: [],
           ok: true,
         },
       ],

@@ -118,6 +118,8 @@ const SOURCE_KINDS: readonly string[] = ["canon", "draft", "approved"];
 export interface KeyedSelection {
   readonly source: SourceKind;
   readonly id: string;
+  /** The realm palette family whose variant atlas this key is for; absent for the base atlas. */
+  readonly realm?: string;
   /** Changes whenever the selection's resolved content does. */
   readonly key: string;
 }
@@ -189,11 +191,14 @@ function parseKeys(value: unknown): Parsed<SourceKeys> {
       return bad(`${at}.source`, "not a known source");
     if (!isSlug(item.id))
       return bad(`${at}.id`, "not a lowercase hyphenated id");
+    if (item.realm !== undefined && !isSlug(item.realm))
+      return bad(`${at}.realm`, "not a lowercase hyphenated id");
     if (!isText(item.key) || item.key === "")
       return bad(`${at}.key`, "not text");
     selections.push({
       source: item.source as SourceKind,
       id: item.id,
+      ...(item.realm === undefined ? {} : { realm: item.realm }),
       key: item.key,
     });
   }

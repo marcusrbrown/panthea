@@ -12,6 +12,7 @@ import {
   firstAnimationForState,
   followClipTiming,
   harnessItems,
+  harnessSubject,
   type OcclusionPair,
   type PlaybackClock,
   pickIn,
@@ -93,6 +94,9 @@ function PreviewHarness({
   const selectionSource = selection?.source;
   const selectionId = selection?.id;
   const selectionKind = selection?.kind;
+  const selectionRealm = selection?.realm;
+  const selectionState = selection?.state;
+  const selectionDirection = selection?.direction;
   const params = useMemo(() => {
     const base = readParams();
     if (
@@ -216,10 +220,10 @@ function PreviewHarness({
       ...(held.ability === undefined ? {} : { ability: held.ability }),
     });
     subjectSeen.current = subjectEntryKey;
-    setState(next?.state ?? "");
-    setDirection(next?.direction ?? "");
+    setState(selectionState ?? next?.state ?? "");
+    setDirection(selectionDirection ?? next?.direction ?? "");
     setAbility(next?.ability);
-  }, [subjectEntryKey, subjectKeys]);
+  }, [subjectEntryKey, subjectKeys, selectionState, selectionDirection]);
 
   const portraitEntryKey = entryKey(portraitEntry);
   const portraitExpressions = JSON.stringify(portraitEntry?.expressions ?? []);
@@ -330,7 +334,18 @@ function PreviewHarness({
     if (params.check || preview === undefined || listing === undefined) return;
     void preview.setItems(
       harnessItems({
-        subject: parseKey(subjectChosen ?? null),
+        subject: harnessSubject(
+          parseKey(subjectChosen ?? null),
+          selectionSource === undefined || selectionId === undefined
+            ? undefined
+            : {
+                source: selectionSource,
+                id: selectionId,
+                ...(selectionRealm === undefined
+                  ? {}
+                  : { realm: selectionRealm }),
+              },
+        ),
         portrait: parseKey(portraitChosen ?? null),
         state,
         direction,
@@ -350,6 +365,9 @@ function PreviewHarness({
     portraitChosen,
     subjectEntry,
     portraitEntry,
+    selectionSource,
+    selectionId,
+    selectionRealm,
     state,
     direction,
     ability,

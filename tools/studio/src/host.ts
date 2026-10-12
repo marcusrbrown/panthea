@@ -366,6 +366,9 @@ export class Studio {
       artifactRoot,
       port: runtime.port,
       content,
+      ...(this.config.registryRoot === undefined
+        ? {}
+        : { registryRoot: this.config.registryRoot }),
       deadlines: runtime.deadlines,
       pollMs: runtime.pollMs,
       ...(this.deps.profile === undefined

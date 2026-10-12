@@ -85,8 +85,18 @@ const keys = (
   selections: selections.map(([source, id, key]) => ({ source, id, key })),
 });
 
+type KeysPayload = {
+  readonly listing: string;
+  readonly selections: readonly {
+    readonly source: string;
+    readonly id: string;
+    readonly realm?: string;
+    readonly key: string;
+  }[];
+};
+
 const snapshot = (
-  sourceKeys: ReturnType<typeof keys> | null | undefined,
+  sourceKeys: KeysPayload | null | undefined,
   extra: Record<string, unknown> = {},
 ) => ({
   host: { state: "running" },
@@ -225,6 +235,97 @@ describe("list, resolve, fetchBytes", () => {
   });
 });
 
+describe("a realm variant", () => {
+  const variantFrames = (pixelKey: string) => ({
+    ...frames(pixelKey),
+    selection: { source: "draft", id: "zeus-take", realm: "underworld" },
+  });
+
+  test("the realm goes out with the resolve request, stays on the selection, and the bytes are asked for under it", async () => {
+    const r = rig({ "source-resolve": () => variantFrames(KEY_B) });
+
+    const resolved = await r.source.resolve({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+    const bytes = await r.source.fetchBytes(resolved.bytes);
+
+    const call = r.transport.to("studio_call")[0]?.args as {
+      op: string;
+      args: Record<string, unknown>;
+    };
+    expect(call.op).toBe("source-resolve");
+    expect(call.args).toEqual({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+    expect(resolved.selection).toEqual({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+    expect([...bytes]).toEqual([...PNG]);
+    expect(r.transport.to("preview_bytes")[0]?.args).toEqual({
+      selection: { source: "draft", id: "zeus-take", realm: "underworld" },
+      v: KEY_B,
+    });
+  });
+
+  test("a stale version re-resolves the same variant, not the base", async () => {
+    let resolves = 0;
+    const r = rig({
+      "source-resolve": (args) => {
+        resolves += 1;
+        expect(args.realm).toBe("underworld");
+        return variantFrames(resolves === 1 ? KEY_A : KEY_B);
+      },
+    });
+    const calls: unknown[] = [];
+    r.transport.answer("preview_bytes", (args) => {
+      calls.push(args);
+      if ((args as { v: string }).v === KEY_A)
+        throw hostError("stale-version", "resolve it again");
+      return PNG_2.buffer.slice(0);
+    });
+    const resolved = await r.source.resolve({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+
+    const bytes = await r.source.fetchBytes(resolved.bytes);
+
+    expect([...bytes]).toEqual([...PNG_2]);
+    const selection = { source: "draft", id: "zeus-take", realm: "underworld" };
+    expect(calls).toEqual([
+      { selection, v: KEY_A },
+      { selection, v: KEY_B },
+    ]);
+  });
+
+  test("a listing entry's realms are read, and a malformed realm in a resolution is refused", async () => {
+    const r = rig({
+      "source-list": () => ({
+        entries: [{ ...listing.entries[0], realms: ["underworld"] }],
+        problems: [],
+      }),
+      "source-resolve": () => ({
+        ...frames(KEY_A),
+        selection: { source: "draft", id: "zeus-take", realm: "../x" },
+      }),
+    });
+
+    const listed = await r.source.list();
+
+    expect(listed.entries[0]?.realms).toEqual(["underworld"]);
+    await expect(
+      r.source.resolve({ source: "draft", id: "zeus-take" }),
+    ).rejects.toThrow();
+  });
+});
+
 describe("a stale version", () => {
   test("re-resolves once and fetches the new key's bytes", async () => {
     let resolves = 0;
@@ -332,6 +433,49 @@ describe("changes", () => {
     r.push(snapshot(base));
     return r;
   }
+
+  test("a variant's key is its own: moving it names the variant selection and leaves the base alone", async () => {
+    const r = rig();
+    r.watch();
+    const withVariant = (variantKey: string) => ({
+      listing: "l1",
+      selections: [
+        { source: "draft", id: "zeus-take", key: KEY_A },
+        {
+          source: "draft",
+          id: "zeus-take",
+          realm: "underworld",
+          key: variantKey,
+        },
+      ],
+    });
+    r.push(snapshot(withVariant(KEY_B)));
+
+    r.push(snapshot(withVariant(KEY_C)));
+
+    expect(r.changes).toEqual([
+      {
+        changed: [{ source: "draft", id: "zeus-take", realm: "underworld" }],
+        listing: false,
+      },
+    ]);
+  });
+
+  test("a keys payload with a malformed realm is dropped and reported, not read", async () => {
+    const r = rig();
+    r.watch();
+
+    r.push(
+      snapshot({
+        listing: "l1",
+        selections: [
+          { source: "draft", id: "zeus-take", realm: "../x", key: KEY_A },
+        ],
+      }),
+    );
+
+    expect(r.changes).toEqual([]);
+  });
 
   test("the first snapshot is the baseline and announces nothing", async () => {
     const r = rig();

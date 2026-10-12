@@ -36,6 +36,12 @@ export type {
   PreviewSlot,
 } from "./export-import";
 export { canonicalFrameHash, type FinishStep } from "./export-import";
+export {
+  type FrameRead,
+  type FrameRefusal,
+  type PublishedFrameRef,
+  registryFrameReader,
+} from "./frame-ref";
 export type { PackInput } from "./packing";
 export { decodePng, type PngDecode } from "./png/decode";
 export {

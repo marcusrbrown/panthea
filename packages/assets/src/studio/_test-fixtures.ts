@@ -824,3 +824,76 @@ export function olympusMovedPaletteFiles(): FixturePalette["files"] {
     "master.hex": base["master.hex"],
   };
 }
+
+/** The native cell the sprite fixtures are drawn at. */
+export const SPRITE_CELL = { w: 64, h: 80 } as const;
+
+/**
+ * Publishes a four-frame zeus-sprite idle/east revision into the rig's own
+ * registry root (never the committed canon) and returns its revision. The
+ * repair tests edit and derive from this revision.
+ */
+export function publishIdleEast(rig: AssetRig): Sha256 {
+  const { session, content, palette, registryRoot } = rig;
+  const [jobId] = runSlots(rig, "zeus-east", "sprite", [
+    { state: "idle", direction: "east" },
+  ]);
+  const opened = session.openWorkingSet("east", "zeus-east", content);
+  if (!opened.ok) throw new Error(`open east: ${opened.message}`);
+  if (!session.pick("east", jobId as string).ok) throw new Error("pick east");
+  const frames = [0, 1, 2, 3].map((i) => paintFigure(content, SPRITE_CELL, i));
+  finishSheet(rig, "east-edit", "east", SPRITE_CELL, [
+    { slot: "idle/east", frames, durations: [167, 167, 167, 167] },
+  ]);
+  const packed = session.pack(
+    {
+      id: "east-pack",
+      workingSetId: "east",
+      assetId: "zeus-sprite",
+      styleTag: "draft",
+      footprint: { w: 1, h: 1 },
+      originalWork: { licence: "MIT", attribution: "the owner" },
+    },
+    content,
+    palette,
+    registryRoot,
+  );
+  if (!packed.ok) throw new Error(`pack east: ${packed.message}`);
+  const found = session.store.readAsset("east-pack");
+  if (found.kind !== "found") throw new Error("no east-pack");
+  // The owner's reading of every licence the studio cannot decide, once each.
+  const seen = new Set<string>();
+  const assessments = found.value.record.manifest.provenance.licences.flatMap(
+    (record) => {
+      const key = JSON.stringify(record);
+      if (
+        seen.has(key) ||
+        ["MIT", "Apache-2.0", "CC0-1.0"].includes(record.licence)
+      )
+        return [];
+      seen.add(key);
+      return [
+        {
+          record,
+          disposition: "mit-compatible" as const,
+          reason: "the owner read these terms",
+        },
+      ];
+    },
+  );
+  const approved = session.approveAsset(
+    "east-pack",
+    { assessments },
+    content,
+    palette,
+  );
+  if (!approved.ok) throw new Error(`approve east: ${approved.message}`);
+  const published = session.publishAsset(
+    "east-pack",
+    content,
+    palette,
+    registryRoot,
+  );
+  if (!published.ok) throw new Error(`publish east: ${published.message}`);
+  return packed.asset.manifestRevision;
+}

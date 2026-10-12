@@ -113,10 +113,19 @@ export function createAssetBridge(options: BridgeOptions): AssetBridge {
   const source = createPreviewSource(options);
 
   const atlas = (rest: string, pixelKey: string | null): BridgeResponse => {
-    const [kind, id, ...extra] = rest.split("/");
-    if (extra.length > 0 || !isSourceKind(kind) || !isSlug(id))
+    const [kind, id, realm, ...extra] = rest.split("/");
+    if (
+      extra.length > 0 ||
+      !isSourceKind(kind) ||
+      !isSlug(id) ||
+      (realm !== undefined && !isSlug(realm))
+    )
       return refused(400, "malformed atlas id");
-    const selection: PreviewSelection = { source: kind, id };
+    const selection: PreviewSelection = {
+      source: kind,
+      id,
+      ...(realm === undefined ? {} : { realm }),
+    };
     const got = source.bytes(selection, pixelKey);
     return got.ok
       ? png(got.bytes)

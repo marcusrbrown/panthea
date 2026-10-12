@@ -25,6 +25,11 @@ export interface GodVisualProfile {
   readonly iconography: readonly string[];
   /** Asset id of the god's portrait, when one is mapped. */
   readonly portrait?: string;
+  /**
+   * Present when the god is drawn, not mirrored, on the west side. The
+   * subject is authoritative: derivation refuses to mirror while it is set.
+   */
+  readonly asymmetry?: { readonly feature: string };
 }
 
 export function parseGodVisualProfile(
@@ -34,7 +39,14 @@ export function parseGodVisualProfile(
   return parseStrictRecord(
     input,
     path,
-    ["schemaVersion", "godId", "paletteFamily", "iconography", "portrait"],
+    [
+      "schemaVersion",
+      "godId",
+      "paletteFamily",
+      "iconography",
+      "portrait",
+      "asymmetry",
+    ],
     (record) => {
       const schemaVersion = parseSchemaVersion(
         record.schemaVersion,
@@ -64,22 +76,33 @@ export function parseGodVisualProfile(
           return fail(`${path}.iconography[${index}]`, `duplicate "${entry}"`);
         seen.add(entry);
       }
-      if (record.portrait === undefined) {
-        return ok({
-          schemaVersion: schemaVersion.value,
-          godId: godId.value,
-          paletteFamily: paletteFamily.value,
-          iconography: iconography.value,
-        });
+      let portrait: string | undefined;
+      if (record.portrait !== undefined) {
+        const parsed = parseAssetId(record.portrait, `${path}.portrait`);
+        if (!parsed.ok) return parsed;
+        portrait = parsed.value;
       }
-      const portrait = parseAssetId(record.portrait, `${path}.portrait`);
-      if (!portrait.ok) return portrait;
+      let asymmetry: { feature: string } | undefined;
+      if (record.asymmetry !== undefined) {
+        const parsed = parseStrictRecord(
+          record.asymmetry,
+          `${path}.asymmetry`,
+          ["feature"],
+          (a) => {
+            const feature = parseString(a.feature, `${path}.asymmetry.feature`);
+            return feature.ok ? ok({ feature: feature.value }) : feature;
+          },
+        );
+        if (!parsed.ok) return parsed;
+        asymmetry = parsed.value;
+      }
       return ok({
         schemaVersion: schemaVersion.value,
         godId: godId.value,
         paletteFamily: paletteFamily.value,
         iconography: iconography.value,
-        portrait: portrait.value,
+        ...(portrait === undefined ? {} : { portrait }),
+        ...(asymmetry === undefined ? {} : { asymmetry }),
       });
     },
   );

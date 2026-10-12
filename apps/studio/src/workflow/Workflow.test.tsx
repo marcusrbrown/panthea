@@ -3,16 +3,22 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { fakeTransport } from "../host/_testkit";
+import { callsTo, fakeTransport, hostError } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
-import { approvalArgsForAsset, packWorkingSetGuarded } from "./actions";
+import {
+  activeDeriveChoiceKey,
+  approvalArgsForAsset,
+  deriveChoices,
+  deriveGuarded,
+  packWorkingSetGuarded,
+} from "./actions";
 import {
   initialWorkflowState,
   queueRowContext,
   reuseRowContext,
   workflowReducer,
 } from "./model";
-import { QueueItem, WorkflowView } from "./Workflow";
+import { DerivePanel, QueueItem, WorkflowView } from "./Workflow";
 
 const host = createStudioHost(fakeTransport());
 
@@ -1150,5 +1156,400 @@ describe("a selected record that has not reached the snapshot", () => {
 
     expect(html).toContain("Waiting for record-zeus-sprite-1");
     expect(previews).toEqual([]);
+  });
+});
+
+describe("deriving from a published sprite", () => {
+  const published = (over: Record<string, unknown> = {}) => ({
+    id: "record-zeus-sprite-1",
+    assetId: "zeus-sprite",
+    state: "canon",
+    kind: "sprite",
+    method: "generated",
+    paletteFamily: "olympus",
+    realms: [],
+    slots: ["idle/east", "seated/east", "walk/east", "act/east/thunderbolt"],
+    manifestRevision: "rev-1",
+    ...over,
+  });
+  const asRecord = (record: Record<string, unknown>) =>
+    record as unknown as Parameters<typeof deriveChoices>[0];
+
+  test("a mirror is offered for the east slots that can be flipped and a bob only for idle, never for walk or act", () => {
+    const labels = deriveChoices(asRecord(published())).map((c) => c.label);
+
+    expect(labels).toContain("Mirror idle/east to idle/west");
+    expect(labels).toContain("Mirror seated/east to seated/west");
+    expect(labels.some((l) => l.startsWith("Bob idle/east"))).toBe(true);
+    expect(
+      labels.filter((l) => l.includes("walk") || l.includes("act")),
+    ).toEqual([]);
+    expect(labels.filter((l) => l.startsWith("Bob"))).toHaveLength(1);
+  });
+
+  test("a palette swap is offered to each realm family except the asset's own", () => {
+    const choices = deriveChoices(asRecord(published()));
+    const swaps = choices.filter((c) => c.args.op === "palette-swap");
+
+    expect(swaps.map((c) => c.args.to)).toEqual(["town", "underworld"]);
+    expect(swaps[0]?.args).toEqual({
+      asset: "zeus-sprite",
+      op: "palette-swap",
+      from: "olympus",
+      to: "town",
+    });
+  });
+
+  test("a mirror is not offered where the west already exists", () => {
+    const choices = deriveChoices(
+      asRecord(published({ slots: ["idle/east", "idle/west"] })),
+    );
+
+    expect(choices.some((c) => c.args.op === "mirror")).toBe(false);
+  });
+
+  test("changing records resets an old derivation to a valid choice", () => {
+    const hera = deriveChoices(
+      asRecord(
+        published({
+          id: "hera-published",
+          assetId: "hera-sprite",
+          slots: ["idle/east"],
+          paletteFamily: undefined,
+        }),
+      ),
+    );
+    const zeus = deriveChoices(
+      asRecord(
+        published({
+          id: "zeus-published",
+          assetId: "zeus-sprite",
+          slots: ["idle/south"],
+        }),
+      ),
+    );
+
+    expect(hera.map((choice) => choice.key)).toContain("mirror:idle/east");
+    expect(
+      activeDeriveChoiceKey(
+        zeus,
+        { recordId: "hera-published", key: "mirror:idle/east" },
+        "zeus-published",
+      ),
+    ).toBe(zeus[0]?.key);
+  });
+
+  test("nothing is offered for a draft, an approved record or a portrait", () => {
+    for (const over of [
+      { state: "draft" },
+      { state: "approved" },
+      { kind: "portrait" },
+    ])
+      expect(deriveChoices(asRecord(published(over)))).toEqual([]);
+  });
+
+  test("the published sprite shows a Derive panel with plain wording, and a draft does not", () => {
+    const html = (state: string) =>
+      renderToStaticMarkup(
+        createElement(WorkflowView, {
+          state: workflowReducer(
+            stateFor(undefined, { assets: [published({ state })] }),
+            { type: "select-asset", assetId: "record-zeus-sprite-1" },
+          ),
+          host,
+        }),
+      );
+
+    expect(html("canon")).toContain("Derive from this revision");
+    expect(html("canon")).toContain("Mirror idle/east to idle/west");
+    expect(html("draft")).not.toContain("Derive from this revision");
+  });
+
+  test("shows a Derive refusal beside its control, not in the page notice strip", () => {
+    const choices = deriveChoices(asRecord(published()));
+    const html = renderToStaticMarkup(
+      createElement(DerivePanel, {
+        choices,
+        selectedKey: choices[0]?.key ?? "",
+        busy: false,
+        result:
+          'the subject declares an asymmetry ("bolt hand"), so west is drawn, not mirrored',
+        resultDetails: "mirror refused",
+        onChoiceChange: () => {},
+        onDerive: () => {},
+      }),
+    );
+
+    expect(html).toContain('class="derive-result" role="status"');
+    expect(html).toContain("bolt hand");
+    expect(html).toContain("mirror refused");
+    expect(html).toContain("Derive</button>");
+  });
+
+  const derived = (
+    over: Record<string, unknown> = {},
+    provenanceSteps: readonly Record<string, unknown>[] = [],
+  ) =>
+    published({
+      id: "record-zeus-sprite-2",
+      state: "draft",
+      method: "derived",
+      provenanceSteps,
+      ...over,
+    });
+
+  test("compares the newly mirrored slot, not a carried east/west pair", () => {
+    const seen: unknown[] = [];
+    const source = published({
+      slots: ["idle/east", "idle/west", "seated/east"],
+    });
+    const draft = derived(
+      {
+        slots: ["idle/east", "idle/west", "seated/east", "seated/west"],
+      },
+      [
+        {
+          recipe: "mirror",
+          source: {
+            assetId: "zeus-sprite",
+            revision: "rev-1",
+            slotKey: "seated/east",
+          },
+          outputSlot: "seated/west",
+        },
+        {
+          recipe: "bob",
+          source: { assetId: "zeus-sprite", slotKey: "idle/south" },
+          outputSlot: "idle/south",
+        },
+      ],
+    );
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: workflowReducer(
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
+        ),
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+
+    expect(html).toContain("Source: published zeus-sprite");
+    expect(html).toContain("Derived: this draft");
+    expect(html).toContain("seated: east → west");
+    expect(seen).toEqual([
+      {
+        source: "canon",
+        id: "zeus-sprite",
+        kind: "sprite",
+        state: "seated",
+        direction: "east",
+      },
+      {
+        source: "draft",
+        id: "record-zeus-sprite-2",
+        kind: "sprite",
+        state: "seated",
+        direction: "west",
+      },
+    ]);
+  });
+
+  test("compares a bob from and to the same slot", () => {
+    const seen: unknown[] = [];
+    const source = published({ slots: ["idle/south"] });
+    const draft = derived({ slots: ["idle/south"] }, [
+      {
+        recipe: "bob",
+        source: { assetId: "zeus-sprite", slotKey: "idle/south" },
+        outputSlot: "idle/south",
+      },
+    ]);
+    renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: workflowReducer(
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
+        ),
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+
+    expect(seen).toEqual([
+      {
+        source: "canon",
+        id: "zeus-sprite",
+        kind: "sprite",
+        state: "idle",
+        direction: "south",
+      },
+      {
+        source: "draft",
+        id: "record-zeus-sprite-2",
+        kind: "sprite",
+        state: "idle",
+        direction: "south",
+      },
+    ]);
+  });
+
+  test("compares a palette swap from its source slot to its variant realm", () => {
+    const seen: unknown[] = [];
+    const source = published({ slots: ["idle/east"] });
+    const draft = derived({ slots: ["idle/east"], realms: ["underworld"] }, [
+      {
+        recipe: "palette-swap",
+        source: { assetId: "zeus-sprite", slotKey: "idle/east" },
+        outputSlot: "idle/east",
+        targetFamily: "underworld",
+      },
+    ]);
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: workflowReducer(
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
+        ),
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+
+    expect(html).toContain("idle/east → underworld");
+    expect(seen).toEqual([
+      {
+        source: "canon",
+        id: "zeus-sprite",
+        kind: "sprite",
+        state: "idle",
+        direction: "east",
+      },
+      {
+        source: "draft",
+        id: "record-zeus-sprite-2",
+        kind: "sprite",
+        state: "idle",
+        direction: "east",
+        realm: "underworld",
+      },
+    ]);
+  });
+
+  test("does not show a comparison when a derived draft has no steps", () => {
+    const seen: unknown[] = [];
+    const source = published();
+    const draft = derived();
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: workflowReducer(
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
+        ),
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+
+    expect(html).not.toContain("derive-compare");
+    expect(seen).toEqual([
+      { source: "draft", id: "record-zeus-sprite-2", kind: "sprite" },
+    ]);
+  });
+
+  const noop = (messages: string[]) => ({
+    allowed: () => true,
+    setBusy: () => undefined,
+    setMessage: (message: string) => {
+      messages.push(message);
+    },
+    setRefusalDetails: () => undefined,
+  });
+
+  test("Derive sends the choice's arguments exactly and reports the working set it made", async () => {
+    const transport = fakeTransport({
+      studio_call: callsTo({
+        derive: () => ({
+          workingSetId: "derive-0123456789ab",
+          created: true,
+          slots: ["idle/west"],
+        }),
+      }),
+    });
+    const messages: string[] = [];
+    const made: string[] = [];
+
+    await deriveGuarded(
+      createStudioHost(transport),
+      noop(messages),
+      { asset: "zeus-sprite", op: "mirror", from: "idle/east" },
+      (reply) => made.push(reply.workingSetId),
+    );
+
+    expect(transport.to("studio_call").map((call) => call.args)).toEqual([
+      {
+        op: "derive",
+        args: { asset: "zeus-sprite", op: "mirror", from: "idle/east" },
+      },
+    ]);
+    expect(made).toEqual(["derive-0123456789ab"]);
+    expect(messages.at(-1)).toContain("Derived idle/west into working set");
+  });
+
+  test("a refusal is shown by its message and selects nothing", async () => {
+    const transport = fakeTransport({
+      studio_call: () => {
+        throw hostError(
+          "asymmetric",
+          'the subject declares an asymmetry ("bolt hand"), so west is drawn, not mirrored',
+        );
+      },
+    });
+    const messages: string[] = [];
+    const made: string[] = [];
+
+    await deriveGuarded(
+      createStudioHost(transport),
+      noop(messages),
+      { asset: "zeus-sprite", op: "mirror", from: "idle/east" },
+      (reply) => made.push(reply.workingSetId),
+    );
+
+    expect(made).toEqual([]);
+    expect(messages.at(-1)).toContain("bolt hand");
+  });
+
+  test("deriving again says so and still points at the same working set", async () => {
+    const transport = fakeTransport({
+      studio_call: callsTo({
+        derive: () => ({
+          workingSetId: "derive-0123456789ab",
+          created: false,
+          slots: ["idle/west"],
+        }),
+      }),
+    });
+    const messages: string[] = [];
+
+    await deriveGuarded(createStudioHost(transport), noop(messages), {
+      asset: "zeus-sprite",
+      op: "mirror",
+      from: "idle/east",
+    });
+
+    expect(messages.at(-1)).toContain("already holds this derivation");
   });
 });

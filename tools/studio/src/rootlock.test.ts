@@ -141,6 +141,37 @@ describe("a session on a root another process holds", () => {
     await studio.teardown();
   });
 
+  test("derive is a write: a session takes the writer lock for it, and is refused as root-locked when another process holds the root", async () => {
+    expect(READ_ONLY.has("derive")).toBe(false);
+    const args = { asset: "zeus-sprite", op: "mirror", from: "idle/east" };
+
+    const held = assetRig();
+    held.session.close();
+    const blocked = sessionStudio({ studioRoot: held.root }, heldBy(HOLDER));
+    expect(await execute(blocked, "derive", args)).toMatchObject({
+      ok: false,
+      error: { code: "root-locked", holder: HOLDER },
+    });
+    await blocked.teardown();
+
+    const free = assetRig();
+    free.session.close();
+    const studio = sessionStudio({ studioRoot: free.root }, {});
+    const probe = openStudioSession(free.root);
+    expect(probe.kind).toBe("opened");
+    if (probe.kind === "opened") probe.session.close();
+    // Nothing is published, so the derive itself is refused; the lock is taken first all the same.
+    const outcome = await execute(studio, "derive", args);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok === false && outcome.error.code).not.toBe("root-locked");
+    expect(await execute(studio, "status", {})).toMatchObject({
+      ok: true,
+      result: { rootLock: { holder: "self", pid: process.pid } },
+    });
+    expect(openStudioSession(free.root).kind).toBe("busy");
+    await studio.teardown();
+  });
+
   test("a holder with no live record is reported as unknown, never guessed", async () => {
     const rig = assetRig();
     rig.session.close();

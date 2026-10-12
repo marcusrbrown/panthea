@@ -372,6 +372,131 @@ export async function pickCandidateGuarded(
   );
 }
 
+/** The realm palette families a swap can target: the greek-master palette's three. */
+export const REALM_FAMILIES = ["town", "olympus", "underworld"] as const;
+
+/** The states whose west cell is their east cell flipped. Walk and act are drawn per direction. */
+const MIRRORABLE_STATES = ["idle", "seated", "hurt", "down"];
+
+export interface DeriveArgs {
+  readonly asset: string;
+  readonly op: "mirror" | "palette-swap" | "bob";
+  readonly from: string;
+  readonly to?: string;
+}
+
+export interface DeriveChoice {
+  readonly key: string;
+  readonly label: string;
+  readonly args: DeriveArgs;
+}
+
+/** Keep a derivation choice tied to the record it was selected for. */
+export function activeDeriveChoiceKey(
+  choices: readonly DeriveChoice[],
+  selection: { readonly recordId: string; readonly key: string },
+  recordId: string,
+): string {
+  return selection.recordId === recordId &&
+    choices.some((choice) => choice.key === selection.key)
+    ? selection.key
+    : (choices[0]?.key ?? "");
+}
+
+/**
+ * What can be derived from a published sprite, in plain words. A mirror is
+ * offered for an east slot of idle, seated, hurt or down with no west yet; a
+ * bob only for an idle slot; a palette swap for each realm other than the
+ * asset's own. Nothing is offered for a portrait or a record that is not
+ * published.
+ */
+export function deriveChoices(asset: SummaryRecord): DeriveChoice[] {
+  if (recordText(asset, "state") !== "canon") return [];
+  if (recordText(asset, "kind") !== "sprite") return [];
+  const id = recordText(asset, "assetId");
+  if (id === undefined) return [];
+  const rawSlots = recordValue(asset, "slots");
+  const slots = Array.isArray(rawSlots)
+    ? rawSlots.filter((slot): slot is string => typeof slot === "string")
+    : [];
+  const choices: DeriveChoice[] = [];
+  for (const slot of slots) {
+    const [state = "", direction = ""] = slot.split("/");
+    if (
+      MIRRORABLE_STATES.includes(state) &&
+      direction === "east" &&
+      !slots.includes(`${state}/west`)
+    )
+      choices.push({
+        key: `mirror:${slot}`,
+        label: `Mirror ${slot} to ${state}/west`,
+        args: { asset: id, op: "mirror", from: slot },
+      });
+    if (state === "idle")
+      choices.push({
+        key: `bob:${slot}`,
+        label: `Bob ${slot} (rebuild the idle loop from its rest frame)`,
+        args: { asset: id, op: "bob", from: slot },
+      });
+  }
+  const own = recordText(asset, "paletteFamily");
+  if (own !== undefined)
+    for (const family of REALM_FAMILIES)
+      if (family !== own)
+        choices.push({
+          key: `palette-swap:${family}`,
+          label: `Palette swap to ${family}`,
+          args: { asset: id, op: "palette-swap", from: own, to: family },
+        });
+  return choices;
+}
+
+/** What a derive replied: the working set it made (or already had) and its slots or realm. */
+export interface DeriveReply {
+  readonly workingSetId: string;
+  readonly created: boolean;
+  readonly slots: readonly string[];
+}
+
+export function readDeriveReply(value: unknown): DeriveReply | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { workingSetId, created, slots } = value as Record<string, unknown>;
+  if (
+    typeof workingSetId !== "string" ||
+    typeof created !== "boolean" ||
+    !Array.isArray(slots)
+  )
+    return undefined;
+  return {
+    workingSetId,
+    created,
+    slots: slots.filter((slot): slot is string => typeof slot === "string"),
+  };
+}
+
+/** The click handler behind Derive: a refusal (asymmetric, non-derivable, ...) is shown as the window's message. */
+export function deriveGuarded(
+  host: StudioHost,
+  ui: GuardUi,
+  args: DeriveArgs,
+  onDerived?: (reply: DeriveReply) => void,
+): Promise<unknown> {
+  return guardedAction(ui, { label: "derive" }, () =>
+    host.call("derive", { ...args }),
+  ).then((result) => {
+    const reply = readDeriveReply(result);
+    if (reply !== undefined) {
+      onDerived?.(reply);
+      ui.setMessage(
+        reply.created
+          ? `Derived ${reply.slots.join(", ")} into working set ${reply.workingSetId}. Pack it to review the result.`
+          : `Working set ${reply.workingSetId} already holds this derivation. Pack it to review the result.`,
+      );
+    }
+    return result;
+  });
+}
+
 /** The click handler behind Pack draft. */
 export function packWorkingSetGuarded(
   host: StudioHost,

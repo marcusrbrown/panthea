@@ -27,7 +27,8 @@ use OpClass::{Long, Read, Write};
 
 /// Argument names are the session's own (`tools/studio/src/commands.ts`). The
 /// masked-edit fields of `generate` (`editBase*`, `editMask`, `editStrength`,
-/// `editCue`) name files by path and stay a CLI path. `finish` takes no files:
+/// `editCue`) name files by path and stay a CLI path; so does `reference`,
+/// which the session refuses as unavailable (the probe's NO-GO). `finish` takes no files:
 /// it takes back what the editor saved. It may name the sheet hash it was
 /// reviewed at, and carry the step it is recorded with (`method` and
 /// `description` are free text published with the asset, not places).
@@ -63,6 +64,7 @@ pub const OPS: &[OpSpec] = &[
         &[
             "source",
             "id",
+            "realm",
             "state",
             "direction",
             "ability",
@@ -106,6 +108,9 @@ pub const OPS: &[OpSpec] = &[
         &["id", "reviewed", "method", "description"],
         Write,
     ),
+    // Derives slots from a published revision into a working set: a mirror, a
+    // bob, or a palette swap. It names the asset and the slots, never a file.
+    spec("derive", &["asset", "op", "from", "to", "params"], Write),
     spec(
         "pack",
         &[
@@ -183,6 +188,8 @@ mod tests {
         "editBaseJob",
         "editBaseOutput",
         "editBaseDescription",
+        "editBasePublished",
+        "editBaseFrameHash",
         "editStrength",
         "editCue",
     ];
@@ -214,6 +221,7 @@ mod tests {
                 "reject",
                 "discard",
                 "finish",
+                "derive",
                 "pack",
                 "approve",
                 "approve-with-exception",
@@ -348,9 +356,43 @@ mod tests {
     }
 
     #[test]
-    fn derive_and_the_path_ops_are_not_callable() {
-        for op in [
+    fn source_resolve_takes_a_realm_and_stays_a_read_with_no_place_in_it() {
+        let row = lookup("source-resolve").unwrap();
+        assert!(row.args.contains(&"realm"));
+        assert_eq!(row.class, Read);
+        assert!(check(
+            "source-resolve",
+            &json!({ "source": "draft", "id": "zeus-take", "realm": "underworld" })
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn derive_is_a_write_that_names_an_asset_and_its_slots_and_never_a_place() {
+        let row = lookup("derive").unwrap();
+        assert_eq!(row.args, ["asset", "op", "from", "to", "params"]);
+        assert_eq!(row.class, Write);
+        for arg in row.args {
+            assert!(!PATHISH.contains(arg), "derive takes {arg}");
+        }
+        assert!(check(
             "derive",
+            &json!({ "asset": "zeus-sprite", "op": "mirror", "from": "idle/east" })
+        )
+        .is_ok());
+        for stray in ["dir", "path", "png", "root", "toString"] {
+            assert_eq!(
+                check("derive", &json!({ stray: "x" })),
+                Err(Refusal::UnknownArgument(stray.into())),
+                "{stray}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_path_ops_and_an_op_the_table_never_had_are_not_callable() {
+        for op in [
+            "rotate",
             "open",
             "edit-workspace",
             "import",
@@ -414,6 +456,9 @@ mod tests {
                 "editMask",
                 "editBaseImage",
                 "editBaseJob",
+                "editBasePublished",
+                "editBaseFrameHash",
+                "reference",
                 "editStrength",
                 "constructor",
                 "__proto__",

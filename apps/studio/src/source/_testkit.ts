@@ -26,6 +26,7 @@ export {
   firstBlob,
   hiddenRgbSprite,
   publishCanon,
+  variantSprite,
   vocabulary,
   withManifest,
   writeDraft,

@@ -117,6 +117,7 @@ Tiers: **T1** Zeus on screen (success criterion 1); **T2** visual reference scen
 
 **Derivation**
 - R13. [T2] From an approved set the studio derives deterministically where the guide allows: mirrored east/west directions, idle bob, realm palette swaps, and damage or fire overlays for structures. Walk and act cycles are not derived.
+  - Note (2026-10-11, owner): derivation reads published revisions only, so `approved` no longer feeds it. A derived draft is packed, approved and published like any other. The text above stays as written.
 - R14. [T2] Frames derivation cannot produce are hand-drawn via F2 or requested as reference-conditioned generation plus inpaint repair; such frames enter the same contact-sheet review as F1.
 - R15. [T2] A derived batch is reproducible from its manifest alone; regenerating with the same inputs yields byte-identical derived frames; output encoders are pinned for determinism.
 

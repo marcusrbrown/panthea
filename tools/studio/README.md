@@ -65,7 +65,7 @@ The environment is never passed to the server or the editor.
 | Command | What it does |
 | --- | --- |
 | `session` | Owns the studio root and serves the commands below as newline-delimited JSON (see Sessions) |
-| `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it. Add `--edit-mask <png> --edit-strength <n> --edit-cue <text>` with one base (`--edit-base-job <id> --edit-base-output <sha256>` or `--edit-base-image <png> --edit-base-description <text>`) to make it a masked img2img edit (see Edits) |
+| `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it. Add `--edit-mask <png> --edit-strength <n> --edit-cue <text>` with one base (`--edit-base-job <id> --edit-base-output <sha256>`, `--edit-base-image <png> --edit-base-description <text>`, or `--edit-base-published <asset>@<revision>:<slot>#<frame> --edit-base-frame-hash <sha256>`) to make it a masked img2img edit (see Edits and Repair). `--reference <json>` asks for reference conditioning and is always refused as `unavailable` |
 | `reroll` | `--request-id --per-slot [--slot-key]`: more jobs for a request, continuing its seed sequence. With `--slot-key` only that slot gets the new jobs (an unknown slot key is `invalid-request` and queues nothing); without it every slot does |
 | `status`, `list <kind>`, `sheet` | Read the durable records without taking the writer lock. `status` also lists `conformSets`, the names of the config's conform sets (never their settings). It also lists `openEdits`, `[{"id","previewSheetHash"}]` for each open edit (`previewSheetHash` is `null` before its first save): a save imported by the watcher changes no count, so a host that polls `status` sees it by comparing this. In `list jobs`, a succeeded job carries `candidate`: `"done"`, `"needs-scale"`, or `null` when it has not been conformed (a candidate's id is its job's id) |
 | `resolve` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: the request `generate` would store and the generation spec built from it, from the content root alone. It takes no lock and writes nothing, so it works while another session owns the root. An omitted seed is drawn and reported; pass the reported seed to `generate` for the same request. An unknown subject, state or kind is the same refusal `generate` gives, with the valid alternatives. Edit files are not accepted. Reply: `{"id","request","spec"}` |
@@ -80,7 +80,7 @@ The environment is never passed to the server or the editor.
 | `reject` | Rejects a packed draft |
 | `open`, `import`, `finish`, `discard`, `export` | Hand edits, in the editor or with files; `open` replies with `workspacePath`, the absolute path of the workspace file, for a host that launches the editor on it, or `null` when no `editor` is configured (the edit is still created, with its sheet and metadata, so `export` and `import`/`finish --png --json` work); `finish --png --json` also takes `--method hand\|script` (default `hand`) and `--description` (required for `script`: what ran), so a scripted edit is not recorded as a hand edit. `finish --reviewed <sheetHash>` names the save the owner reviewed (an `edit-report`'s `sheetHash`, 64 lowercase hex digits): if the sheet the finish would take (the editor's fresh export, or `--png`) hashes differently, it is refused as `stale-review`, nothing is written and the edit stays open. Without `--reviewed` a finish takes whatever is there |
 | `pack`, `approve`, `approve-with-exception`, `publish` | Final records and canon |
-| `derive` | Not supported: exits `1` and changes nothing |
+| `derive` | `derive --asset <id> --op mirror\|palette-swap\|bob --from <slot> [--to <slot or family>] [--params <json>]` reads the asset's published revision and writes a working set of derived slots (a write op: it takes the writer lock). `mirror` makes `<state>/west` from `<state>/east` for idle, seated, hurt and down, and is refused as `asymmetric` (naming the feature) when the subject declares one, `off-centre-pivot` or `non-square-footprint` when the geometry is off, and `non-derivable` for walk and act. `bob` rebuilds an idle loop from the rest frame; `--params` is `{region, exclude, dy, durationsMs, seam, repairs}` (all integers; a default breathing loop when omitted), and it is `non-derivable` for any state but idle. `palette-swap` takes the asset's own palette family as `--from` and the target family as `--to`, and adds a realm variant (its own atlas and an inline colour map, regenerated at every pack); `--params '{"ramps":[["marble","ash"]]}'` pairs ramps, else they pair by order, and unequal ramps are `ramp-length`, an opaque colour in none of them `unmapped-colour`. The reply is `{workingSetId, created, slots}`; the same inputs return the set they made, with `created: false`. Then `pack`, `approve` and `publish` run as for drawn art: pack gates conformance on the derived slots, publish recomputes every step and variant from its published source and refuses a mismatch, naming it. A derived slot that is hand-edited and finished becomes a hand step and is never recomputed. A set that mixes derived and generated slots is refused at pack |
 
 `--slots`, `--params` and the other JSON flags take JSON text or `@file`.
 
@@ -110,6 +110,46 @@ distilled guidance 1 (`SELECTED_PROFILE.edit`), the settings the art-edit probe'
 CLI runs used; plain generation keeps CFG 1 and sends no distilled guidance.
 Edit jobs take about twice as long as plain ones, and record `txt_cfg` and
 `distilled_guidance` in their settings.
+
+## Repair
+
+A masked edit can start from one frame of a published revision, which is how a
+frame that cannot be derived (a walk or act pose, or a west cell of a subject
+that declares an asymmetry) is redrawn. Name it
+`--edit-base-published <asset>@<revision>:<slot>#<frame>` (the revision is its
+64-character hash, the frame a zero-based index) with
+`--edit-base-frame-hash <sha256>`, the hash of the frame's cell as a PNG with
+the colour under alpha 0 zeroed. The hash is required: it fixes which pixels
+the edit started from, and a request naming another is refused. The session
+reads the frame from the registry (`registryRoot` in the config), checks the
+hash, and scales the cell by the whole generation factor with nearest pixels to
+make the base. A refusal names its reason: `missing-revision`, `missing-slot`,
+`missing-frame` or `frame-hash-mismatch` (which also prints the hash the frame
+really has). A base whose size is not a whole multiple of the request's is
+refused.
+
+The result is an ordinary `generated` candidate in its own working set: pick it,
+finish it in the editor, pack, review, approve and publish it like drawn art.
+Pack requires the base to be a frame of the revision now published for the asset
+it packs, records the base frame ref with the mask, strength and cue in the
+generation, lists that revision in `sourceAssets` and carries its licences. A
+repair candidate cannot share a working set with a new derived slot; pack them in
+separate revisions. A repair of an asset whose published revision holds derived
+cells or realm variants stays `generated` and carries their steps in
+`provenance.steps`, so the derivation is not lost; publish recomputes those steps
+like any derived revision's.
+
+Mask and base files are paths and stay on the command line; the app does not
+take them.
+
+### Reference conditioning
+
+`--reference` is accepted so that a request that asks for it fails loudly. It
+returns `unavailable` before the studio lock is taken or anything is stored. The
+probe that tested reference-conditioned facing and pose on the pinned sd-server
+did not pass (NO-GO): facing failed, and the seated pose missed its ceiling by a
+hair. The result is in `tools/probes/art-reference/README.md`. The repair route
+is the masked edit above.
 
 ## One-shot and session
 
@@ -163,8 +203,8 @@ picked up once it is created.
 | Op | Arguments | Reply |
 | --- | --- | --- |
 | `source-list` | none | `{"entries":[{"source","id","assetId","kind","state","ok"}],"problems":[{"scope","message"}]}` |
-| `source-resolve` | `source` (`canon`, `draft` or `approved`), `id`, optional `state`, `direction`, `ability`, `expression` | `{"kind":"frames","selection","manifestKey","asset","bytes":{"width","height","pixelKey"}}`, or `{"kind":"placeholder","selection","reason","uri","problems","bytes"}` when nothing valid is held |
-| `source-bytes` | `source`, `id` and `v` (the `pixelKey` from `source-resolve`), or `placeholder` (a placeholder's `pixelKey`) alone | `{"source","id","pixelKey","width","height","base64"}`, or `{"placeholder","base64"}`; `base64` is the validated PNG. A `v` that is not the selection's current key is refused `stale-version` (resolve again); nothing held is `not-found` |
+| `source-resolve` | `source` (`canon`, `draft` or `approved`), `id`, optional `realm` (a realm palette family: its variant atlas instead of the base atlas; a realm the asset does not publish resolves as a placeholder, `missing-state`), optional `state`, `direction`, `ability`, `expression` | `{"kind":"frames","selection","manifestKey","asset","bytes":{"width","height","pixelKey"}}`, or `{"kind":"placeholder","selection","reason","uri","problems","bytes"}` when nothing valid is held |
+| `source-bytes` | `source`, `id`, optional `realm` and `v` (the `pixelKey` from `source-resolve`), or `placeholder` (a placeholder's `pixelKey`) alone | `{"source","id"[,"realm"],"pixelKey","width","height","base64"}`, or `{"placeholder","base64"}`; `base64` is the validated PNG. A `v` that is not the selection's current key is refused `stale-version` (resolve again); nothing held is `not-found` |
 | `source-keys` | none | `{"listing","selections":[{"source","id","key"}]}`: compare with the previous reply to see what changed |
 
 Ids are lowercase hyphenated slugs; anything else, and any unknown argument, is

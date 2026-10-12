@@ -1,12 +1,19 @@
 import {
+  type AssetId,
+  type ColourMapping,
   type ConformanceReport,
+  canonicalJson,
+  type DerivedStep,
   fail,
   type HandEditStep,
   isRecord,
   ok,
   type ParseResult,
   parseArray,
+  parseAssetId,
+  parseColourMapping,
   parseConformanceReport,
+  parseDerivedStep,
   parseEnum,
   parseIntegerAtLeast,
   parseSha256,
@@ -42,7 +49,7 @@ export interface Keyframe {
   readonly report: ConformanceReport;
 }
 
-/** What a slot's frames were made from: a picked keyframe or an earlier edit's frames. */
+/** What a slot's frames were made from: a picked keyframe, an earlier edit's frames, or a derived slot. */
 export type SlotBasis =
   | {
       readonly kind: "keyframe";
@@ -53,7 +60,27 @@ export type SlotBasis =
       readonly kind: "frames";
       readonly editId: string;
       readonly sheetHash: Sha256;
-    };
+    }
+  | DerivedBasis;
+
+/**
+ * A derived slot as an edit's starting point. It names the recipe and the
+ * published source so a hand edit made from it can say, as history, what the
+ * slot was derived from.
+ */
+export interface DerivedBasis {
+  readonly kind: "derived";
+  readonly recipe: string;
+  readonly version: number;
+  readonly assetId: AssetId;
+  readonly revision: Sha256;
+  readonly slotKey: string;
+  /** The source slot's hash, as the step recorded it. */
+  readonly slotHash: Sha256;
+  /** The step's params as canonical JSON text: what the recipe was run with. */
+  readonly params: string;
+  readonly resultHash: Sha256;
+}
 
 export interface FrameRef {
   readonly hash: Sha256;
@@ -75,6 +102,30 @@ export interface FrameLimits {
   readonly max: number;
 }
 
+/**
+ * A slot this working set derives rather than draws: the step that records it
+ * (recipe, version, params, published source, result hash), the stored frames
+ * the recipe produced, and the conformance evidence of the source slot.
+ */
+export interface DerivedEntry {
+  readonly step: DerivedStep;
+  readonly frames: readonly FrameRef[];
+  readonly loopStart?: number;
+  readonly params: CandidateParams;
+  readonly palette: CandidateTarget["palette"];
+}
+
+/**
+ * A realm variant to add at pack: the palette family and the colour map it is
+ * recoloured under, with one step per slot of the source. The pixels are made
+ * at pack, from the packed atlas.
+ */
+export interface VariantRequest {
+  readonly paletteFamily: string;
+  readonly map: readonly ColourMapping[];
+  readonly steps: readonly DerivedStep[];
+}
+
 export interface WorkingSetRecord {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -87,6 +138,10 @@ export interface WorkingSetRecord {
   readonly limits: Readonly<Record<string, FrameLimits>>;
   readonly picks: Readonly<Record<string, Keyframe>>;
   readonly frames: Readonly<Record<string, AuthoredFrames>>;
+  /** Slots recomputed from a published revision; absent on a set that derives nothing. */
+  readonly derived?: Readonly<Record<string, DerivedEntry>>;
+  /** Realm variants to add at pack, by palette family; absent when there are none. */
+  readonly variants?: Readonly<Record<string, VariantRequest>>;
   readonly status: "open" | "complete";
 }
 
@@ -101,8 +156,10 @@ export function deriveStatus(
   picks: Readonly<Record<string, Keyframe>>,
   frames: Readonly<Record<string, AuthoredFrames>>,
   limits: Readonly<Record<string, FrameLimits>>,
+  derived: Readonly<Record<string, DerivedEntry>> = {},
 ): "open" | "complete" {
   const done = (slot: string) => {
+    if (derived[slot] !== undefined) return true;
     const authored = frames[slot];
     const limit = limits[slot];
     if (authored !== undefined && limit !== undefined)
@@ -133,6 +190,19 @@ export function slotBasisOf(
       kind: "keyframe",
       candidateId: pick.candidateId,
       imageHash: pick.imageHash,
+    };
+  const derived = set.derived?.[slot];
+  if (derived !== undefined)
+    return {
+      kind: "derived",
+      recipe: derived.step.recipe,
+      version: derived.step.version,
+      assetId: derived.step.source.assetId,
+      revision: derived.step.source.revision,
+      slotKey: derived.step.source.slotKey,
+      slotHash: derived.step.source.slotHash,
+      params: canonicalJson(derived.step.params),
+      resultHash: derived.step.resultHash,
     };
   return undefined;
 }
@@ -175,13 +245,65 @@ export function parseSlotBasis(
         } as const);
       },
     );
+  if (kind === "derived")
+    return parseStrictRecord(
+      value,
+      path,
+      [
+        "kind",
+        "recipe",
+        "version",
+        "assetId",
+        "revision",
+        "slotKey",
+        "slotHash",
+        "params",
+        "resultHash",
+      ],
+      (record) => {
+        const recipe = parseString(record.recipe, `${path}.recipe`);
+        if (!recipe.ok) return recipe;
+        const version = parseIntegerAtLeast(
+          record.version,
+          `${path}.version`,
+          1,
+        );
+        if (!version.ok) return version;
+        const assetId = parseAssetId(record.assetId, `${path}.assetId`);
+        if (!assetId.ok) return assetId;
+        const revision = parseSha256(record.revision, `${path}.revision`);
+        if (!revision.ok) return revision;
+        const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+        if (!slotKey.ok) return slotKey;
+        const slotHash = parseSha256(record.slotHash, `${path}.slotHash`);
+        if (!slotHash.ok) return slotHash;
+        const params = parseString(record.params, `${path}.params`);
+        if (!params.ok) return params;
+        const resultHash = parseSha256(record.resultHash, `${path}.resultHash`);
+        if (!resultHash.ok) return resultHash;
+        return ok({
+          kind: "derived",
+          recipe: recipe.value,
+          version: version.value,
+          assetId: assetId.value,
+          revision: revision.value,
+          slotKey: slotKey.value,
+          slotHash: slotHash.value,
+          params: params.value,
+          resultHash: resultHash.value,
+        } as const);
+      },
+    );
   return parseStrictRecord(
     value,
     path,
     ["kind", "editId", "sheetHash"],
     (record) => {
       if (record.kind !== "frames")
-        return fail(`${path}.kind`, 'expected "keyframe" or "frames"');
+        return fail(
+          `${path}.kind`,
+          'expected "keyframe", "frames" or "derived"',
+        );
       const editId = parseSlug(record.editId, `${path}.editId`);
       if (!editId.ok) return editId;
       const sheetHash = parseSha256(record.sheetHash, `${path}.sheetHash`);
@@ -371,6 +493,74 @@ function parseKeyframe(value: unknown, path: string): ParseResult<Keyframe> {
   );
 }
 
+function parseDerivedEntry(
+  value: unknown,
+  path: string,
+): ParseResult<DerivedEntry> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["step", "frames", "loopStart", "params", "palette"],
+    (record) => {
+      const step = parseDerivedStep(record.step, `${path}.step`);
+      if (!step.ok) return step;
+      const frames = parseFrameRefs(record.frames, `${path}.frames`);
+      if (!frames.ok) return frames;
+      let loopStart: number | undefined;
+      if (record.loopStart !== undefined) {
+        const parsed = parseIntegerAtLeast(
+          record.loopStart,
+          `${path}.loopStart`,
+          0,
+        );
+        if (!parsed.ok) return parsed;
+        if (parsed.value >= frames.value.length)
+          return fail(`${path}.loopStart`, "expected a frame index");
+        loopStart = parsed.value;
+      }
+      const params = parseCandidateParams(record.params, `${path}.params`);
+      if (!params.ok) return params;
+      const palette = parseTargetPalette(record.palette, `${path}.palette`);
+      if (!palette.ok) return palette;
+      return ok({
+        step: step.value,
+        frames: frames.value,
+        ...(loopStart === undefined ? {} : { loopStart }),
+        params: params.value,
+        palette: palette.value,
+      });
+    },
+  );
+}
+
+function parseVariantRequest(
+  value: unknown,
+  path: string,
+): ParseResult<VariantRequest> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["paletteFamily", "map", "steps"],
+    (record) => {
+      const family = parseSlug(record.paletteFamily, `${path}.paletteFamily`);
+      if (!family.ok) return family;
+      const map = parseArray(record.map, `${path}.map`, parseColourMapping);
+      if (!map.ok) return map;
+      if (map.value.length === 0)
+        return fail(`${path}.map`, "expected at least one colour mapping");
+      const steps = parseArray(record.steps, `${path}.steps`, parseDerivedStep);
+      if (!steps.ok) return steps;
+      if (steps.value.length === 0)
+        return fail(`${path}.steps`, "expected at least one step");
+      return ok({
+        paletteFamily: family.value,
+        map: map.value,
+        steps: steps.value,
+      });
+    },
+  );
+}
+
 export function parseWorkingSetRecord(
   input: unknown,
 ): ParseResult<WorkingSetRecord> {
@@ -387,6 +577,8 @@ export function parseWorkingSetRecord(
       "limits",
       "picks",
       "frames",
+      "derived",
+      "variants",
       "status",
     ],
     (record) => {
@@ -412,8 +604,13 @@ export function parseWorkingSetRecord(
         parseString,
       );
       if (!required.ok) return required;
-      if (required.value.length === 0)
-        return fail("workingSet.required", "expected at least one slot");
+      const hasVariants =
+        isRecord(record.variants) && Object.keys(record.variants).length > 0;
+      if (required.value.length === 0 && !hasVariants)
+        return fail(
+          "workingSet.required",
+          "expected at least one slot, or a realm variant to add",
+        );
       if (new Set(required.value).size !== required.value.length)
         return fail("workingSet.required", "expected unique slots");
       const limits = parseLimits(record.limits, required.value);
@@ -466,6 +663,48 @@ export function parseWorkingSetRecord(
           );
         frames[slot] = authored.value;
       }
+      const derived: Record<string, DerivedEntry> = {};
+      if (record.derived !== undefined) {
+        if (!isRecord(record.derived))
+          return fail("workingSet.derived", "expected an object");
+        for (const slot of Object.keys(record.derived)) {
+          const path = `workingSet.derived.${slot}`;
+          if (!required.value.includes(slot))
+            return fail(path, "a derived slot that is not required");
+          if (frames[slot] !== undefined || picks[slot] !== undefined)
+            return fail(
+              path,
+              "a derived slot also has a pick or authored frames",
+            );
+          const entry = parseDerivedEntry(record.derived[slot], path);
+          if (!entry.ok) return entry;
+          if (entry.value.step.outputSlot !== slot)
+            return fail(`${path}.step.outputSlot`, `expected "${slot}"`);
+          const limit = limits.value[slot] as FrameLimits;
+          if (
+            entry.value.frames.length < limit.min ||
+            entry.value.frames.length > limit.max
+          )
+            return fail(
+              `${path}.frames`,
+              `expected ${limit.min}-${limit.max} frames, got ${entry.value.frames.length}`,
+            );
+          derived[slot] = entry.value;
+        }
+      }
+      const variants: Record<string, VariantRequest> = {};
+      if (record.variants !== undefined) {
+        if (!isRecord(record.variants))
+          return fail("workingSet.variants", "expected an object");
+        for (const family of Object.keys(record.variants)) {
+          const path = `workingSet.variants.${family}`;
+          const entry = parseVariantRequest(record.variants[family], path);
+          if (!entry.ok) return entry;
+          if (entry.value.paletteFamily !== family)
+            return fail(`${path}.paletteFamily`, `expected "${family}"`);
+          variants[family] = entry.value;
+        }
+      }
       const status = parseEnum(record.status, "workingSet.status", [
         "open",
         "complete",
@@ -473,7 +712,14 @@ export function parseWorkingSetRecord(
       if (!status.ok) return status;
       if (
         status.value !==
-        deriveStatus(kind.value, required.value, picks, frames, limits.value)
+        deriveStatus(
+          kind.value,
+          required.value,
+          picks,
+          frames,
+          limits.value,
+          derived,
+        )
       )
         return fail(
           "workingSet.status",
@@ -489,6 +735,8 @@ export function parseWorkingSetRecord(
         limits: limits.value,
         picks,
         frames,
+        ...(Object.keys(derived).length === 0 ? {} : { derived }),
+        ...(Object.keys(variants).length === 0 ? {} : { variants }),
         status: status.value,
       });
     },
@@ -581,6 +829,7 @@ export function replaceSheetOf(
         set.picks,
         set.frames,
         set.limits,
+        set.derived,
       ),
     },
   };
@@ -621,6 +870,10 @@ export function pickKeyframe(
     return refuse(
       `slot ${slot} has authored frames; a pick would not replace them`,
     );
+  if (set.derived?.[slot] !== undefined)
+    return refuse(
+      `slot ${slot} is derived; a pick would not replace it (derive again, or edit it)`,
+    );
   const frame: Keyframe = {
     candidateId: candidate.id,
     source: candidate.source,
@@ -647,6 +900,7 @@ export function pickKeyframe(
         picks,
         set.frames,
         set.limits,
+        set.derived,
       ),
     },
   };

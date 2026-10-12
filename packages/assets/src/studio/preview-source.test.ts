@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { portraitFixture, spriteFixture } from "../fixtures";
 import { sha256Hex } from "../hash";
+import { encodeRgbaPng } from "../placeholder";
 import {
   fakeWatchFs,
   firstBlob,
   hiddenRgbSprite,
   manualClock,
   publishCanon,
+  variantSprite,
   vocabulary,
   withManifest,
   writeDraft,
@@ -402,6 +404,179 @@ describe("the scheduler and close", () => {
     expect(source.resolve({ source: "canon", id: "zeus-portrait" }).kind).toBe(
       "placeholder",
     );
+  });
+});
+
+describe("a realm variant is a selection of its own", () => {
+  const draftRig = () => {
+    const r = rig();
+    const v = variantSprite("placeholder-zeus", 3);
+    writeDraft(r.studioRoot, "zeus-take", v.asset);
+    r.clock.touch(r.studioRoot, "assets/zeus-take.json");
+    r.clock.tick();
+    return { r, v };
+  };
+
+  test("a draft's realm request resolves the variant atlas and serves the variant's bytes, not the base's", () => {
+    const { r, v } = draftRig();
+
+    const base = r.source.resolve({ source: "draft", id: "zeus-take" });
+    const variant = r.source.resolve({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+
+    expect(base.kind).toBe("frames");
+    expect(variant.kind).toBe("frames");
+    if (base.kind !== "frames" || variant.kind !== "frames") return;
+    expect(variant.selection).toEqual({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+    expect(variant.bytes.pixelKey).not.toBe(base.bytes.pixelKey);
+    const got = r.source.bytes(variant.selection, variant.bytes.pixelKey);
+    expect(got.ok && sha256Hex(got.bytes)).toBe(v.variantHash);
+    const own = r.source.bytes(base.selection, base.bytes.pixelKey);
+    expect(own.ok && sha256Hex(own.bytes)).toBe(sha256Hex(v.baseBytes));
+    // The key of one never serves the other.
+    expect(r.source.bytes(variant.selection, base.bytes.pixelKey)).toEqual({
+      ok: false,
+      reason: "stale",
+    });
+  });
+
+  test("a canon revision's variant is served the same way, from the registry's own blob", () => {
+    const r = rig();
+    const v = variantSprite("placeholder-hera", 4);
+    publishCanon(r.registryRoot, v.asset);
+    r.clock.touch(r.registryRoot, "index.json");
+    r.clock.tick();
+
+    const variant = r.source.resolve({
+      source: "canon",
+      id: "placeholder-hera",
+      realm: "underworld",
+    });
+
+    expect(variant.kind).toBe("frames");
+    if (variant.kind !== "frames") return;
+    const got = r.source.bytes(variant.selection, variant.bytes.pixelKey);
+    expect(got.ok && sha256Hex(got.bytes)).toBe(v.variantHash);
+  });
+
+  test("a realm the asset does not publish is the not-in-this-asset outcome, and no bytes are held for it", () => {
+    const { r } = draftRig();
+
+    const unknown = r.source.resolve({
+      source: "draft",
+      id: "zeus-take",
+      realm: "town",
+    });
+    const missingState = r.source.resolve({
+      source: "draft",
+      id: "zeus-take",
+      state: "walk",
+    });
+
+    expect(unknown.kind).toBe("placeholder");
+    if (unknown.kind !== "placeholder" || missingState.kind !== "placeholder")
+      return;
+    expect(unknown.reason).toBe(missingState.reason);
+    expect(
+      r.source.bytes({ source: "draft", id: "zeus-take", realm: "town" }, "x"),
+    ).toEqual({ ok: false, reason: "not-found" });
+  });
+
+  test("the listing names each entry's realms, and keys() follows a variant's own pixels", () => {
+    const { r, v } = draftRig();
+    const entry = r.source
+      .list()
+      .entries.find((e) => e.id === "zeus-take" && e.source === "draft");
+    expect(entry?.realms).toEqual(["underworld"]);
+    const plain = r.source.list().entries.find((e) => e.source === "canon");
+    expect(plain?.realms).toEqual([]);
+    const before = r.source
+      .keys()
+      .selections.find((s) => s.id === "zeus-take" && s.realm === "underworld");
+    expect(before).toBeDefined();
+
+    // The variant is regenerated with different pixels; the base is untouched.
+    const rgba = new Uint8Array(256 * 80 * 4);
+    for (let at = 0; at < rgba.length; at += 4)
+      rgba.set([200, 12, 90, 255], at);
+    const bytes = encodeRgbaPng(rgba, 256, 80);
+    const hash = sha256Hex(bytes);
+    const next = withManifest(v.asset, {
+      realmVariants: [
+        {
+          ...(v.asset.manifest as unknown as { realmVariants: object[] })
+            .realmVariants[0],
+          atlas: { blob: hash, width: 256, height: 80 },
+        },
+      ],
+    });
+    writeDraft(r.studioRoot, "zeus-take", {
+      manifest: next.manifest,
+      blobs: new Map([...v.asset.blobs, [hash, bytes]]),
+    });
+    r.clock.touch(r.studioRoot, "assets/zeus-take.json");
+    r.clock.tick();
+
+    const after = r.source
+      .keys()
+      .selections.find((s) => s.id === "zeus-take" && s.realm === "underworld");
+    expect(after?.key).not.toBe(before?.key);
+    expect(
+      r.events.some((e) =>
+        e.changed.some((c) => c.id === "zeus-take" && c.realm === "underworld"),
+      ),
+    ).toBe(true);
+  });
+
+  test("a variant whose blob is missing is refused with a problem and resolves as not in this asset; the base still serves", () => {
+    const r = rig();
+    const v = variantSprite("placeholder-zeus", 5);
+    writeDraft(r.studioRoot, "zeus-take", {
+      manifest: v.asset.manifest,
+      blobs: new Map([...v.asset.blobs].filter(([h]) => h !== v.variantHash)),
+    });
+    r.clock.touch(r.studioRoot, "assets/zeus-take.json");
+    r.clock.tick();
+
+    const variant = r.source.resolve({
+      source: "draft",
+      id: "zeus-take",
+      realm: "underworld",
+    });
+
+    expect(variant.kind).toBe("placeholder");
+    expect(r.source.resolve({ source: "draft", id: "zeus-take" }).kind).toBe(
+      "frames",
+    );
+    expect(
+      r.source.list().problems.some((p) => p.message.includes("realm variant")),
+    ).toBe(true);
+  });
+});
+
+describe("parsePreviewResolve and a realm", () => {
+  test("accepts a realm slug, and refuses a malformed one", () => {
+    expect(
+      parsePreviewResolve({
+        source: "draft",
+        id: "zeus-take",
+        realm: "underworld",
+      }),
+    ).toEqual({ source: "draft", id: "zeus-take", realm: "underworld" });
+    expect(
+      typeof parsePreviewResolve({
+        source: "draft",
+        id: "zeus-take",
+        realm: "../x",
+      }),
+    ).toBe("string");
   });
 });
 
