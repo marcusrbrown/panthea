@@ -623,12 +623,17 @@ describe("following the selected clip's timing", () => {
   function follow(world: ReturnType<typeof fakeSource>, req = request) {
     let now = 0;
     const playback = createPlaybackClock([], undefined, () => now);
-    const seen: { durations: readonly number[]; frame: number }[] = [];
+    const seen: {
+      durations: readonly number[];
+      frame: number;
+      playing: boolean;
+    }[] = [];
     const stop = followClipTiming({
       source: world.source as never,
       request: req as never,
       playback,
-      onTiming: (durations, frame) => seen.push({ durations, frame }),
+      onTiming: (durations, frame, playing) =>
+        seen.push({ durations, frame, playing }),
     });
     return { playback, seen, stop, advance: (ms: number) => (now += ms) };
   }
@@ -709,6 +714,91 @@ describe("following the selected clip's timing", () => {
     world.emit({ changed: [zeus], listing: false });
     await settle();
     expect(seen.at(-1)?.durations).toEqual([]);
+  });
+
+  describe("input that arrives while a refresh is still resolving", () => {
+    /** A refresh whose reply the test releases: what the owner does in between lands first. */
+    function pendingRefresh() {
+      const world = fakeSource(clip(167));
+      const followed = follow(world);
+      return { world, ...followed };
+    }
+
+    async function startRefresh(
+      world: ReturnType<typeof fakeSource>,
+      next: ReturnType<typeof clip>,
+    ) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      world.source.resolve = async () => {
+        await gate;
+        return next as never;
+      };
+      world.emit({ changed: [zeus], listing: false });
+      await settle();
+      return release;
+    }
+
+    it("Play pressed while the resolve is pending is not undone by the reply, so the clock still plays and the button's Pause is true", async () => {
+      const { world, playback, seen } = pendingRefresh();
+      await settle();
+      playback.scrub(1);
+      expect(playback.playing()).toBe(false);
+
+      const release = await startRefresh(world, clip(333));
+      playback.play();
+      release();
+      await settle();
+
+      expect(playback.playing()).toBe(true);
+      // The UI is told the same thing, so its button keeps saying Pause.
+      expect(seen.at(-1)?.playing).toBe(true);
+    });
+
+    it("Scrub made while the resolve is pending is kept by the reply, on the new timing", async () => {
+      const { world, playback, seen } = pendingRefresh();
+      await settle();
+      playback.scrub(1);
+
+      const release = await startRefresh(world, clip(333, 6));
+      playback.scrub(3);
+      release();
+      await settle();
+
+      expect(playback.playing()).toBe(false);
+      expect(playback.frame()).toBe(3);
+      expect(playback.elapsed()).toBe(333 * 3 + 166.5);
+      expect(seen.at(-1)?.durations).toHaveLength(6);
+      expect(seen.at(-1)?.frame).toBe(3);
+    });
+
+    it("a Scrub past the new, shorter clip is clamped to its last frame", async () => {
+      const { world, playback } = pendingRefresh();
+      await settle();
+
+      const release = await startRefresh(world, clip(333, 3));
+      playback.scrub(3);
+      release();
+      await settle();
+
+      expect(playback.frame()).toBe(2);
+      expect(playback.playing()).toBe(false);
+    });
+
+    it("a reply that lands while paused still holds the frame the clock is on then", async () => {
+      const { world, playback } = pendingRefresh();
+      await settle();
+      playback.scrub(2);
+
+      const release = await startRefresh(world, clip(333));
+      release();
+      await settle();
+
+      expect(playback.frame()).toBe(2);
+      expect(playback.playing()).toBe(false);
+    });
   });
 
   it("stopping unsubscribes, and a refresh that was in flight when it stopped changes nothing", async () => {

@@ -298,10 +298,11 @@ function PreviewHarness({
       source,
       request,
       playback,
-      onTiming: (durations, frame) => {
+      onTiming: (durations, frame, playing) => {
         if (cancelled) return;
         setFrameDurations(durations);
         setFrameIndex(frame);
+        setIsPlaying(playing);
         preview?.tick(playback.elapsed());
       },
     });

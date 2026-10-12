@@ -150,7 +150,12 @@ export function followClipTiming(input: {
   readonly source: Pick<AssetSource, "resolve" | "subscribe">;
   readonly request: ResolveRequest;
   readonly playback: PlaybackClock;
-  readonly onTiming: (durations: readonly number[], frame: number) => void;
+  /** Reports the new timing with the frame and whether the clock is playing, so the UI never says otherwise. */
+  readonly onTiming: (
+    durations: readonly number[],
+    frame: number,
+    playing: boolean,
+  ) => void;
 }): () => void {
   const { source, request, playback, onTiming } = input;
   let disposed = false;
@@ -160,32 +165,35 @@ export function followClipTiming(input: {
   const load = (refresh: boolean) => {
     latest += 1;
     const mine = latest;
-    const wasPlaying = playback.playing();
-    const heldFrame = playback.frame();
     void source.resolve(request).then(
       (resolved) => {
         if (disposed || mine !== latest) return;
         if (resolved.kind !== "frames") {
           playback.configure([], undefined);
-          onTiming([], 0);
+          onTiming([], 0, playback.playing());
           return;
         }
+        // What the owner did while this was resolving (Play, Pause, a Scrub)
+        // counts: the clock's state is read now, not when the refresh began,
+        // and the reply never changes whether it is playing.
+        const wasPlaying = playback.playing();
+        const heldFrame = playback.frame();
         const { durations, loopStart } = clockTiming(resolved.asset);
         playback.configure(durations, loopStart);
         if (refresh && !wasPlaying && durations.length > 0)
           playback.scrub(Math.min(heldFrame, durations.length - 1));
-        onTiming(durations, playback.frame());
+        onTiming(durations, playback.frame(), playback.playing());
       },
       () => {
         if (disposed || mine !== latest) return;
         playback.configure([], undefined);
-        onTiming([], 0);
+        onTiming([], 0, playback.playing());
       },
     );
   };
 
   playback.configure([], undefined);
-  onTiming([], 0);
+  onTiming([], 0, playback.playing());
   load(false);
   const unsubscribe = source.subscribe((change) => {
     if (
