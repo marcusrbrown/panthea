@@ -77,6 +77,54 @@ function generated() {
   };
 }
 
+function realmVariant() {
+  return {
+    paletteFamily: "underworld",
+    paletteId: "provisional",
+    atlas: { blob: H("9"), width: 256, height: 160 },
+    map: [
+      {
+        source: { ramp: "marble", index: 0 },
+        target: { ramp: "ash", index: 0 },
+      },
+      {
+        source: { ramp: "marble", index: 1 },
+        target: { ramp: "ash", index: 1 },
+      },
+    ],
+  };
+}
+
+function derivedStep(outputSlot: string, resultHash = H("f")) {
+  return {
+    recipe: "mirror",
+    version: 1,
+    params: { from: "east", to: "west" },
+    source: {
+      assetId: "placeholder-zeus",
+      revision: H("e"),
+      slotKey: outputSlot.replace("west", "east"),
+      slotHash: H("a"),
+    },
+    outputSlot,
+    resultHash,
+  };
+}
+
+function derived(steps: unknown[] = [derivedStep("idle/south")]) {
+  return {
+    method: "derived",
+    operation: "mirror",
+    runtime: { name: "panthea-derive", version: "mirror@1+png@1" },
+    steps,
+    sourceAssets: [{ assetId: "placeholder-zeus", revision: H("e") }],
+    resultHashes: [H("f")],
+    licences: [{ subject: "studio", role: "original-work", licence: "MIT" }],
+    relatedJobs: [],
+    handEdits: [],
+  };
+}
+
 function sprite() {
   return {
     schemaVersion: 1,
@@ -91,7 +139,7 @@ function sprite() {
     pivot: { x: 32, y: 80 },
     footprint: { w: 1, h: 1 },
     directions: ["south"],
-    realmVariants: [{ paletteFamily: "underworld", paletteId: "provisional" }],
+    realmVariants: [realmVariant()],
     animations: [
       { state: "idle", direction: "south", frames: frames(4, 64, 80, 167) },
       { state: "seated", direction: "south", frames: frames(2, 64, 80, 200) },
@@ -412,6 +460,7 @@ describe("asset manifests: sprites", () => {
       v.cell = { w: 64, h: 64 };
       v.pivot = { x: 32, y: 64 };
       v.atlas.height = 64;
+      v.realmVariants[0].atlas.height = 64;
       for (const a of v.animations) for (const f of a.frames) f.rect.h = 64;
     },
     /seated/,
@@ -447,6 +496,51 @@ describe("asset manifests: sprites", () => {
       v.realmVariants[0].paletteFamily = "elysium";
     },
     /realmVariants\[0\]/,
+  );
+  for (const [label, key] of [
+    ["an atlas", "atlas"],
+    ["a colour map", "map"],
+  ] as const) {
+    rejects(
+      `a realm variant without ${label}`,
+      sprite,
+      (v) => {
+        delete v.realmVariants[0][key];
+      },
+      new RegExp(`realmVariants\\[0\\]\\.${key}`),
+    );
+  }
+  rejects(
+    "a realm variant atlas of another size",
+    sprite,
+    (v) => {
+      v.realmVariants[0].atlas.width = 128;
+    },
+    /realmVariants\[0\]\.atlas/,
+  );
+  rejects(
+    "an empty realm colour map",
+    sprite,
+    (v) => {
+      v.realmVariants[0].map = [];
+    },
+    /realmVariants\[0\]\.map/,
+  );
+  rejects(
+    "a realm colour map that maps one source colour twice",
+    sprite,
+    (v) => {
+      v.realmVariants[0].map.push({ ...v.realmVariants[0].map[0] });
+    },
+    /realmVariants\[0\]\.map\[2\]/,
+  );
+  rejects(
+    "a realm colour map entry with a negative index",
+    sprite,
+    (v) => {
+      v.realmVariants[0].map[0].target.index = -1;
+    },
+    /realmVariants\[0\]\.map\[0\]\.target\.index/,
   );
   rejects(
     "a duplicate realm variant",
@@ -582,6 +676,153 @@ describe("asset manifests: portraits and effects", () => {
   });
 });
 
+describe("derived manifests", () => {
+  const withProvenance = (provenance: unknown) => ({
+    ...sprite(),
+    realmVariants: [],
+    provenance,
+  });
+
+  it("parses a derived manifest with two steps", () => {
+    const value = withProvenance(
+      derived([
+        derivedStep("idle/south", H("f")),
+        derivedStep("seated/south", H("c")),
+      ]),
+    );
+    const parsed = parseAssetManifest(value, vocab);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.value.provenance.method !== "derived") return;
+    expect(parsed.value.provenance.steps.map((s) => s.outputSlot)).toEqual([
+      "idle/south",
+      "seated/south",
+    ]);
+    const text = canonicalManifestText(parsed.value);
+    const again = parseAssetManifest(JSON.parse(text), vocab);
+    expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+  });
+
+  it("parses a derived manifest whose other slots are carried, with a per-ability step", () => {
+    const one = parseAssetManifest(withProvenance(derived()), vocab);
+    expect(one.ok).toBe(true);
+    const act = parseAssetManifest(
+      withProvenance(derived([derivedStep("act/south/thunderbolt")])),
+      vocab,
+    );
+    expect(act.ok).toBe(true);
+  });
+
+  it("parses a derived portrait and a derived effect by their slot names", () => {
+    const portraitValue = {
+      ...portrait(),
+      provenance: derived([derivedStep("awed")]),
+    };
+    expect(parseAssetManifest(portraitValue, vocab).ok).toBe(true);
+    const effectValue = {
+      ...effect(),
+      provenance: derived([derivedStep("strike")]),
+    };
+    expect(parseAssetManifest(effectValue, vocab).ok).toBe(true);
+  });
+
+  const derivedRejects = (
+    label: string,
+    mutate: (provenance: Mutable) => void,
+    path: RegExp,
+  ) =>
+    rejects(
+      label,
+      () => withProvenance(derived()),
+      (v) => mutate(v.provenance),
+      path,
+    );
+
+  derivedRejects(
+    "a step whose output slot is not in the manifest's animations",
+    (p) => {
+      p.steps[0].outputSlot = "walk/south";
+    },
+    /provenance\.steps\[0\]\.outputSlot/,
+  );
+  derivedRejects(
+    "empty steps",
+    (p) => {
+      p.steps = [];
+    },
+    /provenance\.steps/,
+  );
+  derivedRejects(
+    "missing steps",
+    (p) => {
+      delete p.steps;
+    },
+    /provenance\.steps/,
+  );
+  derivedRejects(
+    "a malformed source slot hash",
+    (p) => {
+      p.steps[0].source.slotHash = "abc";
+    },
+    /steps\[0\]\.source\.slotHash/,
+  );
+  derivedRejects(
+    "a malformed source revision",
+    (p) => {
+      p.steps[0].source.revision = "XYZ";
+    },
+    /steps\[0\]\.source\.revision/,
+  );
+  derivedRejects(
+    "a malformed result hash",
+    (p) => {
+      p.steps[0].resultHash = H("G");
+    },
+    /steps\[0\]\.resultHash/,
+  );
+  derivedRejects(
+    "a step with no recipe",
+    (p) => {
+      p.steps[0].recipe = "";
+    },
+    /steps\[0\]\.recipe/,
+  );
+  derivedRejects(
+    "a step version that is not a positive integer",
+    (p) => {
+      p.steps[0].version = 0;
+    },
+    /steps\[0\]\.version/,
+  );
+  derivedRejects(
+    "fractional params",
+    (p) => {
+      p.steps[0].params = { dy: 0.5 };
+    },
+    /steps\[0\]\.params\.dy/,
+  );
+  derivedRejects(
+    "an unknown key inside a step",
+    (p) => {
+      p.steps[0].note = "x";
+    },
+    /steps\[0\]\.note/,
+  );
+  derivedRejects(
+    "two steps that output one slot",
+    (p) => {
+      p.steps.push(derivedStep("idle/south", H("c")));
+    },
+    /steps\[1\]/,
+  );
+  derivedRejects(
+    "a source asset that is absent",
+    (p) => {
+      p.sourceAssets = [];
+    },
+    /sourceAssets/,
+  );
+});
+
 describe("provenance", () => {
   const provenanceRejects = (
     label: string,
@@ -609,6 +850,7 @@ describe("provenance", () => {
         method: "derived",
         operation: "mirror",
         runtime: { name: "panthea", version: "1" },
+        steps: [derivedStep("idle/south")],
         sourceAssets: [{ assetId: "placeholder-zeus", revision: H("e") }],
         resultHashes: [H("f")],
         licences: [
@@ -941,6 +1183,7 @@ describe("provenance", () => {
       method: "derived",
       operation: "mirror",
       runtime: { name: "p", version: "1" },
+      steps: [derivedStep("idle/south")],
       sourceAssets: [],
       resultHashes: [H("f")],
       licences: [{ subject: "studio", role: "original-work", licence: "MIT" }],
@@ -1017,5 +1260,50 @@ describe("generation requests", () => {
         v.schemaVersion = 3;
       }),
     ).toBe(false);
+  });
+
+  describe("a published edit base", () => {
+    const published = {
+      kind: "published",
+      assetId: "zeus-sprite",
+      revision: H("1"),
+      slotKey: "idle/south",
+      frameIndex: 2,
+      frameHash: H("2"),
+    };
+    const withBase = (base: unknown) =>
+      parseGenerationRequest({
+        ...request,
+        edit: { base, mask: H("3"), strength: 0.5, cue: "turn east" },
+      });
+
+    it("parses and keeps every field", () => {
+      const parsed = withBase(published);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok)
+        expect(parsed.value.edit?.base).toEqual(published as never);
+    });
+
+    for (const [label, change, path] of [
+      ["a malformed frame hash", { frameHash: "abc" }, /base\.frameHash/],
+      ["a malformed revision", { revision: H("Z") }, /base\.revision/],
+      ["a negative frame index", { frameIndex: -1 }, /base\.frameIndex/],
+      ["a fractional frame index", { frameIndex: 1.5 }, /base\.frameIndex/],
+      ["an invalid asset id", { assetId: "Zeus Sprite" }, /base\.assetId/],
+      ["an empty slot key", { slotKey: "" }, /base\.slotKey/],
+      ["an unknown key", { extra: 1 }, /extra/],
+    ] as const) {
+      it(`rejects ${label}`, () => {
+        const result = withBase({ ...published, ...change });
+        expect(result.ok).toBe(false);
+        if (!result.ok)
+          expect(`${result.path} ${result.message}`).toMatch(path);
+      });
+    }
+
+    it("rejects a published base with a field missing", () => {
+      const { frameHash: _frameHash, ...rest } = published;
+      expect(withBase(rest).ok).toBe(false);
+    });
   });
 });

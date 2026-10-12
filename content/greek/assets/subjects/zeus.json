@@ -3,5 +3,6 @@
   "godId": "zeus",
   "paletteFamily": "olympus",
   "iconography": ["thunderbolt"],
-  "portrait": "zeus-portrait"
+  "portrait": "zeus-portrait",
+  "asymmetry": { "feature": "bolt hand" }
 }

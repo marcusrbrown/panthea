@@ -223,6 +223,72 @@ describe("committed content", () => {
   });
 });
 
+describe("subject asymmetry", () => {
+  const subjectFile = (root: string) =>
+    join(root, "assets", "subjects", "zeus.json");
+  const declare = (root: string, asymmetry: unknown) => {
+    const zeus = JSON.parse(readFileSync(subjectFile(root), "utf8"));
+    writeFileSync(subjectFile(root), JSON.stringify({ ...zeus, asymmetry }));
+  };
+  const asymmetric = (feature: string): FixtureAsset => {
+    const base = spriteFixture();
+    return {
+      blobs: base.blobs,
+      manifest: { ...base.manifest, asymmetry: { feature } },
+    };
+  };
+
+  it("is declared on the committed Zeus subject and validates", () => {
+    const committed = JSON.parse(readFileSync(subjectFile(COMMITTED), "utf8"));
+    expect(committed.asymmetry).toEqual({ feature: "bolt hand" });
+    expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("accepts a declared subject whose published sprite predates the declaration", () => {
+    const root = contentRoot();
+    declare(root, { feature: "bolt hand" });
+    publish(root, spriteFixture());
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("accepts a published sprite that carries the subject's feature", () => {
+    const root = contentRoot();
+    declare(root, { feature: "bolt hand" });
+    publish(root, asymmetric("bolt hand"));
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("reports a malformed declaration against the subject file", () => {
+    for (const bad of [{ feature: "" }, {}, "bolt hand", { feature: 1 }]) {
+      const root = contentRoot();
+      declare(root, bad);
+      expect(files(root)).toEqual(["assets/subjects/zeus.json"]);
+    }
+  });
+
+  it("reports a published sprite whose asymmetry is not the subject's", () => {
+    const root = contentRoot();
+    declare(root, { feature: "bolt hand" });
+    const revision = publish(root, asymmetric("left hand"));
+    expect(diagnosticsOf(root)).toEqual([
+      {
+        file: `assets/registry/manifests/${revision}.json`,
+        message: expect.stringContaining('"bolt hand"'),
+      },
+    ]);
+    expect(diagnosticsOf(root)[0]?.message).toContain('"left hand"');
+  });
+
+  it("reports a published sprite that declares asymmetry its subject does not", () => {
+    const root = contentRoot();
+    declare(root, undefined);
+    publish(root, asymmetric("bolt hand"));
+    const found = diagnosticsOf(root);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toContain("declares no asymmetry");
+  });
+});
+
 describe("inhabitant sprite ids", () => {
   const woodcutter = (sprite: unknown) => [
     { id: "woodcutter", sprite },

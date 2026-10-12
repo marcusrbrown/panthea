@@ -770,7 +770,19 @@ describe("publishing needs the approved palette the manifest names", () => {
       blobs: base.blobs,
       manifest: {
         ...base.manifest,
-        realmVariants: [{ paletteFamily: "underworld", paletteId: id }],
+        realmVariants: [
+          {
+            paletteFamily: "underworld",
+            paletteId: id,
+            atlas: base.manifest.atlas,
+            map: [
+              {
+                source: { ramp: "marble", index: 0 },
+                target: { ramp: "ash", index: 0 },
+              },
+            ],
+          },
+        ],
       },
     };
   };

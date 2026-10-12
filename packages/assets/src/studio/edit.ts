@@ -48,6 +48,12 @@ export function resolveEdit(
 
   const { base: source } = edit;
   let baseHash: Sha256;
+  // Reading a registry frame arrives with the repair route (the plan's U6 reader in EditSources).
+  if (source.kind === "published")
+    return refuse(
+      "base",
+      "a published-frame base cannot be read yet: no registry frame reader is wired",
+    );
   if (source.kind === "job") {
     const found = sources.readJob(source.jobId);
     if (found.kind !== "found")
@@ -118,9 +124,19 @@ export function editSettings(
   const { base } = edit;
   return {
     edit_strength: edit.strength,
-    edit_base_kind: base.kind === "job" ? "job" : "hand-authored",
+    edit_base_kind:
+      base.kind === "job"
+        ? "job"
+        : base.kind === "hand"
+          ? "hand-authored"
+          : "published",
     ...(base.kind === "job" ? { edit_base_job: base.jobId } : {}),
-    edit_base_sha256: base.kind === "job" ? base.output : base.image,
+    edit_base_sha256:
+      base.kind === "job"
+        ? base.output
+        : base.kind === "hand"
+          ? base.image
+          : base.frameHash,
     edit_mask_sha256: edit.mask,
   };
 }

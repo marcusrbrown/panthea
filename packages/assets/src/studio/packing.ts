@@ -608,6 +608,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         handBases.set(from.image, from.description);
         break;
       }
+      if (from.kind === "published")
+        return refuse(
+          `job ${generation.jobId} edits a published frame, which pack cannot record yet`,
+        );
       if (baseJobs.has(from.jobId)) break;
       const base = sources.jobs.get(from.jobId);
       if (

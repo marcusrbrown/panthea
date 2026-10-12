@@ -42,6 +42,41 @@ describe("parseGodVisualProfile", () => {
     );
   });
 
+  it("keeps an optional asymmetry feature and leaves it absent otherwise", () => {
+    const plain = parseGodVisualProfile(visual);
+    expect(plain.ok && "asymmetry" in plain.value).toBe(false);
+    const declared = parseGodVisualProfile({
+      ...visual,
+      portrait: "zeus-portrait",
+      asymmetry: { feature: "bolt hand" },
+    });
+    expect(declared.ok && declared.value.asymmetry).toEqual({
+      feature: "bolt hand",
+    });
+    expect(declared.ok && declared.value.portrait).toBe("zeus-portrait");
+    expect(
+      parseGodVisualProfile({ ...visual, asymmetry: { feature: "bolt hand" } }),
+    ).toEqual({
+      ok: true,
+      value: { ...visual, asymmetry: { feature: "bolt hand" } },
+    } as never);
+  });
+
+  it("refuses a malformed asymmetry with a path", () => {
+    const cases: [unknown, RegExp][] = [
+      [{}, /asymmetry\.feature/],
+      [{ feature: "" }, /asymmetry\.feature/],
+      [{ feature: 3 }, /asymmetry\.feature/],
+      [{ feature: "bolt hand", side: "west" }, /side/],
+      ["bolt hand", /asymmetry/],
+    ];
+    for (const [asymmetry, path] of cases) {
+      const result = parseGodVisualProfile({ ...visual, asymmetry });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(`${result.path} ${result.message}`).toMatch(path);
+    }
+  });
+
   it("is strict: unknown keys, versions, empty or duplicate iconography and bad ids fail with a path", () => {
     const cases: [object, RegExp][] = [
       [{ ...visual, sprite: "x" }, /sprite/],
