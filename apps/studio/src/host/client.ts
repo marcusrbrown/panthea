@@ -15,6 +15,7 @@ import {
   type EditExport,
   type EditOpened,
   type EditReport,
+  type FinishStepInput,
   type Parsed,
   parseCandidateFrames,
   parseCandidateSummary,
@@ -66,6 +67,7 @@ export const STUDIO_OPS = [
   "approve",
   "approve-with-exception",
   "publish",
+  "release",
 ] as const;
 export type StudioOp = (typeof STUDIO_OPS)[number];
 
@@ -126,7 +128,17 @@ export interface StudioHost {
     slots: readonly string[],
   ): Promise<EditOpened>;
   editExport(editId: string): Promise<EditExport>;
-  editImport(editId: string, finish?: boolean): Promise<EditBrought>;
+  /**
+   * A finish may carry the step it is recorded with and the sheet hash that was
+   * reviewed (the session refuses it as `stale-review` if the picked files are
+   * another sheet); the files come from the owner's own picks.
+   */
+  editImport(
+    editId: string,
+    finish?: boolean,
+    step?: FinishStepInput,
+    reviewed?: string,
+  ): Promise<EditBrought>;
   /** Conforms one succeeded job into a candidate, by a named set from the config or with inline settings. Refuses with not-found, wrong-state, invalid-config or root-locked. */
   conform(jobId: string, how: ConformHow): Promise<CandidateSummary>;
   /** The metadata of a candidate's stored frames; its pixels come from `previewBytes`. Refuses with not-found, wrong-state or corrupt-blob. */
@@ -259,9 +271,16 @@ export function createStudioHost(transport: HostTransport): StudioHost {
     async editExport(editId) {
       return parsed(await invoke("edit_export", { editId }), parseEditExport);
     },
-    async editImport(editId, finish = false) {
+    async editImport(editId, finish = false, step, reviewed) {
       return parsed(
-        await invoke("edit_import", { editId, finish }),
+        await invoke("edit_import", {
+          editId,
+          finish,
+          ...(reviewed === undefined ? {} : { reviewed }),
+          ...(step === undefined
+            ? {}
+            : { method: step.method, description: step.description }),
+        }),
         parseEditBrought,
       );
     },

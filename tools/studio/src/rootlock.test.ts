@@ -243,7 +243,7 @@ describe("a session on a root another process holds", () => {
     rig.session.close();
 
     const owner = sessionStudio({ studioRoot: rig.root }, {});
-    expect((owner.owner() as { store?: unknown }).store).toBeDefined();
+    expect(((await owner.owner()) as { store?: unknown }).store).toBeDefined();
     expect(await execute(owner, "status", {})).toMatchObject({
       ok: true,
       result: { rootLock: { holder: "self", pid: process.pid } },

@@ -56,6 +56,11 @@ const listing = {
       assetId: "zeus-sprite",
       kind: "sprite",
       state: "canon",
+      animations: [
+        { state: "idle", direction: "south" },
+        { state: "act", direction: "south", ability: "thunderbolt" },
+      ],
+      expressions: [],
       ok: true,
     },
     {
@@ -64,6 +69,8 @@ const listing = {
       assetId: "placeholder-zeus",
       kind: "sprite",
       state: "draft",
+      animations: [],
+      expressions: [],
       ok: false,
     },
   ],
@@ -128,6 +135,10 @@ describe("list, resolve, fetchBytes", () => {
       "draft:zeus-take",
     ]);
     expect(listed.problems).toEqual(listing.problems);
+    expect(listed.entries[0]?.animations).toEqual([
+      { state: "idle", direction: "south" },
+      { state: "act", direction: "south", ability: "thunderbolt" },
+    ]);
     expect(resolved).toMatchObject({
       kind: "frames",
       selection: draft("zeus-take"),
@@ -577,6 +588,31 @@ describe("untrusted payloads", () => {
       { entries: [{ ...listing.entries[0], ok: "yes" }], problems: [] },
     ],
     [
+      "an entry with no animation keys",
+      {
+        entries: [
+          Object.fromEntries(
+            Object.entries(listing.entries[0] ?? {}).filter(
+              ([key]) => key !== "animations",
+            ),
+          ),
+        ],
+        problems: [],
+      },
+    ],
+    [
+      "an entry with a malformed animation key",
+      {
+        entries: [
+          {
+            ...listing.entries[0],
+            animations: [{ state: "act", direction: "north", ability: 7 }],
+          },
+        ],
+        problems: [],
+      },
+    ],
+    [
       "a problem with no message",
       { entries: [], problems: [{ scope: "store" }] },
     ],
@@ -589,6 +625,29 @@ describe("untrusted payloads", () => {
       });
     },
   );
+
+  test("reads expression keys from portrait entries", async () => {
+    const portrait = {
+      ...listing.entries[0],
+      kind: "portrait",
+      animations: [],
+      expressions: [
+        "neutral",
+        "pleased",
+        "angry",
+        "grieving",
+        "scheming",
+        "awed",
+      ],
+    };
+    const r = rig({
+      "source-list": () => ({ entries: [portrait], problems: [] }),
+    });
+
+    expect((await r.source.list()).entries[0]?.expressions).toEqual(
+      portrait.expressions,
+    );
+  });
 
   const withAsset = (patch: Record<string, unknown>) => {
     const value = frames(KEY_A);

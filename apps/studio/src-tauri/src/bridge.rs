@@ -386,6 +386,19 @@ where
     Ok(reply)
 }
 
+/// What `edit_import` asks of the session: an import, or a finish, which may
+/// carry the step it is recorded with.
+#[derive(Debug, Clone, Copy)]
+pub struct ImportRequest<'a> {
+    pub edit_id: &'a str,
+    pub finish: bool,
+    pub method: Option<&'a str>,
+    pub description: Option<&'a str>,
+    /// The sheet hash the owner reviewed: the session refuses a finish with any
+    /// other sheet as `stale-review`. Only a finish takes one.
+    pub reviewed: Option<&'a str>,
+}
+
 /// `edit_import`: the owner picks the sheet and its metadata, and the session
 /// imports them, or finishes the edit with them. `{"cancelled": true}` when
 /// either pick is cancelled.
@@ -393,8 +406,7 @@ pub async fn edit_import<FutA, FutB>(
     mux: &Mux,
     configured: bool,
     dirty: &Dirty,
-    edit_id: &str,
-    finish: bool,
+    request: ImportRequest<'_>,
     pick_png: impl FnOnce() -> FutA,
     pick_json: impl FnOnce() -> FutB,
 ) -> Result<Value, CommandError>
@@ -402,8 +414,25 @@ where
     FutA: Future<Output = Option<PathBuf>>,
     FutB: Future<Output = Option<PathBuf>>,
 {
+    let ImportRequest {
+        edit_id,
+        finish,
+        method,
+        description,
+        reviewed,
+    } = request;
     if !configured {
         return Err(CommandError::not_configured());
+    }
+    // Only a finish has a step or a reviewed hash to carry: the session's
+    // `import` takes none of them.
+    if !finish && (method.is_some() || description.is_some() || reviewed.is_some()) {
+        return Err(CommandError {
+            code: "invalid-arguments".into(),
+            message: "only a finish takes a method, a description and a reviewed hash".into(),
+            retryable: false,
+            detail: None,
+        });
     }
     let Some(png) = pick_png().await else {
         return Ok(cancelled());
@@ -411,11 +440,22 @@ where
     let Some(json_file) = pick_json().await else {
         return Ok(cancelled());
     };
-    let args = json!({
+    let mut args = json!({
         "id": edit_id,
         "png": path_text(&png)?,
         "json": path_text(&json_file)?,
     });
+    // The step is the owner's own words and a method name; the session's
+    // `checkFinishStep` is the only judge of them.
+    for (key, value) in [
+        ("reviewed", reviewed),
+        ("method", method),
+        ("description", description),
+    ] {
+        if let Some(value) = value {
+            args[key] = json!(value);
+        }
+    }
     let op = if finish { "finish" } else { "import" };
     let result = mux.request(op, args, OpClass::Write).await;
     dirty.mark();
@@ -1445,8 +1485,13 @@ mod tests {
                     &mux,
                     true,
                     &dirty,
-                    "e1",
-                    finish,
+                    ImportRequest {
+                        edit_id: "e1",
+                        finish,
+                        method: None,
+                        description: None,
+                        reviewed: None,
+                    },
                     || async { Some(PathBuf::from("/Users/owner/in/sheet.png")) },
                     || async { Some(PathBuf::from("/Users/owner/in/sheet.json")) },
                 )
@@ -1471,6 +1516,140 @@ mod tests {
     }
 
     #[test]
+    fn a_scripted_finish_forwards_its_method_and_description_beside_the_picked_files() {
+        runtime().block_on(async {
+            let (mux, sidecar, dirty) = attached(|_, _| {
+                Reply::Ok(json!({ "editId": "e1", "state": "finished", "changed": true }))
+            });
+
+            let reply = edit_import(
+                &mux,
+                true,
+                &dirty,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: true,
+                    method: Some("script"),
+                    description: Some("idle loop (art-edit/idle.py)"),
+                    reviewed: Some(HASH),
+                },
+                || async { Some(PathBuf::from("/Users/owner/in/sheet.png")) },
+                || async { Some(PathBuf::from("/Users/owner/in/sheet.json")) },
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                sidecar.seen(),
+                vec![(
+                    "finish".to_string(),
+                    json!({
+                        "id": "e1",
+                        "png": "/Users/owner/in/sheet.png",
+                        "json": "/Users/owner/in/sheet.json",
+                        "reviewed": HASH,
+                        "method": "script",
+                        "description": "idle loop (art-edit/idle.py)"
+                    })
+                )]
+            );
+            assert!(!reply.to_string().contains("owner"));
+        });
+    }
+
+    #[test]
+    fn a_finish_forwards_the_reviewed_hash_and_a_plain_import_refuses_one_before_a_picker_opens() {
+        runtime().block_on(async {
+            let (mux, sidecar, dirty) = attached(echo);
+            let opened = RefCell::new(0);
+
+            let error = edit_import(
+                &mux,
+                true,
+                &dirty,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: false,
+                    method: None,
+                    description: None,
+                    reviewed: Some(HASH),
+                },
+                || {
+                    *opened.borrow_mut() += 1;
+                    async { None }
+                },
+                || {
+                    *opened.borrow_mut() += 1;
+                    async { None }
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, "invalid-arguments");
+            assert_eq!(*opened.borrow(), 0);
+            assert_eq!(sidecar.seen(), vec![]);
+
+            // A plain finish carries the hash too, with no step.
+            edit_import(
+                &mux,
+                true,
+                &dirty,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: true,
+                    method: None,
+                    description: None,
+                    reviewed: Some(HASH),
+                },
+                || async { Some(PathBuf::from("/in/sheet.png")) },
+                || async { Some(PathBuf::from("/in/sheet.json")) },
+            )
+            .await
+            .unwrap();
+            let seen = sidecar.seen();
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].0, "finish");
+            assert_eq!(seen[0].1["reviewed"], json!(HASH));
+            assert!(seen[0].1.get("method").is_none());
+        });
+    }
+
+    #[test]
+    fn a_step_on_a_plain_import_is_refused_before_a_picker_opens() {
+        runtime().block_on(async {
+            let (mux, sidecar, dirty) = attached(echo);
+            let opened = RefCell::new(0);
+
+            let error = edit_import(
+                &mux,
+                true,
+                &dirty,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: false,
+                    method: Some("script"),
+                    description: Some("x"),
+                    reviewed: None,
+                },
+                || {
+                    *opened.borrow_mut() += 1;
+                    async { None }
+                },
+                || {
+                    *opened.borrow_mut() += 1;
+                    async { None }
+                },
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(error.code, "invalid-arguments");
+            assert_eq!(*opened.borrow(), 0);
+            assert_eq!(sidecar.seen(), vec![]);
+        });
+    }
+
+    #[test]
     fn cancelling_either_picker_imports_nothing_and_a_cancelled_first_pick_skips_the_second() {
         runtime().block_on(async {
             let (mux, sidecar, dirty) = attached(echo);
@@ -1480,8 +1659,13 @@ mod tests {
                 &mux,
                 true,
                 &dirty,
-                "e1",
-                false,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: false,
+                    method: None,
+                    description: None,
+                    reviewed: None,
+                },
                 || async { None },
                 || {
                     *second.borrow_mut() = true;
@@ -1494,8 +1678,13 @@ mod tests {
                 &mux,
                 true,
                 &dirty,
-                "e1",
-                false,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: false,
+                    method: None,
+                    description: None,
+                    reviewed: None,
+                },
                 || async { Some(PathBuf::from("/a.png")) },
                 || async { None },
             )
@@ -1518,8 +1707,13 @@ mod tests {
                 &mux,
                 false,
                 &dirty,
-                "e1",
-                false,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: false,
+                    method: None,
+                    description: None,
+                    reviewed: None,
+                },
                 || {
                     *opened.borrow_mut() += 1;
                     async { None }

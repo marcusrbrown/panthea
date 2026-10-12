@@ -535,6 +535,7 @@ mod tests {
             attempt: None,
             max_attempts: None,
             lock_holder: None,
+            lock: None,
         };
 
         assert_eq!(
@@ -551,6 +552,7 @@ mod tests {
             attempt: None,
             max_attempts: None,
             lock_holder: None,
+            lock: None,
         };
         assert_eq!(
             compose(Some(&json!({ "host": "forged" })), &host),
@@ -798,7 +800,7 @@ mod tests {
         let last = seen.last().unwrap();
         assert_eq!(
             last["host"],
-            json!({ "state": "read-only", "lockHolder": 4242 })
+            json!({ "state": "read-only", "lockHolder": 4242, "lock": "other" })
         );
         assert_eq!(last["jobs"], json!([]), "the reads still arrive");
     }
@@ -814,7 +816,10 @@ mod tests {
         assert!(!apply_snapshot(&mut lifecycle, id, free));
 
         let seen = delivered.lock().unwrap();
-        assert_eq!(seen.last().unwrap()["host"], json!({ "state": "running" }));
+        assert_eq!(
+            seen.last().unwrap()["host"],
+            json!({ "state": "running", "lock": "free" })
+        );
         let states: Vec<&Value> = seen
             .iter()
             .map(|snapshot| &snapshot["host"]["state"])

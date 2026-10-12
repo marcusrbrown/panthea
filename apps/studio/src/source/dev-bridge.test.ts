@@ -177,6 +177,15 @@ describe("one source per selection", () => {
           assetId: "zeus-portrait",
           kind: "portrait",
           state: "canon",
+          animations: [],
+          expressions: [
+            "neutral",
+            "pleased",
+            "angry",
+            "grieving",
+            "scheming",
+            "awed",
+          ],
           ok: true,
         },
         {
@@ -185,6 +194,8 @@ describe("one source per selection", () => {
           assetId: "placeholder-zeus",
           kind: "sprite",
           state: "draft",
+          animations: [{ state: "idle", direction: "south" }],
+          expressions: [],
           ok: true,
         },
         {
@@ -193,6 +204,8 @@ describe("one source per selection", () => {
           assetId: "placeholder-zeus",
           kind: "sprite",
           state: "draft",
+          animations: [{ state: "idle", direction: "south" }],
+          expressions: [],
           ok: true,
         },
         {
@@ -201,6 +214,8 @@ describe("one source per selection", () => {
           assetId: "placeholder-zeus",
           kind: "sprite",
           state: "approved",
+          animations: [{ state: "idle", direction: "south" }],
+          expressions: [],
           ok: true,
         },
       ],

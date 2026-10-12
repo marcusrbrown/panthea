@@ -57,6 +57,24 @@ describe("EditPanel", () => {
     expect(html).not.toContain("Apply conformance");
   });
 
+  test("Finish can be scripted: a toggle, and a description that says it is published", () => {
+    const html = renderToStaticMarkup(
+      createElement(EditPanel, {
+        host,
+        edit: { id: "edit-1", status: "open", slots: ["idle/south"] },
+        report,
+        editorLaunched: true,
+        canMutate: true,
+      }),
+    );
+
+    expect(html).toContain("Scripted");
+    expect(html).toMatch(/<input[^>]*type="checkbox"[^>]*>\s*Scripted/);
+    expect(html).toContain("published with the asset");
+    // The description is only asked for once the toggle is on.
+    expect(html).not.toContain("Description of what ran");
+  });
+
   test("finish and discard stay disabled until pixels are explicitly confirmed", () => {
     const html = renderToStaticMarkup(
       createElement(EditPanel, {

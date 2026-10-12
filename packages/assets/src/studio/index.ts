@@ -121,6 +121,7 @@ export {
   type StudioRuntime,
   type TeardownResult,
 } from "./runtime";
+export { MAX_SEED } from "./seed";
 export {
   type CommandFailure,
   type CommandResult,

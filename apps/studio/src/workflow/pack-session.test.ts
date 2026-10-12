@@ -311,7 +311,6 @@ describe("pack form arguments against an in-process StudioSession", () => {
         ),
       },
     ]);
-    let importedReportHash: string | undefined;
     const transport = fakeTransport();
     transport.answer("studio_call", (callArgs) => {
       const op = callArgs?.op;
@@ -328,7 +327,6 @@ describe("pack form arguments against an in-process StudioSession", () => {
       if (op === "edit-report") {
         const result = sdkEditReport(rig.root, String(args.id));
         if (!result.ok) throw hostError(result.reason, result.message);
-        importedReportHash = result.sheetHash;
         const { ok: _ok, ...report } = result;
         return report;
       }
@@ -379,7 +377,8 @@ describe("pack form arguments against an in-process StudioSession", () => {
             exportedSheet.json,
             rig.content,
             undefined,
-            importedReportHash as never,
+            // The hash the app named, as the real session checks it against the picked sheet.
+            args?.reviewed as never,
           )
         : rig.session.importEdit(
             editId,
@@ -458,6 +457,7 @@ describe("pack form arguments against an in-process StudioSession", () => {
     expect(transport.to("edit_import")[1]?.args).toEqual({
       editId: opened.editId,
       finish: true,
+      reviewed: report.sheetHash,
     });
     expect(rig.session.store.status().assets).toHaveLength(1);
     expect(rig.session.store.status().workingSets[0]?.status).toBe("complete");

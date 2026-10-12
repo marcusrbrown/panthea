@@ -1,4 +1,4 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src", "studio-headroom/src"]
+  "include": ["src", "studio-headroom/src", "studio-release/src"]
 }

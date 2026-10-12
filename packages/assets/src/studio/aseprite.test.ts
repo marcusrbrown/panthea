@@ -588,6 +588,110 @@ describe("running the editor", () => {
     session.close();
   });
 
+  test("finishing through the editor with a script step records that step, and without one stays a hand edit", async () => {
+    const step = {
+      method: "script",
+      description: "idle loop (tools/probes/art-edit/idle.py)",
+    } as const;
+    const edited = fourFrames();
+    const first = rig();
+    const fakeA = fakeEditor();
+    fakeA.set({
+      sheetBase64: Buffer.from(edited.png).toString("base64"),
+      json: edited.json,
+    });
+
+    const scripted = await (await readyAdapter(first.session, fakeA)).refresh(
+      "e1",
+      content,
+      "finish",
+      undefined,
+      step,
+    );
+
+    expect(scripted).toEqual({ ok: true, changed: true });
+    expect(
+      readStudioStatus(first.root).workingSets[0]?.frames["idle/south"]
+        ?.handEdits[0],
+    ).toMatchObject({ description: step.description, method: "script" });
+    expect(readStudioStatus(first.root).edits[0]?.step).toEqual(step);
+    first.session.close();
+
+    const second = rig();
+    const fakeB = fakeEditor();
+    fakeB.set({
+      sheetBase64: Buffer.from(edited.png).toString("base64"),
+      json: edited.json,
+    });
+    await (await readyAdapter(second.session, fakeB)).refresh(
+      "e1",
+      content,
+      "finish",
+    );
+    const plain = readStudioStatus(second.root).workingSets[0]?.frames[
+      "idle/south"
+    ]?.handEdits[0];
+    expect(plain?.method).toBeUndefined();
+    expect(plain?.description).toBe("hand edit e1");
+    second.session.close();
+  });
+
+  test("the reviewed hash and the step travel together: a stale hash is refused and the same step then succeeds", async () => {
+    const { root, session } = rig();
+    const fake = fakeEditor();
+    const edited = fourFrames();
+    fake.set({
+      sheetBase64: Buffer.from(edited.png).toString("base64"),
+      json: edited.json,
+    });
+    const adapter = await readyAdapter(session, fake);
+    const step = { method: "script", description: "idle loop" } as const;
+    await adapter.refresh("e1", content, "import");
+
+    const stale = await adapter.refresh(
+      "e1",
+      content,
+      "finish",
+      sha256Hex(new Uint8Array([1, 2, 3])) as Sha256,
+      step,
+    );
+    const retried = await adapter.refresh(
+      "e1",
+      content,
+      "finish",
+      sha256Hex(edited.png) as Sha256,
+      step,
+    );
+
+    expect(stale).toMatchObject({ ok: false, reason: "stale-review" });
+    expect(retried).toMatchObject({ ok: true });
+    expect(readStudioStatus(root).edits[0]?.status).toBe("finished");
+    expect(readStudioStatus(root).edits[0]?.step).toEqual(step);
+    session.close();
+  });
+
+  test("a step the SDK does not accept is a typed refusal through the editor too", async () => {
+    const { root, session } = rig();
+    const fake = fakeEditor();
+    const edited = fourFrames();
+    fake.set({
+      sheetBase64: Buffer.from(edited.png).toString("base64"),
+      json: edited.json,
+    });
+
+    const refused = await (await readyAdapter(session, fake)).refresh(
+      "e1",
+      content,
+      "finish",
+      undefined,
+      { method: "script" } as never,
+    );
+
+    expect(refused).toMatchObject({ ok: false });
+    expect(readStudioStatus(root).edits[0]?.status).toBe("open");
+    session.close();
+  });
+
   test("a half-written export, a missing export and a failing editor are typed refusals that keep the earlier preview", async () => {
     const { root, session } = rig();
     const fake = fakeEditor();
@@ -722,6 +826,36 @@ describe("running the editor", () => {
       adapter.refreshFallback("e1", edited.png, edited.json, content, "finish"),
     ).toEqual({ ok: true, changed: true });
     expect(readStudioStatus(root).edits[0]?.status).toBe("finished");
+    session.close();
+  });
+
+  test("a scripted finish with no editor records the same step from hand-exported files", async () => {
+    const { root, session } = rig();
+    const adapter = createEditorAdapter(session, {
+      path: scratchDir(),
+      platform: "linux",
+      timeoutMs: 1000,
+      tempParent: scratchDir(),
+    });
+    adapters.push(adapter);
+    const edited = fourFrames();
+    const step = { method: "script", description: "idle loop" } as const;
+
+    const result = adapter.refreshFallback(
+      "e1",
+      edited.png,
+      edited.json,
+      content,
+      "finish",
+      undefined,
+      step,
+    );
+
+    expect(result).toEqual({ ok: true, changed: true });
+    expect(
+      readStudioStatus(root).workingSets[0]?.frames["idle/south"]?.handEdits[0],
+    ).toMatchObject({ description: step.description, method: "script" });
+    expect(readStudioStatus(root).edits[0]?.step).toEqual(step);
     session.close();
   });
 

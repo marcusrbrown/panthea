@@ -20,6 +20,7 @@ import {
   type StudioContent,
   slotKey,
 } from "./request";
+import { MAX_SEED } from "./seed";
 
 const repo = join(import.meta.dir, "..", "..", "..", "..");
 const probeRoot = join(repo, "tools", "probes", "art-local-2");
@@ -491,7 +492,7 @@ describe("job expansion", () => {
     expect(ok(planJobs(record, 2, undefined)).jobs).toHaveLength(12);
   });
 
-  test("a seed that would pass the safe-integer limit is refused with nothing planned", () => {
+  test("a seed whose last job would pass 2^32-1 is refused with nothing planned", () => {
     const edge = (base: number, perSlot: number) =>
       planJobs(
         {
@@ -500,8 +501,10 @@ describe("job expansion", () => {
         },
         perSlot,
       );
-    expect(edge(Number.MAX_SAFE_INTEGER - 23, 4)).toMatchObject({ ok: true });
-    expect(edge(Number.MAX_SAFE_INTEGER - 22, 4)).toMatchObject({
+    // Six slots, four jobs each: ordinals 0..23.
+    expect(MAX_SEED).toBe(4_294_967_295);
+    expect(edge(MAX_SEED - 23, 4)).toMatchObject({ ok: true });
+    expect(edge(MAX_SEED - 22, 4)).toMatchObject({
       ok: false,
       error: { kind: "seed-overflow" },
     });

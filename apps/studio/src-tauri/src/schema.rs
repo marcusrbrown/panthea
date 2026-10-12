@@ -27,9 +27,10 @@ use OpClass::{Long, Read, Write};
 
 /// Argument names are the session's own (`tools/studio/src/commands.ts`). The
 /// masked-edit fields of `generate` (`editBase*`, `editMask`, `editStrength`,
-/// `editCue`) name files by path and stay a CLI path. `finish` takes no files
-/// and no step here, so it can only take back what the editor saved; it may
-/// name the sheet hash it was reviewed at.
+/// `editCue`) name files by path and stay a CLI path. `finish` takes no files:
+/// it takes back what the editor saved. It may name the sheet hash it was
+/// reviewed at, and carry the step it is recorded with (`method` and
+/// `description` are free text published with the asset, not places).
 pub const OPS: &[OpSpec] = &[
     // Reads of durable records.
     spec("status", &[], Read),
@@ -100,7 +101,11 @@ pub const OPS: &[OpSpec] = &[
     // `reviewed` is the sheet hash of the saved version the owner reviewed (an
     // edit report's `sheetHash`), not a place: the session refuses a finish
     // that would take another sheet.
-    spec("finish", &["id", "reviewed"], Write),
+    spec(
+        "finish",
+        &["id", "reviewed", "method", "description"],
+        Write,
+    ),
     spec(
         "pack",
         &[
@@ -121,6 +126,10 @@ pub const OPS: &[OpSpec] = &[
         Write,
     ),
     spec("publish", &["id", "confirm"], Write),
+    // Gives the writer lock back when the app is idle; the sidecar refuses it
+    // with `not-idle` otherwise. It takes the lock lazily again at the next
+    // write. No arguments: there is nothing to force.
+    spec("release", &[], Write),
 ];
 
 /// Why a call was refused before the sidecar saw it.
@@ -176,8 +185,6 @@ mod tests {
         "editBaseDescription",
         "editStrength",
         "editCue",
-        "method",
-        "description",
     ];
 
     #[test]
@@ -211,8 +218,25 @@ mod tests {
                 "approve",
                 "approve-with-exception",
                 "publish",
+                "release",
             ]
         );
+    }
+
+    #[test]
+    fn release_is_a_write_that_takes_no_argument_and_gives_the_lock_back() {
+        let row = lookup("release").unwrap();
+        assert_eq!(row.args, [] as [&str; 0]);
+        assert_eq!(row.class, Write);
+        assert!(check("release", &json!({})).is_ok());
+        assert!(check("release", &Value::Null).is_ok());
+        for stray in ["force", "id", "path", "toString"] {
+            assert_eq!(
+                check("release", &json!({ stray: true })),
+                Err(Refusal::UnknownArgument(stray.into())),
+                "{stray}"
+            );
+        }
     }
 
     #[test]
@@ -429,29 +453,48 @@ mod tests {
             ),
             Err(Refusal::UnknownArgument("json".into()))
         );
-        assert!(matches!(
+        assert_eq!(
             check(
                 "finish",
-                &json!({ "id": "e1", "method": "script", "description": "x" })
+                &json!({ "id": "e1", "method": "script", "description": "x", "png": "/tmp/x.png" })
             ),
-            Err(Refusal::UnknownArgument(_))
-        ));
+            Err(Refusal::UnknownArgument("png".into()))
+        );
     }
 
     #[test]
-    fn finish_may_name_the_reviewed_sheet_hash_and_still_takes_no_file_or_step() {
+    fn finish_names_the_reviewed_hash_and_may_carry_a_script_step_but_takes_no_file() {
         let row = lookup("finish").unwrap();
-        assert_eq!(row.args, ["id", "reviewed"]);
+        assert_eq!(row.args, ["id", "reviewed", "method", "description"]);
         assert_eq!(row.class, Write);
         assert!(check("finish", &json!({ "id": "e1", "reviewed": "ab" })).is_ok());
-        for stray in ["png", "json", "method", "description"] {
+        assert!(check(
+            "finish",
+            &json!({ "id": "e1", "reviewed": "ab", "method": "script", "description": "idle loop" })
+        )
+        .is_ok());
+        for stray in ["png", "json", "dir", "path"] {
             assert_eq!(
                 check("finish", &json!({ "id": "e1", stray: "x" })),
                 Err(Refusal::UnknownArgument(stray.into()))
             );
         }
-        // A hash is not a place: `reviewed` is not one of the path-like names.
-        assert!(!PATHISH.contains(&"reviewed"));
+        // A hash and a step are free text, not places: none of the three is path-like.
+        for free_text in ["reviewed", "method", "description"] {
+            assert!(!PATHISH.contains(&free_text), "{free_text}");
+        }
+    }
+
+    #[test]
+    fn only_finish_takes_a_step_and_no_other_op_has_method_or_description() {
+        for spec in OPS {
+            if spec.op == "finish" {
+                continue;
+            }
+            for arg in ["method", "description"] {
+                assert!(!spec.args.contains(&arg), "{} takes {arg}", spec.op);
+            }
+        }
     }
 
     #[test]
@@ -499,6 +542,7 @@ mod tests {
             "approve",
             "approve-with-exception",
             "publish",
+            "release",
         ] {
             assert_eq!(lookup(op).unwrap().class, OpClass::Write, "{op}");
         }

@@ -263,7 +263,8 @@ flowchart TB
 The primary studio workspace groups request and queue, candidate sheet with reports/provenance, and selected-asset preview. Actions follow lifecycle: candidates can be picked/rejected; failed conformance needs an owner exception before approval; drafts can edit/approve/reject; external editing offers finish/discard; approved sets can pack/publish subject to palette/licence gates. Queue states distinguish empty, unavailable/staging, queued, running, aborting/restarting, cancelled, removed, failed and completed. Late results after cancellation are discarded, not presented as completed. Tests prove controls remain usable throughout those transitions.
 
 ### Unit 8. Packaged game resolution
-- [ ] Draw canon Zeus in packaged client.
+- [x] Draw canon Zeus in packaged client.
+- (2026-10-11) Complete. The code landed in #200, the timed T1 sitting and canon seated in #206, and the thunderbolt act (strike art) in #208. Canon `zeus-sprite` revision `1382b7f7` covers idle, seated and act/south/thunderbolt. The evidence is in `docs/evidence/asset-studio/{unit8,seated,act}/`.
 - **Child plan:** `docs/plans/2026-10-10-002-feat-packaged-game-canon-art-plan.md` is authoritative. Dated note (owner, 2026-10-10), with the earlier text below kept as written:
   - **Sprite id in world state.** It is set at genesis from `GodProfile.sprite`, and from content for other inhabitants. The frame carries it, and the store moves to version 7. This replaces "does not … modify world frames/store" and "no store/observer/settings changes".
   - **Native loader checks integrity only.** It checks sha256 and keeps reads inside the bundled registry. The webview parses the schema and fetches atlases by verified content hash, not by id.
@@ -282,6 +283,11 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 
 ### Unit 9. Derivation and repair
 - [ ] Expand approved sets honestly and reproducibly.
+- **Child plan:** `docs/plans/2026-10-11-001-feat-studio-derivation-repair-plan.md` is authoritative. Dated note (owner, 2026-10-11); the earlier text below is kept as written.
+  - **Zeus's remaining idle directions are deferred.** The bolt hand blocks mirroring, so north, east and west are new art. That work waits for the sprite-pipeline research. Verification is a real derive-to-publish run on a symmetric fixture, plus the Zeus mirror refusal.
+  - **Overlays move to Unit 10**, alongside the first structure.
+  - **Reference conditioning is probed first on the pinned runtime**, which already parses `ref_images`.
+  - **The unit also adds studio features:** preview of every published key, release of the writer lock when idle, scripted finish in the app, a seed field, queue responsiveness, and the slot hint.
 - **Requirements:** R2, R13–R15, R20; AE4; U06, U07, X02.
 - **Dependencies:** Tier 1 complete; chosen provider must expose reference/inpaint capability or report unavailable.
 - **Files:** Create `packages/assets/src/derive.ts`, `derive.test.ts`, `reference.ts`, `reference.test.ts`; extend CLI/app frame playback tests and committed derivation fixtures; update traceability.
@@ -292,6 +298,7 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 
 ### Unit 10. Structures and effects
 - [ ] Complete visual reference scene.
+- (2026-10-11) This unit also owns the damage/fire overlay derivation op and its vocabulary, moved from Unit 9. T2 completion also waits on Zeus's north, east and west idle art, deferred from Unit 9 to the sprite-pipeline research.
 - **Requirements:** R20, R21; AE7; X02, X03.
 - **Dependencies:** Unit 9.
 - **Files:** Add tree/building/lightning manifests and bytes under `content/greek/assets/`; create `packages/assets/src/overlays.test.ts`, `effects.test.ts`; extend studio preview fixtures/tests and scenario evidence; update traceability.

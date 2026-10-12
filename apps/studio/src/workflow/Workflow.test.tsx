@@ -6,10 +6,26 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { fakeTransport } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
 import { approvalArgsForAsset, packWorkingSetGuarded } from "./actions";
-import { initialWorkflowState, workflowReducer } from "./model";
-import { WorkflowView } from "./Workflow";
+import {
+  initialWorkflowState,
+  queueRowContext,
+  reuseRowContext,
+  workflowReducer,
+} from "./model";
+import { QueueItem, WorkflowView } from "./Workflow";
 
 const host = createStudioHost(fakeTransport());
+
+/** Handlers that never change identity, as the window gives its rows. */
+const rowHandlersForTest = (() => {
+  const handlers = {
+    onRemove: () => undefined,
+    onAbort: () => undefined,
+    onRetry: () => undefined,
+    onConform: () => undefined,
+  };
+  return () => handlers;
+})();
 
 function stateFor(
   job?: Record<string, unknown>,
@@ -233,6 +249,51 @@ describe("WorkflowView controls", () => {
     expect(css).toMatch(/\.pack-form\s*\{[^}]*margin-top:\s*0;/s);
     expect(css).toMatch(/\.asset-select\s*\{[^}]*margin-bottom:\s*10px;/s);
     expect(css).toMatch(/\.scale-conform-form\s*\{[^}]*row-gap:\s*10px;/s);
+  });
+
+  test("keeps the isometric preview above selected-record details", () => {
+    const html = render(
+      stateFor(undefined, {
+        assets: [
+          {
+            id: "draft-a",
+            assetId: "zeus-sprite",
+            state: "draft",
+            manifestRevision: "rev-draft-a",
+          },
+        ],
+      }),
+    );
+    const preview = html.indexOf("Isometric preview");
+    const record = html.indexOf('class="asset-select workflow-field"');
+
+    expect(preview).toBeGreaterThanOrEqual(0);
+    expect(record).toBeGreaterThan(preview);
+  });
+
+  test("gives preview controls a visible group title over the scene", () => {
+    const css = readFileSync(
+      new URL("./workflow.css", import.meta.url),
+      "utf8",
+    );
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+    expect(css).toMatch(
+      /\.preview-controls\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*1;/s,
+    );
+    expect(css).toMatch(
+      /\.preview-controls-title\s*\{[^}]*color:\s*var\(--ink-soft\);/s,
+    );
+    expect(css).toMatch(
+      /\.preview-compact #preview\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*0;/s,
+    );
+    expect(css).toContain(".preview-compact > section:not(.preview-controls)");
+    expect(app).toMatch(
+      /<section\s+className="preview-controls"\s+aria-label="Preview controls">/,
+    );
+    expect(app).toContain(
+      '<span className="preview-controls-title">Preview controls</span>',
+    );
   });
 
   test("empty queue has no job actions", () => {
@@ -676,6 +737,224 @@ describe("WorkflowView controls", () => {
     );
     expect(html).toMatch(/<button type="button">View sheet<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled[^>]*>View sheet<\/button>/);
+  });
+
+  describe("the writer lock", () => {
+    const withLock = (
+      host: Record<string, unknown>,
+      status: Record<string, unknown>,
+      extra: Record<string, unknown> = {},
+    ) => stateFor(undefined, { host, status, ...extra });
+    const RELEASE_ENABLED = /<button(?![^>]*disabled)[^>]*>Release<\/button>/;
+    const RELEASE_DISABLED = /<button[^>]*disabled[^>]*>Release<\/button>/;
+
+    test("the header says whether this app holds the lock, nobody does, or pid N does", () => {
+      expect(
+        render(withLock({ state: "running", lock: "held" }, { idle: true })),
+      ).toContain("Held by this app");
+      expect(
+        render(withLock({ state: "running", lock: "free" }, { idle: true })),
+      ).toContain("Free");
+      const other = render(
+        withLock({ state: "read-only", lockHolder: 913, lock: "other" }, {}),
+      );
+      expect(other).toContain("Held by pid 913");
+      expect(other).toContain("Read-only");
+    });
+
+    test("the Release button is enabled when the app holds the lock and is idle", () => {
+      expect(
+        render(withLock({ state: "running", lock: "held" }, { idle: true })),
+      ).toMatch(RELEASE_ENABLED);
+    });
+
+    test("it is disabled when the app is not idle, and says why", () => {
+      const html = render(
+        withLock(
+          { state: "running", lock: "held" },
+          { idle: false, idleReason: "a job is queued or running" },
+        ),
+      );
+
+      expect(html).toMatch(RELEASE_DISABLED);
+      expect(html).toContain("a job is queued or running");
+    });
+
+    test("it is disabled when there is no lock of this app's to release", () => {
+      for (const host of [
+        { state: "running", lock: "free" },
+        { state: "read-only", lockHolder: 913, lock: "other" },
+        { state: "restarting", attempt: 1, maxAttempts: 3 },
+      ])
+        expect(render(withLock(host, { idle: true })), host.state).toMatch(
+          RELEASE_DISABLED,
+        );
+    });
+
+    test("a free lock does not make the window read-only: writes stay enabled", () => {
+      const html = render(
+        withLock(
+          { state: "running", lock: "free" },
+          { idle: true },
+          {
+            requests: [{ id: "r1", subject: "zeus" }],
+            workingSets: [{ id: "w1", requestId: "r1", status: "open" }],
+          },
+        ),
+      );
+
+      expect(html).not.toContain("read-only");
+      expect(html).not.toContain("Locked by another studio session");
+    });
+
+    test("a write refused as root-locked keeps the resolved request on screen and offers Retry", () => {
+      const resolved = workflowReducer(
+        withLock({ state: "running", lock: "free" }, { idle: true }),
+        { type: "resolution", value: { spec: { subject: "zeus" } } },
+      );
+      const refused = workflowReducer(resolved, {
+        type: "write-locked",
+        op: "generate",
+        args: { id: "zeus-1" },
+      });
+
+      const html = render(refused);
+
+      expect(html).toContain("Resolved spec");
+      expect(html).toContain("another process holds the writer lock");
+      expect(html).toMatch(/<button(?![^>]*disabled)[^>]*>Retry<\/button>/);
+      expect(render(resolved)).not.toContain("another process holds");
+      expect(
+        render(workflowReducer(refused, { type: "write-unlocked" })),
+      ).not.toContain("another process holds");
+    });
+  });
+
+  describe("the request form", () => {
+    test("Generate has a base seed field that says empty draws one", () => {
+      const html = render(stateFor());
+
+      expect(html).toContain("Base seed");
+      expect(html).toMatch(/<input[^>]*inputMode="numeric"[^>]*>/);
+      expect(html).toContain("empty draws one");
+    });
+
+    test("the slot hint shows examples, including an act with its ability", () => {
+      const html = render(stateFor());
+
+      expect(html).toContain("state/direction[/ability]");
+      expect(html).toContain("act/south/thunderbolt");
+      expect(html).toContain("act needs an ability");
+    });
+  });
+
+  describe("the queue", () => {
+    // React skips a memoized row whose props are all `Object.is`-equal. There
+    // is no DOM here to count renders in, so this drives the real reducer
+    // through two parent renders that change things the row does not show and
+    // checks every prop a row is given is the same value both times.
+    test("a row is given the same props across two parent renders that change nothing it shows", () => {
+      const jobs = Array.from({ length: 72 }, (_, i) => ({
+        id: `j${i}`,
+        requestId: "r1",
+        slotKey: `idle/${i}`,
+        status: "queued",
+        candidate: null,
+      }));
+      const snapshot = (extra: Record<string, unknown>) => ({
+        host: { state: "running", lock: "held" },
+        status: { idle: false },
+        requests: [],
+        jobs: jobs as never,
+        candidates: [],
+        edits: [],
+        workingSets: [],
+        assets: [],
+        ...extra,
+      });
+      const first = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot({}) as never,
+      });
+      // A poll brings the same jobs as new objects, and other panels' records change.
+      const second = workflowReducer(first, {
+        type: "snapshot",
+        snapshot: snapshot({
+          jobs: jobs.map((job) => ({ ...job })),
+          assets: [{ id: "a1" }],
+          requests: [{ id: "r1" }],
+        }) as never,
+      });
+      const handlers = rowHandlersForTest();
+      const props = (
+        state: typeof first,
+        job: (typeof first.jobs)[number],
+      ) => ({
+        job,
+        ctx: reuseRowContext(rowContextRef.current, queueRowContext(state)),
+        busy: false,
+        ...handlers,
+        conformSet: "",
+        candidate: undefined,
+        conformBusy: false,
+      });
+      const rowContextRef = { current: queueRowContext(first) };
+
+      const before = props(first, first.jobs[5] as never);
+      rowContextRef.current = before.ctx;
+      const after = props(second, second.jobs[5] as never);
+
+      for (const key of Object.keys(before) as (keyof typeof before)[])
+        expect(Object.is(before[key], after[key]), key).toBe(true);
+      // Every row, not just one.
+      for (const [index, job] of second.jobs.entries())
+        expect(job).toBe(first.jobs[index] as never);
+      // And a change to the row's own job does give it new props.
+      const changed = workflowReducer(second, {
+        type: "snapshot",
+        snapshot: snapshot({
+          jobs: jobs.map((job, i) =>
+            i === 5 ? { ...job, status: "running" } : { ...job },
+          ),
+        }) as never,
+      });
+      expect(changed.jobs[5]).not.toBe(second.jobs[5] as never);
+      expect(changed.jobs[6]).toBe(second.jobs[6] as never);
+    });
+
+    test("a row is a memoized component", () => {
+      expect((QueueItem as unknown as { $$typeof: symbol }).$$typeof).toBe(
+        Symbol.for("react.memo"),
+      );
+    });
+
+    test("72 jobs render as 72 rows", () => {
+      const jobs = Array.from({ length: 72 }, (_, i) => ({
+        id: `j${i}`,
+        requestId: "r1",
+        slotKey: `idle/${i}`,
+        status: i % 2 === 0 ? "queued" : "succeeded",
+        candidate: i % 4 === 1 ? null : { id: `c${i}` },
+      }));
+      const state = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: {
+          host: { state: "running", lock: "held" },
+          status: { idle: false, conformSets: ["standard"] },
+          requests: [],
+          jobs: jobs as never,
+          candidates: [{ id: "c3", status: "done" }],
+          edits: [],
+          workingSets: [],
+          assets: [],
+        },
+      });
+
+      const html = render(state);
+
+      expect(html.match(/class="queue-row /g)).toHaveLength(72);
+      expect(html).toContain("72 jobs");
+    });
   });
 
   test("retry is absent from succeeded, queued and running jobs", () => {

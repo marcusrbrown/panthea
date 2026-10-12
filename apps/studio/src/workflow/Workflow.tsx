@@ -1,6 +1,7 @@
 import {
   type Dispatch,
   type FormEvent,
+  memo,
   type ReactNode,
   useEffect,
   useMemo,
@@ -20,9 +21,13 @@ import type {
 import {
   approvalArgsForAsset,
   buildPackArgs,
+  buildRequestArgs,
+  callTrackingLock,
+  checkResolvedSeed,
   chooseConfigGuarded,
   conformJob,
   createLatest,
+  createStableHandlers,
   detailText,
   type EditorSession,
   editableSlotsForSet,
@@ -32,31 +37,43 @@ import {
   editsForReports,
   readEditReport as fetchEditReport,
   type GuardUi,
+  generateReady,
   guardedAction,
   openWorkingSetEdit,
   packNeedsOriginalWork,
   packNeedsStillFrameMs,
   packWorkingSetGuarded,
   parseInlineConformDraft,
-  parseSlotSpecs,
   pickCandidateGuarded,
+  previewForAsset,
   readExistingSheet,
+  releaseWriterLock,
   reopenEditor,
   reopenWorkingSetEdit,
+  requestJobCount,
+  requestSignature,
   rerollArgs,
   resolveFlow,
+  retryLockedWrite,
   sheetFlow,
   slotHint,
+  subjectSlug,
 } from "./actions";
 import { CandidatePixels } from "./CandidatePixelCell";
 import { EditPanel } from "./EditPanel";
 import {
+  canMutate,
+  canRelease,
   initialWorkflowState,
+  lockLabel,
   type QueueJob,
+  type QueueRowContext,
+  queueRowContext,
   recordObject,
   recordText,
   recordValue,
   resolveActiveRecord,
+  reuseRowContext,
   type WorkflowAction,
   type WorkflowState,
   workflowReducer,
@@ -67,6 +84,8 @@ export interface PreviewSelection {
   readonly source: "canon" | "draft" | "approved";
   readonly id: string;
   readonly kind?: "sprite" | "portrait";
+  /** The record that replaced the selected canon record; the preview draws nothing of the selected one. */
+  readonly supersededBy?: string;
 }
 
 export interface WorkflowViewProps {
@@ -122,17 +141,14 @@ const slug = (value: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
-function canMutate(state: WorkflowState) {
-  return (
-    state.configured &&
-    state.host.state === "running" &&
-    state.lockOwner === undefined
-  );
-}
-
-function QueueItem({
+/**
+ * One queue row. It is given its own job and a few primitives (`ctx`), never
+ * the window's state, and its handlers are stable, so typing in the form or a
+ * poll that changes nothing about this job does not render it again.
+ */
+export const QueueItem = memo(function QueueItem({
   job,
-  state,
+  ctx,
   busy,
   onRemove,
   onAbort,
@@ -143,7 +159,7 @@ function QueueItem({
   conformBusy,
 }: {
   job: QueueJob;
-  state: WorkflowState;
+  ctx: QueueRowContext;
   busy: boolean;
   onRemove: (id: string) => void;
   onAbort: (id: string) => void;
@@ -155,10 +171,9 @@ function QueueItem({
 }) {
   const candidateSummary = candidate as CandidateSummary | undefined;
   const restartRemoval =
-    state.lockOwner === undefined &&
-    (state.restartPending || state.host.state === "restarting") &&
+    ctx.restartRemovable &&
     (job.status === "queued" || job.status === "aborting");
-  const enabled = (canMutate(state) || restartRemoval) && !busy;
+  const enabled = (ctx.mutable || restartRemoval) && !busy;
   const canRemove = job.status === "queued" || job.status === "aborting";
   const reason = job.reason;
   const progress =
@@ -176,16 +191,16 @@ function QueueItem({
         {job.requestId ? ` · ${job.requestId}` : ""}
       </small>
       {(job.status === "aborting" ||
-        (state.restartPending &&
+        (ctx.restartPending &&
           (job.status === "cancelled" || job.status === "queued"))) && (
         <p className="queue-note">
           Restarting the image server. The next job reloads the model.
         </p>
       )}
-      {state.host.state === "restarting" && job.status === "queued" && (
+      {ctx.hostRestarting && job.status === "queued" && (
         <p className="queue-note">
-          Waiting for server restart, attempt {state.host.attempt} of{" "}
-          {state.host.maxAttempts}.
+          Waiting for server restart, attempt {ctx.attempt} of {ctx.maxAttempts}
+          .
         </p>
       )}
       {reason && (
@@ -253,7 +268,7 @@ function QueueItem({
       )}
     </li>
   );
-}
+});
 
 function ScaleConformForm({
   candidate,
@@ -434,8 +449,11 @@ export function WorkflowView({
   const [slots, setSlots] = useState("idle/south\nwalk/south");
   const [batch, setBatch] = useState(1);
   const [styleNote, setStyleNote] = useState("");
+  const [seedText, setSeedText] = useState("");
   const [requestId, setRequestId] = useState("");
   const [resolvedArgs, setResolvedArgs] = useState<Record<string, unknown>>();
+  /** The form text the resolve on screen was made from. */
+  const [resolvedFrom, setResolvedFrom] = useState<string>();
   const [workingSetId, setWorkingSetId] = useState("");
   const [assetId, setAssetId] = useState("");
   const [styleTag, setStyleTag] = useState("");
@@ -554,36 +572,38 @@ export function WorkflowView({
               state.host.state === "restarting"),
       ),
       { label: op, nonBlocking },
-      () => host.call(op, args),
+      () =>
+        callTrackingLock(host, op, args, {
+          readOnly,
+          lockedWritePending: state.lockedWrite !== undefined,
+          dispatch,
+        }),
     );
 
-  const formArgs = () => {
-    const id =
-      requestId || `${slug(subject)}-${crypto.randomUUID().slice(0, 8)}`;
-    const parsedSlots = parseSlotSpecs(slots, kind);
-    if (!slug(subject) || parsedSlots.length === 0)
-      throw new Error("Enter a subject and at least one slot.");
-    const args: Record<string, unknown> = {
-      id,
-      subject: slug(subject),
-      kind,
-      slots: parsedSlots,
-      batch: Math.max(1, Math.floor(batch)),
-    };
-    if (styleNote.trim()) args.styleNote = styleNote.trim();
-    return args;
+  const release = async () => {
+    const outcome = await releaseWriterLock(state, (op, args) =>
+      call(op, args, false, false, true),
+    );
+    if (outcome.kind === "released") setMessage(outcome.message);
   };
+
+  const formArgs = () =>
+    buildRequestArgs(
+      { subject, kind, slots, batch, styleNote, seedText },
+      requestId || `${subjectSlug(subject)}-${crypto.randomUUID().slice(0, 8)}`,
+    );
 
   // A resolve reply is only for the form it was sent from: the form's current
   // text is compared with the text it had at the click.
   const formSignature = useRef("");
-  formSignature.current = JSON.stringify([
+  formSignature.current = requestSignature({
     subject,
     kind,
     slots,
     batch,
     styleNote,
-  ]);
+    seed: seedText,
+  });
   const latestResolve = useRef(createLatest());
   const latestSheet = useRef(createLatest());
   const workingSetIdRef = useRef(workingSetId);
@@ -601,12 +621,27 @@ export function WorkflowView({
         isCurrent: () => formSignature.current === sentFrom,
         call: async () => call("resolve", args, true),
         onResolved: (result) => {
+          // A seed the host drew is held to the same range as one typed.
+          const drawn = checkResolvedSeed(
+            object(object(result).request).seed,
+            requestJobCount(slots, kind, batch),
+          );
+          if (drawn !== undefined) {
+            setResolvedArgs(undefined);
+            setResolvedFrom(undefined);
+            dispatch?.({ type: "refusal", message: drawn });
+            return;
+          }
+          setResolvedFrom(sentFrom);
           dispatch?.({ type: "resolution", value: result });
           setMessage(
             "Request resolved. Review the specification before generating.",
           );
         },
-        onRefused: () => setResolvedArgs(undefined),
+        onRefused: () => {
+          setResolvedArgs(undefined);
+          setResolvedFrom(undefined);
+        },
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -620,6 +655,7 @@ export function WorkflowView({
 
   const generate = async () => {
     if (!resolvedSpec || !resolvedArgs) return;
+    if (!generateReady(resolvedFrom, formSignature.current)) return;
     const args = { ...resolvedArgs };
     const resolved = object(resolvedRequest);
     if (typeof resolved.seed === "number") args.seed = resolved.seed;
@@ -627,6 +663,7 @@ export function WorkflowView({
     if (result !== undefined) {
       dispatch?.({ type: "resolution", value: undefined });
       setResolvedArgs(undefined);
+      setResolvedFrom(undefined);
       setRequestId("");
       setMessage("Request added to the queue.");
     }
@@ -659,6 +696,13 @@ export function WorkflowView({
     const args = rerollArgs(job);
     if (args) void call("reroll", args, false, false, true);
   };
+  // The write the lock refused is sent again. A generate goes back through the
+  // form's own handler, so it ends the way a first try does.
+  const retryRefusedWrite = () =>
+    void retryLockedWrite(state.lockedWrite, {
+      call: (op, args) => call(op, args, false, false, true),
+      generate,
+    });
 
   const runConform = async (jobId: string, how: ConformHow) => {
     if (!mutationsEnabled) return;
@@ -675,6 +719,33 @@ export function WorkflowView({
       setConformBusy((previous) => ({ ...previous, [jobId]: false }));
     }
   };
+
+  // The rows get handlers that never change identity and always call the
+  // latest of these, and the few facts they need as one object that changes
+  // only when one of those facts does.
+  const rowLatest = useRef({
+    onRemove: (_id: string): void => undefined,
+    onAbort: (_id: string): void => undefined,
+    onRetry: (_job: QueueJob): void => undefined,
+    onConform: (_jobId: string, _how: ConformHow): void => undefined,
+  });
+  rowLatest.current = {
+    onRemove: (id) => void remove(id),
+    onAbort: (id) => void abort(id),
+    onRetry: retry,
+    onConform: (jobId, how) => void runConform(jobId, how),
+  };
+  const rowHandlers = useMemo(() => createStableHandlers(rowLatest), []);
+  const rowContext = useRef(queueRowContext(state));
+  rowContext.current = reuseRowContext(
+    rowContext.current,
+    queueRowContext(state),
+  );
+  const candidatesById = useMemo(
+    () =>
+      new Map(state.candidates.map((candidate) => [candidate.id, candidate])),
+    [state.candidates],
+  );
 
   const loadSheet = async (request: SummaryRecord) => {
     if (!readsEnabled) return;
@@ -751,15 +822,9 @@ export function WorkflowView({
   const activeAssetKind =
     (activeAsset ? recordText(activeAsset, "kind") : undefined) ??
     (assetWorkingSet ? recordText(assetWorkingSet, "kind") : undefined);
-  // The preview source keys drafts and approved records by record id and canon
-  // by asset id; asking for the asset id of a draft would draw another record.
+  // What the preview is asked to draw for this record: see `previewForAsset`.
   const activePreview: PreviewSelection | undefined = activeAsset
-    ? activeAssetState === "approved" || activeAssetState === "draft"
-      ? { source: activeAssetState, id: activeAsset.id }
-      : {
-          source: "canon",
-          id: recordText(activeAsset, "assetId") ?? activeAsset.id,
-        }
+    ? previewForAsset(activeAsset, state.assets)
     : undefined;
   const activePreviewWithKind: PreviewSelection | undefined =
     activePreview &&
@@ -950,6 +1015,7 @@ export function WorkflowView({
     state.lockOwner === undefined
       ? undefined
       : `Locked by another studio session (pid ${state.lockOwner})`;
+  const lockIndicator = lockLabel(state);
   const restartMessage = state.restartPending
     ? "Image server restarting after abort. Queued jobs can still be removed."
     : state.host.state === "restarting"
@@ -968,6 +1034,26 @@ export function WorkflowView({
             <span className={`host-dot host-${state.host.state}`} />
             {hostLabel(state.host)}
           </div>
+          {lockIndicator && (
+            <div className="host-indicator" aria-live="polite">
+              {lockIndicator}
+            </div>
+          )}
+          {state.configured && (
+            <button
+              type="button"
+              disabled={!canRelease(state) || busy}
+              title={
+                canRelease(state)
+                  ? "Give the writer lock back so a CLI step can write"
+                  : (state.idleReason ??
+                    "Nothing to release: this app does not hold the lock")
+              }
+              onClick={() => void release()}
+            >
+              Release
+            </button>
+          )}
           {onConfigChoose && (
             <button
               type="button"
@@ -1005,6 +1091,25 @@ export function WorkflowView({
           {lockMessage && (
             <p className="notice notice-lock" role="status">
               {lockMessage}. This window is read-only.
+            </p>
+          )}
+          {state.lockedWrite && (
+            <p className="notice notice-lock" role="status">
+              The write was refused: another process holds the writer lock. Your
+              form is unchanged.{" "}
+              <button
+                type="button"
+                disabled={!mutationsEnabled}
+                onClick={retryRefusedWrite}
+              >
+                Retry
+              </button>
+            </p>
+          )}
+          {state.releaseFailure && (
+            <p className="notice notice-warn" role="status">
+              Releasing the writer lock failed and the lock was kept:{" "}
+              {state.releaseFailure}. Release again, or quit the app.
             </p>
           )}
           {restartMessage && (
@@ -1096,6 +1201,27 @@ export function WorkflowView({
                   />
                 </label>
                 <label className="workflow-field">
+                  Base seed{" "}
+                  <span className="field-hint">
+                    digits only, 0 to 4294967295; empty draws one
+                  </span>
+                  <input
+                    className="workflow-control"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="draw one"
+                    value={seedText}
+                    onChange={(event) => {
+                      setSeedText(event.target.value);
+                      setRequestId("");
+                      dispatch?.({ type: "resolution", value: undefined });
+                      setResolvedArgs(undefined);
+                      setResolvedFrom(undefined);
+                    }}
+                  />
+                </label>
+                <label className="workflow-field">
                   Style note <span className="field-hint">optional</span>
                   <textarea
                     className="workflow-control"
@@ -1116,7 +1242,11 @@ export function WorkflowView({
                   <button
                     type="button"
                     className="primary"
-                    disabled={!mutationsEnabled || resolvedArgs === undefined}
+                    disabled={
+                      !mutationsEnabled ||
+                      resolvedArgs === undefined ||
+                      !generateReady(resolvedFrom, formSignature.current)
+                    }
                     onClick={() => void generate()}
                   >
                     Generate
@@ -1130,6 +1260,13 @@ export function WorkflowView({
                     Review this input. Generation uses the resolved seed and
                     request.
                   </p>
+                  {typeof object(resolvedRequest).seed === "number" && (
+                    <p className="resolved-seed">
+                      Base seed:{" "}
+                      <strong>{String(object(resolvedRequest).seed)}</strong>
+                      {seedText === "" ? " (drawn for this request)" : ""}
+                    </p>
+                  )}
                   <pre>{detailText(resolvedSpec)}</pre>
                 </section>
               )}
@@ -1181,16 +1318,14 @@ export function WorkflowView({
                     <QueueItem
                       key={job.id}
                       job={job}
-                      state={state}
+                      ctx={rowContext.current}
                       busy={queueBusy[job.id] === true}
-                      onRemove={(id) => void remove(id)}
-                      onAbort={(id) => void abort(id)}
-                      onRetry={retry}
+                      onRemove={rowHandlers.onRemove}
+                      onAbort={rowHandlers.onAbort}
+                      onRetry={rowHandlers.onRetry}
                       conformSet={conformSet}
-                      onConform={(jobId, how) => void runConform(jobId, how)}
-                      candidate={state.candidates.find(
-                        (candidate) => candidate.id === job.id,
-                      )}
+                      onConform={rowHandlers.onConform}
+                      candidate={candidatesById.get(job.id)}
                       conformBusy={conformBusy[job.id] === true}
                     />
                   ))}
@@ -1447,6 +1582,21 @@ export function WorkflowView({
                   <p>Review the record, then confirm each lifecycle change.</p>
                 </div>
               </div>
+              <section className="preview-area">
+                <div className="preview-heading">
+                  <h3>Isometric preview</h3>
+                  <span>integer zoom · nearest pixels</span>
+                </div>
+                {activePreviewWithKind && renderPreview ? (
+                  renderPreview(activePreviewWithKind)
+                ) : (
+                  <p className="muted">
+                    {pendingAssetId === undefined
+                      ? "Select a draft or approved record to preview it."
+                      : `Waiting for ${pendingAssetId}; no other record is previewed.`}
+                  </p>
+                )}
+              </section>
               {state.assets.length === 0 && pendingAssetId === undefined ? (
                 <p className="empty-state">
                   Packed drafts and approved records will appear here.
@@ -1619,21 +1769,6 @@ export function WorkflowView({
                   )}
                 </>
               )}
-              <section className="preview-area">
-                <div className="preview-heading">
-                  <h3>Isometric preview</h3>
-                  <span>integer zoom · nearest pixels</span>
-                </div>
-                {activePreviewWithKind && renderPreview ? (
-                  renderPreview(activePreviewWithKind)
-                ) : (
-                  <p className="muted">
-                    {pendingAssetId === undefined
-                      ? "Select a draft or approved record to preview it."
-                      : `Waiting for ${pendingAssetId}; no other record is previewed.`}
-                  </p>
-                )}
-              </section>
               {activeEdit && (
                 <EditPanel
                   host={host}
@@ -1673,7 +1808,7 @@ function hostLabel(host: WorkflowState["host"]): string {
     case "running":
       return "Connected";
     case "read-only":
-      return `Read-only (held by pid ${host.lockHolder})`;
+      return "Read-only";
     case "restarting":
       return `Restarting ${host.attempt}/${host.maxAttempts}`;
     case "unavailable":

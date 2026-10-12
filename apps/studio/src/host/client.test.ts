@@ -114,6 +114,25 @@ describe("calls", () => {
     ]);
   });
 
+  test("release is an op with no arguments, and a refusal because the app is not idle is a typed host error", async () => {
+    expect(STUDIO_OPS).toContain("release");
+    const transport = fakeTransport({
+      studio_call: (args) => {
+        if ((args as { op: string }).op !== "release") return {};
+        throw hostError("not-idle", "the app is not idle: an op is in flight");
+      },
+    });
+
+    const error = await createStudioHost(transport)
+      .call("release")
+      .catch((caught: unknown) => caught);
+
+    expect(transport.to("studio_call").map((call) => call.args)).toEqual([
+      { op: "release", args: {} },
+    ]);
+    expect(error).toMatchObject({ code: "not-idle", retryable: false });
+  });
+
   test("the typed op list is the Rust schema table, in the same order", async () => {
     const text = await Bun.file(
       join(import.meta.dir, "..", "..", "src-tauri", "src", "schema.rs"),
@@ -262,6 +281,28 @@ describe("edit and config commands", () => {
       { editId: "e1", finish: false },
       { editId: "e1", finish: true },
     ]);
+  });
+
+  test("a scripted finish from picked files carries its method and description and nothing else", async () => {
+    const transport = fakeTransport({
+      edit_import: () => ({ editId: "e1", state: "finished", changed: true }),
+    });
+    const host = createStudioHost(transport);
+
+    await host.editImport(
+      "e1",
+      true,
+      { method: "script", description: "idle loop" },
+      "c".repeat(64),
+    );
+
+    expect(transport.to("edit_import")[0]?.args).toEqual({
+      editId: "e1",
+      finish: true,
+      reviewed: "c".repeat(64),
+      method: "script",
+      description: "idle loop",
+    });
   });
 
   test("editReport asks edit-report for the id alone and parses the reply", async () => {

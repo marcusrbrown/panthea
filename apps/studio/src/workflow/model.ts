@@ -1,3 +1,4 @@
+import type { StudioOp } from "../host/client";
 import type {
   CandidateSummary,
   EditReport,
@@ -30,6 +31,17 @@ export interface WorkflowState {
   readonly host: HostStatus;
   readonly configured: boolean;
   readonly lockOwner?: number;
+  /** The host's own answer to whether a release would be accepted now (`status.idle`). */
+  readonly idle: boolean;
+  /** Why it is not, when the host said. */
+  readonly idleReason?: string;
+  /** Why the last release failed while the lock was kept, when one did. */
+  readonly releaseFailure?: string;
+  /** The last write another process's lock refused, kept so Retry can send it again. */
+  readonly lockedWrite?: {
+    readonly op: StudioOp;
+    readonly args: Readonly<Record<string, unknown>>;
+  };
   readonly status?: Readonly<Record<string, unknown>> | null;
   readonly requests: readonly SummaryRecord[];
   readonly jobs: readonly QueueJob[];
@@ -50,6 +62,12 @@ export interface WorkflowState {
 export type WorkflowAction =
   | { readonly type: "snapshot"; readonly snapshot: StudioSnapshot }
   | { readonly type: "configured"; readonly configured: boolean }
+  | {
+      readonly type: "write-locked";
+      readonly op: StudioOp;
+      readonly args: Readonly<Record<string, unknown>>;
+    }
+  | { readonly type: "write-unlocked" }
   | { readonly type: "job-aborting"; readonly jobId: string }
   | { readonly type: "job-abort-failed"; readonly jobId: string }
   | { readonly type: "job-cancelled"; readonly jobId: string }
@@ -110,10 +128,122 @@ function queueJob(raw: SummaryRecord, tombstone?: "cancelled" | "removed") {
   } satisfies QueueJob;
 }
 
+/** The header's lock state: held by this app, free, or held by pid N. Nothing before the sidecar has said. */
+export function lockLabel(state: WorkflowState): string | undefined {
+  const { host } = state;
+  if (host.state === "read-only") return `Held by pid ${host.lockHolder}`;
+  if (host.state !== "running") return undefined;
+  if (host.lock === "held") return "Held by this app";
+  return host.lock === "free" ? "Free" : undefined;
+}
+
+/** Release gives back a lock this app holds, and only when the host says it is idle. */
+export function canRelease(state: WorkflowState): boolean {
+  return (
+    state.configured &&
+    state.host.state === "running" &&
+    state.host.lock === "held" &&
+    state.idle
+  );
+}
+
+/** A write another process's lock refused, as opposed to any other refusal. */
+export function refusedByLock(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "root-locked"
+  );
+}
+
+/** Whether the window may write: configured, the sidecar running, and no other process holding the lock. */
+export function canMutate(state: WorkflowState): boolean {
+  return (
+    state.configured &&
+    state.host.state === "running" &&
+    state.lockOwner === undefined
+  );
+}
+
+/**
+ * The few facts of the window a queue row needs, as primitives: the same for
+ * every row, and equal across any change the rows do not show (a candidate, an
+ * asset, a request). A row given only this and its own job is not rendered
+ * again for those changes.
+ */
+export interface QueueRowContext {
+  /** Writes are allowed. */
+  readonly mutable: boolean;
+  /** A queued or aborting job may still be removed: the image server is restarting. */
+  readonly restartRemovable: boolean;
+  readonly restartPending: boolean;
+  readonly hostRestarting: boolean;
+  readonly attempt: number | undefined;
+  readonly maxAttempts: number | undefined;
+}
+
+/** The context to give rows: the previous object while every fact is the same, so memoized rows are not rendered again. */
+export function reuseRowContext(
+  previous: QueueRowContext,
+  next: QueueRowContext,
+): QueueRowContext {
+  return (Object.keys(previous) as (keyof QueueRowContext)[]).every(
+    (key) => previous[key] === next[key],
+  )
+    ? previous
+    : next;
+}
+
+export function queueRowContext(state: WorkflowState): QueueRowContext {
+  const hostRestarting = state.host.state === "restarting";
+  return {
+    mutable: canMutate(state),
+    restartRemovable:
+      state.lockOwner === undefined && (state.restartPending || hostRestarting),
+    restartPending: state.restartPending,
+    hostRestarting,
+    attempt: state.host.attempt,
+    maxAttempts: state.host.maxAttempts,
+  };
+}
+
+/** The same job, field for field: its record is what the row shows. */
+function sameJob(previous: QueueJob, next: QueueJob): boolean {
+  return (
+    previous.id === next.id &&
+    previous.requestId === next.requestId &&
+    previous.slotKey === next.slotKey &&
+    previous.status === next.status &&
+    previous.reason === next.reason &&
+    JSON.stringify(previous.raw) === JSON.stringify(next.raw)
+  );
+}
+
+/**
+ * The jobs a snapshot brings, reusing the object of every job that did not
+ * change (and the list itself when nothing did), so a memoized row skips the
+ * poll that carries it again.
+ */
+function reuseJobs(
+  previous: readonly QueueJob[],
+  next: readonly QueueJob[],
+): readonly QueueJob[] {
+  const before = new Map(previous.map((job) => [job.id, job]));
+  const kept = next.map((job) => {
+    const old = before.get(job.id);
+    return old !== undefined && sameJob(old, job) ? old : job;
+  });
+  return kept.length === previous.length &&
+    kept.every((job, index) => job === previous[index])
+    ? previous
+    : kept;
+}
+
 export function initialWorkflowState(): WorkflowState {
   return {
     host: { state: "starting" },
     configured: false,
+    idle: false,
     restartPending: false,
     requests: [],
     jobs: [],
@@ -142,19 +272,28 @@ export function workflowReducer(
         snapshot.host.state === "read-only"
           ? snapshot.host.lockHolder
           : undefined;
+      const status =
+        snapshot.status === undefined ? state.status : snapshot.status;
+      const reported = object(status);
       const tombstones = { ...state.tombstones };
-      const jobs = (snapshot.jobs ?? []).map((raw) => {
-        const protectedState = tombstones[raw.id];
-        const job = queueJob(raw, protectedState);
-        if (job.status === "cancelled" || job.status === "removed")
-          tombstones[job.id] = job.status;
-        return job;
-      });
+      const jobs = reuseJobs(
+        state.jobs,
+        (snapshot.jobs ?? []).map((raw) => {
+          const protectedState = tombstones[raw.id];
+          const job = queueJob(raw, protectedState);
+          if (job.status === "cancelled" || job.status === "removed")
+            tombstones[job.id] = job.status;
+          return job;
+        }),
+      );
       return {
         ...state,
         host: snapshot.host,
         configured: snapshot.host.state !== "not-configured",
-        status: snapshot.status === undefined ? state.status : snapshot.status,
+        status,
+        idle: reported.idle === true,
+        idleReason: text(reported.idleReason),
+        releaseFailure: text(reported.releaseFailure),
         ...(pid === undefined ? { lockOwner: undefined } : { lockOwner: pid }),
         requests: snapshot.requests ?? [],
         jobs,
@@ -169,6 +308,10 @@ export function workflowReducer(
         errors: snapshot.errors ?? {},
       };
     }
+    case "write-locked":
+      return { ...state, lockedWrite: { op: action.op, args: action.args } };
+    case "write-unlocked":
+      return { ...state, lockedWrite: undefined };
     case "job-aborting":
       return {
         ...state,

@@ -109,8 +109,49 @@ describe("the host status", () => {
     ["null", null],
     ["a string", "running"],
     ["an array", []],
+    [
+      "a lock word that is not one of the three",
+      { state: "running", lock: "mine" },
+    ],
+    [
+      "another holder's lock on a running host",
+      { state: "running", lock: "other" },
+    ],
+    [
+      "a free lock on a read-only host",
+      { state: "read-only", lockHolder: 4242, lock: "free" },
+    ],
+    ["a lock on a host with no sidecar", { state: "starting", lock: "free" }],
+    [
+      "a lock on a restarting host",
+      { state: "restarting", attempt: 1, maxAttempts: 3, lock: "held" },
+    ],
   ])("refuses %s", (_name, value) => {
     expect(parseHostStatus(value).ok).toBe(false);
+  });
+
+  test("a running host reports whether this app holds the writer lock or nobody does", () => {
+    expect(parseHostStatus({ state: "running", lock: "held" })).toEqual({
+      ok: true,
+      value: { state: "running", lock: "held" },
+    });
+    expect(parseHostStatus({ state: "running", lock: "free" })).toEqual({
+      ok: true,
+      value: { state: "running", lock: "free" },
+    });
+    expect(parseHostStatus({ state: "running" })).toEqual({
+      ok: true,
+      value: { state: "running" },
+    });
+  });
+
+  test("a read-only host may say the lock is another process's", () => {
+    expect(
+      parseHostStatus({ state: "read-only", lockHolder: 4242, lock: "other" }),
+    ).toEqual({
+      ok: true,
+      value: { state: "read-only", lockHolder: 4242, lock: "other" },
+    });
   });
 });
 

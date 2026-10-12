@@ -166,6 +166,16 @@ function hashFile(path: string): Promise<string> {
   });
 }
 
+/**
+ * Files whose bytes hashed to their pinned sha256, for the life of the
+ * process. Hashing the models is most of a cold start (about 6 s of 8 s on the
+ * real ones: tools/probes/studio-release), and a release that gives the lock
+ * back opens a new runtime on the same files. An entry holds only while the
+ * path, the size and the mtime (to the nanosecond) are what was hashed; any
+ * other change is hashed again. The size is still checked first, every time.
+ */
+const hashedFiles = new Set<string>();
+
 async function verifyArtifacts(
   root: string,
   profile: SelectedProfile,
@@ -215,11 +225,17 @@ async function verifyArtifacts(
   }
   if (problems.length > 0) return { ok: false, reason: problems.join("; ") };
   for (const check of checks) {
+    // The stat is taken before the hash: a file that changes while it is read
+    // has another mtime next time and is hashed again.
+    const stat = statSync(check.path, { bigint: true });
+    const key = `${check.path}\0${stat.size}\0${stat.mtimeNs}\0${check.sha256}`;
+    if (hashedFiles.has(key)) continue;
     const actual = await hashFile(check.path);
     if (actual !== check.sha256)
       problems.push(
         `${check.label} sha256 ${actual} does not match the pinned ${check.sha256}`,
       );
+    else hashedFiles.add(key);
   }
   if (problems.length > 0) return { ok: false, reason: problems.join("; ") };
   return {

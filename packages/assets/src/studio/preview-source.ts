@@ -37,6 +37,12 @@ export interface PreviewListingEntry extends PreviewSelection {
   readonly assetId: string;
   readonly kind: "sprite" | "portrait" | "unknown";
   readonly state: PreviewSourceKind;
+  readonly animations: readonly {
+    readonly state: string;
+    readonly direction: string;
+    readonly ability?: string;
+  }[];
+  readonly expressions: readonly string[];
   /** False when the entry failed validation and resolves to the placeholder. */
   readonly ok: boolean;
 }
@@ -252,6 +258,47 @@ const kindOf = (manifest: unknown): PreviewListingEntry["kind"] => {
   return kind === "sprite" || kind === "portrait" ? kind : "unknown";
 };
 
+function keysOf(
+  manifest: unknown,
+): Pick<PreviewListingEntry, "animations" | "expressions"> {
+  const record = manifest as {
+    animations?: unknown;
+    expressions?: unknown;
+    kind?: unknown;
+  } | null;
+  if (record?.kind === "sprite" && Array.isArray(record.animations)) {
+    return {
+      animations: record.animations.flatMap((item) => {
+        if (typeof item !== "object" || item === null) return [];
+        const key = item as Record<string, unknown>;
+        if (typeof key.state !== "string" || typeof key.direction !== "string")
+          return [];
+        return [
+          {
+            state: key.state,
+            direction: key.direction,
+            ...(typeof key.ability === "string"
+              ? { ability: key.ability }
+              : {}),
+          },
+        ];
+      }),
+      expressions: [],
+    };
+  }
+  if (record?.kind === "portrait" && Array.isArray(record.expressions)) {
+    return {
+      animations: [],
+      expressions: record.expressions.flatMap((item) => {
+        if (typeof item !== "object" || item === null) return [];
+        const expression = (item as Record<string, unknown>).expression;
+        return typeof expression === "string" ? [expression] : [];
+      }),
+    };
+  }
+  return { animations: [], expressions: [] };
+}
+
 function scan(options: PreviewSourceOptions): Model {
   const held = new Map<string, Held>();
   const entries: PreviewListingEntry[] = [];
@@ -322,6 +369,7 @@ function scan(options: PreviewSourceOptions): Model {
         assetId: entry.assetId,
         kind: kindOf(revision.value.manifest),
         state: "canon",
+        ...keysOf(revision.value.manifest),
         ok: true,
       });
     }
@@ -345,7 +393,8 @@ function scan(options: PreviewSourceOptions): Model {
       if (state !== "draft" && state !== "approved") continue;
       const selection: PreviewSelection = { source: state, id: asset.id };
       const key = keyOf(selection);
-      const refuse = (message: string) => {
+      const refuse = (message: string, manifest?: unknown) => {
+        const keys = keysOf(manifest);
         const problem = { scope: key, message };
         byKey.set(key, [problem]);
         problems.push(problem);
@@ -358,6 +407,7 @@ function scan(options: PreviewSourceOptions): Model {
           assetId: asset.assetId,
           kind: kindOf(asset.record.manifest),
           state,
+          ...keys,
           ok: false,
         });
       };
@@ -369,7 +419,10 @@ function scan(options: PreviewSourceOptions): Model {
       }
       const manifest: Manifest = parsed.value;
       if (manifest.id !== asset.assetId) {
-        refuse(`manifest is for "${manifest.id}", not "${asset.assetId}"`);
+        refuse(
+          `manifest is for "${manifest.id}", not "${asset.assetId}"`,
+          manifest,
+        );
         continue;
       }
       const hash = manifest.atlas.blob;
@@ -378,16 +431,16 @@ function scan(options: PreviewSourceOptions): Model {
       try {
         bytes = readStudioBlob(options.studioRoot, hash);
       } catch (error) {
-        refuse(`${file}: ${errorText(error)}`);
+        refuse(`${file}: ${errorText(error)}`, manifest);
         continue;
       }
       if (bytes === undefined) {
-        refuse(`${file}: atlas blob is missing`);
+        refuse(`${file}: atlas blob is missing`, manifest);
         continue;
       }
       const checked = checkBlob(bytes, hash, manifest.atlas, file);
       if (!checked.ok) {
-        refuse(`${checked.file}: ${checked.message}`);
+        refuse(`${checked.file}: ${checked.message}`, manifest);
         continue;
       }
       const entry: SnapshotEntry = {
@@ -403,6 +456,7 @@ function scan(options: PreviewSourceOptions): Model {
         assetId: asset.assetId,
         kind: kindOf(manifest),
         state,
+        ...keysOf(manifest),
         ok: true,
       });
     }
