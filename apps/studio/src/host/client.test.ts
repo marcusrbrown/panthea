@@ -289,14 +289,17 @@ describe("edit and config commands", () => {
     });
     const host = createStudioHost(transport);
 
-    await host.editImport("e1", true, {
-      method: "script",
-      description: "idle loop",
-    });
+    await host.editImport(
+      "e1",
+      true,
+      { method: "script", description: "idle loop" },
+      "c".repeat(64),
+    );
 
     expect(transport.to("edit_import")[0]?.args).toEqual({
       editId: "e1",
       finish: true,
+      reviewed: "c".repeat(64),
       method: "script",
       description: "idle loop",
     });

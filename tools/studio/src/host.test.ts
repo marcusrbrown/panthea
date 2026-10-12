@@ -5,7 +5,7 @@
 // the lock, the queue and the records behave as they do in the app.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   type DrainResult,
@@ -127,6 +127,8 @@ function world() {
     runtimes: [] as FakeRuntime[],
     editors: [] as FakeEditor[],
     previews: { opened: 0, closed: 0 },
+    /** When set, the next session open throws it (once), as a failing disk would. */
+    openThrows: undefined as Error | undefined,
     drainGate: Promise.resolve() as Promise<void>,
     drainRefusal: undefined as DrainResult | undefined,
     abortGate: Promise.resolve() as Promise<void>,
@@ -215,6 +217,11 @@ function world() {
     sleep: () => Promise.resolve(),
     isAlive: (pid) => pid === state.holder,
     openSession: (path) => {
+      if (state.openThrows !== undefined) {
+        const error = state.openThrows;
+        state.openThrows = undefined;
+        throw error;
+      }
       state.opens += 1;
       return state.holder === undefined
         ? openStudioSession(path)
@@ -385,6 +392,38 @@ describe("the lock is released when the app is idle", () => {
 
     expect(lockIsFree(w.root)).toBe(false);
     gate.resolve();
+    await w.studio.teardown();
+  });
+
+  test("a grace that fires while an op is running releases nothing, and the op's end arms a new one that does", async () => {
+    const w = world();
+    await settled(w);
+    // One grace is armed, the app is idle, and then an op starts without ending.
+    expect(w.clock.pending(RELEASE_GRACE_MS)).toBe(1);
+    const gate = defer();
+    w.state.abortGate = gate.promise;
+    const abort = execute(w.studio, "abort", { jobId: "zeus-idle-0000" });
+    await flush();
+    expect(w.clock.pending(RELEASE_GRACE_MS)).toBe(1);
+
+    w.clock.fire(RELEASE_GRACE_MS);
+    await flush();
+
+    // The re-check at fire time saw the op and kept the lock.
+    expect(w.state.runtimes[0]?.shutdowns).toBe(0);
+    expect(lockIsFree(w.root)).toBe(false);
+    expect(w.cap.err.join("\n")).not.toContain("automatic release");
+
+    gate.resolve();
+    expect((await abort).ok).toBe(true);
+    await flush();
+    expect(w.clock.pending(RELEASE_GRACE_MS)).toBe(1);
+
+    w.clock.fire(RELEASE_GRACE_MS);
+    await flush();
+
+    expect(w.state.runtimes[0]?.shutdowns).toBe(1);
+    expect(lockIsFree(w.root)).toBe(true);
     await w.studio.teardown();
   });
 });
@@ -718,6 +757,54 @@ describe("a release that does not finish", () => {
     expect(w.clock.pending(RELEASE_GRACE_MS)).toBe(0);
   });
 
+  test("a release whose bound fired while its steps still run hands out no session and starts no second release; a late success then frees the lock and says so", async () => {
+    const w = world();
+    await settled(w);
+    const gate = defer<TeardownResult>();
+    w.state.shutdown = () => gate.promise;
+    const releasing = execute(w.studio, "release", {});
+    await flush();
+    w.clock.fire(RELEASE_BOUND_MS);
+    expect(await releasing).toMatchObject({
+      ok: false,
+      error: { code: "release-failed" },
+    });
+    const opens = w.state.opens;
+
+    // The steps are still open: nobody gets the old session or a new one.
+    const owner = await w.studio.owner();
+    const write = await generate(w, "zeus-idle-2");
+    const second = await w.studio.release();
+
+    expect(owner).toMatchObject({
+      ok: false,
+      error: { code: "release-failed" },
+    });
+    expect(write).toMatchObject({
+      ok: false,
+      error: { code: "release-failed" },
+    });
+    expect(second).toMatchObject({
+      ok: false,
+      error: { code: "release-failed" },
+    });
+    expect(w.state.opens).toBe(opens);
+    expect(w.state.shutdownCalls).toBe(1);
+    expect(lockIsFree(w.root)).toBe(false);
+
+    // The shutdown answers late and succeeds: the lock is free, and the log says so.
+    gate.resolve({ ok: true });
+    await flush();
+
+    expect(lockIsFree(w.root)).toBe(true);
+    expect(w.cap.err.join("\n")).toContain("the writer lock is now free");
+    expect((await status(w)).releaseFailure).toBeNull();
+    const again = await generate(w, "zeus-idle-3");
+    expect(again).toMatchObject({ ok: true, result: { state: "queued" } });
+    await w.studio.idle();
+    await w.studio.teardown();
+  });
+
   test("an automatic release that fails is logged and keeps the lock", async () => {
     const w = world();
     await settled(w);
@@ -826,6 +913,119 @@ describe("the edit watcher is a lazy writer", () => {
     await flush();
 
     expect(imports(w)).toHaveLength(1);
+    await w.studio.teardown();
+  });
+
+  describe("a poll that cannot import", () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    afterEach(() => {
+      process.off("unhandledRejection", onRejection);
+    });
+
+    test("a session open that throws is logged, rejects nothing, keeps the baseline and the watch, and the next poll imports", async () => {
+      process.on("unhandledRejection", onRejection);
+      const w = world();
+      const file = await watching(w);
+      w.clock.fire(RELEASE_GRACE_MS);
+      await flush();
+      writeFileSync(file, SAVED);
+      w.state.openThrows = new Error("the disk went away");
+
+      w.clock.fire(EDIT_POLL_MS);
+      await flush();
+      // Let a rejection, if there is one, reach the process hook.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(rejections).toEqual([]);
+      expect(w.cap.err.join("\n")).toContain(
+        "edit e1 not imported: the disk went away",
+      );
+      expect(w.studio.hasWatches).toBe(true);
+      expect(w.clock.pending(EDIT_POLL_MS)).toBe(1);
+      expect(imports(w)).toEqual([]);
+
+      w.clock.fire(EDIT_POLL_MS);
+      await flush();
+      w.clock.fire(EDIT_POLL_MS);
+      await flush();
+
+      expect(imports(w)).toEqual([
+        { editId: "e1", mode: "import", bytes: SAVED },
+      ]);
+      await w.studio.teardown();
+    });
+
+    test("a workspace file that vanishes between the check and the read is logged and the watch stays armed", async () => {
+      process.on("unhandledRejection", onRejection);
+      const w = world();
+      const file = await watching(w);
+      writeFileSync(file, SAVED);
+      // The file is a directory when read: existsSync passes, readFileSync throws.
+      rmSync(file);
+      mkdirSync(file);
+
+      w.clock.fire(EDIT_POLL_MS);
+      await flush();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(rejections).toEqual([]);
+      expect(w.cap.err.join("\n")).toContain("edit e1 not imported:");
+      expect(w.clock.pending(EDIT_POLL_MS)).toBe(1);
+      rmSync(file, { recursive: true });
+      writeFileSync(file, SAVED);
+      w.clock.fire(EDIT_POLL_MS);
+      await flush();
+      w.clock.fire(EDIT_POLL_MS);
+      await flush();
+      expect(imports(w)).toHaveLength(1);
+      await w.studio.teardown();
+    });
+  });
+
+  test("an editor that is unavailable leaves the baseline so the next poll retries once the file is unchanged; a failed export is terminal", async () => {
+    const w = world();
+    const file = await watching(w);
+    w.state.refresh = async () =>
+      ({
+        ok: false,
+        reason: "editor-unavailable",
+        message: "aseprite is not installed",
+      }) as never;
+    writeFileSync(file, SAVED);
+
+    w.clock.fire(EDIT_POLL_MS);
+    await flush();
+    expect(imports(w)).toHaveLength(1);
+
+    // The editor comes back; the file has not changed since.
+    w.state.refresh = async () => ({ ok: true, changed: true }) as never;
+    w.clock.fire(EDIT_POLL_MS);
+    await flush();
+    w.clock.fire(EDIT_POLL_MS);
+    await flush();
+    w.clock.fire(EDIT_POLL_MS);
+    await flush();
+
+    expect(imports(w)).toHaveLength(2);
+    expect(w.cap.err.join("\n")).toContain("edit e1 imported");
+
+    // export-incomplete is terminal: it is logged and not retried.
+    writeFileSync(file, "v3");
+    w.state.refresh = async () =>
+      ({
+        ok: false,
+        reason: "export-incomplete",
+        message: "half-written",
+      }) as never;
+    w.clock.fire(EDIT_POLL_MS);
+    await flush();
+    w.clock.fire(EDIT_POLL_MS);
+    await flush();
+    w.clock.fire(EDIT_POLL_MS);
+    await flush();
+
+    expect(imports(w)).toHaveLength(3);
     await w.studio.teardown();
   });
 

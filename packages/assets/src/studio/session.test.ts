@@ -34,6 +34,7 @@ import {
 import * as studio from "./index";
 import { openStudioSession, readStudioStatus } from "./index";
 import { newRequestRecord } from "./request";
+import { MAX_SEED } from "./seed";
 
 afterEach(async () => {
   await reapChildren();
@@ -596,6 +597,7 @@ describe("public surface", () => {
     expect(Object.keys(studio).sort()).toEqual([
       "COALESCE_MS",
       "DEFAULT_BATCH",
+      "MAX_SEED",
       "PREVIEW_SOURCE_KINDS",
       "PROVIDER",
       "SELECTED_PROFILE",
@@ -827,9 +829,29 @@ describe("request submission", () => {
       reason: "invalid-request",
     });
     expect(
-      session.submitRequest(faces("zeus-edge", Number.MAX_SAFE_INTEGER - 5)),
+      session.submitRequest(faces("zeus-edge", MAX_SEED - 4)),
     ).toMatchObject({ ok: false, reason: "seed-overflow", enqueued: [] });
 
+    expect(snapshot(root)).toEqual(before);
+    session.close();
+  });
+
+  test("a reroll that would pass 2^32-1 is refused and writes nothing", () => {
+    const root = tempRoot();
+    const session = openOrFail(root);
+    // Six expressions at the default batch of four: ordinals 0..23 end exactly at the ceiling.
+    expect(
+      session.submitRequest(faces("zeus-ceiling", MAX_SEED - 23)),
+    ).toMatchObject({ ok: true });
+    const before = snapshot(root);
+
+    const refused = session.reroll("zeus-ceiling", 1);
+
+    expect(refused).toMatchObject({
+      ok: false,
+      reason: "seed-overflow",
+      enqueued: [],
+    });
     expect(snapshot(root)).toEqual(before);
     session.close();
   });

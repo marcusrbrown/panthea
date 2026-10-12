@@ -4,15 +4,18 @@ import { type CheckResult, runChecks } from "./check/run";
 import {
   abilitiesForKey,
   animationKeyMessage,
+  clockTiming,
   createPlaybackClock,
   directionsForState,
+  entryKey,
+  expressionAfterListing,
   expressionKeyMessage,
   firstAnimationForState,
-  firstPreviewKey,
   harnessItems,
   type OcclusionPair,
   type PlaybackClock,
   pickIn,
+  spriteKeyAfterListing,
   statesForEntry,
 } from "./harness/layout";
 import { usePreview } from "./harness/usePreview";
@@ -196,23 +199,44 @@ function PreviewHarness({
     (entry) => keyOf(entry) === portraitChosen,
   );
 
+  // The reset is keyed on what the entry is and what it publishes, not on the
+  // listing's object identity: every refresh makes new objects, and a refresh
+  // that changes nothing must not move the owner's selection.
+  const subjectEntryKey = entryKey(subjectEntry);
+  const subjectKeys = JSON.stringify(subjectEntry?.animations ?? []);
+  const heldKey = useRef({ state, direction, ability });
+  heldKey.current = { state, direction, ability };
+  const subjectSeen = useRef<string | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the entry's key and its published keys are what the reset follows
   useEffect(() => {
-    const first = firstPreviewKey(subjectEntry);
-    if (first?.kind === "sprite") {
-      setState(first.state);
-      setDirection(first.direction);
-      setAbility(first.ability);
-    } else {
-      setState("");
-      setDirection("");
-      setAbility(undefined);
-    }
-  }, [subjectEntry]);
+    const held = heldKey.current;
+    const next = spriteKeyAfterListing(subjectEntry, subjectSeen.current, {
+      state: held.state,
+      direction: held.direction,
+      ...(held.ability === undefined ? {} : { ability: held.ability }),
+    });
+    subjectSeen.current = subjectEntryKey;
+    setState(next?.state ?? "");
+    setDirection(next?.direction ?? "");
+    setAbility(next?.ability);
+  }, [subjectEntryKey, subjectKeys]);
 
+  const portraitEntryKey = entryKey(portraitEntry);
+  const portraitExpressions = JSON.stringify(portraitEntry?.expressions ?? []);
+  const heldExpression = useRef(expression);
+  heldExpression.current = expression;
+  const portraitSeen = useRef<string | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the entry's key and its published expressions are what the reset follows
   useEffect(() => {
-    const first = firstPreviewKey(portraitEntry);
-    setExpression(first?.kind === "portrait" ? first.expression : "");
-  }, [portraitEntry]);
+    setExpression(
+      expressionAfterListing(
+        portraitEntry,
+        portraitSeen.current,
+        heldExpression.current,
+      ),
+    );
+    portraitSeen.current = portraitEntryKey;
+  }, [portraitEntryKey, portraitExpressions]);
 
   const currentAnimation = {
     state,
@@ -238,6 +262,9 @@ function PreviewHarness({
     key: `frame-${frame}-${duration}`,
   }));
 
+  // The entry is followed by its key and what it publishes, not by object
+  // identity, so a listing refresh that changes nothing does not restart playback.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above
   useEffect(() => {
     let cancelled = false;
     playback.configure([], undefined);
@@ -268,10 +295,8 @@ function PreviewHarness({
     void source.resolve(request).then(
       (resolved) => {
         if (cancelled || resolved.kind !== "frames") return;
-        const durations = resolved.asset.frames.map(
-          (frame) => frame.durationMs,
-        );
-        playback.configure(durations, resolved.asset.loopStart);
+        const { durations, loopStart } = clockTiming(resolved.asset);
+        playback.configure(durations, loopStart);
         setFrameDurations(durations);
         setFrameIndex(playback.frame());
         preview?.tick(playback.elapsed());
@@ -288,8 +313,10 @@ function PreviewHarness({
   }, [
     source,
     preview,
-    subjectEntry,
-    portraitEntry,
+    subjectEntryKey,
+    subjectKeys,
+    portraitEntryKey,
+    portraitExpressions,
     state,
     direction,
     ability,
@@ -522,6 +549,13 @@ function PreviewHarness({
             )}
           </div>
 
+          {selection?.supersededBy !== undefined && (
+            <p className="preview-key-message" role="status">
+              This record was replaced by {selection.supersededBy}; the preview
+              shows only the current canon revision, so nothing is drawn for
+              this one.
+            </p>
+          )}
           {(missingSpriteKey !== undefined ||
             missingExpression !== undefined) && (
             <p className="preview-key-message" role="status">

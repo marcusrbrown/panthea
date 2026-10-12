@@ -182,6 +182,18 @@ export interface QueueRowContext {
   readonly maxAttempts: number | undefined;
 }
 
+/** The context to give rows: the previous object while every fact is the same, so memoized rows are not rendered again. */
+export function reuseRowContext(
+  previous: QueueRowContext,
+  next: QueueRowContext,
+): QueueRowContext {
+  return (Object.keys(previous) as (keyof QueueRowContext)[]).every(
+    (key) => previous[key] === next[key],
+  )
+    ? previous
+    : next;
+}
+
 export function queueRowContext(state: WorkflowState): QueueRowContext {
   const hostRestarting = state.host.state === "restarting";
   return {

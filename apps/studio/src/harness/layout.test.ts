@@ -1,12 +1,17 @@
 import { describe, expect, it } from "bun:test";
 import type { PreviewItem } from "../renderer/preview";
 import {
+  clockTiming,
+  createPlaybackClock,
+  entryKey,
+  expressionAfterListing,
   expressionKeyMessage,
   HARNESS_CAMERA,
   harnessItems,
   MISSING_SPRITE,
   PORTRAIT_PANEL_AT,
   pickIn,
+  spriteKeyAfterListing,
 } from "./layout";
 
 const zeus = { source: "draft", id: "zeus-idle" } as const;
@@ -413,6 +418,158 @@ describe("published preview keys", () => {
     now = 615;
     expect(clock.frame()).toBe(4);
     now = 715;
+    expect(clock.frame()).toBe(2);
+  });
+});
+
+describe("the selection across a listing refresh", () => {
+  const sprite = (animations: readonly object[]) =>
+    ({
+      source: "canon",
+      id: "zeus-sprite",
+      assetId: "zeus-sprite",
+      kind: "sprite",
+      state: "canon",
+      ok: true,
+      animations,
+      expressions: [],
+    }) as never;
+  const all = [
+    { state: "idle", direction: "south" },
+    { state: "seated", direction: "south" },
+    { state: "act", direction: "south", ability: "thunderbolt" },
+  ];
+  const act = { state: "act", direction: "south", ability: "thunderbolt" };
+
+  it("a new listing object for the same entry keeps the selected key while it is still published", () => {
+    const first = sprite(all);
+    const refreshed = sprite([...all]);
+
+    expect(refreshed).not.toBe(first);
+    expect(spriteKeyAfterListing(refreshed, entryKey(first), act)).toEqual(act);
+  });
+
+  it("falls back to the first key when the entry changed or the key is no longer published", () => {
+    const other = { ...(sprite(all) as object), id: "zeus-other" } as never;
+    expect(spriteKeyAfterListing(other, "canon:zeus-sprite", act)).toEqual({
+      state: "idle",
+      direction: "south",
+    });
+    const trimmed = sprite(all.slice(0, 2));
+    expect(spriteKeyAfterListing(trimmed, entryKey(trimmed), act)).toEqual({
+      state: "idle",
+      direction: "south",
+    });
+    expect(spriteKeyAfterListing(undefined, undefined, act)).toBeUndefined();
+  });
+
+  it("an expression is held across a refresh and reset when its entry or the expression goes", () => {
+    const portraitEntry = (expressions: readonly string[]) =>
+      ({
+        source: "canon",
+        id: "zeus-portrait",
+        assetId: "zeus-portrait",
+        kind: "portrait",
+        state: "canon",
+        ok: true,
+        animations: [],
+        expressions,
+      }) as never;
+    const six = ["neutral", "pleased", "angry", "grieving", "scheming", "awed"];
+
+    expect(
+      expressionAfterListing(
+        portraitEntry([...six]),
+        "canon:zeus-portrait",
+        "angry",
+      ),
+    ).toBe("angry");
+    expect(
+      expressionAfterListing(
+        portraitEntry(six.slice(0, 2)),
+        "canon:zeus-portrait",
+        "angry",
+      ),
+    ).toBe("neutral");
+    expect(
+      expressionAfterListing(portraitEntry([...six]), "canon:other", "angry"),
+    ).toBe("neutral");
+  });
+});
+
+describe("stepping past the last frame", () => {
+  const durations = [83, 100, 83, 83, 100];
+
+  it("wraps to the loop start of a looping clip instead of stalling on the last frame", () => {
+    const clock = createPlaybackClock(durations, 2, () => 0);
+    clock.scrub(4);
+    expect(clock.frame()).toBe(4);
+
+    clock.step(1);
+
+    expect(clock.frame()).toBe(2);
+    expect(clock.playing()).toBe(false);
+  });
+
+  it("wraps to frame 0 when there is no loop, and a step backwards or a scrub still clamps", () => {
+    const clock = createPlaybackClock(durations, undefined, () => 0);
+    clock.scrub(4);
+    clock.step(1);
+    expect(clock.frame()).toBe(0);
+
+    clock.step(-1);
+    expect(clock.frame()).toBe(0);
+    clock.scrub(99);
+    expect(clock.frame()).toBe(4);
+    clock.scrub(-3);
+    expect(clock.frame()).toBe(0);
+  });
+
+  it("a single-frame clip stays on its frame", () => {
+    const clock = createPlaybackClock([100], undefined, () => 0);
+    clock.step(1);
+    expect(clock.frame()).toBe(0);
+  });
+});
+
+describe("the playback timing a resolved asset gives the clock", () => {
+  it("is the manifest's own frame durations: the Zeus act, 83/100/83/83/100 ms, with no loop", () => {
+    const frames = [83, 100, 83, 83, 100].map((durationMs) => ({ durationMs }));
+
+    expect(clockTiming({ frames })).toEqual({
+      durations: [83, 100, 83, 83, 100],
+      loopStart: undefined,
+    });
+  });
+
+  it("carries the loop start, and a clip with no frames has no timing", () => {
+    const frames = [83, 100, 83, 83, 100].map((durationMs) => ({ durationMs }));
+
+    expect(clockTiming({ frames, loopStart: 2 })).toEqual({
+      durations: [83, 100, 83, 83, 100],
+      loopStart: 2,
+    });
+    expect(clockTiming({ frames: [] })).toEqual({
+      durations: [],
+      loopStart: undefined,
+    });
+  });
+
+  it("drives the clock to the manifest's frames: frame 3 at 183 ms of the act, and frame 2 after the first pass with loopStart 2", () => {
+    let now = 0;
+    const timing = clockTiming({
+      frames: [83, 100, 83, 83, 100].map((durationMs) => ({ durationMs })),
+      loopStart: 2,
+    });
+    const clock = createPlaybackClock(
+      timing.durations,
+      timing.loopStart,
+      () => now,
+    );
+    clock.play();
+    now = 183;
+    expect(clock.frame()).toBe(2);
+    now = 449;
     expect(clock.frame()).toBe(2);
   });
 });

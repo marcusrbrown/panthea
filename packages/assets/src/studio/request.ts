@@ -17,6 +17,7 @@ import {
 } from "@panthea/contracts";
 import type { Palette, PaletteRamp } from "../palette";
 import { PROVIDER, SELECTED_PROFILE } from "./provider";
+import { MAX_SEED } from "./seed";
 import type { JobSource, RequestRecord } from "./store";
 
 export const DEFAULT_BATCH = 4;
@@ -481,7 +482,7 @@ export function planJobs(
     });
   const count = slots.length * perSlot;
   const lastOrdinal = record.nextOrdinal + count - 1;
-  if (baseSeed + lastOrdinal > Number.MAX_SAFE_INTEGER)
+  if (baseSeed + lastOrdinal > MAX_SEED)
     return bad({ kind: "seed-overflow", baseSeed, lastOrdinal });
 
   const jobs: PlannedJob[] = [];

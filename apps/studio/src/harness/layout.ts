@@ -70,6 +70,68 @@ export function firstPreviewKey(
   return undefined;
 }
 
+/** The id a listing entry is selected by; the same entry has the same string across listing refreshes. */
+export const entryKey = (
+  entry: Pick<ListingEntry, "source" | "id"> | undefined,
+) => (entry === undefined ? undefined : `${entry.source}:${entry.id}`);
+
+/**
+ * The sprite key to hold after the listing changed. The same entry (by key
+ * string, not object identity: every listing refresh makes new objects) keeps
+ * the key the owner chose while it is still published; a different entry, or a
+ * key that is gone, falls back to the first published key.
+ */
+export function spriteKeyAfterListing(
+  entry: ListingEntry | undefined,
+  previousEntryKey: string | undefined,
+  current: PreviewAnimationKey,
+): PreviewAnimationKey | undefined {
+  if (
+    entry !== undefined &&
+    entryKey(entry) === previousEntryKey &&
+    isAnimationKey(entry, current)
+  )
+    return current;
+  const first = firstPreviewKey(entry);
+  return first?.kind === "sprite"
+    ? {
+        state: first.state,
+        direction: first.direction,
+        ...(first.ability === undefined ? {} : { ability: first.ability }),
+      }
+    : undefined;
+}
+
+/** The expression to hold after the listing changed, by the same rule as sprite keys. */
+export function expressionAfterListing(
+  entry: ListingEntry | undefined,
+  previousEntryKey: string | undefined,
+  current: string,
+): string {
+  if (
+    entry?.kind === "portrait" &&
+    entryKey(entry) === previousEntryKey &&
+    entry.expressions.includes(current)
+  )
+    return current;
+  const first = firstPreviewKey(entry);
+  return first?.kind === "portrait" ? first.expression : "";
+}
+
+/** What a resolved atlas tells the playback clock: each frame's duration and where the loop starts, both from the manifest. */
+export function clockTiming(asset: {
+  readonly frames: readonly { readonly durationMs: number }[];
+  readonly loopStart?: number | undefined;
+}): {
+  readonly durations: readonly number[];
+  readonly loopStart: number | undefined;
+} {
+  return {
+    durations: asset.frames.map((frame) => frame.durationMs),
+    loopStart: asset.loopStart,
+  };
+}
+
 export function statesForEntry(entry: ListingEntry | undefined): string[] {
   return [...new Set(entry?.animations.map((key) => key.state) ?? [])];
 }
@@ -214,7 +276,16 @@ export function createPlaybackClock(
       else this.play();
     },
     step(amount = 1) {
-      seek(frame() + amount);
+      // Past the last frame a step wraps to where the clip loops (the first
+      // frame when it has no loop) rather than stalling on the last one. A
+      // scrub keeps its clamp.
+      const last = durations.length - 1;
+      let target = frame() + amount;
+      if (last > 0 && target > last) {
+        const start = Math.min(Math.max(0, loopStart ?? 0), last);
+        target = start + ((target - last - 1) % (last + 1 - start));
+      }
+      seek(target);
     },
     scrub(index) {
       seek(index);

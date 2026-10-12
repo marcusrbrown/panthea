@@ -7,6 +7,8 @@ import * as workflowActions from "./actions";
 import {
   buildFinishStep,
   buildPackArgs,
+  buildRequestArgs,
+  callTrackingLock,
   checkResolvedSeed,
   chooseConfigGuarded,
   conformJob,
@@ -26,19 +28,23 @@ import {
   parseInlineConformDraft,
   parseSlotSpecs,
   pickCandidateGuarded,
+  previewForAsset,
   readEditReport,
   readExistingSheet,
+  releaseWriterLock,
   reopenEditor,
   requestSignature,
   rerollArgs,
   resolveFlow,
+  retryLockedWrite,
+  routePreviewSelection,
   SLOT_EXAMPLES,
   STALE_REVIEW_MESSAGE,
   sheetFlow,
   slotHint,
   slotProblem,
 } from "./actions";
-import { initialWorkflowState, workflowReducer } from "./model";
+import { initialWorkflowState, refusedByLock, workflowReducer } from "./model";
 
 const configure = (
   studioCall: (args: Readonly<Record<string, unknown>> | undefined) => unknown,
@@ -860,7 +866,7 @@ describe("finishing the version that was reviewed", () => {
     ).rejects.toMatchObject({ code: "wrong-state" });
   });
 
-  test("with no editor the owner picks the files to finish with, so no hash is named and none applies", async () => {
+  test("with no editor the owner picks the files to finish with, and the finish still names the hash that was reviewed", async () => {
     const transport = fakeTransport({
       edit_import: () => ({ editId: "e1", state: "finished", changed: true }),
     });
@@ -876,7 +882,12 @@ describe("finishing the version that was reviewed", () => {
     expect(transport.calls.map((call) => call.command)).toEqual([
       "edit_import",
     ]);
-    expect(transport.calls[0]?.args).toEqual({ editId: "e1", finish: true });
+    // The report on screen names the sheet it was made from; the finish names it too.
+    expect(transport.calls[0]?.args).toEqual({
+      editId: "e1",
+      finish: true,
+      reviewed: "c".repeat(64),
+    });
   });
 
   test("cancelling the fallback file picker leaves the edit open", async () => {
@@ -985,9 +996,36 @@ describe("a scripted finish", () => {
       args: {
         editId: "e1",
         finish: true,
+        reviewed: "c".repeat(64),
         method: "script",
         description: step.description,
       },
+    });
+  });
+
+  test("a no-editor finish the session refuses as stale-review is a plain message, and the retry sends the identical call", async () => {
+    let attempts = 0;
+    const transport = fakeTransport({
+      edit_import: () => {
+        attempts += 1;
+        if (attempts === 1)
+          throw hostError(
+            "stale-review",
+            "the picked sheet is not the reviewed one",
+          );
+        return { editId: "e1", state: "finished", changed: true };
+      },
+    });
+    const host = createStudioHost(transport);
+
+    const first = await finishReviewedEdit(host, "e1", report, false, step);
+    const retry = await finishReviewedEdit(host, "e1", report, false, step);
+
+    expect(first).toEqual({ kind: "stale", message: STALE_REVIEW_MESSAGE });
+    expect(retry).toEqual({ kind: "finished" });
+    expect(transport.calls[1]).toEqual(transport.calls[0]);
+    expect(transport.calls[0]?.args).toMatchObject({
+      reviewed: "c".repeat(64),
     });
   });
 
@@ -1372,5 +1410,338 @@ describe("choosing a config", () => {
 
     expect(configured).toBe(1);
     expect(shown).toEqual(["", ""]);
+  });
+});
+
+describe("the preview follows the selected record", () => {
+  const record = (fields: Record<string, unknown>) =>
+    ({ id: "r", ...fields }) as never;
+  // The Zeus sprite: three canon revisions chained by `prior`, the last one current.
+  const first = record({
+    id: "zeus-sprite-u7-c2-draft",
+    assetId: "zeus-sprite",
+    state: "canon",
+    published: "rev-a",
+  });
+  const second = record({
+    id: "record-zeus-sprite-1",
+    assetId: "zeus-sprite",
+    state: "canon",
+    prior: "rev-a",
+    published: "rev-b",
+  });
+  const third = record({
+    id: "record-zeus-sprite-2",
+    assetId: "zeus-sprite",
+    state: "canon",
+    prior: "rev-b",
+    published: "rev-c",
+  });
+  const assets = [first, second, third];
+
+  test("the current canon revision is previewed by its asset id", () => {
+    expect(previewForAsset(third, assets)).toEqual({
+      source: "canon",
+      id: "zeus-sprite",
+    });
+  });
+
+  test("a canon revision a later one replaced is not previewed as the later one: it names its successor and draws nothing of its own", () => {
+    // Its own record id: canon is listed by asset id, so nothing matches it.
+    expect(previewForAsset(second, assets)).toEqual({
+      source: "canon",
+      id: "record-zeus-sprite-1",
+      supersededBy: "record-zeus-sprite-2",
+    });
+    expect(previewForAsset(first, assets)).toEqual({
+      source: "canon",
+      id: "zeus-sprite-u7-c2-draft",
+      supersededBy: "record-zeus-sprite-1",
+    });
+  });
+
+  test("drafts and approved records are keyed by their own record id, and a lone canon record is current", () => {
+    expect(
+      previewForAsset(
+        record({ id: "d1", assetId: "zeus", state: "draft" }),
+        assets,
+      ),
+    ).toEqual({ source: "draft", id: "d1" });
+    expect(
+      previewForAsset(
+        record({ id: "a1", assetId: "zeus", state: "approved" }),
+        assets,
+      ),
+    ).toEqual({ source: "approved", id: "a1" });
+    expect(previewForAsset(third, [third])).toEqual({
+      source: "canon",
+      id: "zeus-sprite",
+    });
+  });
+
+  test("routes a superseded record to a key nothing is listed under, so the preview shows its placeholder and not another record's pixels", () => {
+    const current = routePreviewSelection({
+      ...previewForAsset(third, assets),
+      kind: "sprite",
+    });
+    const superseded = routePreviewSelection({
+      ...previewForAsset(second, assets),
+      kind: "sprite",
+    });
+
+    expect(current).toEqual({
+      source: "canon",
+      subjectKey: "canon:zeus-sprite",
+    });
+    // Canon entries are keyed by asset id; the record's own id matches none of them.
+    expect(superseded).toEqual({
+      source: "canon",
+      subjectKey: "canon:record-zeus-sprite-1",
+    });
+  });
+});
+
+describe("the Release button's action", () => {
+  const running = (extra: Record<string, unknown>) =>
+    workflowReducer(initialWorkflowState(), {
+      type: "snapshot",
+      snapshot: {
+        host: { state: "running", lock: "held" },
+        status: { idle: true },
+        requests: [],
+        jobs: [],
+        candidates: [],
+        edits: [],
+        workingSets: [],
+        assets: [],
+        ...extra,
+      } as never,
+    });
+
+  test("it sends release with no arguments when the app holds the lock and is idle", async () => {
+    const transport = fakeTransport({
+      studio_call: () => ({ state: "released" }),
+    });
+    const host = createStudioHost(transport);
+
+    const outcome = await releaseWriterLock(running({}), (op, args) =>
+      host.call(op, args),
+    );
+
+    expect(outcome).toEqual({
+      kind: "released",
+      message: "Released the writer lock.",
+    });
+    expect(transport.calls).toEqual([
+      { command: "studio_call", args: { op: "release", args: {} } },
+    ]);
+  });
+
+  test("it sends nothing when the app is not idle, does not hold the lock, or is not running", async () => {
+    const transport = fakeTransport({});
+    const host = createStudioHost(transport);
+    const send = (op: "release", args: Record<string, never>) =>
+      host.call(op, args);
+    const notIdle = running({ status: { idle: false } });
+    const free = workflowReducer(initialWorkflowState(), {
+      type: "snapshot",
+      snapshot: {
+        host: { state: "running", lock: "free" },
+        status: { idle: true },
+        requests: [],
+        jobs: [],
+        candidates: [],
+        edits: [],
+        workingSets: [],
+        assets: [],
+      } as never,
+    });
+
+    for (const state of [notIdle, free, initialWorkflowState()])
+      expect(await releaseWriterLock(state, send)).toEqual({ kind: "skipped" });
+    expect(transport.calls).toEqual([]);
+  });
+
+  test("a not-idle refusal from the host reaches the caller, and a refused call is not reported as released", async () => {
+    const transport = fakeTransport({
+      studio_call: () => {
+        throw hostError("not-idle", "the app is not idle: a drain is running");
+      },
+    });
+    const host = createStudioHost(transport);
+
+    await expect(
+      releaseWriterLock(running({}), (op, args) => host.call(op, args)),
+    ).rejects.toMatchObject({ code: "not-idle" });
+
+    expect(await releaseWriterLock(running({}), async () => undefined)).toEqual(
+      { kind: "refused" },
+    );
+  });
+});
+
+describe("retrying a write the lock refused", () => {
+  const args = { jobId: "j1", note: { keep: true } };
+  const locked = () =>
+    hostError("root-locked", "another process holds the root");
+
+  /** The window's reducer, applied to what the calls dispatch. */
+  function window(initial: ReturnType<typeof initialWorkflowState>) {
+    let state = initial;
+    return {
+      dispatch: (action: Parameters<typeof workflowReducer>[1]) => {
+        state = workflowReducer(state, action);
+      },
+      get state() {
+        return state;
+      },
+    };
+  }
+
+  test("a write the lock refused is remembered with its op and arguments, and the retry sends the identical op and arguments", async () => {
+    const ui = window(initialWorkflowState());
+    const sent: unknown[] = [];
+    const transport = fakeTransport({
+      studio_call: (callArgs) => {
+        sent.push(callArgs);
+        if (sent.length === 1) throw locked();
+        return { ok: true };
+      },
+    });
+    const host = createStudioHost(transport);
+
+    await expect(
+      callTrackingLock(host, "remove", args, {
+        readOnly: false,
+        lockedWritePending: false,
+        dispatch: ui.dispatch,
+      }),
+    ).rejects.toMatchObject({ code: "root-locked" });
+    const refused = ui.state.lockedWrite;
+    expect(refused).toEqual({ op: "remove", args });
+
+    await retryLockedWrite(refused, {
+      call: (op, retryArgs) =>
+        callTrackingLock(host, op, retryArgs, {
+          readOnly: false,
+          lockedWritePending: true,
+          dispatch: ui.dispatch,
+        }),
+      generate: async () => {
+        throw new Error("not a generate");
+      },
+    });
+
+    expect(sent[1]).toEqual(sent[0]);
+    // The retry sent a copy: what was remembered is untouched.
+    expect(refused?.args).toEqual(args);
+  });
+
+  test("a successful retry clears the refusal and a second refusal keeps it with the same arguments", async () => {
+    const ui = window(
+      workflowReducer(initialWorkflowState(), {
+        type: "write-locked",
+        op: "remove",
+        args,
+      }),
+    );
+    const outcomes = [locked(), undefined];
+    const host = createStudioHost(
+      fakeTransport({
+        studio_call: () => {
+          const next = outcomes.shift();
+          if (next !== undefined) throw next;
+          return { ok: true };
+        },
+      }),
+    );
+    const retry = () =>
+      retryLockedWrite(ui.state.lockedWrite, {
+        call: (op, retryArgs) =>
+          callTrackingLock(host, op, retryArgs, {
+            readOnly: false,
+            lockedWritePending: ui.state.lockedWrite !== undefined,
+            dispatch: ui.dispatch,
+          }),
+        generate: async () => undefined,
+      });
+
+    await expect(retry()).rejects.toMatchObject({ code: "root-locked" });
+    expect(ui.state.lockedWrite).toEqual({ op: "remove", args });
+
+    await retry();
+    expect(ui.state.lockedWrite).toBeUndefined();
+  });
+
+  test("a generate goes back through the form's own handler, and nothing is sent when nothing was refused", async () => {
+    const calls: string[] = [];
+    await retryLockedWrite(
+      { op: "generate", args: { id: "r1" } },
+      {
+        call: async () => calls.push("call"),
+        generate: async () => {
+          calls.push("generate");
+        },
+      },
+    );
+    await retryLockedWrite(undefined, {
+      call: async () => calls.push("call"),
+      generate: async () => {
+        calls.push("generate");
+      },
+    });
+
+    expect(calls).toEqual(["generate"]);
+    expect(refusedByLock(locked())).toBe(true);
+  });
+});
+
+describe("the Generate form's arguments", () => {
+  const form = {
+    subject: "Zeus",
+    kind: "sprite" as const,
+    slots: "idle/south",
+    batch: 1,
+    styleNote: "",
+    seedText: "",
+  };
+
+  test("they carry the subject slug, the slots, the batch and the seed typed, with a given id", () => {
+    expect(
+      buildRequestArgs({ ...form, seedText: "7", batch: 2 }, "zeus-1"),
+    ).toEqual({
+      id: "zeus-1",
+      subject: "zeus",
+      kind: "sprite",
+      slots: [{ state: "idle", direction: "south" }],
+      batch: 2,
+      seed: 7,
+    });
+    expect(buildRequestArgs(form, "zeus-1")).not.toHaveProperty("seed");
+  });
+
+  test("a seed whose last job would pass 2^32-1 throws before anything is sent: seed 4294967295 with a batch of 4", () => {
+    const transport = fakeTransport({});
+
+    expect(() =>
+      buildRequestArgs({ ...form, seedText: "4294967295", batch: 4 }, "zeus-1"),
+    ).toThrow(/past 4294967295/);
+    expect(transport.calls).toEqual([]);
+    // The same seed with one job is the ceiling itself and is accepted.
+    expect(
+      buildRequestArgs({ ...form, seedText: "4294967295" }, "zeus-1"),
+    ).toMatchObject({ seed: 4294967295 });
+  });
+
+  test("a bad slot, a missing subject and a malformed seed throw their own messages", () => {
+    expect(() => buildRequestArgs({ ...form, subject: "  " }, "x")).toThrow(
+      "Enter a subject and at least one slot.",
+    );
+    expect(() =>
+      buildRequestArgs({ ...form, slots: "act//thunderbolt" }, "x"),
+    ).toThrow(/direction is empty/);
+    expect(() => buildRequestArgs({ ...form, seedText: "-1" }, "x")).toThrow(
+      /whole digits only/,
+    );
   });
 });

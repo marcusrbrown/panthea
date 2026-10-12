@@ -394,6 +394,9 @@ pub struct ImportRequest<'a> {
     pub finish: bool,
     pub method: Option<&'a str>,
     pub description: Option<&'a str>,
+    /// The sheet hash the owner reviewed: the session refuses a finish with any
+    /// other sheet as `stale-review`. Only a finish takes one.
+    pub reviewed: Option<&'a str>,
 }
 
 /// `edit_import`: the owner picks the sheet and its metadata, and the session
@@ -416,15 +419,17 @@ where
         finish,
         method,
         description,
+        reviewed,
     } = request;
     if !configured {
         return Err(CommandError::not_configured());
     }
-    // Only a finish has a step to carry: the session's `import` takes neither.
-    if !finish && (method.is_some() || description.is_some()) {
+    // Only a finish has a step or a reviewed hash to carry: the session's
+    // `import` takes none of them.
+    if !finish && (method.is_some() || description.is_some() || reviewed.is_some()) {
         return Err(CommandError {
             code: "invalid-arguments".into(),
-            message: "only a finish takes a method and a description".into(),
+            message: "only a finish takes a method, a description and a reviewed hash".into(),
             retryable: false,
             detail: None,
         });
@@ -442,7 +447,11 @@ where
     });
     // The step is the owner's own words and a method name; the session's
     // `checkFinishStep` is the only judge of them.
-    for (key, value) in [("method", method), ("description", description)] {
+    for (key, value) in [
+        ("reviewed", reviewed),
+        ("method", method),
+        ("description", description),
+    ] {
         if let Some(value) = value {
             args[key] = json!(value);
         }
@@ -1481,6 +1490,7 @@ mod tests {
                         finish: finish,
                         method: None,
                         description: None,
+                        reviewed: None,
                     },
                     || async { Some(PathBuf::from("/Users/owner/in/sheet.png")) },
                     || async { Some(PathBuf::from("/Users/owner/in/sheet.json")) },
@@ -1521,6 +1531,7 @@ mod tests {
                     finish: true,
                     method: Some("script"),
                     description: Some("idle loop (art-edit/idle.py)"),
+                    reviewed: Some(HASH),
                 },
                 || async { Some(PathBuf::from("/Users/owner/in/sheet.png")) },
                 || async { Some(PathBuf::from("/Users/owner/in/sheet.json")) },
@@ -1536,12 +1547,70 @@ mod tests {
                         "id": "e1",
                         "png": "/Users/owner/in/sheet.png",
                         "json": "/Users/owner/in/sheet.json",
+                        "reviewed": HASH,
                         "method": "script",
                         "description": "idle loop (art-edit/idle.py)"
                     })
                 )]
             );
             assert!(!reply.to_string().contains("owner"));
+        });
+    }
+
+    #[test]
+    fn a_finish_forwards_the_reviewed_hash_and_a_plain_import_refuses_one_before_a_picker_opens() {
+        runtime().block_on(async {
+            let (mux, sidecar, dirty) = attached(echo);
+            let opened = RefCell::new(0);
+
+            let error = edit_import(
+                &mux,
+                true,
+                &dirty,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: false,
+                    method: None,
+                    description: None,
+                    reviewed: Some(HASH),
+                },
+                || {
+                    *opened.borrow_mut() += 1;
+                    async { None }
+                },
+                || {
+                    *opened.borrow_mut() += 1;
+                    async { None }
+                },
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, "invalid-arguments");
+            assert_eq!(*opened.borrow(), 0);
+            assert_eq!(sidecar.seen(), vec![]);
+
+            // A plain finish carries the hash too, with no step.
+            edit_import(
+                &mux,
+                true,
+                &dirty,
+                ImportRequest {
+                    edit_id: "e1",
+                    finish: true,
+                    method: None,
+                    description: None,
+                    reviewed: Some(HASH),
+                },
+                || async { Some(PathBuf::from("/in/sheet.png")) },
+                || async { Some(PathBuf::from("/in/sheet.json")) },
+            )
+            .await
+            .unwrap();
+            let seen = sidecar.seen();
+            assert_eq!(seen.len(), 1);
+            assert_eq!(seen[0].0, "finish");
+            assert_eq!(seen[0].1["reviewed"], json!(HASH));
+            assert!(seen[0].1.get("method").is_none());
         });
     }
 
@@ -1560,6 +1629,7 @@ mod tests {
                     finish: false,
                     method: Some("script"),
                     description: Some("x"),
+                    reviewed: None,
                 },
                 || {
                     *opened.borrow_mut() += 1;
@@ -1594,6 +1664,7 @@ mod tests {
                     finish: false,
                     method: None,
                     description: None,
+                    reviewed: None,
                 },
                 || async { None },
                 || {
@@ -1612,6 +1683,7 @@ mod tests {
                     finish: false,
                     method: None,
                     description: None,
+                    reviewed: None,
                 },
                 || async { Some(PathBuf::from("/a.png")) },
                 || async { None },
@@ -1640,6 +1712,7 @@ mod tests {
                     finish: false,
                     method: None,
                     description: None,
+                    reviewed: None,
                 },
                 || {
                     *opened.borrow_mut() += 1;

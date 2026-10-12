@@ -21,6 +21,8 @@ import type {
 import {
   approvalArgsForAsset,
   buildPackArgs,
+  buildRequestArgs,
+  callTrackingLock,
   checkResolvedSeed,
   chooseConfigGuarded,
   conformJob,
@@ -41,20 +43,21 @@ import {
   packNeedsOriginalWork,
   packNeedsStillFrameMs,
   packWorkingSetGuarded,
-  parseBaseSeed,
   parseInlineConformDraft,
-  parseSlotSpecs,
   pickCandidateGuarded,
+  previewForAsset,
   readExistingSheet,
+  releaseWriterLock,
   reopenEditor,
   reopenWorkingSetEdit,
   requestJobCount,
   requestSignature,
   rerollArgs,
   resolveFlow,
+  retryLockedWrite,
   sheetFlow,
   slotHint,
-  slotProblem,
+  subjectSlug,
 } from "./actions";
 import { CandidatePixels } from "./CandidatePixelCell";
 import { EditPanel } from "./EditPanel";
@@ -69,8 +72,8 @@ import {
   recordObject,
   recordText,
   recordValue,
-  refusedByLock,
   resolveActiveRecord,
+  reuseRowContext,
   type WorkflowAction,
   type WorkflowState,
   workflowReducer,
@@ -81,6 +84,8 @@ export interface PreviewSelection {
   readonly source: "canon" | "draft" | "approved";
   readonly id: string;
   readonly kind?: "sprite" | "portrait";
+  /** The record that replaced the selected canon record; the preview draws nothing of the selected one. */
+  readonly supersededBy?: string;
 }
 
 export interface WorkflowViewProps {
@@ -130,10 +135,6 @@ const label = (status: string) =>
     : status === "unavailable"
       ? "Unavailable / staging"
       : status[0]?.toUpperCase() + status.slice(1);
-const sameRowContext = (left: QueueRowContext, right: QueueRowContext) =>
-  (Object.keys(left) as (keyof QueueRowContext)[]).every(
-    (key) => left[key] === right[key],
-  );
 const slug = (value: string) =>
   value
     .toLowerCase()
@@ -571,53 +572,26 @@ export function WorkflowView({
               state.host.state === "restarting"),
       ),
       { label: op, nonBlocking },
-      async () => {
-        try {
-          const result = await host.call(op, args);
-          if (!readOnly && state.lockedWrite !== undefined)
-            dispatch?.({ type: "write-unlocked" });
-          return result;
-        } catch (error) {
-          // Another process took the lock between polls: the form stays as it
-          // is and the write can be sent again once the holder is gone.
-          if (!readOnly && op !== "release" && refusedByLock(error))
-            dispatch?.({ type: "write-locked", op, args });
-          throw error;
-        }
-      },
+      () =>
+        callTrackingLock(host, op, args, {
+          readOnly,
+          lockedWritePending: state.lockedWrite !== undefined,
+          dispatch,
+        }),
     );
 
   const release = async () => {
-    if (!canRelease(state)) return;
-    const result = await call("release", {}, false, false, true);
-    if (result !== undefined) setMessage("Released the writer lock.");
+    const outcome = await releaseWriterLock(state, (op, args) =>
+      call(op, args, false, false, true),
+    );
+    if (outcome.kind === "released") setMessage(outcome.message);
   };
 
-  const formArgs = () => {
-    const id =
-      requestId || `${slug(subject)}-${crypto.randomUUID().slice(0, 8)}`;
-    const parsedSlots = parseSlotSpecs(slots, kind);
-    if (!slug(subject) || parsedSlots.length === 0)
-      throw new Error("Enter a subject and at least one slot.");
-    // Bad input is refused here, before the host sees it and before any record.
-    const problem = slotProblem(slots, kind);
-    if (problem !== undefined) throw new Error(problem);
-    const baseSeed = parseBaseSeed(
-      seedText,
-      requestJobCount(slots, kind, batch),
+  const formArgs = () =>
+    buildRequestArgs(
+      { subject, kind, slots, batch, styleNote, seedText },
+      requestId || `${subjectSlug(subject)}-${crypto.randomUUID().slice(0, 8)}`,
     );
-    if (!baseSeed.ok) throw new Error(baseSeed.message);
-    const args: Record<string, unknown> = {
-      id,
-      subject: slug(subject),
-      kind,
-      slots: parsedSlots,
-      batch: Math.max(1, Math.floor(batch)),
-    };
-    if (baseSeed.seed !== undefined) args.seed = baseSeed.seed;
-    if (styleNote.trim()) args.styleNote = styleNote.trim();
-    return args;
-  };
 
   // A resolve reply is only for the form it was sent from: the form's current
   // text is compared with the text it had at the click.
@@ -724,12 +698,11 @@ export function WorkflowView({
   };
   // The write the lock refused is sent again. A generate goes back through the
   // form's own handler, so it ends the way a first try does.
-  const retryLockedWrite = () => {
-    const refused = state.lockedWrite;
-    if (refused === undefined) return;
-    if (refused.op === "generate") void generate();
-    else void call(refused.op, { ...refused.args }, false, false, true);
-  };
+  const retryRefusedWrite = () =>
+    void retryLockedWrite(state.lockedWrite, {
+      call: (op, args) => call(op, args, false, false, true),
+      generate,
+    });
 
   const runConform = async (jobId: string, how: ConformHow) => {
     if (!mutationsEnabled) return;
@@ -763,10 +736,11 @@ export function WorkflowView({
     onConform: (jobId, how) => void runConform(jobId, how),
   };
   const rowHandlers = useMemo(() => createStableHandlers(rowLatest), []);
-  const nextRowContext = queueRowContext(state);
-  const rowContext = useRef(nextRowContext);
-  if (!sameRowContext(rowContext.current, nextRowContext))
-    rowContext.current = nextRowContext;
+  const rowContext = useRef(queueRowContext(state));
+  rowContext.current = reuseRowContext(
+    rowContext.current,
+    queueRowContext(state),
+  );
   const candidatesById = useMemo(
     () =>
       new Map(state.candidates.map((candidate) => [candidate.id, candidate])),
@@ -848,15 +822,9 @@ export function WorkflowView({
   const activeAssetKind =
     (activeAsset ? recordText(activeAsset, "kind") : undefined) ??
     (assetWorkingSet ? recordText(assetWorkingSet, "kind") : undefined);
-  // The preview source keys drafts and approved records by record id and canon
-  // by asset id; asking for the asset id of a draft would draw another record.
+  // What the preview is asked to draw for this record: see `previewForAsset`.
   const activePreview: PreviewSelection | undefined = activeAsset
-    ? activeAssetState === "approved" || activeAssetState === "draft"
-      ? { source: activeAssetState, id: activeAsset.id }
-      : {
-          source: "canon",
-          id: recordText(activeAsset, "assetId") ?? activeAsset.id,
-        }
+    ? previewForAsset(activeAsset, state.assets)
     : undefined;
   const activePreviewWithKind: PreviewSelection | undefined =
     activePreview &&
@@ -1132,7 +1100,7 @@ export function WorkflowView({
               <button
                 type="button"
                 disabled={!mutationsEnabled}
-                onClick={retryLockedWrite}
+                onClick={retryRefusedWrite}
               >
                 Retry
               </button>

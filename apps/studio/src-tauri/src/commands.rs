@@ -192,6 +192,10 @@ pub async fn edit_export(
 
 /// Imports (or, with `finish`, finishes with) a sheet and its metadata the owner
 /// picks.
+// A Tauri command's parameters are its wire contract (one named argument per key
+// the webview sends), so the count is not ours to fold; the bridge takes them
+// as one `ImportRequest`.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn edit_import(
     app: AppHandle,
@@ -201,6 +205,7 @@ pub async fn edit_import(
     finish: Option<bool>,
     method: Option<String>,
     description: Option<String>,
+    reviewed: Option<String>,
 ) -> Result<Value, CommandError> {
     let (png_app, json_app) = (app.clone(), app);
     bridge::edit_import(
@@ -212,6 +217,7 @@ pub async fn edit_import(
             finish: finish.unwrap_or(false),
             method: method.as_deref(),
             description: description.as_deref(),
+            reviewed: reviewed.as_deref(),
         },
         || pick_file(png_app, "Sheet", "png"),
         || pick_file(json_app, "Sheet metadata", "json"),

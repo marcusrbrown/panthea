@@ -1,4 +1,6 @@
-import { HostError, type StudioHost } from "../host/client";
+import { MAX_SEED } from "@panthea/assets/browser";
+import type { Dispatch } from "react";
+import { HostError, type StudioHost, type StudioOp } from "../host/client";
 import type {
   CandidateSummary,
   ConformHow,
@@ -10,7 +12,15 @@ import type {
   FinishStepInput,
   SummaryRecord,
 } from "../host/types";
-import { recordObject, recordText, recordValue } from "./model";
+import {
+  canRelease,
+  recordObject,
+  recordText,
+  recordValue,
+  refusedByLock,
+  type WorkflowAction,
+  type WorkflowState,
+} from "./model";
 
 export function parseSlotSpecs(
   source: string,
@@ -87,8 +97,7 @@ export function slotProblem(
   return undefined;
 }
 
-/** The highest seed the pinned engine has been exercised on. */
-export const MAX_SEED = 4_294_967_295;
+export { MAX_SEED };
 
 export type BaseSeed =
   | { readonly ok: true; readonly seed: number | undefined }
@@ -524,6 +533,51 @@ export function routePreviewSelection(selection: {
     : { source: selection.source, subjectKey: key };
 }
 
+/** What the preview is asked to draw for the record selected in the asset list. */
+export interface AssetPreview {
+  readonly source: "canon" | "draft" | "approved";
+  /**
+   * Canon is keyed by asset id; drafts and approved records by record id. A
+   * superseded canon record is named by its own record id, which no canon entry
+   * is listed under.
+   */
+  readonly id: string;
+  /** Set when the selected record is a canon revision a later one replaced: the preview has nothing of its own to draw for it. */
+  readonly supersededBy?: string;
+}
+
+/**
+ * The preview selection for an asset record. The preview source keys drafts and
+ * approved records by record id and canon by asset id, and holds only the
+ * current canon revision of an asset: asking for the asset id of a draft would
+ * draw another record, and so would asking for the asset id of a canon revision
+ * that a later one replaced (the preview would show the later record's pixels
+ * under the earlier one's name).
+ */
+export function previewForAsset(
+  asset: SummaryRecord,
+  assets: readonly SummaryRecord[],
+): AssetPreview {
+  const state = recordText(asset, "state");
+  if (state === "approved" || state === "draft")
+    return { source: state, id: asset.id };
+  const assetId = recordText(asset, "assetId") ?? asset.id;
+  const published = recordText(asset, "published");
+  const successor =
+    published === undefined
+      ? undefined
+      : assets.find(
+          (other) =>
+            other.id !== asset.id &&
+            recordText(other, "state") === "canon" &&
+            (recordText(other, "assetId") ?? other.id) === assetId &&
+            recordText(other, "prior") === published,
+        );
+  return successor === undefined
+    ? { source: "canon", id: assetId }
+    : { source: "canon", id: asset.id, supersededBy: successor.id };
+}
+
 export function approvalArgsForAsset(
   asset: SummaryRecord,
 ): { readonly id: string; readonly confirm: string } | undefined {
@@ -833,8 +887,9 @@ export function finishOutcomeMessage(
  * finish names the sheet hash of the report on screen, and the session refuses
  * (`stale-review`) if the workspace was saved again since: that is a plain
  * message, and the caller refreshes the report. Without an editor the owner
- * picks the files to finish with in the same step, so there is no earlier
- * save for them to have missed and no hash to name.
+ * picks the files to finish with in the same step; the finish names the same
+ * hash, so the session refuses (`stale-review`) files that are not the sheet
+ * the report on screen was made from.
  */
 export async function finishReviewedEdit(
   host: StudioHost,
@@ -849,7 +904,12 @@ export async function finishReviewedEdit(
     return { kind: "refused", message: SCRIPTED_NEEDS_REVIEW_MESSAGE };
   try {
     if (editorLaunched === false) {
-      const imported = await host.editImport(editId, true, step);
+      const imported = await host.editImport(
+        editId,
+        true,
+        step,
+        report.sheetHash,
+      );
       if (imported.cancelled) return { kind: "cancelled" };
     } else
       await host.call("finish", {
@@ -886,4 +946,121 @@ export async function chooseConfigGuarded(
   } catch (error) {
     hooks.onNotice(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** The host's name for a lowercase, dash-separated subject. */
+export const subjectSlug = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+export interface GenerateForm {
+  readonly subject: string;
+  readonly kind: "sprite" | "portrait";
+  readonly slots: string;
+  readonly batch: number;
+  readonly styleNote: string;
+  readonly seedText: string;
+}
+
+/**
+ * The arguments of a resolve and a generate, from the form. Bad input throws
+ * here, with the words to show, before the host is called and before any record
+ * is written: no slot, a slot that parses into something other than what was
+ * typed, a seed that is not digits, or one whose last job would pass the
+ * ceiling.
+ */
+export function buildRequestArgs(
+  form: GenerateForm,
+  id: string,
+): Record<string, unknown> {
+  const parsedSlots = parseSlotSpecs(form.slots, form.kind);
+  if (!subjectSlug(form.subject) || parsedSlots.length === 0)
+    throw new Error("Enter a subject and at least one slot.");
+  const problem = slotProblem(form.slots, form.kind);
+  if (problem !== undefined) throw new Error(problem);
+  const baseSeed = parseBaseSeed(
+    form.seedText,
+    requestJobCount(form.slots, form.kind, form.batch),
+  );
+  if (!baseSeed.ok) throw new Error(baseSeed.message);
+  const args: Record<string, unknown> = {
+    id,
+    subject: subjectSlug(form.subject),
+    kind: form.kind,
+    slots: parsedSlots,
+    batch: Math.max(1, Math.floor(form.batch)),
+  };
+  if (baseSeed.seed !== undefined) args.seed = baseSeed.seed;
+  if (form.styleNote.trim()) args.styleNote = form.styleNote.trim();
+  return args;
+}
+
+export type ReleaseOutcome =
+  | { readonly kind: "released"; readonly message: string }
+  | { readonly kind: "refused" }
+  | { readonly kind: "skipped" };
+
+/**
+ * The Release button: sends `release` with no arguments, and only while the
+ * window says the app holds the lock and is idle. The host decides again and
+ * refuses `not-idle` if it is not; that refusal reaches the caller.
+ */
+export async function releaseWriterLock(
+  state: WorkflowState,
+  call: (op: "release", args: Record<string, never>) => Promise<unknown>,
+): Promise<ReleaseOutcome> {
+  if (!canRelease(state)) return { kind: "skipped" };
+  const result = await call("release", {});
+  return result === undefined
+    ? { kind: "refused" }
+    : { kind: "released", message: "Released the writer lock." };
+}
+
+/**
+ * A host call that keeps track of the lock. A write another process's lock
+ * refused is remembered with its op and arguments (the form is left as it is);
+ * a write that succeeds while one is remembered clears it.
+ */
+export async function callTrackingLock(
+  host: StudioHost,
+  op: StudioOp,
+  args: Record<string, unknown>,
+  track: {
+    readonly readOnly: boolean;
+    readonly lockedWritePending: boolean;
+    readonly dispatch: Dispatch<WorkflowAction> | undefined;
+  },
+): Promise<unknown> {
+  try {
+    const result = await host.call(op, args);
+    if (!track.readOnly && track.lockedWritePending)
+      track.dispatch?.({ type: "write-unlocked" });
+    return result;
+  } catch (error) {
+    if (!track.readOnly && op !== "release" && refusedByLock(error))
+      track.dispatch?.({ type: "write-locked", op, args });
+    throw error;
+  }
+}
+
+/**
+ * Sends the write the lock refused again, identically: the same op and a copy
+ * of the same arguments. A generate goes back through the form's own handler so
+ * it ends the way a first try does.
+ */
+export async function retryLockedWrite(
+  refused: WorkflowState["lockedWrite"],
+  handlers: {
+    readonly call: (
+      op: StudioOp,
+      args: Record<string, unknown>,
+    ) => Promise<unknown>;
+    readonly generate: () => Promise<void>;
+  },
+): Promise<void> {
+  if (refused === undefined) return;
+  if (refused.op === "generate") await handlers.generate();
+  else await handlers.call(refused.op, { ...refused.args });
 }

@@ -155,6 +155,12 @@ export class Studio {
   private releasing: Promise<Outcome> | undefined;
   /** Why the last release attempt failed; the lock is still held while this is set. */
   private releaseFailure: string | undefined;
+  /**
+   * The release's steps (editor close, runtime shutdown, session close) while
+   * they are still running. A release whose bound fired leaves them running:
+   * until they settle nobody is handed the session they are closing.
+   */
+  private releaseSteps: Promise<void> | undefined;
   private cancelGrace: (() => void) | undefined;
   /** Whether a write used the lock since the grace was armed: a write restarts the grace, a read does not. */
   private touched = false;
@@ -239,15 +245,29 @@ export class Studio {
    * it would have used is gone.
    */
   private async afterRelease(): Promise<Outcome | undefined> {
-    if (this.releasing === undefined) return undefined;
+    // The steps of a release whose bound fired may still be running: the
+    // session is being closed under them, so nobody is handed it. (Waiting for
+    // them could wait forever on a shutdown that never answers.)
+    const stillRunning = () =>
+      this.releaseSteps === undefined
+        ? undefined
+        : refuse(
+            "release-failed",
+            "a release that did not finish is still running; the lock is kept",
+            { hint: "wait for it, release again later, or quit the app" },
+          );
+    if (this.releasing === undefined) return stillRunning();
     while (this.releasing !== undefined) await this.releasing;
-    return this.releaseFailure === undefined
-      ? undefined
-      : refuse(
-          "release-failed",
-          "releasing the writer lock failed and the lock was kept",
-          { hint: "release again, or quit the app" },
-        );
+    return (
+      stillRunning() ??
+      (this.releaseFailure === undefined
+        ? undefined
+        : refuse(
+            "release-failed",
+            "releasing the writer lock failed and the lock was kept",
+            { hint: "release again, or quit the app" },
+          ))
+    );
   }
 
   /** The session that holds the lock, taking the lock first if this process does not hold it. A release in progress is waited for, then a fresh acquire follows. */
@@ -516,6 +536,13 @@ export class Studio {
       watch.cancel = undefined;
       try {
         await this.importChanged(editId, file, watch);
+      } catch (error) {
+        // Nothing here may escape the timer: a session that will not open, or a
+        // workspace file that vanished, is a refusal to try again next poll,
+        // with the baseline untouched and the watch still armed.
+        this.deps.log(
+          `edit ${editId} not imported: ${error instanceof Error ? error.message : "the import failed"}`,
+        );
       } finally {
         arm();
       }
@@ -550,19 +577,28 @@ export class Studio {
       }
       const editor = this.editorFor(owned);
       const content = this.loadedContent();
-      watch.baseline = hash;
       if (isOutcome(editor) || isOutcome(content)) {
+        watch.baseline = hash;
         this.deps.log(`edit ${editId} not imported: not configured`);
         return;
       }
       try {
         const result = await editor.refresh(editId, content, "import");
+        // An editor that could not be started never looked at the file: the
+        // baseline stays so the next poll tries again. Every other result,
+        // including a failed export, is terminal for this version.
+        if (!result.ok && result.reason === "editor-unavailable") {
+          this.deps.log(`edit ${editId} not imported: ${result.reason}`);
+          return;
+        }
+        watch.baseline = hash;
         this.deps.log(
           result.ok
             ? `edit ${editId} ${result.changed ? "imported" : "unchanged"}`
             : `edit ${editId} not imported: ${result.reason}`,
         );
       } catch {
+        watch.baseline = hash;
         this.deps.log(`edit ${editId} not imported: the import failed`);
       }
     } finally {
@@ -680,6 +716,13 @@ export class Studio {
       );
     const session = this.session;
     if (session === undefined) return Promise.resolve(done({ state: "free" }));
+    if (this.releaseSteps !== undefined)
+      return Promise.resolve(
+        refuse(
+          "release-failed",
+          "a release that did not finish is still running; the lock is kept",
+        ),
+      );
     let reason = this.idleReason();
     if (reason === undefined) {
       // The one full read: a job left queued in the store (not drained by this
@@ -709,6 +752,7 @@ export class Studio {
       RELEASE_MARGIN_MS;
     // The steps keep going past the bound: a shutdown that finishes late still
     // completes the release, and only then clears the refs.
+    let overBound = false;
     const steps = (async (): Promise<string | undefined> => {
       try {
         await this.editor?.close();
@@ -724,17 +768,26 @@ export class Studio {
         this.editor = undefined;
         this.preview = undefined;
         this.releaseFailure = undefined;
+        if (overBound)
+          this.deps.log(
+            "the release finished late: the writer lock is now free",
+          );
         return undefined;
       } catch {
         return "closing the session threw";
       }
     })();
+    // Tracks the steps themselves, not the race: it stays set while they run.
+    const open = steps.then(() => {
+      if (this.releaseSteps === open) this.releaseSteps = undefined;
+    });
+    this.releaseSteps = open;
     let cancel: () => void = () => {};
     const timeout = new Promise<string>((resolve) => {
-      cancel = this.deps.schedule(
-        () => resolve(`the release did not finish within ${bound} ms`),
-        bound,
-      );
+      cancel = this.deps.schedule(() => {
+        overBound = true;
+        resolve(`the release did not finish within ${bound} ms`);
+      }, bound);
     });
     const failure = await Promise.race([steps, timeout]);
     cancel();
@@ -742,6 +795,8 @@ export class Studio {
       this.deps.log("released the writer lock");
       return done({ state: "released" });
     }
+    // A late success clears this; a failure that came with the steps already
+    // finished leaves it set, as before.
     this.releaseFailure ??= failure;
     this.deps.log(`release failed: the writer lock is kept (${failure})`);
     return refuse(

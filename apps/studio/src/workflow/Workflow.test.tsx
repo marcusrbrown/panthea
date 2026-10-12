@@ -6,10 +6,26 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { fakeTransport } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
 import { approvalArgsForAsset, packWorkingSetGuarded } from "./actions";
-import { initialWorkflowState, workflowReducer } from "./model";
+import {
+  initialWorkflowState,
+  queueRowContext,
+  reuseRowContext,
+  workflowReducer,
+} from "./model";
 import { QueueItem, WorkflowView } from "./Workflow";
 
 const host = createStudioHost(fakeTransport());
+
+/** Handlers that never change identity, as the window gives its rows. */
+const rowHandlersForTest = (() => {
+  const handlers = {
+    onRemove: () => undefined,
+    onAbort: () => undefined,
+    onRetry: () => undefined,
+    onConform: () => undefined,
+  };
+  return () => handlers;
+})();
 
 function stateFor(
   job?: Record<string, unknown>,
@@ -833,7 +849,80 @@ describe("WorkflowView controls", () => {
   });
 
   describe("the queue", () => {
-    test("a row is a memoized component, so a keystroke elsewhere does not render it again", () => {
+    // React skips a memoized row whose props are all `Object.is`-equal. There
+    // is no DOM here to count renders in, so this drives the real reducer
+    // through two parent renders that change things the row does not show and
+    // checks every prop a row is given is the same value both times.
+    test("a row is given the same props across two parent renders that change nothing it shows", () => {
+      const jobs = Array.from({ length: 72 }, (_, i) => ({
+        id: `j${i}`,
+        requestId: "r1",
+        slotKey: `idle/${i}`,
+        status: "queued",
+        candidate: null,
+      }));
+      const snapshot = (extra: Record<string, unknown>) => ({
+        host: { state: "running", lock: "held" },
+        status: { idle: false },
+        requests: [],
+        jobs: jobs as never,
+        candidates: [],
+        edits: [],
+        workingSets: [],
+        assets: [],
+        ...extra,
+      });
+      const first = workflowReducer(initialWorkflowState(), {
+        type: "snapshot",
+        snapshot: snapshot({}) as never,
+      });
+      // A poll brings the same jobs as new objects, and other panels' records change.
+      const second = workflowReducer(first, {
+        type: "snapshot",
+        snapshot: snapshot({
+          jobs: jobs.map((job) => ({ ...job })),
+          assets: [{ id: "a1" }],
+          requests: [{ id: "r1" }],
+        }) as never,
+      });
+      const handlers = rowHandlersForTest();
+      const props = (
+        state: typeof first,
+        job: (typeof first.jobs)[number],
+      ) => ({
+        job,
+        ctx: reuseRowContext(rowContextRef.current, queueRowContext(state)),
+        busy: false,
+        ...handlers,
+        conformSet: "",
+        candidate: undefined,
+        conformBusy: false,
+      });
+      const rowContextRef = { current: queueRowContext(first) };
+
+      const before = props(first, first.jobs[5] as never);
+      rowContextRef.current = before.ctx;
+      const after = props(second, second.jobs[5] as never);
+
+      for (const key of Object.keys(before) as (keyof typeof before)[])
+        expect(Object.is(before[key], after[key]), key).toBe(true);
+      // Every row, not just one.
+      for (const [index, job] of second.jobs.entries())
+        expect(job).toBe(first.jobs[index] as never);
+      // And a change to the row's own job does give it new props.
+      const changed = workflowReducer(second, {
+        type: "snapshot",
+        snapshot: snapshot({
+          jobs: jobs.map((job, i) =>
+            i === 5 ? { ...job, status: "running" } : { ...job },
+          ),
+        }) as never,
+      });
+      expect(changed.jobs[5]).not.toBe(second.jobs[5] as never);
+      expect(changed.jobs[6]).toBe(second.jobs[6] as never);
+    });
+
+    test("a row is a memoized component", () => {
       expect((QueueItem as unknown as { $$typeof: symbol }).$$typeof).toBe(
         Symbol.for("react.memo"),
       );
