@@ -2,6 +2,8 @@
 
 Status: Draft defaults proposed 2026-10-03 for owner review. These are D23 tunables, not owner decisions; the asset studio's conformance step enforces whatever this file says, so change the file rather than the tool. content-direction.md asked for this guide; D14, X02, and X03 govern delivery.
 
+Note (2026-10-12): [ADR-0012](../decisions/0012-pre-rendered-retro-art-direction.md) is accepted. It adds a pre-rendered retro direction for new assets beside the rules below. Every rule here still binds for hand-pixel assets, which are the legacy class; the dated notes below say where the retro classes differ.
+
 ## Purpose
 
 One place that says what a Panthea asset looks like so that a generated, hand-drawn, or procedurally derived frame can be checked against it. Every rule here is either measurable by the conformance step or a do/don't an owner review can apply.
@@ -22,11 +24,13 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 | Gods | 48–56 px | 64×80 | Taller than mortals at rest; a divine aura or motif, never a size that breaks the cell. |
 | Beasts, large props | up to 96 px | 128×128 | Footprint 2×2 tiles or larger; declare it. |
 
+- Note (2026-10-12, ADR-0012): retro classes sit beside the rows above, not in place of them. Gods: 60–64 px on the `god-tall` cell, 112×96, with the pivot declared per asset ((56, 78) for Zeus); a 96×96 cell is allowed when the measured envelope fits. Mortals: 40–48 px on 64×64. Animals and scenery: measured envelopes declared in the manifest. Standing height, maximum action extent (the whole animation with stamps and outline) and a margin of about 6 px are recorded as separate numbers, and each asset has one pivot across every clip and facing. The rows above, with the 64×80 `god` cell, are the legacy class. Styles and sizes are never mixed within one character.
 - Pivot is the midpoint between the feet, placed at the bottom vertex of the occupied tile. Collision footprint is declared in tiles (1×1 for humanoids).
 - Four directions for the MVP: south, north, east, west. West is east mirrored unless the asset declares an asymmetry (Hephaestus's hammer hand, Zeus's bolt hand). Eight directions are deferred.
   - Note (2026-10-11): the asymmetry is declared on the subject's visual profile (`asymmetry: {feature}`; Zeus declares `bolt hand`), not discovered from pixels. A mirror of a subject that declares one is refused, and pack writes the declaration into the manifest. The line above stays as written.
 - States (versioned data, defaults here): `idle` (4 frames at 3–6 fps, so the rest and peak frames may hold longer, for example 333/167/333/167 ms), `seated` (2 frames, gods only; Zeus on a cloud with body partly obscured is the reference), one `act` per declared ability (4–6 frames at 10–12 fps), `walk` (6 frames at 10 fps; deferred until the world carries position and facing), `hurt` (2 frames), `down` (1 frame). Timing is per-frame in milliseconds in the manifest.
   - Note (2026-10-10): the owner cut the cloud from Zeus's `seated` reference above. The line stays as written; Zeus's seated sprite is drawn without a cloud.
+  - Note (2026-10-12, ADR-0012): retro `walk` is 16 frames over 800 ms, sample counts are set per clip, and real durations and event timing are kept. A state and its sample variants (8 or 16 frames) share one pose policy. The counts above stay as the defaults for hand-pixel assets.
 - Only `idle` bob, east/west mirroring, palette swaps, and overlays are derived procedurally; `walk` and `act` frames are drawn or generated and repaired.
 - Silhouette first: a character must be identifiable at 1× from shape and two colours alone. Test by thresholding to black on white.
 - Readable features at this scale: head about one quarter of height, hands as 2–3 px blocks, no faces beyond eyes and brow on world sprites. Expression lives in portraits.
@@ -41,6 +45,7 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 
 - One master palette per content pack, at most 64 colours, committed as a `.gpl`/`.hex` file under `content/greek/palette/` and referenced by every asset. The owner approves the master palette before any asset is marked canon; drafts conform against a provisional palette until then.
 - Each character gets ramps of 4–5 shades drawn from the master palette; world sprites use at most 16 colours including outline, portraits at most 32.
+- Note (2026-10-12, ADR-0012): the `greek-retro` palette is a new version beside `greek-master`: at most 64 colours, ramps of up to 6 shades for that version only, at most 48 colours per sprite, binary alpha, and the same digest-bound approval before any asset is promoted against it. The colour limit belongs to the palette version: 16 for `greek-master`, 48 for `greek-retro`. The 4–5 shade ramps and the 16-colour limit above are unchanged for `greek-master`.
 - Realm families (hues set by the owner-approved [`greek-master` palette](../../content/greek/palette/palette.json); other guide defaults remain owner-vetoable):
   - Town and wilderness: warm earth, olive, terracotta, sun-bleached stone; sky light.
   - Olympus: cool whites, pale gold, lapis, marble; high key.
@@ -51,6 +56,7 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 ## Line, light, and dithering
 
 - Selective outline: 1 px, in the darkest shade of the local ramp, on the exterior silhouette and where forms overlap; no outline between adjacent shades of one form.
+- Note (2026-10-12, ADR-0012): retro assets get one 1 px exterior outline in the darkest shade of the local ramp, applied once to the final combined silhouette (props and stamps included), plus selective overlap lines from part-ID and depth passes. Shading is 5-band toon with no routine dithering. Contact shadows are one palette colour with no outline. Small authored face and signature-prop stamps are allowed, composited with correct occlusion and recorded as authored art.
 - Key light from the upper left (north-west in iso), consistent across every asset, including buildings and tiles. Cast shadows are a single flat shade on the ground layer, one tile-height tall at most.
 - No automatic dithering. Hand dithering is allowed for large gradients (sky, water, cloth) in checkerboard only.
 - No anti-aliasing between sprite and background; alpha is binary. Interior anti-aliasing is allowed on portraits only.

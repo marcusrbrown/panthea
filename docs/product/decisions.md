@@ -42,6 +42,7 @@ Possible event undo became snapshot restore.
 Video export and YouTube delivery became post-MVP work.
 Literal WebGPU-only rendering on the macOS baseline became dual-backend (WebGPU/WebGL2) after the WKWebView probe found no `navigator.gpu` on macOS 15.
 File/code-only authoring (D18) and the editors deferral (D24) were narrowed on 2026-10-03: an owner-facing asset studio is in scope; player-facing in-game editors stay deferred (D26).
+D14 is not amended (2026-10-12, ADR-0012): CC0 kit bodies, rendered and baked to pixel art, count as appropriately sourced material under content-direction.md, so "original pixel art" covers the pre-rendered retro direction. Its isometric, portrait, effect and cutscene parts are unchanged.
 
 ## Boundaries on delegated choices
 
