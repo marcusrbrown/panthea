@@ -35,6 +35,7 @@ export {
   type ResolveQuery,
   type SnapshotEntry,
 } from "./resolve-core";
+export { MAX_SEED } from "./studio/seed";
 
 export type PixelResolution =
   | CanonResolution
