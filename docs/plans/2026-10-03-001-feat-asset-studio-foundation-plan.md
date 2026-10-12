@@ -288,6 +288,7 @@ The primary studio workspace groups request and queue, candidate sheet with repo
   - **Overlays move to Unit 10**, alongside the first structure.
   - **Reference conditioning is probed first on the pinned runtime**, which already parses `ref_images`.
   - **The unit also adds studio features:** preview of every published key, release of the writer lock when idle, scripted finish in the app, a seed field, queue responsiveness, and the slot hint.
+  - (2026-10-11) Progress: the child plan's derivation and repair units are built (mirror, whole-asset palette swap into a realm palette and idle bob from a published revision; the `derive` op through pack and publish; realm variants regenerated and verified at every publish; a masked edit on a published frame). The reference-conditioning probe was NO-GO (`tools/probes/art-reference/README.md`), so reference requests return `unavailable` and R14's generated route is partial. R13 stays partial (overlays move to Unit 10) and so does R20 (the Zeus idle directions are deferred). Evidence: `docs/evidence/asset-studio/unit9/README.md`. Not verified: a real repair job on a GPU, and the derive-to-publish path through the packaged game.
 - **Requirements:** R2, R13–R15, R20; AE4; U06, U07, X02.
 - **Dependencies:** Tier 1 complete; chosen provider must expose reference/inpaint capability or report unavailable.
 - **Files:** Create `packages/assets/src/derive.ts`, `derive.test.ts`, `reference.ts`, `reference.test.ts`; extend CLI/app frame playback tests and committed derivation fixtures; update traceability.

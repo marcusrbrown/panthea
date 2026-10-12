@@ -1,7 +1,7 @@
 ---
 title: "feat: Studio derivation, repair route and app ergonomics (asset studio Unit 9)"
 type: feat
-status: active
+status: completed
 date: 2026-10-11
 origin: docs/brainstorms/2026-10-03-asset-studio-requirements.md
 ---
@@ -446,7 +446,7 @@ flowchart TB
 
 U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that file, or the units run serially.
 
-- [ ] **U1: Reference-conditioning probe**
+- [x] **U1: Reference-conditioning probe**
 
 **Goal:** Measure whether reference-conditioned generation on the pinned build can produce a new facing or pose of an existing sprite while keeping its identity.
 
@@ -487,7 +487,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 - The owner sees the 1× sheet.
 - No studio code changes.
 
-- [ ] **U2: Contracts and subject asymmetry**
+- [x] **U2: Contracts and subject asymmetry**
 
 **Goal:** Give derived provenance, realm variants, published edit bases and subject asymmetry schemas that code can actually produce.
 
@@ -520,7 +520,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 
 **Verification:** The contract and content tests pass, and canon validates unchanged.
 
-- [ ] **U3: Derivation core**
+- [x] **U3: Derivation core**
 
 **Goal:** Deterministic mirror, palette swap and bob functions over RGBA frames, each with a recorded recipe.
 
@@ -558,7 +558,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 
 **Verification:** The goldens pass, the PNG structure validates, and the functions do no I/O.
 
-- [ ] **U4: Derived slots through pack and publish, and the `derive` op**
+- [x] **U4: Derived slots through pack and publish, and the `derive` op**
 
 **Goal:** Derived slots become drafts that pack, approve and publish with conformance and recompute. `derive` becomes a real op on every surface.
 
@@ -603,7 +603,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 
 **Verification:** `bun run check` and `cargo test` pass. Op parity covers `derive`.
 
-- [ ] **U5: Repair route**
+- [x] **U5: Repair route**
 
 **Goal:** Non-derivable frames get a recorded repair path: a masked edit on a published frame, plus reference conditioning when U1 passes.
 
@@ -743,7 +743,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 - A packaged screenshot shows the seed field, the Scripted toggle and the hint.
 - The owner confirms visual changes through the question tool.
 
-- [ ] **U9: Evidence, traceability and parent-plan notes**
+- [x] **U9: Evidence, traceability and parent-plan notes**
 
 **Goal:** Record what was proven, and keep the parent plan and origin honest.
 

@@ -24,6 +24,7 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 
 - Pivot is the midpoint between the feet, placed at the bottom vertex of the occupied tile. Collision footprint is declared in tiles (1×1 for humanoids).
 - Four directions for the MVP: south, north, east, west. West is east mirrored unless the asset declares an asymmetry (Hephaestus's hammer hand, Zeus's bolt hand). Eight directions are deferred.
+  - Note (2026-10-11): the asymmetry is declared on the subject's visual profile (`asymmetry: {feature}`; Zeus declares `bolt hand`), not discovered from pixels. A mirror of a subject that declares one is refused, and pack writes the declaration into the manifest. The line above stays as written.
 - States (versioned data, defaults here): `idle` (4 frames at 3–6 fps, so the rest and peak frames may hold longer, for example 333/167/333/167 ms), `seated` (2 frames, gods only; Zeus on a cloud with body partly obscured is the reference), one `act` per declared ability (4–6 frames at 10–12 fps), `walk` (6 frames at 10 fps; deferred until the world carries position and facing), `hurt` (2 frames), `down` (1 frame). Timing is per-frame in milliseconds in the manifest.
   - Note (2026-10-10): the owner cut the cloud from Zeus's `seated` reference above. The line stays as written; Zeus's seated sprite is drawn without a cloud.
 - Only `idle` bob, east/west mirroring, palette swaps, and overlays are derived procedurally; `walk` and `act` frames are drawn or generated and repaired.
