@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 1,
+  "id": "retro-scene-provisional",
+  "note": "Provisional probe palette; does not change the art guide. Shades 0 (darkest) is the outline; bands use shades 1 to 5.",
+  "derivedFrom": {
+    "palette": "greek-master",
+    "familiesDigest": "3d1a6b4ba343ca683f77c967de48219f2d6eaeffd3b35bd4b6abc54fb27133c3"
+  },
+  "limits": {
+    "sceneColours": 64,
+    "spriteColours": 48,
+    "shadesPerRamp": 6
+  },
+  "families": [
+    {
+      "id": "retro-scene",
+      "ramps": [
+        {
+          "id": "marble",
+          "source": "olympus/marble",
+          "shades": [
+            "#526471",
+            "#70848e",
+            "#8fa6ad",
+            "#abbfc0",
+            "#c7d8d4",
+            "#f0eee0"
+          ],
+          "kept": ["#526471", "#8fa6ad", "#c7d8d4", "#f0eee0"]
+        },
+        {
+          "id": "pale-gold",
+          "source": "olympus/pale-gold",
+          "shades": [
+            "#76572f",
+            "#947039",
+            "#b38b43",
+            "#c8a559",
+            "#ddbf70",
+            "#f4e4ae"
+          ],
+          "kept": ["#76572f", "#b38b43", "#ddbf70", "#f4e4ae"]
+        },
+        {
+          "id": "cloud",
+          "source": "olympus/cloud",
+          "shades": [
+            "#637b89",
+            "#8098a4",
+            "#9fb5bf",
+            "#bacbcf",
+            "#d6e1df",
+            "#f3f0dc"
+          ],
+          "kept": ["#637b89", "#9fb5bf", "#d6e1df", "#f3f0dc"]
+        },
+        {
+          "id": "lapis",
+          "source": "olympus/lapis",
+          "shades": [
+            "#243f63",
+            "#3c6290",
+            "#567ba4",
+            "#7194b8",
+            "#9bb2c6",
+            "#c5d1d3"
+          ],
+          "kept": ["#243f63", "#3c6290", "#7194b8", "#c5d1d3"]
+        },
+        {
+          "id": "soil",
+          "source": "town/soil",
+          "shades": [
+            "#382d29",
+            "#70503b",
+            "#936545",
+            "#b77a4e",
+            "#ce9866",
+            "#e4b77e"
+          ],
+          "kept": ["#382d29", "#70503b", "#b77a4e", "#e4b77e"]
+        },
+        {
+          "id": "olive",
+          "source": "town/olive",
+          "shades": [
+            "#3b4431",
+            "#515c3d",
+            "#68764a",
+            "#838e55",
+            "#9ea65f",
+            "#d5c887"
+          ],
+          "kept": ["#3b4431", "#68764a", "#9ea65f", "#d5c887"]
+        },
+        {
+          "id": "terracotta",
+          "source": "town/terracotta",
+          "shades": [
+            "#63392f",
+            "#834736",
+            "#a4553c",
+            "#ce7651",
+            "#dd9267",
+            "#ecae7d"
+          ],
+          "kept": ["#63392f", "#a4553c", "#ce7651", "#ecae7d"]
+        },
+        {
+          "id": "stone-sky",
+          "source": "town/stone-sky",
+          "shades": [
+            "#56655d",
+            "#6f7d70",
+            "#889684",
+            "#a6ae95",
+            "#c4c6a6",
+            "#eee0bd"
+          ],
+          "kept": ["#56655d", "#889684", "#c4c6a6", "#eee0bd"]
+        },
+        {
+          "id": "bone",
+          "source": "underworld/bone",
+          "shades": [
+            "#514940",
+            "#696053",
+            "#827766",
+            "#9d907b",
+            "#b9aa91",
+            "#e4d8ba"
+          ],
+          "kept": ["#514940", "#827766", "#b9aa91", "#e4d8ba"]
+        }
+      ]
+    }
+  ]
+}

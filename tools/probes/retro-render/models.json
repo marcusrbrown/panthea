@@ -1,0 +1,218 @@
+{
+  "note": "Provenance for the third-party inputs of the retro-render probe. Files live outside git in the main checkout (tools/probes/*/models/ is gitignored); paths below are relative to <main-checkout>/tools/probes/retro-render/models.",
+  "modelsDirectory": "<main-checkout>/tools/probes/retro-render/models/",
+  "downloadedOn": "2026-10-11",
+  "downloadedBy": "the owner, through a browser",
+  "packs": [
+    {
+      "id": "universal-base-characters",
+      "title": "Universal Base Characters [Standard]",
+      "author": "Quaternius",
+      "sourcePage": "https://quaternius.com/packs/universalbasecharacters.html",
+      "licence": "CC0 1.0 Universal",
+      "licenceUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "status": "used",
+      "usedFor": "Zeus (Superhero_Male_FullBody, Hair_Beard, Hair_SimpleParted, Hair_Long: side locks and back mass) and the mortal (Superhero_Female_FullBody, Hair_SimpleParted); skinned to the UAL clips",
+      "note": "Material textures are not used: every material is replaced by a palette ramp. The Standard tier ships two base characters.",
+      "zip": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard].zip",
+        "sha256": "fdbf1804c90dfc1ea03e992bff7da2dfd1a79318e13270a660180f9308455f40",
+        "bytes": 128968391
+      },
+      "licenceFile": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/License_Standard.txt",
+        "sha256": "0f4beaf0fe360a7732e58bbe3dbf60a2422367fbea60cb9ea4add968f383268e",
+        "text": "This is the standard FREE version of the Universal Base Characters Kit, which only contains a portion of the models . You can buy the SOURCE version which has all the models with rigged .blends, and Unity(URP), Unreal Engine and Godot projects with custom shaders already set up. You can get the other version from the website https://quaternius.com ------------------------------------------------------- License: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication https://creativecommons.org/publicdomain/zero/1.0/ ------------------------------------------------------ Models by @Quaternius Cons"
+      },
+      "files": [
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Base Characters/Godot - UE/Superhero_Male_FullBody.gltf",
+          "sha256": "e7fcea214ecf8855afbf910b50de6f9c7d1decfb71ca28bad8a4481452dafeb4",
+          "bytes": 30989
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Base Characters/Godot - UE/Superhero_Male_FullBody.bin",
+          "sha256": "459003f9745853ae562a85506a2b94dd56515c1f37728f9fa3d2ce1a3e4cd92f",
+          "bytes": 720076
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Base Characters/Godot - UE/Superhero_Female_FullBody.gltf",
+          "sha256": "adedf28000a0716f689b009a70314506fc62f827498f77ba852acb5610f3f3f4",
+          "bytes": 31656
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Base Characters/Godot - UE/Superhero_Female_FullBody.bin",
+          "sha256": "3a8220a485b33d05d879115a50697728b45a151781106033afb8b8c243fca208",
+          "bytes": 990808
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Beard.gltf",
+          "sha256": "80013b9791ce12c65fbe693cf669b02ef5c38091c653bf13b9415d2d8380e0ce",
+          "bytes": 23104
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Beard.bin",
+          "sha256": "bf2f46ef5808665ef31082f787bc68c51ff063e81b76ca1a51ac86a9ae723be7",
+          "bytes": 41356
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_SimpleParted.gltf",
+          "sha256": "fe0f354d7f95d83d38e15c60794dcc063fa4d60550706f3d7ba51491cdc07c56",
+          "bytes": 23114
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_SimpleParted.bin",
+          "sha256": "ecd7c81959f3985d6254458a440daaaa18a8bfbb1dbe111c68a04a72374d54db",
+          "bytes": 51332
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Long.gltf",
+          "sha256": "27e2c63e8f98c79fb600268ffcc92b36c621b8653b5a7dcbadb08328f3f887a9",
+          "bytes": 23813
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Long.bin",
+          "sha256": "268fd531d2c2ac321783d36fcf106d15c5c76e8923eec2c8704d5fe9de953589",
+          "bytes": 181756
+        }
+      ]
+    },
+    {
+      "id": "farm-animals",
+      "title": "LowPoly Animated Animals (Farm Animals Animated)",
+      "author": "Quaternius",
+      "sourcePage": "https://quaternius.itch.io/lowpoly-animated-animals",
+      "licence": "NOT SHIPPED: the archive contains OBJ, FBX, Blend, Preview.gif and no licence file",
+      "licenceUrl": null,
+      "status": "excluded-not-used",
+      "usedFor": "nothing. No licence file ships and the page text does not state the licence, so it stays excluded; the Ultimate Animated Animals pack (below) supplies the animal instead.",
+      "note": "Only the zip hash is recorded.",
+      "zip": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/Farm Animals Animated  by Quaternius.zip",
+        "sha256": "b4bc5f209368cafc21962934e7d676cf1cfb1f746a363086cd9f45c4385db70e",
+        "bytes": 6963285
+      },
+      "licenceFile": null,
+      "files": []
+    },
+    {
+      "id": "kaykit-forest-nature",
+      "title": "KayKit Forest Nature Pack 1.0 FREE",
+      "author": "Kay Lousberg",
+      "sourcePage": "https://kaylousberg.itch.io/kaykit-forest",
+      "licence": "Creative Commons Zero, CC0 (credit not mandatory)",
+      "licenceUrl": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "status": "inspected-not-used",
+      "usedFor": "nothing. Tree_1_A, Tree_3_A and Tree_4_A were inspected; their textured trees are taller and bulkier than the cypress-like silhouette the scene needs.",
+      "note": "",
+      "zip": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/KayKit_Forest_Nature_Pack_1.0_FREE.zip",
+        "sha256": "2ee83e63bb7695f2d884ec27ddf6fce020789a452e7d5c5b0bbdfc4f6ea1fc8c",
+        "bytes": 6435630
+      },
+      "licenceFile": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/KayKit_Forest_Nature_Pack_1.0_FREE/KayKit_Forest_Nature_Pack_1.0_FREE/License.txt",
+        "sha256": "987811fa42c7548ad487324531813b0210ee6d1ebd410089e881820630e3be54",
+        "text": "KayKit : Forest Nature Pack (1.0) Created/distributed by Kay Lousberg (www.kaylousberg.com) Creation date: 29/04/2025 17:00 ------------------------------ License: (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/ This content is free to use in personal, educational and commercial projects. Support me by crediting Kay Lousberg, www.kaylousberg.com (this is not mandatory, but would be appreciated) ------------------------------ This asset pack is here thanks to all the wonderful people who support KayKit on Patreon and those who buy EXTRA or SOURCE packs on itch.io."
+      },
+      "files": []
+    },
+    {
+      "id": "medieval-village",
+      "title": "Medieval Village Pack - Dec 2020",
+      "author": "Quaternius",
+      "sourcePage": "https://quaternius.com/packs/medievalvillage.html",
+      "licence": "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
+      "licenceUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "status": "used",
+      "usedFor": "the style-comparison building (Buildings/OBJ/House_1)",
+      "note": "The zip name carries a Google Drive export suffix; it was re-zipped from the original pack, so its hash will not match quaternius.com's download.",
+      "zip": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/Medieval Village Pack - Dec 2020-20261012T081001Z-1-001.zip",
+        "sha256": "da26618f1937acdc60be05d9b9bab579cbd9529fbb0dd0009a9f3ab76c77c578",
+        "bytes": 8782767
+      },
+      "licenceFile": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/Medieval Village Pack - Dec 2020-20261012T081001Z-1-001/Medieval Village Pack - Dec 2020/License.txt",
+        "sha256": "83d8959f9fc56353ed571fbe2dc52e4bcd64508e2399501cd45ac2ce3df0bf8c",
+        "text": "------------------------------------------------------ LowPoly Models by @Quaternius Consider supporting me on Patreon, even $1 helps me a lot! https://www.patreon.com/quaternius ------------------------------------------------------- License: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication https://creativecommons.org/publicdomain/zero/1.0/"
+      },
+      "files": [
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Medieval Village Pack - Dec 2020-20261012T081001Z-1-001/Medieval Village Pack - Dec 2020/Buildings/OBJ/House_1.obj",
+          "sha256": "3b9287272ad4bb51a269d3e39720ddccbf634cd223d29f5c0ac0356834b1a22e",
+          "bytes": 422122
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Medieval Village Pack - Dec 2020-20261012T081001Z-1-001/Medieval Village Pack - Dec 2020/Buildings/OBJ/House_1.mtl",
+          "sha256": "c3241e56d572963003ebac7efa40c89e39d6e50d9d6de7274038904ba5316f8b",
+          "bytes": 1685
+        }
+      ]
+    },
+    {
+      "id": "ultimate-animated-animals",
+      "title": "Ultimate Animated Animals - July 2021",
+      "author": "Quaternius",
+      "sourcePage": "https://quaternius.com/packs/ultimateanimatedanimals.html",
+      "downloadedOn": "2026-10-12",
+      "licence": "CC0 1.0 Universal (CC0 1.0) Public Domain Dedication",
+      "licenceUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "status": "used",
+      "usedFor": "the animal: Bull (glTF/Bull.gltf, its own rig and the Idle and Walk clips). Deer, Donkey and Horse were the alternatives",
+      "note": "The zip name carries a Google Drive export suffix, so it is a re-zip of the original pack. Bull.gltf embeds its buffer, so there is no .bin. The material colours are not used: each Bull material is mapped to a scene ramp by hand.",
+      "zip": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/Ultimate Animated Animals - July 2021-20261012T171708Z-1-001.zip",
+        "sha256": "fce5d64693a0a9ac19db008547ca6cebebb1b11f2673f6fb9288301497998e95",
+        "bytes": 40126807
+      },
+      "licenceFile": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/Ultimate Animated Animals - July 2021-20261012T171708Z-1-001/Ultimate Animated Animals - July 2021/License.txt",
+        "sha256": "83d8959f9fc56353ed571fbe2dc52e4bcd64508e2399501cd45ac2ce3df0bf8c",
+        "text": "------------------------------------------------------ LowPoly Models by @Quaternius Consider supporting me on Patreon, even $1 helps me a lot! https://www.patreon.com/quaternius ------------------------------------------------------- License: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication https://creativecommons.org/publicdomain/zero/1.0/"
+      },
+      "files": [
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Ultimate Animated Animals - July 2021-20261012T171708Z-1-001/Ultimate Animated Animals - July 2021/glTF/Bull.gltf",
+          "sha256": "535da2992eb125d517725159a2eddeb520b72595bcb3021985fc43d2c84bff76",
+          "bytes": 3110158
+        }
+      ]
+    },
+    {
+      "id": "kenney-nature-kit",
+      "title": "Nature Kit 2.1",
+      "author": "Kenney",
+      "sourcePage": "https://kenney.nl/assets/nature-kit",
+      "licence": "Creative Commons Zero, CC0 (credit not mandatory)",
+      "licenceUrl": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "status": "used",
+      "usedFor": "the tree (Models/GLTF format/tree_cone.glb); tree_pineTallA, tree_thin, tree_pineSmallA and tree_oak were rendered for comparison only",
+      "note": "",
+      "zip": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/kenney_nature-kit.zip",
+        "sha256": "fa7974a0d342bfe63c38664ba9f8ec1a4aab8ea25f099bdc56870e33588c4d9d",
+        "bytes": 10537521
+      },
+      "licenceFile": {
+        "file": "<main-checkout>/tools/probes/retro-render/models/kenney_nature-kit/License.txt",
+        "sha256": "cb96b75e3560ac78d7a53ce6f083f4cdb5c53faea6141b62d63458dcfe1e4b9d",
+        "text": "Nature Kit (2.1) Created/distributed by Kenney (www.kenney.nl) Creation date: 29-04-2020 01:02 ------------------------------ License: (Creative Commons Zero, CC0) http://creativecommons.org/publicdomain/zero/1.0/ This content is free to use in personal, educational and commercial projects. Support us by crediting Kenney or www.kenney.nl (this is not mandatory) ------------------------------ Donate: http://support.kenney.nl Request: http://request.kenney.nl Patreon: http://patreon.com/kenney/ Follow on Twitter for updates: http://twitter.com/KenneyNL"
+      },
+      "files": [
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/kenney_nature-kit/Models/GLTF format/tree_cone.glb",
+          "sha256": "90be4d214ee2cbf79d317677cb87fc11dac9873b73e446b75e8c12825a374272",
+          "bytes": 10924
+        }
+      ]
+    }
+  ],
+  "animationSource": {
+    "id": "universal-animation-library",
+    "see": "tools/probes/blender-sprite/models.json",
+    "file": "<main-checkout>/tools/probes/blender-sprite/models/Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard.glb",
+    "sha256": "69591853d817488edaa8fd9bf8fc1d821eaeaf789f8627b3cd23b41c4ed67997",
+    "licence": "CC0 1.0 (see the blender-sprite provenance)"
+  }
+}
