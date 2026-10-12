@@ -33,6 +33,7 @@ import type { CandidateParams } from "./candidates";
 import { regenerateVariantAtlas } from "./derivation";
 import { derivationRuntime } from "./derive";
 import { type EditRecord, handStepOf } from "./export-import";
+import { cutFrame } from "./frame-ref";
 import { decodePng } from "./png/decode";
 import { buildSpec, type StudioContent } from "./request";
 import type { CommandRecord, JobRecord, RequestRecord } from "./store";
@@ -705,6 +706,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
   // base is recorded as hand work, with the stored image's hash.
   const baseJobs = new Map<string, JobRecord>();
   const handBases = new Map<Sha256, string>();
+  let editsPublished = false;
   for (const generation of generations.values()) {
     let edit = generation.request.edit;
     while (edit !== undefined) {
@@ -718,10 +720,32 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         handBases.set(from.image, from.description);
         break;
       }
-      if (from.kind === "published")
-        return refuse(
-          `job ${generation.jobId} edits a published frame, which pack cannot record yet`,
+      if (from.kind === "published") {
+        // A repair starts from a frame of the revision now published for this
+        // asset, so the frame is checked against that revision's own atlas.
+        const at = `job ${generation.jobId} edits frame ${from.frameIndex} of ${from.slotKey} in ${from.assetId} ${from.revision}`;
+        if (
+          prior === undefined ||
+          from.assetId !== input.assetId ||
+          from.revision !== prior.revision
+        )
+          return refuse(
+            `${at}, which is no longer the published revision of ${input.assetId}: repair from the current revision`,
+          );
+        const cut = cutFrame(
+          prior.manifest,
+          prior.atlas,
+          from.slotKey,
+          from.frameIndex,
         );
+        if (!cut.ok) return refuse(`${at}: ${cut.message}`);
+        if (cut.hash !== from.frameHash)
+          return refuse(
+            `${at}: frame-hash-mismatch: the frame has hash ${cut.hash}, not ${from.frameHash}`,
+          );
+        editsPublished = true;
+        break;
+      }
       if (baseJobs.has(from.jobId)) break;
       const base = sources.jobs.get(from.jobId);
       if (
@@ -741,7 +765,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
   const derivedMode =
     derivedSlots.length > 0 || Object.keys(set.variants ?? {}).length > 0;
   // Derived work carries the licences of the revision it was made from.
-  if (derivedMode && prior !== undefined)
+  if ((derivedMode || editsPublished) && prior !== undefined)
     for (const licence of prior.manifest.provenance.licences)
       licences.push(licence);
   for (const record of [
@@ -833,7 +857,8 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       `the working set derives with more than one recipe (${recipes.join(", ")}); derive them in separate revisions`,
     );
   const sourceAssets =
-    (derivedMode || carriedKeys.length > 0) && prior !== undefined
+    (derivedMode || editsPublished || carriedKeys.length > 0) &&
+    prior !== undefined
       ? [{ assetId: input.assetId, revision: prior.revision }]
       : [];
   let provenance: Record<string, unknown>;

@@ -21,6 +21,7 @@ import {
   type PackInput,
   parsePreviewResolve,
   type RequestInput,
+  registryFrameReader,
   resolveEdit,
   type StudioAssetRecord,
   type StudioContent,
@@ -151,6 +152,14 @@ function strictObject(
 const EDIT_COMMON = ["editMask", "editStrength", "editCue"] as const;
 const EDIT_JOB_BASE = ["editBaseJob", "editBaseOutput"] as const;
 const EDIT_HAND_BASE = ["editBaseImage", "editBaseDescription"] as const;
+const EDIT_PUBLISHED_BASE = ["editBasePublished", "editBaseFrameHash"] as const;
+
+/** Where the probe that decided against reference conditioning records its result. */
+const REFERENCE_README = "tools/probes/art-reference/README.md";
+
+const PUBLISHED_REF =
+  /^([a-z0-9][a-z0-9-]*)@([0-9a-f]{64}):([^:#@\s]+)#(0|[1-9][0-9]*)$/;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 type Edit = NonNullable<RequestInput["edit"]>;
 type EditArgs = {
@@ -164,27 +173,39 @@ const hashOf = (bytes: Uint8Array) =>
 
 /**
  * The masked-edit flags: the mask, strength and cue, and exactly one base: a
- * job's output (`--edit-base-job` with `--edit-base-output`) or a hand-authored
- * image (`--edit-base-image` with `--edit-base-description`). Files are read
- * from their paths and named by their hashes.
+ * job's output (`--edit-base-job` with `--edit-base-output`), a hand-authored
+ * image (`--edit-base-image` with `--edit-base-description`), or one frame of a
+ * published revision (`--edit-base-published asset@revision:slot#frame` with
+ * `--edit-base-frame-hash`). Files are read from their paths and named by their
+ * hashes; a published frame is named by its reference and read from the
+ * registry when the edit is checked.
  */
 function readEditArgs(a: Args): EditArgs | undefined | Outcome {
   const given = (keys: readonly string[]) =>
     keys.filter((key) => a[key] !== undefined).length;
   const all = (keys: readonly string[]) => given(keys) === keys.length;
-  if (given([...EDIT_COMMON, ...EDIT_JOB_BASE, ...EDIT_HAND_BASE]) === 0)
+  if (
+    given([
+      ...EDIT_COMMON,
+      ...EDIT_JOB_BASE,
+      ...EDIT_HAND_BASE,
+      ...EDIT_PUBLISHED_BASE,
+    ]) === 0
+  )
     return undefined;
   const jobBase = given(EDIT_JOB_BASE) > 0;
   const handBase = given(EDIT_HAND_BASE) > 0;
+  const publishedBase = given(EDIT_PUBLISHED_BASE) > 0;
   if (
     !all(EDIT_COMMON) ||
-    jobBase === handBase ||
+    [jobBase, handBase, publishedBase].filter(Boolean).length !== 1 ||
     (jobBase && !all(EDIT_JOB_BASE)) ||
-    (handBase && !all(EDIT_HAND_BASE))
+    (handBase && !all(EDIT_HAND_BASE)) ||
+    (publishedBase && !all(EDIT_PUBLISHED_BASE))
   )
     return refuse(
       "invalid-arguments",
-      "an edit needs --edit-mask, --edit-strength and --edit-cue with one base: --edit-base-job and --edit-base-output, or --edit-base-image and --edit-base-description",
+      "an edit needs --edit-mask, --edit-strength and --edit-cue with one base: --edit-base-job and --edit-base-output, --edit-base-image and --edit-base-description, or --edit-base-published and --edit-base-frame-hash",
     );
   const blobs = new Map<string, Uint8Array>();
   const read = (path: string, what: string): Uint8Array | Outcome => {
@@ -199,7 +220,25 @@ function readEditArgs(a: Args): EditArgs | undefined | Outcome {
   const mask = read(a.editMask as string, "mask");
   if (isOutcome(mask)) return mask;
   let base: Edit["base"];
-  if (jobBase)
+  if (publishedBase) {
+    const ref = PUBLISHED_REF.exec(a.editBasePublished as string);
+    if (ref === null || !SHA256_HEX.test(a.editBaseFrameHash as string))
+      return refuse(
+        "invalid-arguments",
+        "--edit-base-published must read asset@revision:slot#frame (the revision a 64-character hash) and --edit-base-frame-hash must be a 64-character hash",
+      );
+    base = {
+      kind: "published",
+      assetId: ref[1] as Extract<
+        Edit["base"],
+        { kind: "published" }
+      >["assetId"],
+      revision: ref[2] as Edit["mask"],
+      slotKey: ref[3] as string,
+      frameIndex: Number(ref[4]),
+      frameHash: a.editBaseFrameHash as Edit["mask"],
+    };
+  } else if (jobBase)
     base = {
       kind: "job",
       jobId: a.editBaseJob as string,
@@ -807,11 +846,21 @@ const OPS: Record<string, OpDef> = {
       ...str("editBaseOutput"),
       ...str("editBaseImage"),
       ...str("editBaseDescription"),
+      ...str("editBasePublished"),
+      ...str("editBaseFrameHash"),
       ...str("editMask"),
       editStrength: { t: "number" },
       ...str("editCue"),
+      // Reference conditioning is not built (see REFERENCE_README); any value is refused.
+      reference: { t: "json" },
     },
     run: async (studio, a) => {
+      if (a.reference !== undefined)
+        return refuse(
+          "unavailable",
+          `reference conditioning is not available: the probe that tested it did not pass (${REFERENCE_README})`,
+          { readme: REFERENCE_README },
+        );
       const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
@@ -826,11 +875,22 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(built)) return built;
       const spec = built.spec;
       if (edit !== undefined && spec.edit !== undefined) {
+        // A published frame is read from the registry, which only such an edit needs.
+        const registry =
+          spec.edit.base.kind === "published"
+            ? studio.registryRoot()
+            : undefined;
+        if (registry !== undefined && isOutcome(registry)) return registry;
         // Checked with the files served from memory, so a refusal stores nothing.
         const checked = resolveEdit(spec.edit, spec.generated, {
           readJob: session.store.readJob,
           readBlob: (hash) =>
             edit.blobs.get(hash) ?? session.store.readBlob(hash),
+          ...(registry === undefined
+            ? {}
+            : {
+                readFrame: registryFrameReader(registry, content.vocabulary),
+              }),
         });
         if (!checked.ok)
           return refuse("invalid-request", "the edit is not valid", {

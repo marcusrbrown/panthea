@@ -27,7 +27,8 @@ use OpClass::{Long, Read, Write};
 
 /// Argument names are the session's own (`tools/studio/src/commands.ts`). The
 /// masked-edit fields of `generate` (`editBase*`, `editMask`, `editStrength`,
-/// `editCue`) name files by path and stay a CLI path. `finish` takes no files:
+/// `editCue`) name files by path and stay a CLI path; so does `reference`,
+/// which the session refuses as unavailable (the probe's NO-GO). `finish` takes no files:
 /// it takes back what the editor saved. It may name the sheet hash it was
 /// reviewed at, and carry the step it is recorded with (`method` and
 /// `description` are free text published with the asset, not places).
@@ -186,6 +187,8 @@ mod tests {
         "editBaseJob",
         "editBaseOutput",
         "editBaseDescription",
+        "editBasePublished",
+        "editBaseFrameHash",
         "editStrength",
         "editCue",
     ];
@@ -440,6 +443,9 @@ mod tests {
                 "editMask",
                 "editBaseImage",
                 "editBaseJob",
+                "editBasePublished",
+                "editBaseFrameHash",
+                "reference",
                 "editStrength",
                 "constructor",
                 "__proto__",

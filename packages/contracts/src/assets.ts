@@ -1398,6 +1398,18 @@ export function parseProvenance(
           `base output ${output} is not an output of job "${jobId}"`,
         );
     }
+    if (edit?.base.kind === "published") {
+      const { assetId, revision } = edit.base;
+      if (
+        !sourceAssets.value.some(
+          (ref) => ref.assetId === assetId && ref.revision === revision,
+        )
+      )
+        return fail(
+          `${at}.request.edit.base.revision`,
+          `the published base ${assetId} ${revision} is not among sourceAssets`,
+        );
+    }
     if (edit?.base.kind === "hand") {
       const { image } = edit.base;
       if (!handEdits.value.some((step) => step.hash === image))

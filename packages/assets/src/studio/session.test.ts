@@ -621,6 +621,7 @@ describe("public surface", () => {
       "planJobs",
       "readStudioBlob",
       "readStudioStatus",
+      "registryFrameReader",
       "reportOnly",
       "resolveAseprite",
       "resolveEdit",

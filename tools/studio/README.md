@@ -65,7 +65,7 @@ The environment is never passed to the server or the editor.
 | Command | What it does |
 | --- | --- |
 | `session` | Owns the studio root and serves the commands below as newline-delimited JSON (see Sessions) |
-| `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it. Add `--edit-mask <png> --edit-strength <n> --edit-cue <text>` with one base (`--edit-base-job <id> --edit-base-output <sha256>` or `--edit-base-image <png> --edit-base-description <text>`) to make it a masked img2img edit (see Edits) |
+| `generate` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: builds the request, queues it durably and runs it. Add `--edit-mask <png> --edit-strength <n> --edit-cue <text>` with one base (`--edit-base-job <id> --edit-base-output <sha256>`, `--edit-base-image <png> --edit-base-description <text>`, or `--edit-base-published <asset>@<revision>:<slot>#<frame> --edit-base-frame-hash <sha256>`) to make it a masked img2img edit (see Edits and Repair). `--reference <json>` asks for reference conditioning and is always refused as `unavailable` |
 | `reroll` | `--request-id --per-slot [--slot-key]`: more jobs for a request, continuing its seed sequence. With `--slot-key` only that slot gets the new jobs (an unknown slot key is `invalid-request` and queues nothing); without it every slot does |
 | `status`, `list <kind>`, `sheet` | Read the durable records without taking the writer lock. `status` also lists `conformSets`, the names of the config's conform sets (never their settings). It also lists `openEdits`, `[{"id","previewSheetHash"}]` for each open edit (`previewSheetHash` is `null` before its first save): a save imported by the watcher changes no count, so a host that polls `status` sees it by comparing this. In `list jobs`, a succeeded job carries `candidate`: `"done"`, `"needs-scale"`, or `null` when it has not been conformed (a candidate's id is its job's id) |
 | `resolve` | `--id --subject --kind --slots <json> [--batch --seed --style-note]`: the request `generate` would store and the generation spec built from it, from the content root alone. It takes no lock and writes nothing, so it works while another session owns the root. An omitted seed is drawn and reported; pass the reported seed to `generate` for the same request. An unknown subject, state or kind is the same refusal `generate` gives, with the valid alternatives. Edit files are not accepted. Reply: `{"id","request","spec"}` |
@@ -110,6 +110,43 @@ distilled guidance 1 (`SELECTED_PROFILE.edit`), the settings the art-edit probe'
 CLI runs used; plain generation keeps CFG 1 and sends no distilled guidance.
 Edit jobs take about twice as long as plain ones, and record `txt_cfg` and
 `distilled_guidance` in their settings.
+
+## Repair
+
+A masked edit can start from one frame of a published revision, which is how a
+frame that cannot be derived (a walk or act pose, or a west cell of a subject
+that declares an asymmetry) is redrawn. Name it
+`--edit-base-published <asset>@<revision>:<slot>#<frame>` (the revision is its
+64-character hash, the frame a zero-based index) with
+`--edit-base-frame-hash <sha256>`, the hash of the frame's cell as a PNG with
+the colour under alpha 0 zeroed. The hash is required: it fixes which pixels
+the edit started from, and a request naming another is refused. The session
+reads the frame from the registry (`registryRoot` in the config), checks the
+hash, and scales the cell by the whole generation factor with nearest pixels to
+make the base. A refusal names its reason: `missing-revision`, `missing-slot`,
+`missing-frame` or `frame-hash-mismatch` (which also prints the hash the frame
+really has). A base whose size is not a whole multiple of the request's is
+refused.
+
+The result is an ordinary `generated` candidate in its own working set: pick it,
+finish it in the editor, pack, review, approve and publish it like drawn art.
+Pack requires the base to be a frame of the revision now published for the asset
+it packs, records the base frame ref with the mask, strength and cue in the
+generation, lists that revision in `sourceAssets` and carries its licences. A
+repair candidate cannot share a working set with a derived slot; pack them in
+separate revisions.
+
+Mask and base files are paths and stay on the command line; the app does not
+take them.
+
+### Reference conditioning
+
+`--reference` is accepted so that a request that asks for it fails loudly. It
+returns `unavailable` before the studio lock is taken or anything is stored. The
+probe that tested reference-conditioned facing and pose on the pinned sd-server
+did not pass (NO-GO): facing failed, and the seated pose missed its ceiling by a
+hair. The result is in `tools/probes/art-reference/README.md`. The repair route
+is the masked edit above.
 
 ## One-shot and session
 

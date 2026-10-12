@@ -8,6 +8,9 @@
 // `strength`; white mask pixels are the ones the model may change.
 
 import type { GenerationEdit, Sha256 } from "@panthea/contracts";
+import type { RgbaImage } from "../conformance";
+import { encodeRgbaPng } from "../placeholder";
+import type { FrameRead, PublishedFrameRef } from "./frame-ref";
 import { decodePng } from "./png/decode";
 import type { AdapterInput, RequestResult } from "./request";
 import type { JobRecord, Read } from "./store";
@@ -15,6 +18,11 @@ import type { JobRecord, Read } from "./store";
 export interface EditSources {
   readJob(id: string): Read<JobRecord>;
   readBlob(hash: Sha256): Uint8Array | undefined;
+  /**
+   * Resolves a published-frame base from the registry (`registryFrameReader`).
+   * Absent where no registry is wired; a published base is then refused.
+   */
+  readFrame?(ref: PublishedFrameRef): FrameRead;
 }
 
 export interface ResolvedEdit {
@@ -27,6 +35,24 @@ const refuse = (field: string, message: string): RequestResult<never> => ({
   ok: false,
   error: { kind: "invalid-edit", field, message },
 });
+
+/** The cell enlarged by a whole factor with nearest pixels, the way a generation is scaled from its native cell. */
+function enlarge(image: RgbaImage, factor: number): Uint8Array {
+  const width = image.width * factor;
+  const height = image.height * factor;
+  const rgba = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1)
+      rgba.set(
+        image.rgba.subarray(
+          (Math.floor(y / factor) * image.width + Math.floor(x / factor)) * 4,
+          (Math.floor(y / factor) * image.width + Math.floor(x / factor)) * 4 +
+            4,
+        ),
+        (y * width + x) * 4,
+      );
+  return encodeRgbaPng(rgba, width, height);
+}
 
 /**
  * Checks an edit against the store: strength in (0, 1], a base (a succeeded
@@ -47,14 +73,30 @@ export function resolveEdit(
     return refuse("strength", "strength must be above 0 and at most 1");
 
   const { base: source } = edit;
-  let baseHash: Sha256;
-  // Reading a registry frame arrives with the repair route (the plan's U6 reader in EditSources).
-  if (source.kind === "published")
-    return refuse(
-      "base",
-      "a published-frame base cannot be read yet: no registry frame reader is wired",
-    );
-  if (source.kind === "job") {
+  let baseHash: Sha256 | undefined;
+  let baseBytes: Uint8Array | undefined;
+  if (source.kind === "published") {
+    if (sources.readFrame === undefined)
+      return refuse(
+        "base",
+        "a published-frame base cannot be read: no registry is wired to this edit",
+      );
+    const frame = sources.readFrame(source);
+    if (!frame.ok) return refuse("base", frame.message);
+    // The generation is the native cell enlarged by a whole factor, the same
+    // way a candidate is scaled back down; any other size would resample.
+    const factor = size.w / frame.image.width;
+    if (
+      !Number.isInteger(factor) ||
+      factor < 1 ||
+      size.h !== frame.image.height * factor
+    )
+      return refuse(
+        "base",
+        `the published frame is ${frame.image.width}x${frame.image.height}, which does not scale by a whole factor to the ${size.w}x${size.h} the request generates`,
+      );
+    baseBytes = enlarge(frame.image, factor);
+  } else if (source.kind === "job") {
     const found = sources.readJob(source.jobId);
     if (found.kind !== "found")
       return refuse("base", `there is no readable job ${source.jobId}`);
@@ -72,9 +114,11 @@ export function resolveEdit(
     baseHash = source.output;
   } else baseHash = source.image;
 
-  const baseBytes = sources.readBlob(baseHash);
-  if (baseBytes === undefined)
-    return refuse("base", `the base image ${baseHash} is missing`);
+  if (baseBytes === undefined) {
+    baseBytes = sources.readBlob(baseHash as Sha256);
+    if (baseBytes === undefined)
+      return refuse("base", `the base image ${baseHash} is missing`);
+  }
   const base = decodePng(baseBytes);
   if (!base.ok) return refuse("base", base.message);
   if (base.image.width !== size.w || base.image.height !== size.h)

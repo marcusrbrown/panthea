@@ -21,6 +21,7 @@ import { join } from "node:path";
 import type { GenerationEdit, ImageOutput } from "@panthea/contracts";
 import type { RgbaImage } from "../conformance";
 import { editSettings, imgGenBody, resolveEdit } from "./edit";
+import { registryFrameReader } from "./frame-ref";
 import { decodePng } from "./png/decode";
 import { SELECTED_PROFILE, type SelectedProfile } from "./provider";
 import { adapterInput, buildSpec, type StudioContent } from "./request";
@@ -42,6 +43,8 @@ export interface RuntimeConfig {
   /** Loopback port the owned server listens on; it must be free. */
   readonly port: number;
   readonly content: StudioContent;
+  /** The committed registry a masked edit's published frame is read from; without it such an edit cannot run. */
+  readonly registryRoot?: string;
   readonly deadlines: RuntimeDeadlines;
   readonly pollMs: number;
   readonly profile?: SelectedProfile;
@@ -753,6 +756,14 @@ export function openRuntime(
       resolved = resolveEdit(spec.value.edit, spec.value.generated, {
         readJob: session.store.readJob,
         readBlob: session.store.readBlob,
+        ...(config.registryRoot === undefined
+          ? {}
+          : {
+              readFrame: registryFrameReader(
+                config.registryRoot,
+                config.content.vocabulary,
+              ),
+            }),
       });
       if (!resolved.ok)
         return fail(`the edit cannot run: ${JSON.stringify(resolved.error)}`);
