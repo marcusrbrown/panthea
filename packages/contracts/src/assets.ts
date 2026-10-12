@@ -552,6 +552,12 @@ export interface GenerationRef {
 export interface GeneratedProvenance extends ProvenanceCommon {
   readonly method: "generated";
   readonly generations: readonly GenerationRef[];
+  /**
+   * The steps of the derived cells and realm variants this revision carries
+   * from its prior revision, so a drawn or repaired revision does not lose their
+   * lineage. Absent when it carries none; when present, non-empty.
+   */
+  readonly steps?: readonly DerivedStep[];
 }
 
 export interface HandProvenance extends ProvenanceCommon {
@@ -1228,6 +1234,42 @@ const COMMON_PROVENANCE_KEYS = [
 
 const PROVENANCE_METHODS = ["generated", "hand", "derived"] as const;
 
+/**
+ * The steps of a provenance record: each a valid step, one per slot (a palette
+ * swap also names its realm, so a slot keeps its own step and one swap per
+ * realm), each with its source among the record's source assets.
+ */
+function parseStepList(
+  value: unknown,
+  path: string,
+  sourceAssets: readonly AssetRevisionRef[],
+): ParseResult<readonly DerivedStep[]> {
+  const steps = parseArray(value, `${path}.steps`, parseDerivedStep);
+  if (!steps.ok) return steps;
+  const duplicateSlot = uniqueBy(
+    steps.value,
+    (step) =>
+      step.recipe === "palette-swap"
+        ? `palette-swap:${String(step.params.targetFamily)}:${step.outputSlot}`
+        : step.outputSlot,
+    `${path}.steps`,
+  );
+  if (duplicateSlot) return duplicateSlot;
+  for (const [index, step] of steps.value.entries()) {
+    const { assetId, revision } = step.source;
+    if (
+      !sourceAssets.some(
+        (ref) => ref.assetId === assetId && ref.revision === revision,
+      )
+    )
+      return fail(
+        `${path}.steps[${index}].source`,
+        `the step's source ${assetId} ${revision} is not among sourceAssets`,
+      );
+  }
+  return ok(steps.value);
+}
+
 export function parseProvenance(
   input: unknown,
   path = "provenance",
@@ -1236,7 +1278,7 @@ export function parseProvenance(
   const method = parseEnum(input.method, `${path}.method`, PROVENANCE_METHODS);
   if (!method.ok) return { ...method, reason: "unknown-kind" };
   const extraKeys = {
-    generated: ["generations"],
+    generated: ["generations", "steps"],
     hand: ["editor"],
     derived: ["operation", "runtime", "steps", "resultHashes"],
   }[method.value];
@@ -1328,33 +1370,10 @@ export function parseProvenance(
     }
     const operation = parseString(input.operation, `${path}.operation`);
     if (!operation.ok) return operation;
-    const steps = parseArray(input.steps, `${path}.steps`, parseDerivedStep);
+    const steps = parseStepList(input.steps, path, sourceAssets.value);
     if (!steps.ok) return steps;
     if (steps.value.length === 0)
       return fail(`${path}.steps`, "a derived asset records at least one step");
-    // A slot has one step, except that a palette swap also records the realm it
-    // swaps into: a slot keeps its own step and one swap step per realm.
-    const duplicateSlot = uniqueBy(
-      steps.value,
-      (step) =>
-        step.recipe === "palette-swap"
-          ? `palette-swap:${String(step.params.targetFamily)}:${step.outputSlot}`
-          : step.outputSlot,
-      `${path}.steps`,
-    );
-    if (duplicateSlot) return duplicateSlot;
-    for (const [index, step] of steps.value.entries()) {
-      const { assetId, revision } = step.source;
-      if (
-        !sourceAssets.value.some(
-          (ref) => ref.assetId === assetId && ref.revision === revision,
-        )
-      )
-        return fail(
-          `${path}.steps[${index}].source`,
-          `the step's source ${assetId} ${revision} is not among sourceAssets`,
-        );
-    }
     return ok({
       method: "derived",
       operation: operation.value,
@@ -1379,6 +1398,14 @@ export function parseProvenance(
     `${path}.generations`,
   );
   if (duplicate) return duplicate;
+  let carried: readonly DerivedStep[] | undefined;
+  if (input.steps !== undefined) {
+    const steps = parseStepList(input.steps, path, sourceAssets.value);
+    if (!steps.ok) return steps;
+    if (steps.value.length === 0)
+      return fail(`${path}.steps`, "expected at least one step, or none");
+    carried = steps.value;
+  }
   for (const [index, generation] of generations.value.entries()) {
     const at = `${path}.generations[${index}]`;
     const job = relatedJobs.value.find((ref) => ref.jobId === generation.jobId);
@@ -1465,6 +1492,7 @@ export function parseProvenance(
   return ok({
     method: "generated",
     generations: generations.value,
+    ...(carried === undefined ? {} : { steps: carried }),
     ...common,
   });
 }
@@ -2221,10 +2249,15 @@ export function parseAssetManifest(
     }
   };
   const manifest = body();
-  if (!manifest.ok || manifest.value.provenance.method !== "derived")
-    return manifest;
+  if (!manifest.ok) return manifest;
+  const recorded = manifest.value.provenance;
+  const carried =
+    recorded.method === "derived" || recorded.method === "generated"
+      ? recorded.steps
+      : undefined;
+  if (carried === undefined) return manifest;
   const slots = new Set(slotKeys(manifest.value));
-  for (const [index, step] of manifest.value.provenance.steps.entries()) {
+  for (const [index, step] of carried.entries()) {
     if (!slots.has(step.outputSlot)) {
       return fail(
         `${path}.provenance.steps[${index}].outputSlot`,

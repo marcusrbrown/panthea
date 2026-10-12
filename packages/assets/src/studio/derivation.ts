@@ -537,6 +537,14 @@ function atlasFrames(
   }));
 }
 
+/** The derivation steps a manifest records: its own (derived) or those it carries (generated). */
+export function stepsOf(manifest: AssetManifest): readonly DerivedStep[] {
+  const { provenance } = manifest;
+  return provenance.method === "derived" || provenance.method === "generated"
+    ? (provenance.steps ?? [])
+    : [];
+}
+
 export interface DerivationAudit {
   readonly manifest: AssetManifest;
   /** The packed atlas the manifest names. */
@@ -563,55 +571,52 @@ export function auditDerivation(audit: DerivationAudit): string | undefined {
   const packed = decodePng(audit.atlas);
   if (!packed.ok) return "the packed atlas cannot be decoded";
 
-  if (manifest.provenance.method === "derived") {
-    for (const step of manifest.provenance.steps) {
-      const named = `derived step ${step.recipe} -> ${step.outputSlot}`;
-      const source = audit.sources.get(step.source.revision);
-      if (source === undefined || source.manifest.id !== step.source.assetId)
-        return `${named}: its source revision ${step.source.assetId} ${step.source.revision} is not one of the manifest's source assets`;
-      const again = recomputeStep(step, {
-        source,
-        content: audit.content,
-        subject: audit.subject,
-      });
-      if (!again.ok) return `${named}: ${again.message}`;
-      const made = again.steps[0];
-      if (made === undefined || !sameStep(made, step))
-        return `${named}: recomputing it from its published source gives a different step (result ${made?.resultHash ?? "none"}, recorded ${step.resultHash})`;
-      // A palette swap's pixels are the variant's, which is checked below as the packed
-      // atlas recoloured under the variant's map; the map is tied to this step there. A
-      // carried swap describes the source it was made from, not the slot as it is now.
-      if (step.recipe === "palette-swap") continue;
-      const slot = again.slots[0];
-      if (slot === undefined) return `${named}: the recipe made no slot`;
-      const held = atlasFrames(manifest, packed.image, step.outputSlot);
-      if (held === undefined || held.length !== slot.frames.length)
-        return `${named}: the manifest does not hold the frames the recipe makes`;
-      for (const [index, frame] of slot.frames.entries()) {
-        const have = held[index];
-        if (
-          have === undefined ||
-          have.durationMs !== frame.durationMs ||
-          have.rgba.length !== frame.image.rgba.length ||
-          have.rgba.some((v, i) => v !== frame.image.rgba[i])
-        )
-          return `${named}: frame ${index} is not what the recipe makes from its source`;
-      }
-      const animation = manifest.animations.find(
-        (a) => slotKeyOf(a) === step.outputSlot,
-      );
-      if (animation?.loopStart !== slot.loopStart)
-        return `${named}: the loop start is not what the recipe makes`;
+  const recorded = stepsOf(manifest);
+  for (const step of recorded) {
+    const named = `derived step ${step.recipe} -> ${step.outputSlot}`;
+    const source = audit.sources.get(step.source.revision);
+    if (source === undefined || source.manifest.id !== step.source.assetId)
+      return `${named}: its source revision ${step.source.assetId} ${step.source.revision} is not one of the manifest's source assets`;
+    const again = recomputeStep(step, {
+      source,
+      content: audit.content,
+      subject: audit.subject,
+    });
+    if (!again.ok) return `${named}: ${again.message}`;
+    const made = again.steps[0];
+    if (made === undefined || !sameStep(made, step))
+      return `${named}: recomputing it from its published source gives a different step (result ${made?.resultHash ?? "none"}, recorded ${step.resultHash})`;
+    // A palette swap's pixels are the variant's, which is checked below as the packed
+    // atlas recoloured under the variant's map; the map is tied to this step there. A
+    // carried swap describes the source it was made from, not the slot as it is now.
+    if (step.recipe === "palette-swap") continue;
+    const slot = again.slots[0];
+    if (slot === undefined) return `${named}: the recipe made no slot`;
+    const held = atlasFrames(manifest, packed.image, step.outputSlot);
+    if (held === undefined || held.length !== slot.frames.length)
+      return `${named}: the manifest does not hold the frames the recipe makes`;
+    for (const [index, frame] of slot.frames.entries()) {
+      const have = held[index];
+      if (
+        have === undefined ||
+        have.durationMs !== frame.durationMs ||
+        have.rgba.length !== frame.image.rgba.length ||
+        have.rgba.some((v, i) => v !== frame.image.rgba[i])
+      )
+        return `${named}: frame ${index} is not what the recipe makes from its source`;
     }
+    const animation = manifest.animations.find(
+      (a) => slotKeyOf(a) === step.outputSlot,
+    );
+    if (animation?.loopStart !== slot.loopStart)
+      return `${named}: the loop start is not what the recipe makes`;
   }
 
   const ramps = rampIndex(audit.content.palette);
   for (const variant of manifest.realmVariants) {
     const named = `the ${variant.paletteFamily} realm variant`;
     // The variant's map is the map of the palette-swap step that records it.
-    const steps =
-      manifest.provenance.method === "derived" ? manifest.provenance.steps : [];
-    const step = swapStepFor(steps, variant.paletteFamily);
+    const step = swapStepFor(recorded, variant.paletteFamily);
     if (step === undefined) return `${named}: no palette-swap step records it`;
     const expected = swapMapOf(step, audit.content.palette);
     if (!expected.ok) return `${named}: ${expected.message}`;

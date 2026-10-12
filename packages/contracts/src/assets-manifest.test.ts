@@ -843,6 +843,80 @@ describe("derived manifests", () => {
     },
     /steps\[2\]/,
   );
+  describe("a generated manifest that carries derived cells", () => {
+    const carrying = (steps: unknown[] = [derivedStep("idle/south")]) => ({
+      ...generated(),
+      steps,
+      sourceAssets: [{ assetId: "placeholder-zeus", revision: H("e") }],
+    });
+    const carriedRejects = (
+      label: string,
+      mutate: (provenance: Mutable) => void,
+      path: RegExp,
+    ) =>
+      rejects(
+        label,
+        () => withProvenance(carrying()),
+        (v) => mutate(v.provenance),
+        path,
+      );
+
+    it("parses with steps, keeps method generated, and round-trips canonically", () => {
+      const parsed = parseAssetManifest(withProvenance(carrying()), vocab);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok || parsed.value.provenance.method !== "generated") return;
+      expect(parsed.value.provenance.steps?.map((s) => s.outputSlot)).toEqual([
+        "idle/south",
+      ]);
+      const text = canonicalManifestText(parsed.value);
+      const again = parseAssetManifest(JSON.parse(text), vocab);
+      expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+    });
+
+    it("parses without steps exactly as before, and writes no steps key", () => {
+      const parsed = parseAssetManifest(withProvenance(generated()), vocab);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      expect(canonicalManifestText(parsed.value)).not.toContain('"steps"');
+    });
+
+    carriedRejects(
+      "an empty steps list",
+      (p) => {
+        p.steps = [];
+      },
+      /steps/,
+    );
+    carriedRejects(
+      "two steps for one slot",
+      (p) => {
+        p.steps.push(derivedStep("idle/south", H("c")));
+      },
+      /steps\[1\]/,
+    );
+    carriedRejects(
+      "a step whose source is not among the source assets",
+      (p) => {
+        p.steps[0].source.revision = H("d");
+      },
+      /steps\[0\]\.source/,
+    );
+    carriedRejects(
+      "a __proto__ key in a step's params",
+      (p) => {
+        p.steps[0].params = JSON.parse('{"__proto__": {"dy": 1}}');
+      },
+      /steps\[0\]\.params\.__proto__/,
+    );
+    carriedRejects(
+      "a step for a slot the manifest does not hold",
+      (p) => {
+        p.steps = [derivedStep("walk/south")];
+      },
+      /steps\[0\]\.outputSlot/,
+    );
+  });
+
   derivedRejects(
     "a source asset that is absent",
     (p) => {

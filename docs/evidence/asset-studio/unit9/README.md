@@ -11,11 +11,12 @@ Plan unit: [derivation and repair plan](../../../plans/2026-10-11-001-feat-studi
 | A real in-process derive → pack → approve → publish on a symmetric fixture, into an isolated registry | `packages/assets/src/studio/derivation.test.ts`, "a mirrored west packs, approves and publishes with steps[], and deriving again returns the same working set" |
 | Running a derivation twice gives identical bytes (AE4) | `derive.golden.test.ts` (committed PNG and result hashes, byte-identical on a second run; a symmetric figure mirrors to its own bytes) and the first test above |
 | Recipe-only regeneration is byte-identical (R15) | `derivation.test.ts`, "R15: with the derived blobs deleted, every step regenerates from the manifest and its published source to the same bytes" |
-| A mirror of Zeus is refused, naming the declared feature | `derivation.test.ts`, "a mirror of Zeus is refused: the subject declares a bolt hand", the CLI, and the window (below) |
+| A mirror of Zeus is refused, naming the declared feature | `derivation.test.ts`, "a mirror of Zeus is refused: the subject declares a bolt hand"; on the command line `tools/studio/src/repair.test.ts`, "a mirror of the published Zeus idle/east is refused as asymmetric, naming the declared feature"; and the window (below) |
 | A mirror approved before a subject declared an asymmetry is refused at the next publish | `derivation.test.ts`, "a mirror approved before the subject declared an asymmetry is refused at publish, naming the step" |
 | A realm variant is regenerated from the new source atlas on a later revision, and a tampered variant is refused | `derivation.test.ts`, "a palette swap becomes a realm variant with its own atlas in the registry; a later revision regenerates it from the new atlas" and "a tampered variant atlas is refused at publish, whether forged to match its hash or overwritten" |
 | A derived slot that fails conformance blocks plain approve; a hand-edited derived slot becomes a hand step | `derivation.test.ts` (two cases of those names) |
-| A set that mixes a derived slot with a generated one is refused at pack | `derivation.test.ts` |
+| A set that mixes a new derived slot with a new generated slot is refused at pack | `derivation.test.ts` |
+| A generated revision (a new drawn slot, or a repair) that keeps derived cells or realm variants records their steps in `provenance.steps`, lists their sources in `sourceAssets`, and publish recomputes them; a carried mirror that has gone stale fails the mirror check, and one from before an asymmetry declaration is refused at publish | `derivation.test.ts`, "a generated revision carries the steps of the derived cells it keeps"; `assets-manifest.test.ts`, "a generated manifest that carries derived cells" |
 | Pack writes the subject's declared asymmetry, and does not carry the prior revision's | `derivation.test.ts` |
 | Canon is untouched: the three published `zeus-sprite` manifests and the portrait still parse byte for byte, and `validate:assets` passes | `packages/contracts/src/assets-manifest.test.ts`, `tools/content` `validate:assets` |
 
@@ -35,13 +36,13 @@ The bob recipe was run first against the published `zeus-sprite` idle/south cell
 A frame that cannot be derived (a walk or act pose, or a west cell of a subject with a declared asymmetry) is redrawn through a masked edit whose base is one frame of a published revision.
 
 - The frame is read from the registry in Node, never by the webview, and must match a recorded hash. A wrong hash, a missing revision, a missing slot and a missing frame are each refused with a named reason (`packages/assets/src/studio/repair.test.ts`; the flags and refusals on the command line in `tools/studio/src/repair.test.ts`).
-- The generation records the base frame ref with the mask, strength and cue. Pack requires the base to be a frame of the revision now published for that asset, lists it in `sourceAssets` and carries its licences.
-- The output is an ordinary generated candidate in its own working set. It packs on its own, approves and publishes like drawn art, and is refused when mixed with a derived slot (`repair.test.ts`).
+- The generation records the base frame ref with the mask, strength and cue. Pack requires the base to be a frame of the revision now published for that asset, lists it in `sourceAssets` and carries its licences. If that revision holds derived cells or realm variants, the repaired revision stays `generated` and records their steps (see the table above).
+- The output is an ordinary generated candidate in its own working set. It packs on its own, approves and publishes like drawn art, and is refused when mixed with a new derived slot (`repair.test.ts`).
 - Mask and base files stay on the command line (`tools/studio/README.md`, "Repair"); the app does not take them.
 
 ## Reference conditioning: NO-GO
 
-The probe of reference-conditioned facing and pose on the pinned runtime came back NO-GO ([`tools/probes/art-reference/README.md`](../../../../tools/probes/art-reference/README.md), "Verdict"): facing failed with one or two references, and the seated pose missed its preregistered ceiling (0.404 against 0.40). Reference conditioning is therefore not wired. A request that asks for it (`generate --reference`) returns `unavailable`, naming that README, before the writer lock is taken (`tools/studio/src/repair.test.ts`). R14's generated route is partial.
+The probe of reference-conditioned facing and pose on the pinned runtime came back NO-GO ([`tools/probes/art-reference/README.md`](../../../../tools/probes/art-reference/README.md), "Verdict"): facing failed with one or two references, and the seated pose missed its preregistered ceiling (0.404 against 0.40). Reference conditioning is therefore not wired. A request that asks for it (`generate --reference`) returns `unavailable`, naming that README, before the writer lock is taken: `tools/studio/src/repair.test.ts` holds the root with `heldBy` and expects `unavailable` with no lock attempt, while the same call without `--reference` meets the lock (`busy`). R14's generated route is partial.
 
 ## Packaged studio window
 
@@ -54,18 +55,18 @@ The packaged `panthea-studio.app` (release bundle, built from the tree this unit
 
 | File | Shows |
 | --- | --- |
-| `derive-panel-mirror.png` | The Derive panel on the published fixture sprite with "Mirror idle/east to idle/west" selected |
-| `derived-draft-side-by-side.png` | The draft packed from that derivation (the report is `pass`), with the published source (idle, east) beside the derived draft (idle, west) |
-| `zeus-mirror-refused.png` | The same action on the Zeus record: the message reads `the subject declares an asymmetry ("bolt hand"), so west is drawn, not mirrored` |
-| `palette-swap-choice.png` | "Palette swap to underworld" selected on the fixture sprite |
-| `palette-swap-derived.png` | The result of that Derive: `Derived underworld into working set …. Pack it to review the result.` |
+| `derive-panel.png` | The Derive panel on the published fixture sprite: the explanation, the Derivation choice and the Derive button |
+| `derived-draft-side-by-side.png` | The draft packed from a mirror derivation (the report is `pass`), with the published source (idle, east) beside the derived draft (idle, west), each with its own state and direction readout |
+| `zeus-mirror-refused.png` | The mirror action on the Zeus record: the refusal appears in a box under the Derive button and reads `the subject declares an asymmetry ("bolt hand"), so west is drawn, not mirrored` |
 
-Image sizes (bytes): `derive-panel-mirror` 45,245; `derived-draft-side-by-side` 62,264; `zeus-mirror-refused` 60,276; `palette-swap-choice` 50,090; `palette-swap-derived` 60,826. Total 278,701.
+These three images were captured after the Derive panel polish. They replace an earlier set from the first sitting, in which the Derive result appeared in the strip at the top of the page; that placement was changed and the earlier images (including the palette-swap choice and result) are no longer in this folder. Palette swap is covered here by the in-process tests above only; the polished window was not driven through it. Each image is one window crop, reduced to a width of at most 560 pixels.
+
+Image sizes (bytes): `derive-panel` 88,955; `derived-draft-side-by-side` 90,313; `zeus-mirror-refused` 96,421. Total 275,689.
 
 What the window showed that the tests do not say:
 
-- The Derive panel offers mirror only for an east slot with no west, bob only for idle, and a palette swap to each realm but the asset's own. It was seen with a fixture sprite and a Zeus record.
-- A refusal appears in the page's notice strip at the top of the window, not beside the Derive button. After pressing Derive on a record low in the page the owner has to scroll up to read it.
+- The Derive panel offers mirror only for an east slot with no west, bob only for idle, and a palette swap to each realm family except the asset's own. It was seen with a fixture sprite and a Zeus record.
+- Derive results appear next to the Derive control, in a box under the button, so the owner does not scroll to read a refusal or a success. The `zeus-mirror-refused.png` capture shows it.
 - The preview scene is small. The east-to-west flip of the fixture figure cannot be read at that size; the flip is proven by the byte-level tests above, not by the screenshot.
 - Before a derived working set is packed, "Open editor" is disabled ("Pick a candidate before opening this set in the editor") because a derived slot is neither a pick nor an authored frame.
 

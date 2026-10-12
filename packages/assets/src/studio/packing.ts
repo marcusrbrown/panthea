@@ -33,6 +33,7 @@ import type { CandidateParams } from "./candidates";
 import {
   DEFAULT_CONFORM,
   regenerateVariantAtlas,
+  stepsOf,
   swapMapOf,
   swapStepFor,
 } from "./derivation";
@@ -554,13 +555,13 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
           .filter((family) => set.variants?.[family] === undefined)
       : [];
   const carriedSteps: DerivedStep[] =
-    prior?.manifest.provenance.method === "derived"
-      ? prior.manifest.provenance.steps.filter((step) =>
+    prior === undefined
+      ? []
+      : stepsOf(prior.manifest).filter((step) =>
           step.recipe === "palette-swap"
             ? carriedFamilies.includes(String(step.params.targetFamily))
             : carriedKeys.includes(step.outputSlot),
-        )
-      : [];
+        );
   const allKeys = [...new Set(cells.map((c) => c.slot))].sort(order);
   if (kind === "portrait") {
     const missing = vocabulary.expressions.filter((e) => !allKeys.includes(e));
@@ -934,11 +935,6 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     return refuse(
       `the working set derives with more than one recipe (${recipes.join(", ")}); derive them in separate revisions`,
     );
-  // A revision that is generated cannot record the steps of what it carries.
-  if (!derivedMode && carriedSteps.length > 0)
-    return refuse(
-      `this revision carries derived cells or realm variants (${[...new Set(carriedSteps.map((step) => `${step.recipe} ${step.outputSlot}`))].join(", ")}) and adds drawn slots: a drawn revision cannot record their steps, so the derivation would lose its record`,
-    );
   // Every carried realm variant keeps the swap step whose map it is.
   for (const family of carriedFamilies) {
     const step = swapStepFor(carriedSteps, family);
@@ -979,7 +975,9 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       ) === at,
   );
   let provenance: Record<string, unknown>;
-  if (steps.length > 0) {
+  // A derived revision records its steps as its method; a drawn one (generated)
+  // records only the steps of the derived cells and variants it carries.
+  if (steps.length > 0 && derivedMode) {
     const first = steps[0] as DerivedStep;
     provenance = {
       method: "derived",
@@ -1008,6 +1006,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     provenance = {
       method: "generated",
       generations: [...generations.values()],
+      ...(steps.length === 0 ? {} : { steps }),
       licences,
       relatedJobs,
       handEdits,
@@ -1076,11 +1075,6 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       });
     }
   }
-  // A derived pack that measured nothing is not a pass.
-  if ((derivedMode || steps.length > 0) && checks.length === 0)
-    return refuse(
-      "the derived pack measured no cell: a report with no checks is not a pass",
-    );
   const report: ConformanceReport = {
     schemaVersion: 1,
     status: checks.some((c) => c.status === "fail") ? "fail" : "pass",

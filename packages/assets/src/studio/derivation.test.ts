@@ -744,6 +744,183 @@ describe("derive through pack and publish", () => {
     expect(refused.message).toContain("mixes derived slots");
   });
 
+  describe("a generated revision carries the steps of the derived cells it keeps", () => {
+    /** A newly drawn idle/north in its own working set, finished by hand: a generated slot. */
+    function drawNorth(rig: AssetRig, content: StudioContent) {
+      const [job] = runSlots(rig, "zeus-north", "sprite", [
+        { state: "idle", direction: "north" },
+      ]);
+      must(rig.session.openWorkingSet("north", "zeus-north", content));
+      must(rig.session.pick("north", job as string));
+      finishSheet(rig, "north-edit", "north", cell, [
+        {
+          slot: "idle/north",
+          frames: [0, 1, 2, 3].map((i) => paintFigure(content, cell, i + 2)),
+          durations: [333, 167, 333, 167],
+        },
+      ]);
+    }
+
+    test("a new generated slot beside a derived mirror west packs and publishes, records the mirror step, and publish recomputes it", () => {
+      const rig = assetRig();
+      const content = symmetric(rig.content);
+      const r0 = publishEast(rig, content);
+      const mirror = must(
+        rig.session.derive(
+          { asset: ASSET, op: "mirror", from: "idle/east" },
+          content,
+          rig.registryRoot,
+        ),
+      );
+      const r1 = release(rig, content, mirror.workingSetId, "west-pack");
+      drawNorth(rig, content);
+
+      const r2 = release(rig, content, "north", "north-pack");
+
+      const manifest = published(rig, r2);
+      expect(manifest.provenance.method).toBe("generated");
+      if (manifest.provenance.method !== "generated") return;
+      expect(
+        manifest.provenance.steps?.map((s) => `${s.recipe}:${s.outputSlot}`),
+      ).toEqual(["mirror:idle/west"]);
+      expect(manifest.provenance.sourceAssets).toContainEqual({
+        assetId: ASSET as never,
+        revision: r0,
+      });
+      expect(manifest.provenance.sourceAssets).toContainEqual({
+        assetId: ASSET as never,
+        revision: r1,
+      });
+      if (manifest.kind !== "sprite") throw new Error("not a sprite");
+      expect(
+        manifest.animations.map((a) => `${a.state}/${a.direction}`),
+      ).toEqual(
+        ["idle/north", "idle/east", "idle/west"].sort(
+          (a, b) =>
+            ["idle/south", "idle/north", "idle/east", "idle/west"].indexOf(a) -
+            ["idle/south", "idle/north", "idle/east", "idle/west"].indexOf(b),
+        ),
+      );
+    });
+
+    test("publish recomputes the carried step exactly as for a derived revision: a mirror from before an asymmetry declaration is refused", () => {
+      const rig = assetRig();
+      const content = symmetric(rig.content);
+      publishEast(rig, content);
+      const mirror = must(
+        rig.session.derive(
+          { asset: ASSET, op: "mirror", from: "idle/east" },
+          content,
+          rig.registryRoot,
+        ),
+      );
+      release(rig, content, mirror.workingSetId, "west-pack");
+      drawNorth(rig, content);
+      must(
+        rig.session.pack(
+          packInput({ id: "north-pack", workingSetId: "north" }),
+          content,
+          rig.palette,
+          rig.registryRoot,
+        ),
+      );
+      must(approveDraft(rig, content, "north-pack"));
+
+      const refused = rig.session.publishAsset(
+        "north-pack",
+        rig.content,
+        rig.palette,
+        rig.registryRoot,
+      );
+
+      expect(refused.ok).toBe(false);
+      if (refused.ok) return;
+      expect(refused.message).toContain("derived step mirror -> idle/west");
+      expect(refused.message).toContain("bolt hand");
+    });
+
+    test("a carried realm variant keeps its swap step on a generated revision, and publish recomputes it", () => {
+      const rig = realPaletteRig();
+      const content = symmetric(rig.content);
+      publishEast(rig, content);
+      const swap = must(
+        rig.session.derive(
+          {
+            asset: ASSET,
+            op: "palette-swap",
+            from: "olympus",
+            to: "underworld",
+          },
+          content,
+          rig.registryRoot,
+        ),
+      );
+      release(rig, content, swap.workingSetId, "swap-pack");
+      drawNorth(rig, content);
+
+      const r2 = release(rig, content, "north", "north-pack");
+
+      const manifest = published(rig, r2);
+      expect(manifest.provenance.method).toBe("generated");
+      if (manifest.provenance.method !== "generated") return;
+      if (manifest.kind !== "sprite") throw new Error("not a sprite");
+      expect(manifest.realmVariants.map((v) => v.paletteFamily)).toEqual([
+        "underworld",
+      ]);
+      expect(
+        manifest.provenance.steps?.map((s) => `${s.recipe}:${s.outputSlot}`),
+      ).toEqual(["palette-swap:idle/east"]);
+      expect(manifest.provenance.steps?.[0]?.params.targetFamily).toBe(
+        "underworld",
+      );
+    });
+
+    test("a repair of idle/east leaves the carried mirror west stale: the mirror check fails and plain approve is blocked", () => {
+      const rig = assetRig();
+      const content = symmetric(rig.content);
+      publishEast(rig, content);
+      const mirror = must(
+        rig.session.derive(
+          { asset: ASSET, op: "mirror", from: "idle/east" },
+          content,
+          rig.registryRoot,
+        ),
+      );
+      release(rig, content, mirror.workingSetId, "west-pack");
+      const [job] = runSlots(rig, "zeus-east-again", "sprite", [
+        { state: "idle", direction: "east" },
+      ]);
+      must(rig.session.openWorkingSet("again", "zeus-east-again", content));
+      must(rig.session.pick("again", job as string));
+      finishSheet(rig, "again-edit", "again", cell, [
+        {
+          slot: "idle/east",
+          frames: [5, 6, 7, 8].map((i) => paintFigure(content, cell, i)),
+          durations: [333, 167, 333, 167],
+        },
+      ]);
+
+      const packed = must(
+        rig.session.pack(
+          packInput({ id: "again-pack", workingSetId: "again" }),
+          content,
+          rig.palette,
+          rig.registryRoot,
+        ),
+      );
+
+      const record = packed.asset.record;
+      if (record.state !== "draft") throw new Error("not a draft");
+      expect(record.report?.status).toBe("fail");
+      expect(
+        (record.report?.checks ?? []).some(
+          (c) => c.check.endsWith(":mirror") && c.status === "fail",
+        ),
+      ).toBe(true);
+      expect(approveDraft(rig, content, "again-pack").ok).toBe(false);
+    });
+  });
+
   test("a derivation made from a revision that is no longer published is refused at pack: derive again", () => {
     const rig = assetRig();
     const content = symmetric(rig.content);

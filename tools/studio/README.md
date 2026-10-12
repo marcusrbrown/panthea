@@ -133,8 +133,11 @@ finish it in the editor, pack, review, approve and publish it like drawn art.
 Pack requires the base to be a frame of the revision now published for the asset
 it packs, records the base frame ref with the mask, strength and cue in the
 generation, lists that revision in `sourceAssets` and carries its licences. A
-repair candidate cannot share a working set with a derived slot; pack them in
-separate revisions.
+repair candidate cannot share a working set with a new derived slot; pack them in
+separate revisions. A repair of an asset whose published revision holds derived
+cells or realm variants stays `generated` and carries their steps in
+`provenance.steps`, so the derivation is not lost; publish recomputes those steps
+like any derived revision's.
 
 Mask and base files are paths and stay on the command line; the app does not
 take them.
