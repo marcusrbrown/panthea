@@ -183,12 +183,12 @@ Product IDs: X02, W01, U06, U07, U08. Origin IDs from `docs/brainstorms/2026-10-
 
 ## Key Technical Decisions
 
-- **Blender is a second engine in the existing runtime, owned by the sidecar.** The drain picks the engine from the job's provider. Only one engine is live at a time: `sd-server` stops before a render batch and restarts after, which bounds memory on 16 GiB (U1 measures both alone and coexisting). An unavailable engine fails only jobs whose provider matches; the drain continues for other kinds. Rust lifecycle code is unchanged; the `schema.rs` op table gains fields.
+- **Blender is a second engine in the existing runtime, owned by the sidecar.** The drain picks the engine from the job's provider. Only one engine is live at a time: `sd-server` stops before a render batch and restarts after, which bounds memory on 16 GiB. U1 measured Blender alone at about 1 GiB peak; a single loaded `sd-server` generation reached critical pressure on a host already carrying 11–12 GB of swap, and the two were never measured loaded together. The drain refuses to launch either engine while system memory pressure is critical (level 4) and leaves the job queued with guidance. An unavailable engine fails only jobs whose provider matches; the drain continues for other kinds. Rust lifecycle code is unchanged; the `schema.rs` op table gains fields.
 - **One Blender process per consecutive run of render jobs.** A warm worker is deferred until the probe shows startup cost matters. A parent-pid guard in the Blender script stops orphaned renders.
 - **One job is one slot, producing all its frames.** Recipe requests force batch 1 and a fixed base seed of 0 (the planner and runtime require one); reroll is refused. Raw frames (colour, part-ID, depth) are content-addressed blobs in the gitignored studio store and stay there after publish.
-- **Slot commit by sentinel.** Blender writes each slot to a temporary directory and then a `done.json` listing frame count and per-file sha256 per role (colour, id, depth). The runner ingests only slots whose sentinel matches, counts expected files, and never trusts the exit code.
+- **Slot commit by sentinel.** Blender writes each slot to a temporary directory and then a `done.json` listing frame count and per-file sha256 per role (colour, id, depth). The runner ingests only slots whose sentinel matches, counts expected files, and never trusts the exit code. The sentinel hashes check transport integrity only: Blender writes date and render-time PNG chunks, so frame identity is always decoded pixels (U1: 48/48 frames pixel-identical across processes, 0/48 byte-identical). Depth is 8-bit RGBA, the format `decodePng` reads, with its quantisation recorded in the recipe.
 - **Script contract.** One contract serves the script, the runner's parser and the test fake: the recipe input, the `done.json` schema and an exit-code table (ok, no GPU context, version mismatch, input error); no GPU context and version mismatch map to `unavailable`, input error to `failed`. The script is embedded in the sidecar as text and written to a scratch file at run time (the `export.lua` precedent); its hash is the script hash.
-- **Failure taxonomy.** Missing Blender, wrong version or build, sha mismatch, or no GPU context: `unavailable`, with guidance and no fallback. Exit 0 with a short frame set, the input-error exit code, a kit-closure or staging violation, or a stall past the watchdog: `failed`. Abort discards the in-flight slot and the drain continues with the next job once the engine restarts; finished slots stay succeeded.
+- **Failure taxonomy.** Missing Blender, wrong version or build, sha mismatch, no GPU context, or death by signal before the script's first line (U1: denying the GPU crashes Blender with SIGSEGV before any script runs, so the no-GPU exit code is not reachable that way): `unavailable`, with guidance and no fallback. Stop is SIGTERM then SIGKILL to the process group, never SIGINT (U1: SIGINT is swallowed and the render completes); a terminated render reads as aborted, not failed. U1 measured TERM and KILL under 100 ms, so Blender uses the shared quit deadlines. Exit 0 with a short frame set, the input-error exit code, a kit-closure or staging violation, or a stall past the watchdog: `failed`. Abort discards the in-flight slot and the drain continues with the next job once the engine restarts; finished slots stay succeeded.
 - **Pin.** Blender 5.2.2 LTS, build hash `d13f752e3b9c`. The executable path comes from owner config (never the webview) and lives outside `artifactRoot`. A separate verifier checks the binary's sha256 (cached by size and mtime) and the script asserts `bpy.app.version_string` and build hash; both go into the recipe. Child env is an explicit allow-list; `--factory-startup` always.
 - **`rendered` provenance and R15.** R15 governs derived batches. A rendered revision is re-renderable from pinned inputs: the Blender pin and the inputs of two recipe hashes. The revision recipe hash covers the fields shared across slots: profile, camera, palette id and digest, pivot, script hash, post-step version, Blender pin, kit and stamp hashes. The slot recipe hash adds the slot's state, clip, facing and seed to the revision hash. Pack and the publish audit compare the revision hash across slots. A separate render audit verifies at publish, offline and without Blender: every pinned hash, the job ledger, and a TypeScript post-step recompute from the stored raw frames that reproduces every cell hash and the atlas. Raw frames stay in the studio store after publish and publish-time verification is the check; after publish, a fresh clone can re-render from the pins but cannot recompute from raw frames. Same-machine raw-frame identity is measured by U1; cross-GPU identity is recorded as unknown. The Blender pin is a recorded tool fact in the recipe, not an output licence record: ADR-0012 already approved the tool, and rendered outputs stay MIT (R6). Owner-accepted 2026-10-12; recorded as dated notes on R15 and ADR-0012.
 - **Post step in TypeScript.** Mode downscale, palette snap, outline after composite, selective overlap lines from part-ID and depth, contact shadow, and stamp composite move into `packages/assets`. `POST_STEP_VERSION` (bumped with any golden change) is pinned in the recipe. A parity test runs the port against a small committed raw-frame fixture for one slot, generated once from the probe, so it runs from a clean checkout; TS goldens are the baseline afterwards and the probe's Python post step stays as probe history. No ffmpeg or Python in the studio.
@@ -214,9 +214,7 @@ Product IDs: X02, W01, U06, U07, U08. Origin IDs from `docs/brainstorms/2026-10-
 ### Deferred to Implementation
 
 - Retro idle, seated and act frame counts and timings: art decisions fixed in the preregistered criteria (Unit 10) before the final render.
-- Whether the Universal Animation Library has a usable seated clip, or seated is a keyed static pose: U1 checks.
-- Depth precision: 16-bit grey if `decodePng` reads it, else 8-bit quantised in the script with the quantisation in the recipe.
-- Whether Blender needs its own quit deadline beyond the shared one: set from U1's measured TERM latency.
+- Seated pose: U1 found `Sitting_Idle_Loop` in the animation library with a closed loop, but it renders at 0.90× idle height against the probe's 0.85 proxy. The Zeus profile adjusts the seated pose (U6), and U10's preregistered criteria set the seated threshold.
 - Exact `kits.json` size cap: measured set plus margin.
 - Texture references in vendor glTF that are never used: textures are skipped at import and listed on the declared skip list; U1 confirms on the real Blender that nothing outside staging is read.
 
@@ -285,7 +283,7 @@ flowchart TB
 
 ### Phase A: foundations
 
-- [ ] **U1. Preregistered render probe**
+- [x] **U1. Preregistered render probe**
 
 **Goal:** Measure what the engine design assumes, before building it.
 
@@ -509,7 +507,9 @@ flowchart TB
 **Test scenarios:**
 - Happy path: a render job stores raw-frame blobs, cells and a manifest blob for N frames with `rendered` provenance inputs.
 - Integration: a queue of sd, render, sd jobs runs in order with `sd-server` stopped before the render and restarted after.
-- Error path: Blender missing, wrong version, sha mismatch or no-GPU exit marks only render jobs `unavailable`; queued sd jobs still run, and the host keeps kicking while jobs remain queued.
+- Error path: Blender missing, wrong version, sha mismatch, no-GPU exit, or death by signal before the script's first line marks only render jobs `unavailable`; queued sd jobs still run, and the host keeps kicking while jobs remain queued.
+- Edge case: with an injected pressure reader reporting critical, the drain launches neither engine and leaves the job queued with guidance; it launches once pressure drops.
+- Edge case: stop sends SIGTERM to the group, then SIGKILL after the grace; SIGINT is never sent.
 - Error path: exit 0 with a short frame set, or the input-error exit code, marks the job `failed` (not `unavailable`).
 - Error path: a planted unlisted texture or buffer in a referenced glTF fails the job before launch (positive control: the same recipe without it runs).
 - Error path: a torn frame without a sentinel is never ingested.

@@ -1,0 +1,138 @@
+{
+  "schema": 1,
+  "unit": "U1",
+  "plan": "docs/plans/2026-10-12-001-feat-retro-render-pipeline-plan.md",
+  "preregistered": "Written and hashed before any measurement run. This file is never edited after its hash is recorded in README.md; a change means a new file and a new recorded hash, with the old one kept.",
+  "stop_conditions": [
+    "EEVEE cannot render when Blender is launched as in criterion a: stop and report with evidence, do not work around it.",
+    "Memory pressure reaches critical (sysctl kern.memorystatus_vm_pressure_level == 4) in any sample: the driver kills the process groups it owns, stops, and the run is reported as a fail of criterion c."
+  ],
+  "bounds": {
+    "termGraceMs": 2000,
+    "killMs": 10000,
+    "groupGoneBoundMs": 12000,
+    "source": "tools/studio/README.md config example (runtime.deadlines) and ADR-0010: a stopped child group must be gone within termGraceMs + killMs; the whole quit adds a 3000 ms margin (apps/studio/src-tauri/src/teardown.rs QUIT_MARGIN)."
+  },
+  "pin": {
+    "blenderExecutable": "/Applications/Blender.app/Contents/MacOS/Blender",
+    "expectedVersionPrefix": "5.2.2",
+    "expectedBuildHash": "d13f752e3b9c"
+  },
+  "slot": {
+    "definition": "One Zeus slot is one (state, facing) pair rendered as every frame of its clip, in three passes per frame: colour, part-ID, depth.",
+    "item": "zeus-tall",
+    "cell": [112, 96],
+    "renderSize": [448, 384],
+    "supersample": 4,
+    "clip": "walk16",
+    "state": "walk",
+    "facing": "south",
+    "frames": 16,
+    "passesPerFrame": 3,
+    "rendersPerSlot": 48,
+    "source": "tools/probes/retro-render (render_retro.py, retro_plan.py), run unchanged apart from restricting the item's clips and facings in a wrapper"
+  },
+  "launch": {
+    "description": "Same shape as launch in packages/assets/src/studio/runtime.ts: spawn(binary, argv, { detached: true, shell: false, stdio: ['ignore','pipe','pipe'], env }), own process group (child pgid == child pid, supervisor pgid different, checked through ps), argv only, explicit env object, never the parent's env.",
+    "argv": ["--background", "--factory-startup", "--python-exit-code", "1", "--python", "<script>", "--", "<script args>"],
+    "envCeiling": ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"],
+    "envProcedure": "Start with an empty env object (the sd-server precedent). If the render fails, add only keys from envCeiling, one at a time, and record the minimal set that works. Nothing outside envCeiling is ever passed."
+  },
+  "criteria": [
+    {
+      "id": "a",
+      "title": "EEVEE renders from a sidecar-style launch with no terminal",
+      "kind": "pass-fail",
+      "pass": "Launched as in `launch`, the slot render exits 0, the script reports render engine BLENDER_EEVEE and a GPU renderer string that is not a software rasteriser, and all 48 PNGs of the slot exist and decode. The script also reports that stdin/stdout/stderr are not ttys and that opening /dev/tty fails (no controlling terminal), and the supervisor reports the child's pgid equals its pid. Fail on any other outcome; a fail is a stop condition.",
+      "evidence": "driver result JSON plus the script's probe-meta.json",
+      "positiveControl": "The terminal check must be able to fail: run the same terminal check once with a pseudo-terminal attached (through `script`) and show it reports a tty and a controlling terminal, so a 'no terminal' reading is not a constant."
+    },
+    {
+      "id": "b",
+      "title": "Cancel: SIGINT, SIGTERM and SIGKILL to the process group mid-render",
+      "kind": "pass-fail",
+      "trials": "3 per signal, 9 in all. The signal is sent to the group (kill(-pgid, sig)) once at least 3 colour frames of the slot exist on disk and the child has not exited.",
+      "record": ["latency from signal to group gone (child closed and no process left in the pgid, polled through ps every 10 ms, the definition stopGroup uses)", "exit code or terminating signal", "processes left in the group or whose argv names the staging dir 1000 ms after 'gone'", "files left in the output dir: zero-length files, PNGs that fail to parse, temp-named files, and whether probe-done.json (the probe's slot sentinel) exists"],
+      "pass": "In every trial the group is gone within groupGoneBoundMs (12000 ms) and no process survives the 1000 ms re-check. Partial files and the exit code are recorded, not gated, except that probe-done.json must be absent after every cancelled trial.",
+      "informational": "TERM latency against termGraceMs (2000 ms): whether Blender needs a quit deadline of its own is read from the measured SIGTERM latencies (U7 decision).",
+      "positiveControl": "A child group whose leader ignores SIGTERM (a shell with `trap '' TERM` running a sleep) is sent the same SIGTERM through the same measurement code: the harness must report it still alive after the TERM grace and then gone after SIGKILL. A harness that reports 'gone' for it is broken."
+    },
+    {
+      "id": "c",
+      "title": "Peak memory: Blender alone, then Blender with sd-server loaded and idle",
+      "kind": "informational plus a pass-fail never-critical check",
+      "method": "Sampler loop with an injected tick (clock and command runner are parameters; unit-tested with a fake clock). Per tick, for each tracked pid: `footprint -p` phys_footprint, and RSS from ps; plus kern.memorystatus_vm_pressure_level, vm.swapusage, and vm_stat free pages. Tick interval 250 ms. The script also reports its own resource.getrusage ru_maxrss at exit, a high-water mark that does not depend on the tick.",
+      "phases": ["P1: Blender alone rendering the slot", "P2: sd-server alone, started with the SELECTED_PROFILE flags and components, ready and idle for 20 s (no generation)", "P3: sd-server still live and idle while Blender renders the slot"],
+      "report": ["peak summed phys_footprint and peak per-process phys_footprint per phase, in MiB", "peak RSS per phase", "max pressure level per phase", "swap used before and after each phase", "physical RAM"],
+      "pass": "Pressure level 4 (critical) is never sampled in any phase. All numbers are reported. Because sampling is by tick, a peak between ticks can be missed; the report states that.",
+      "interpretationRule": "The plan's one-engine-at-a-time decision is 'supported by this evidence' only if P3's peak summed footprint exceeds 75% of physical RAM or the pressure level reaches 2 (warn) or more in P3. Otherwise the report says the measurement alone does not justify it and that the decision rests on the stated risk, not on this probe.",
+      "positiveControl": "Fake-clock unit test shows the sampler records a peak between synthetic readings and flags a level-4 reading as critical. Live: a footprint read of the driver's own process while it holds a known 256 MiB allocation must rise by about that amount (within 25%), showing the reader sees real growth."
+    },
+    {
+      "id": "d",
+      "title": "Same-machine repeatability",
+      "kind": "pass-fail",
+      "pass": "The slot is rendered twice in two separate Blender processes with identical argv except the output directory. For all 16 frames and all three roles, the decoded RGBA pixel buffers (decodePng from packages/assets/src/studio/png/decode.ts, pixels as stored) are byte-identical. The report also gives whether the PNG files themselves are byte-identical.",
+      "positiveControl": "The comparison must be able to fail: compare run A frame 0 against run A frame 1 (different poses) and against run A's other roles, and show each is reported different; and flip one pixel of a decoded copy and show it is reported different."
+    },
+    {
+      "id": "e",
+      "title": "Forced no-GPU-context behaviour",
+      "kind": "pass-fail on the finding, whatever it is",
+      "method": "A probe mode of the script creates the EEVEE context by rendering one 8x8 frame and exits 0 on success, exit 10 on a context failure, 12 on an input error. Try, in this order, until one stops the context from being created: (1) `--gpu-backend` set to a backend not available on this OS; (2) a macOS sandbox profile that denies the GPU IOKit user client; (3) an unset or emptied launch environment is already covered by (a) and is not a forcing method; (4) anything else found and recorded. Each attempt is recorded with its exit code or signal and stderr tail.",
+      "pass": "Pass if a method is found where the unmodified probe script exits with the distinct code 10. If a method makes Blender exit non-zero or die by signal without code 10, the finding is 'forced, but not mappable inside the script' and is reported as such (not a pass). If no method forces it, the finding is 'cannot be forced here', with the attempts listed.",
+      "positiveControl": "The same probe run with no forcing method exits 0 in the same session; and a deliberate input error (missing --models path) exits 12, so 10 is distinct from both."
+    },
+    {
+      "id": "f",
+      "title": "Depth PNG precision and bytes per raw slot",
+      "kind": "informational",
+      "report": ["PNG colour type and bit depth of the colour, part-ID and depth files the retro-render script writes", "whether decodePng accepts each (it is documented to accept 8-bit RGB and RGBA only)", "whether decodePng accepts a 16-bit greyscale depth PNG rendered by the same Blender (expected to be refused as unsupported-png; the refusal text is recorded)", "number of distinct depth levels in the slot at 8 bits and at 16 bits, and the depth step in metres implied by depth_range (18..22 m)", "bytes on disk per role and in total for the slot, and decoded RGBA bytes per slot"],
+      "positiveControl": "decodePng on a known-good 8-bit RGBA PNG written by the repo's own encoder succeeds, so a refusal of the 16-bit file is about the format."
+    },
+    {
+      "id": "g",
+      "title": "Binary pin",
+      "kind": "pass-fail on the pin, informational on time",
+      "report": ["full sha256 of the Mach-O at the pin.blenderExecutable path, hashed by a streaming reader in the Bun process, run three times with the time of each", "bpy.app.version_string, bpy.app.build_hash, build date, as the script reports them", "codesign --verify --deep --strict result and its time (whether a hash of the Mach-O alone covers the bundle)"],
+      "pass": "The three hashes agree; version_string starts with expectedVersionPrefix and build_hash equals expectedBuildHash.",
+      "positiveControl": "The same pin comparison run against a copy of the Mach-O with one byte changed (in scratch) reports a different sha256, and a comparison against a wrong expected build hash reports a mismatch."
+    },
+    {
+      "id": "h",
+      "title": "Staging isolation, observed independently of the script",
+      "kind": "pass-fail, or 'not possible' stated with its limits",
+      "method": "Stage only the kit files the Zeus recipe imports (the male base glTF and its .bin, the three hair glTFs and their .bin files, and the animation library glb) under scratch/staging, mirroring the directory layout retro-render's retro_assets.py expects, with no texture files, so textures are skipped at import by being absent. Run the slot render under sandbox-exec with a profile that denies file-read-data everywhere and then allows only: staging, the output directory, the script directories, the Blender bundle, and the system roots Blender needs (found by iteration and listed). The observation is the kernel's own Sandbox denial records, read with `log show` after the run; it does not depend on the script.",
+      "pass": "The staged slot render exits 0 with all 48 frames under the final profile, and the denial log for the child's pid shows no read of any path under the kit pack directories in the main checkout or of any file with a data extension (.gltf, .glb, .bin, .png, .jpg, .jpeg, .webp, .hdr, .exr, .blend) outside the allow-list. Every other denied path is listed and explained. Fail if a kit read outside staging is seen or the render needs a kit path outside staging to run.",
+      "positiveControls": ["A glTF in staging whose images[].uri points at a planted texture outside staging (an absolute path under scratch/outside): the denial log must show that exact path as denied for the render's pid.", "A glTF in staging whose buffers[].uri points at a planted buffer outside staging: same, and the import must fail with exit 12 or a recorded error.", "A deny-observation sanity check: a one-line read of a file outside the allow-list from inside the same sandboxed Blender (`--python-expr`) appears in the log."],
+      "limits_to_state": ["Only denied reads are logged; reads inside the allow-list (staging, system roots, the Blender bundle) are allowed and not observed, so the claim covers reads outside those roots only.", "file-read-metadata (stat) is not denied, so existence probing outside the allow-list is not observed.", "Writes and network are not covered by this criterion.", "sandbox-exec is deprecated; the observation is of this OS version only."]
+    },
+    {
+      "id": "i",
+      "title": "A usable seated clip in the animation library",
+      "kind": "pass-fail on measurable parts, art judgement reported not decided",
+      "method": "Read the glb's animation list and, in Blender, import the clip set on the Zeus rig and measure: frame range; the largest bone-head displacement between the first and last sample of the loop (metres, and pixels at 29.0788 px/m); and the rendered figure's vertical screen extent for the seated clip against the idle clip, both south-facing, from the render script's own extent_px.",
+      "pass": "A seated-named clip (Sitting_Idle_Loop) exists and imports; its first-to-last pose displacement is below 0.02 m for every bone (a closed loop); and its mean figure height is at most 85% of idle's mean height. The clips Sitting_Enter and Sitting_Talking_Loop are listed for information.",
+      "notReported": "Whether the seated pose looks right on Zeus is the owner's visual call and is not decided here; a contact image is stored under scratch only.",
+      "positiveControl": "The same measurement on Idle_Loop must report it as not seated (height ratio 1.0) and on Walk_Loop must report a loop with the first-to-last displacement under the threshold, showing the closure measure does not simply read zero; a deliberately mismatched pair (frame range start vs a mid-range frame) must exceed the threshold."
+    },
+    {
+      "id": "j",
+      "title": "Cold start to first frame",
+      "kind": "informational",
+      "report": ["time from spawn to the script's first Python line", "from there to the first colour PNG appearing on disk (driver-observed mtime) with the scene build included", "per-frame render time after the first", "launch order of the run in the session; the runs are labelled first or later, and the report does not claim a true cold boot"],
+      "positiveControl": "Not applicable: a timing, not a refusal."
+    },
+    {
+      "id": "k",
+      "title": "Texture skip is output-neutral (added with the others, before any run)",
+      "kind": "pass-fail",
+      "pass": "The slot rendered from staging (no textures present) and the slot rendered from the unstaged kit directory in the main checkout (textures present) have byte-identical decoded RGBA pixels for all frames and roles.",
+      "positiveControl": "Same pixel comparison as criterion d's control."
+    }
+  ],
+  "reporting": {
+    "singleMachine": "Everything is measured on one machine in one session; counts of runs are stated per criterion and nothing is generalised past them.",
+    "noWorkarounds": "A failed criterion is reported as a fail with its evidence. Thresholds above are not changed after a run."
+  }
+}
