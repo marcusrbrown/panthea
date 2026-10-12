@@ -202,7 +202,22 @@ describe("asset summaries", () => {
           id: "zeus-sprite",
           kind: "sprite",
           paletteFamily: "olympus",
-          provenance: { method: "derived" },
+          provenance: {
+            method: "derived",
+            steps: [
+              {
+                recipe: "palette-swap",
+                source: {
+                  assetId: "zeus-sprite",
+                  revision: hash,
+                  slotKey: "idle/east",
+                  slotHash: hash,
+                },
+                outputSlot: "idle/east",
+                params: { targetFamily: "underworld" },
+              },
+            ],
+          },
           realmVariants: [{ paletteFamily: "underworld" }],
           animations: [
             { state: "idle", direction: "east", frames: [] },
@@ -261,6 +276,18 @@ describe("asset summaries", () => {
       published: null,
       kind: "sprite",
       method: "derived",
+      provenanceSteps: [
+        {
+          recipe: "palette-swap",
+          source: {
+            assetId: "zeus-sprite",
+            revision: hash,
+            slotKey: "idle/east",
+          },
+          outputSlot: "idle/east",
+          targetFamily: "underworld",
+        },
+      ],
       slots: ["idle/east", "act/south/thunderbolt"],
       realms: ["underworld"],
       paletteFamily: "olympus",

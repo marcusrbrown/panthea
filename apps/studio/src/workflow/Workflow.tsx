@@ -89,6 +89,8 @@ export interface PreviewSelection {
   readonly kind?: "sprite" | "portrait";
   readonly state?: string;
   readonly direction?: string;
+  readonly ability?: string;
+  readonly realm?: string;
   /** The record that replaced the selected canon record; the preview draws nothing of the selected one. */
   readonly supersededBy?: string;
 }
@@ -127,6 +129,81 @@ const candidateChangeCount = (candidate: SummaryRecord) => {
   return typeof count === "number" && Number.isFinite(count)
     ? count
     : Number.POSITIVE_INFINITY;
+};
+interface SlotSelection {
+  readonly state: string;
+  readonly direction: string;
+  readonly ability?: string;
+}
+
+interface DerivationComparison {
+  readonly recipe: "mirror" | "bob" | "palette-swap";
+  readonly sourceAssetId: string;
+  readonly sourceRevision?: string;
+  readonly sourceSlot: SlotSelection;
+  readonly outputSlot: SlotSelection;
+  readonly targetFamily?: string;
+}
+
+const slotSelection = (value: string): SlotSelection | undefined => {
+  const parts = value.split("/");
+  if (
+    (parts.length !== 2 && parts.length !== 3) ||
+    parts.some((part) => part.length === 0)
+  )
+    return undefined;
+  const [state, direction, ability] = parts;
+  if (state === undefined || direction === undefined) return undefined;
+  return {
+    state,
+    direction,
+    ...(ability === undefined ? {} : { ability }),
+  };
+};
+
+const derivationComparison = (
+  asset: SummaryRecord,
+): DerivationComparison | undefined => {
+  const firstStep = entries(recordValue(asset, "provenanceSteps"))[0];
+  if (firstStep === undefined) return undefined;
+  const step = object(firstStep);
+  const recipe = text(step.recipe);
+  if (recipe !== "mirror" && recipe !== "bob" && recipe !== "palette-swap")
+    return undefined;
+  const source = object(step.source);
+  const sourceAssetId = text(source.assetId);
+  const sourceSlotKey = text(source.slotKey);
+  const outputSlotKey = text(step.outputSlot);
+  const sourceSlot = sourceSlotKey && slotSelection(sourceSlotKey);
+  const outputSlot = outputSlotKey && slotSelection(outputSlotKey);
+  if (!sourceAssetId || !sourceSlot || !outputSlot) return undefined;
+
+  if (
+    recipe === "mirror" &&
+    (sourceSlot.state !== outputSlot.state ||
+      sourceSlot.direction !== "east" ||
+      outputSlot.direction !== "west")
+  )
+    return undefined;
+  if (
+    recipe === "bob" &&
+    (sourceSlotKey !== outputSlotKey ||
+      sourceSlot.direction !== outputSlot.direction)
+  )
+    return undefined;
+  const targetFamily = text(step.targetFamily);
+  if (recipe === "palette-swap" && !targetFamily) return undefined;
+
+  return {
+    recipe,
+    sourceAssetId,
+    ...(typeof source.revision === "string"
+      ? { sourceRevision: source.revision }
+      : {}),
+    sourceSlot,
+    outputSlot,
+    ...(recipe === "palette-swap" ? { targetFamily } : {}),
+  };
 };
 const object = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null
@@ -896,6 +973,29 @@ export function WorkflowView({
           kind: activeAssetKind as "portrait" | "sprite",
         }
       : activePreview;
+  const comparison =
+    activeAsset &&
+    activeAssetState === "draft" &&
+    recordText(activeAsset, "method") === "derived"
+      ? derivationComparison(activeAsset)
+      : undefined;
+  const comparisonSource = comparison
+    ? state.assets.find(
+        (record) =>
+          recordState(record) === "canon" &&
+          (recordText(record, "assetId") ?? record.id) ===
+            comparison.sourceAssetId &&
+          (comparison.sourceRevision === undefined ||
+            recordText(record, "manifestRevision") ===
+              comparison.sourceRevision),
+      )
+    : undefined;
+  const hasComparison =
+    comparison !== undefined && comparisonSource !== undefined;
+  const slotName = (slot: SlotSelection) =>
+    `${slot.state}/${slot.direction}${
+      slot.ability === undefined ? "" : `/${slot.ability}`
+    }`;
 
   const activeEdit =
     state.edits.find((edit) => edit.id === activeEditId) ??
@@ -1675,92 +1775,52 @@ export function WorkflowView({
                 renderPreview &&
                 activeAsset &&
                 activeAssetState === "draft" &&
-                recordText(activeAsset, "method") === "derived" ? (
-                  (() => {
-                    const assetId =
-                      recordText(activeAsset, "assetId") ?? activeAsset.id;
-                    const sourceAsset = state.assets.find(
-                      (record) =>
-                        recordState(record) === "canon" &&
-                        (recordText(record, "assetId") ?? record.id) ===
-                          assetId,
-                    );
-                    const sourceSlotsValue = sourceAsset
-                      ? recordValue(sourceAsset, "slots")
-                      : undefined;
-                    const derivedSlotsValue = recordValue(activeAsset, "slots");
-                    const sourceSlots = Array.isArray(sourceSlotsValue)
-                      ? sourceSlotsValue.filter(
-                          (slot): slot is string => typeof slot === "string",
-                        )
-                      : [];
-                    const derivedSlots = Array.isArray(derivedSlotsValue)
-                      ? derivedSlotsValue.filter(
-                          (slot): slot is string => typeof slot === "string",
-                        )
-                      : [];
-                    const sourceSlot = sourceSlots.find((slot) => {
-                      const [slotState, direction] = slot.split("/");
-                      return (
-                        direction === "east" &&
-                        derivedSlots.includes(`${slotState}/west`)
-                      );
-                    });
-                    const [comparisonState, comparisonDirection] =
-                      sourceSlot?.split("/") ?? [];
-                    const comparison = sourceSlot
-                      ? {
-                          state: comparisonState,
-                          sourceDirection: comparisonDirection,
-                          derivedDirection: "west",
-                        }
-                      : undefined;
-                    return (
-                      <div className="derive-compare">
-                        <p className="derive-compare-summary">
-                          {comparison
-                            ? `${comparison.state}: ${comparison.sourceDirection} → ${comparison.derivedDirection}`
-                            : "Published frame and derived draft"}
-                        </p>
-                        <figure>
-                          <figcaption>
-                            Source: published {assetId}
-                            {comparison
-                              ? ` · ${comparison.sourceDirection}`
-                              : ""}
-                          </figcaption>
-                          {renderPreview({
-                            source: "canon",
-                            id: assetId,
-                            kind: "sprite",
-                            ...(comparison
-                              ? {
-                                  state: comparison.state,
-                                  direction: comparison.sourceDirection,
-                                }
-                              : {}),
-                          })}
-                        </figure>
-                        <figure>
-                          <figcaption>
-                            Derived: this draft
-                            {comparison
-                              ? ` · ${comparison.derivedDirection}`
-                              : ""}
-                          </figcaption>
-                          {renderPreview({
-                            ...activePreviewWithKind,
-                            ...(comparison
-                              ? {
-                                  state: comparison.state,
-                                  direction: comparison.derivedDirection,
-                                }
-                              : {}),
-                          })}
-                        </figure>
-                      </div>
-                    );
-                  })()
+                hasComparison &&
+                comparison &&
+                activeAsset &&
+                activePreviewWithKind ? (
+                  <div className="derive-compare">
+                    <p className="derive-compare-summary">
+                      {comparison.recipe === "palette-swap"
+                        ? `${slotName(comparison.sourceSlot)} → ${comparison.targetFamily}`
+                        : `${comparison.sourceSlot.state}: ${comparison.sourceSlot.direction} → ${comparison.outputSlot.direction}`}
+                    </p>
+                    <figure>
+                      <figcaption>
+                        Source: published {comparison.sourceAssetId} ·{" "}
+                        {slotName(comparison.sourceSlot)}
+                      </figcaption>
+                      {renderPreview({
+                        source: "canon",
+                        id: comparison.sourceAssetId,
+                        kind: "sprite",
+                        state: comparison.sourceSlot.state,
+                        direction: comparison.sourceSlot.direction,
+                        ...(comparison.sourceSlot.ability === undefined
+                          ? {}
+                          : { ability: comparison.sourceSlot.ability }),
+                      })}
+                    </figure>
+                    <figure>
+                      <figcaption>
+                        Derived: this draft ·{" "}
+                        {comparison.recipe === "palette-swap"
+                          ? comparison.targetFamily
+                          : slotName(comparison.outputSlot)}
+                      </figcaption>
+                      {renderPreview({
+                        ...activePreviewWithKind,
+                        state: comparison.outputSlot.state,
+                        direction: comparison.outputSlot.direction,
+                        ...(comparison.outputSlot.ability === undefined
+                          ? {}
+                          : { ability: comparison.outputSlot.ability }),
+                        ...(comparison.targetFamily === undefined
+                          ? {}
+                          : { realm: comparison.targetFamily }),
+                      })}
+                    </figure>
+                  </div>
                 ) : activePreviewWithKind && renderPreview ? (
                   renderPreview(activePreviewWithKind)
                 ) : (

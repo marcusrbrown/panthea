@@ -236,6 +236,22 @@ export function assetSummary(record: StudioAssetRecord): Json {
     state.state === "candidate" || state.state === "draft"
       ? state.report
       : undefined;
+  const provenanceSteps =
+    state.manifest.provenance.method === "derived"
+      ? state.manifest.provenance.steps.map((step) => ({
+          recipe: step.recipe,
+          source: {
+            assetId: step.source.assetId,
+            revision: step.source.revision,
+            slotKey: step.source.slotKey,
+          },
+          outputSlot: step.outputSlot,
+          ...(step.recipe === "palette-swap" &&
+          typeof step.params.targetFamily === "string"
+            ? { targetFamily: step.params.targetFamily }
+            : {}),
+        }))
+      : undefined;
   return {
     id: record.id,
     workingSetId: record.workingSetId,
@@ -246,6 +262,7 @@ export function assetSummary(record: StudioAssetRecord): Json {
     published: record.published?.revision ?? null,
     kind: state.manifest.kind,
     method: state.manifest.provenance.method,
+    ...(provenanceSteps === undefined ? {} : { provenanceSteps }),
     // The slots the manifest holds, and the realm palettes it already has a variant for.
     slots: slotsOf(state.manifest),
     realms:

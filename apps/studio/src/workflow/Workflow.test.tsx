@@ -1286,15 +1286,49 @@ describe("deriving from a published sprite", () => {
     expect(html).toContain("Derive</button>");
   });
 
-  test("a derived draft shows the published source beside it", () => {
+  const derived = (
+    over: Record<string, unknown> = {},
+    provenanceSteps: readonly Record<string, unknown>[] = [],
+  ) =>
+    published({
+      id: "record-zeus-sprite-2",
+      state: "draft",
+      method: "derived",
+      provenanceSteps,
+      ...over,
+    });
+
+  test("compares the newly mirrored slot, not a carried east/west pair", () => {
     const seen: unknown[] = [];
+    const source = published({
+      slots: ["idle/east", "idle/west", "seated/east"],
+    });
+    const draft = derived(
+      {
+        slots: ["idle/east", "idle/west", "seated/east", "seated/west"],
+      },
+      [
+        {
+          recipe: "mirror",
+          source: {
+            assetId: "zeus-sprite",
+            revision: "rev-1",
+            slotKey: "seated/east",
+          },
+          outputSlot: "seated/west",
+        },
+        {
+          recipe: "bob",
+          source: { assetId: "zeus-sprite", slotKey: "idle/south" },
+          outputSlot: "idle/south",
+        },
+      ],
+    );
     const html = renderToStaticMarkup(
       createElement(WorkflowView, {
         state: workflowReducer(
-          stateFor(undefined, {
-            assets: [published({ state: "draft", method: "derived" })],
-          }),
-          { type: "select-asset", assetId: "record-zeus-sprite-1" },
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
         ),
         host,
         renderPreview: (selection) => {
@@ -1306,9 +1340,133 @@ describe("deriving from a published sprite", () => {
 
     expect(html).toContain("Source: published zeus-sprite");
     expect(html).toContain("Derived: this draft");
+    expect(html).toContain("seated: east → west");
     expect(seen).toEqual([
-      { source: "canon", id: "zeus-sprite", kind: "sprite" },
-      { source: "draft", id: "record-zeus-sprite-1", kind: "sprite" },
+      {
+        source: "canon",
+        id: "zeus-sprite",
+        kind: "sprite",
+        state: "seated",
+        direction: "east",
+      },
+      {
+        source: "draft",
+        id: "record-zeus-sprite-2",
+        kind: "sprite",
+        state: "seated",
+        direction: "west",
+      },
+    ]);
+  });
+
+  test("compares a bob from and to the same slot", () => {
+    const seen: unknown[] = [];
+    const source = published({ slots: ["idle/south"] });
+    const draft = derived({ slots: ["idle/south"] }, [
+      {
+        recipe: "bob",
+        source: { assetId: "zeus-sprite", slotKey: "idle/south" },
+        outputSlot: "idle/south",
+      },
+    ]);
+    renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: workflowReducer(
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
+        ),
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+
+    expect(seen).toEqual([
+      {
+        source: "canon",
+        id: "zeus-sprite",
+        kind: "sprite",
+        state: "idle",
+        direction: "south",
+      },
+      {
+        source: "draft",
+        id: "record-zeus-sprite-2",
+        kind: "sprite",
+        state: "idle",
+        direction: "south",
+      },
+    ]);
+  });
+
+  test("compares a palette swap from its source slot to its variant realm", () => {
+    const seen: unknown[] = [];
+    const source = published({ slots: ["idle/east"] });
+    const draft = derived({ slots: ["idle/east"], realms: ["underworld"] }, [
+      {
+        recipe: "palette-swap",
+        source: { assetId: "zeus-sprite", slotKey: "idle/east" },
+        outputSlot: "idle/east",
+        targetFamily: "underworld",
+      },
+    ]);
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: workflowReducer(
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
+        ),
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+
+    expect(html).toContain("idle/east → underworld");
+    expect(seen).toEqual([
+      {
+        source: "canon",
+        id: "zeus-sprite",
+        kind: "sprite",
+        state: "idle",
+        direction: "east",
+      },
+      {
+        source: "draft",
+        id: "record-zeus-sprite-2",
+        kind: "sprite",
+        state: "idle",
+        direction: "east",
+        realm: "underworld",
+      },
+    ]);
+  });
+
+  test("does not show a comparison when a derived draft has no steps", () => {
+    const seen: unknown[] = [];
+    const source = published();
+    const draft = derived();
+    const html = renderToStaticMarkup(
+      createElement(WorkflowView, {
+        state: workflowReducer(
+          stateFor(undefined, { assets: [source, draft] }),
+          { type: "select-asset", assetId: draft.id },
+        ),
+        host,
+        renderPreview: (selection) => {
+          seen.push(selection);
+          return null;
+        },
+      }),
+    );
+
+    expect(html).not.toContain("derive-compare");
+    expect(seen).toEqual([
+      { source: "draft", id: "record-zeus-sprite-2", kind: "sprite" },
     ]);
   });
 
