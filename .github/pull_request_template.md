@@ -19,7 +19,7 @@
 
 - [ ] `bun install --frozen-lockfile`
 - [ ] `bun run check` (typecheck, lint, test)
-- [ ] `cargo fmt --check && cargo clippy -- -D warnings` (if Rust changed)
+- [ ] Rust gates from AGENTS.md Verification (if Rust changed)
 
 ## Approval needed
 

@@ -282,7 +282,8 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 ### Tier 2: Visual reference scene
 
 ### Unit 9. Derivation and repair
-- [ ] Expand approved sets honestly and reproducibly.
+- [x] Expand approved sets honestly and reproducibly.
+- (2026-10-11) Complete. Studio features in #209, derivation and masked repair in #210. Reference conditioning was NO-GO. Zeus's other directions and overlays are deferred (see the child plan).
 - **Child plan:** `docs/plans/2026-10-11-001-feat-studio-derivation-repair-plan.md` is authoritative. Dated note (owner, 2026-10-11); the earlier text below is kept as written.
   - **Zeus's remaining idle directions are deferred.** The bolt hand blocks mirroring, so north, east and west are new art. That work waits for the sprite-pipeline research. Verification is a real derive-to-publish run on a symmetric fixture, plus the Zeus mirror refusal.
   - **Overlays move to Unit 10**, alongside the first structure.

@@ -60,7 +60,7 @@ Probes live in `tools/probes/<name>/` with a README recording the method and res
 
 - `bun install --frozen-lockfile`
 - `bun run check` (typecheck, lint, test)
-- `cargo fmt --check && cargo clippy -- -D warnings` in `apps/desktop/src-tauri`
+- `cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings && cargo test --locked` in `apps/desktop/src-tauri` and `apps/studio/src-tauri` (build each sidecar first; see `docs/solutions/workflow-issues/tauri-clippy-requires-built-sidecar-2026-10-04.md`)
 - Acceptance evidence per [acceptance.md](docs/product/acceptance.md)
 
 Mocks, successful dependency installs, and browser-only renderer demos are not proof of the packaged offline MVP.

@@ -1,6 +1,7 @@
 ---
 title: Live-reload asset bridges need version-keyed bytes and watches for late roots
 date: 2026-10-08
+last_updated: 2026-10-11
 category: integration-issues
 module: studio-preview
 problem_type: integration_issue
@@ -12,7 +13,7 @@ symptoms:
   - "Drafts never appeared when the store root was created after the dev server started, even after a browser refresh"
 root_cause: missing_validation
 resolution_type: code_fix
-tags: [studio, live-reload, vite, asset-bridge, fs-watch, pixel-key, cache-invalidation]
+tags: [studio, live-reload, vite, asset-bridge, fs-watch, pixel-key, cache-invalidation, realm-variant]
 ---
 
 # Live-reload asset bridges need version-keyed bytes and watches for late roots
@@ -79,6 +80,7 @@ The watcher fix makes startup order irrelevant. If the root exists, it is watche
   - the watcher moves from ancestor to recursive root and reports `""`;
   - a store created after the bridge starts lists its first draft and emits one change.
 - **Test watchers through the production logic with injected fs primitives** (`WatchFs`: `exists`, `watch`), not through a fake that ignores whether the path exists. The thin `node:fs` wrapper itself stays untested.
+- **Every field that changes the pixels belongs in the selection key, end to end.** A realm variant once drew the base atlas because the realm never reached the preview source. The realm now runs through resolve, the listing, keys, the sidecar ops, the native bridge, the webview source and the harness, and `atlasKeyOf` (`apps/studio/src/renderer/preview.ts`) gives the variant its own atlas. Test: `apps/studio/src/renderer/preview.test.ts`, which draws a realm variant on its own atlas beside the base of the same record.
 - **Keep `resolveAsset` on the node side.** `@panthea/assets` isn't browser-safe, because `resolve` imports `placeholder`, which imports `node:crypto` and `node:zlib`. The browser imports types only, and the studio's scripts run Vite through Bun (`bun --bun vite`).
 
 ## Related

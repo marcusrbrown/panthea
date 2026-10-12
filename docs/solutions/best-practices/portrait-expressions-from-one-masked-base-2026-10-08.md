@@ -1,6 +1,7 @@
 ---
 title: Consistent portrait expressions from one masked base
 date: 2026-10-08
+last_updated: 2026-10-11
 category: best-practices
 module: assets
 problem_type: best_practice
@@ -17,7 +18,7 @@ tags: [portraits, masked-img2img, z-image, expressions, pixel-cleanup, provenanc
 
 ## Context
 
-The art guide asks for six expressions with the same head position and hairline, where only the eyes, brows, mouth and one secondary cue change. Generating each expression independently gave different eyes in every frame, and they looked inhuman from the second frame on. Hand-pixelled mouths, a FLUX.2 Klein reference edit, and two cleanups that pasted in new mouths were all rejected. The owner accepted only expressions made by editing a single neutral base.
+The art guide asks for six expressions with the same head position and hairline, where only the eyes, brows, mouth and one secondary cue change. Generating each expression independently gave different eyes in every frame, and they looked inhuman from the second frame on. Hand-pixelled mouths, a FLUX.2 Klein reference edit, and two cleanups that pasted in new mouths were all rejected. The owner accepted only expressions made by editing a single neutral base. Reference conditioning for new facings and poses is a separate probe: `tools/probes/art-reference/README.md`.
 
 ## Guidance
 
