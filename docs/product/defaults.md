@@ -14,7 +14,7 @@ Rows marked Default make remaining details concrete for implementation and can b
 | Catch-up | Cap missed-time advancement and show a consequence summary | Accepted |
 | Failure | Configured provider sequence, then routine-only behavior | Accepted |
 | Undo | Restore a snapshot rather than reverse isolated committed events | Accepted |
-| Art | Coherent temporary appearance while generation runs; simulation has priority | Accepted |
+| Art | Coherent temporary appearance while generation runs; simulation has priority. 2026-10-12: sizes, palette versions, colour limits, outline and animation defaults for new assets follow [ADR-0012](../decisions/0012-pre-rendered-retro-art-direction.md) and the art guide's dated notes | Accepted |
 | World slots | One active simulation at a time; multiple saved worlds and copied snapshots | Default |
 | Time scale | One wall-clock second advances one simulation second initially | Default |
 | Catch-up cap | Advance at most one hour of missed wall time per return; no permanent backlog of discarded time | Default |

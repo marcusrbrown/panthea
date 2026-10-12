@@ -17,3 +17,4 @@ Update this index and [traceability.md](../product/traceability.md) whenever an 
 | [0009](0009-asset-registry-lifecycle-and-uris.md) | Asset registry, lifecycle and logical URIs | Accepted | U06, U07, U08, X02 |
 | [0010](0010-studio-app-host.md) | Studio app host | Accepted | U06, U07, U08, X02 |
 | [0011](0011-game-canon-art-loading.md) | Game canon art loading | Accepted | U07, U08, X02 |
+| [0012](0012-pre-rendered-retro-art-direction.md) | Pre-rendered retro art direction | Accepted | X02, W01, U06 |
