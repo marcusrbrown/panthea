@@ -1,7 +1,7 @@
 ---
 title: "Local 64x80 god sprites on a 16 GiB M1 Pro: palette downscale at any ratio, then specified pixel edits"
 date: 2026-10-08
-last_updated: 2026-10-08
+last_updated: 2026-10-12
 category: best-practices
 module: art-local
 problem_type: best_practice
@@ -23,6 +23,8 @@ tags: [sprites, pixel-art, local-models, m1-pro, z-image, palette-downscale, out
 Zeus has a canon idle-south sprite, `zeus-sprite` (#188), made entirely on this machine. The target, from `docs/product/art-guide.md`, is a 64×80 cell, a figure 48–56 px tall, a 1 px selective outline in the darkest shade of the local ramp, at most 16 Olympus colours, binary alpha, a pivot at (32,80), and Zeus's bolt.
 
 Earlier this doc recorded the sprite as open research, with Zeus on `placeholder-zeus` and every route rejected. That was superseded on 2026-10-08. The failed routes are kept below as the record.
+
+2026-10-12: [ADR-0012](../../decisions/0012-pre-rendered-retro-art-direction.md) (#215) replaces this route's targets for new assets. New gods use `god-tall` (112×96, pivot (56,78)) on `greek-retro`. Mortal cells stay 64×64. This route remains the method for legacy 64×80 sprites on `greek-master`.
 
 The missing piece was the downscale. Every earlier route reduced by a whole number: conforming accepts only a scale where source size = scale × cell, so a 512×640 render is always scale 8, and one route snapped 11× nearest-neighbour. Figure height then followed the model's composition: 62–70 px against 48–56.
 
