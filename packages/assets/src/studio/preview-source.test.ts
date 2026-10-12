@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spriteFixture } from "../fixtures";
+import { portraitFixture, spriteFixture } from "../fixtures";
 import { sha256Hex } from "../hash";
 import {
   fakeWatchFs,
@@ -11,6 +11,7 @@ import {
   manualClock,
   publishCanon,
   vocabulary,
+  withManifest,
   writeDraft,
 } from "./_test-preview";
 import { decodePng } from "./png/decode";
@@ -172,6 +173,82 @@ describe("bytes", () => {
 });
 
 describe("keys", () => {
+  test("lists every animation key and portrait expression for canon, draft, and approved records", () => {
+    const r = rig();
+    const sprite = spriteFixture("zeus-sprite");
+    const idleFrames = sprite.manifest.animations[0]?.frames;
+    if (idleFrames === undefined)
+      throw new Error("sprite fixture has no frames");
+    const actDurations = [83, 100, 83, 83, 100];
+    const zeus = withManifest(sprite, {
+      animations: [
+        { state: "idle", direction: "south", frames: idleFrames },
+        {
+          state: "seated",
+          direction: "south",
+          frames: idleFrames.slice(0, 2),
+        },
+        {
+          state: "act",
+          direction: "south",
+          ability: "thunderbolt",
+          loopStart: 2,
+          frames: actDurations.map((durationMs, index) => {
+            const sourceFrame = idleFrames[index % idleFrames.length];
+            if (sourceFrame === undefined)
+              throw new Error("sprite fixture has no source frame");
+            return { ...sourceFrame, durationMs };
+          }),
+        },
+      ],
+    });
+    const portrait = portraitFixture("zeus-portrait");
+    const portraitFrames = portrait.manifest.expressions.map(
+      (item) => item.frame,
+    );
+    const expressions = [
+      "neutral",
+      "pleased",
+      "angry",
+      "grieving",
+      "scheming",
+      "awed",
+    ];
+    const zeusPortrait = withManifest(portrait, {
+      expressions: expressions.map((expression, index) => ({
+        expression,
+        frame: portraitFrames[index % portraitFrames.length],
+      })),
+    });
+
+    publishCanon(r.registryRoot, zeus);
+    publishCanon(r.registryRoot, zeusPortrait);
+    for (const state of ["draft", "approved"] as const) {
+      writeDraft(r.studioRoot, `zeus-sprite-${state}`, zeus, state);
+      writeDraft(r.studioRoot, `zeus-portrait-${state}`, zeusPortrait, state);
+    }
+    r.clock.touch(r.registryRoot, "index.json");
+    r.clock.touch(r.studioRoot, "assets/zeus-sprite-draft.json");
+    r.clock.tick();
+
+    const listing = r.source.list();
+    const spriteKeys = [
+      { state: "idle", direction: "south" },
+      { state: "seated", direction: "south" },
+      { state: "act", direction: "south", ability: "thunderbolt" },
+    ];
+    for (const source of ["canon", "draft", "approved"] as const) {
+      const spriteEntry = listing.entries.find(
+        (entry) => entry.source === source && entry.assetId === "zeus-sprite",
+      );
+      const portraitEntry = listing.entries.find(
+        (entry) => entry.source === source && entry.assetId === "zeus-portrait",
+      );
+      expect(spriteEntry?.animations).toEqual(spriteKeys);
+      expect(portraitEntry?.expressions).toEqual(expressions);
+    }
+  });
+
   test("name every held or refused selection, and the listing key moves with the listing", () => {
     const r = rig();
     const empty = r.source.keys();

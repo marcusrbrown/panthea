@@ -13,7 +13,10 @@ import type {
 // session and the webview share one shape. Type-only: the browser bundle takes
 // nothing at runtime from the assets package.
 export type Selection = PreviewSelection;
-export type ListingEntry = PreviewListingEntry;
+export interface ListingEntry extends PreviewListingEntry {
+  readonly animations: PreviewListingEntry["animations"];
+  readonly expressions: PreviewListingEntry["expressions"];
+}
 export type AssetProblem = PreviewProblem;
 export type Listing = PreviewListing;
 export type ResolveRequest = PreviewResolveRequest;

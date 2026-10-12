@@ -1614,6 +1614,21 @@ export function WorkflowView({
                   <p>Review the record, then confirm each lifecycle change.</p>
                 </div>
               </div>
+              <section className="preview-area">
+                <div className="preview-heading">
+                  <h3>Isometric preview</h3>
+                  <span>integer zoom · nearest pixels</span>
+                </div>
+                {activePreviewWithKind && renderPreview ? (
+                  renderPreview(activePreviewWithKind)
+                ) : (
+                  <p className="muted">
+                    {pendingAssetId === undefined
+                      ? "Select a draft or approved record to preview it."
+                      : `Waiting for ${pendingAssetId}; no other record is previewed.`}
+                  </p>
+                )}
+              </section>
               {state.assets.length === 0 && pendingAssetId === undefined ? (
                 <p className="empty-state">
                   Packed drafts and approved records will appear here.
@@ -1786,21 +1801,6 @@ export function WorkflowView({
                   )}
                 </>
               )}
-              <section className="preview-area">
-                <div className="preview-heading">
-                  <h3>Isometric preview</h3>
-                  <span>integer zoom · nearest pixels</span>
-                </div>
-                {activePreviewWithKind && renderPreview ? (
-                  renderPreview(activePreviewWithKind)
-                ) : (
-                  <p className="muted">
-                    {pendingAssetId === undefined
-                      ? "Select a draft or approved record to preview it."
-                      : `Waiting for ${pendingAssetId}; no other record is previewed.`}
-                  </p>
-                )}
-              </section>
               {activeEdit && (
                 <EditPanel
                   host={host}

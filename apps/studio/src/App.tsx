@@ -1,7 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type CheckResult, runChecks } from "./check/run";
-import { harnessItems, type OcclusionPair, pickIn } from "./harness/layout";
+import {
+  abilitiesForKey,
+  animationKeyMessage,
+  createPlaybackClock,
+  directionsForState,
+  expressionKeyMessage,
+  firstAnimationForState,
+  firstPreviewKey,
+  harnessItems,
+  type OcclusionPair,
+  type PlaybackClock,
+  pickIn,
+  statesForEntry,
+} from "./harness/layout";
 import { usePreview } from "./harness/usePreview";
 import { inTauri } from "./host/tauri";
 import { ZOOMS, type Zoom } from "./renderer/preview";
@@ -20,17 +33,6 @@ declare global {
     __studioCheck?: CheckState;
   }
 }
-
-const STATES = ["idle", "seated", "walk", "hurt", "down"];
-const DIRECTIONS = ["south", "north", "east", "west"];
-const EXPRESSIONS = [
-  "neutral",
-  "pleased",
-  "angry",
-  "grieving",
-  "scheming",
-  "awed",
-];
 
 const keyOf = (selection: Selection) => `${selection.source}:${selection.id}`;
 
@@ -110,19 +112,43 @@ function PreviewHarness({
     };
   }, [selectionSource, selectionId, selectionKind]);
   const container = useRef<HTMLDivElement | null>(null);
-  const handle = usePreview(container, params);
-  const { preview, source, listing } = handle;
-
   const [sourceKind, setSourceKind] = useState<SourceKind>(params.source);
   const [subjectKey, setSubjectKey] = useState(params.subject);
   const [portraitKey, setPortraitKey] = useState(params.portrait);
-  const [state, setState] = useState("idle");
-  const [direction, setDirection] = useState("south");
-  const [expression, setExpression] = useState("neutral");
+  const [focusKind, setFocusKind] = useState<
+    PreviewSelection["kind"] | undefined
+  >(selectionKind);
+  const [state, setState] = useState("");
+  const [direction, setDirection] = useState("");
+  const [ability, setAbility] = useState<string | undefined>();
+  const [expression, setExpression] = useState("");
   const [zoom, setZoom] = useState<Zoom>(params.zoom);
   const [companion, setCompanion] = useState(true);
   const [occlusion, setOcclusion] = useState<OcclusionPair>(params.occlusion);
   const [check, setCheck] = useState<CheckState>({ status: "idle" });
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [frameDurations, setFrameDurations] = useState<readonly number[]>([]);
+  const [isPlaying, setIsPlaying] = useState(params.animate);
+  const playbackRef = useRef<PlaybackClock | undefined>(undefined);
+  if (playbackRef.current === undefined) {
+    playbackRef.current = createPlaybackClock([], undefined, () =>
+      performance.now(),
+    );
+    if (params.animate) playbackRef.current.play();
+  }
+  const playback = playbackRef.current;
+  const syncFrame = useCallback(() => {
+    const next = playback.frame();
+    setFrameIndex((current) => (current === next ? current : next));
+  }, [playback]);
+  const handle = usePreview(container, {
+    ...params,
+    animate: !params.check,
+    elapsed: playback.elapsed,
+    onTick: syncFrame,
+  });
+  const { preview, source, listing } = handle;
+
   useEffect(() => {
     if (
       selectionSource === undefined ||
@@ -136,21 +162,142 @@ function PreviewHarness({
       kind: selectionKind,
     });
     setSourceKind(selectionSource);
-    if (route.subjectKey !== undefined) setSubjectKey(route.subjectKey);
-    if (route.portraitKey !== undefined) setPortraitKey(route.portraitKey);
+    if (route.subjectKey !== undefined) {
+      setFocusKind("sprite");
+      setSubjectKey(route.subjectKey);
+      setPortraitKey(null);
+    }
+    if (route.portraitKey !== undefined) {
+      setFocusKind("portrait");
+      setPortraitKey(route.portraitKey);
+      setSubjectKey(null);
+    }
   }, [selectionSource, selectionId, selectionKind]);
 
   const entries = listing?.entries ?? [];
-  const sprites = entries.filter(
-    (entry) => entry.source === sourceKind && entry.kind === "sprite",
-  );
-  const portraits = entries.filter(
-    (entry) => entry.source === sourceKind && entry.kind === "portrait",
-  );
+  const sprites =
+    focusKind === "portrait"
+      ? []
+      : entries.filter(
+          (entry) => entry.source === sourceKind && entry.kind === "sprite",
+        );
+  const portraits =
+    focusKind === "sprite"
+      ? []
+      : entries.filter(
+          (entry) => entry.source === sourceKind && entry.kind === "portrait",
+        );
   const subjectChoice = pickIn(sprites, parseKey(subjectKey));
   const portraitChoice = pickIn(portraits, parseKey(portraitKey));
   const subjectChosen = subjectChoice && keyOf(subjectChoice);
   const portraitChosen = portraitChoice && keyOf(portraitChoice);
+  const subjectEntry = sprites.find((entry) => keyOf(entry) === subjectChosen);
+  const portraitEntry = portraits.find(
+    (entry) => keyOf(entry) === portraitChosen,
+  );
+
+  useEffect(() => {
+    const first = firstPreviewKey(subjectEntry);
+    if (first?.kind === "sprite") {
+      setState(first.state);
+      setDirection(first.direction);
+      setAbility(first.ability);
+    } else {
+      setState("");
+      setDirection("");
+      setAbility(undefined);
+    }
+  }, [subjectEntry]);
+
+  useEffect(() => {
+    const first = firstPreviewKey(portraitEntry);
+    setExpression(first?.kind === "portrait" ? first.expression : "");
+  }, [portraitEntry]);
+
+  const currentAnimation = {
+    state,
+    direction,
+    ...(ability === undefined ? {} : { ability }),
+  };
+  const missingSpriteKey = animationKeyMessage(subjectEntry, currentAnimation);
+  const missingExpression = expressionKeyMessage(portraitEntry, expression);
+  const availableAbilities = abilitiesForKey(subjectEntry, state, direction);
+  const hasUnspecifiedAbility = subjectEntry?.animations.some(
+    (key) =>
+      key.state === state &&
+      key.direction === direction &&
+      key.ability === undefined,
+  );
+  const abilityOptions = [
+    ...(hasUnspecifiedAbility ? [""] : []),
+    ...availableAbilities,
+  ];
+  const frameControls = frameDurations.map((duration, frame) => ({
+    duration,
+    frame,
+    key: `frame-${frame}-${duration}`,
+  }));
+
+  useEffect(() => {
+    let cancelled = false;
+    playback.configure([], undefined);
+    setFrameDurations([]);
+    setFrameIndex(0);
+    preview?.tick(0);
+
+    if (source === undefined) return;
+
+    const request =
+      subjectEntry !== undefined && missingSpriteKey === undefined
+        ? {
+            source: subjectEntry.source,
+            id: subjectEntry.id,
+            state,
+            direction,
+            ...(ability === undefined ? {} : { ability }),
+          }
+        : portraitEntry !== undefined && missingExpression === undefined
+          ? {
+              source: portraitEntry.source,
+              id: portraitEntry.id,
+              expression,
+            }
+          : undefined;
+    if (request === undefined) return;
+
+    void source.resolve(request).then(
+      (resolved) => {
+        if (cancelled || resolved.kind !== "frames") return;
+        const durations = resolved.asset.frames.map(
+          (frame) => frame.durationMs,
+        );
+        playback.configure(durations, resolved.asset.loopStart);
+        setFrameDurations(durations);
+        setFrameIndex(playback.frame());
+        preview?.tick(playback.elapsed());
+      },
+      () => {
+        if (cancelled) return;
+        playback.configure([], undefined);
+        setFrameDurations([]);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    source,
+    preview,
+    subjectEntry,
+    portraitEntry,
+    state,
+    direction,
+    ability,
+    expression,
+    missingSpriteKey,
+    missingExpression,
+    playback,
+  ]);
 
   useEffect(() => {
     if (params.check || preview === undefined || listing === undefined) return;
@@ -160,7 +307,10 @@ function PreviewHarness({
         portrait: parseKey(portraitChosen ?? null),
         state,
         direction,
+        ability,
         expression,
+        animations: subjectEntry?.animations ?? [],
+        expressions: portraitEntry?.expressions ?? [],
         companion,
         occlusion,
       }),
@@ -171,8 +321,11 @@ function PreviewHarness({
     listing,
     subjectChosen,
     portraitChosen,
+    subjectEntry,
+    portraitEntry,
     state,
     direction,
+    ability,
     expression,
     companion,
     occlusion,
@@ -224,7 +377,7 @@ function PreviewHarness({
       className={
         compact ? "preview-harness preview-compact" : "preview-harness"
       }
-      style={{ fontFamily: "monospace", padding: compact ? 0 : 12 }}
+      style={{ padding: compact ? 0 : 12 }}
     >
       {!compact && <h1 style={{ fontSize: 16 }}>Panthea Studio preview</h1>}
       <p>
@@ -232,123 +385,241 @@ function PreviewHarness({
           ? `Renderer failed: ${handle.failure}`
           : `Renderer: ${handle.backend ?? "starting"}${params.forceWebGL ? " (WebGL2 forced)" : ""}`}
       </p>
-      <fieldset style={{ marginBottom: 8 }}>
-        <legend>Controls</legend>
-        <label>
-          Source{" "}
-          <select
-            value={sourceKind}
-            onChange={(event) => {
-              setSourceKind(event.target.value as SourceKind);
-              setSubjectKey(null);
-              setPortraitKey(null);
-            }}
-          >
-            {SOURCE_KINDS.map((kind) => (
-              <option key={kind} value={kind}>
-                {kind === "draft" ? "draft (not approved)" : kind}
-              </option>
-            ))}
-          </select>
-        </label>{" "}
-        <label>
-          Sprite{" "}
-          <select
-            value={subjectChosen ?? ""}
-            onChange={(event) => setSubjectKey(event.target.value)}
-          >
-            {sprites.length === 0 && (
-              <option value="">none (placeholder)</option>
+      {!params.check && (
+        <section className="preview-controls" aria-label="Preview controls">
+          <span className="preview-controls-title">Preview controls</span>
+          {!compact && (
+            <div className="preview-selectors">
+              <label>
+                Source{" "}
+                <select
+                  value={sourceKind}
+                  onChange={(event) => {
+                    setSourceKind(event.target.value as SourceKind);
+                    setSubjectKey(null);
+                    setPortraitKey(null);
+                  }}
+                >
+                  {SOURCE_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {kind === "draft" ? "draft (not approved)" : kind}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {focusKind !== "portrait" && (
+                <label>
+                  Sprite{" "}
+                  <select
+                    value={subjectChosen ?? ""}
+                    onChange={(event) => setSubjectKey(event.target.value)}
+                  >
+                    {sprites.length === 0 && (
+                      <option value="">none (placeholder)</option>
+                    )}
+                    {sprites.map((entry) => (
+                      <option key={keyOf(entry)} value={keyOf(entry)}>
+                        {describe(entry)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {focusKind !== "sprite" && (
+                <label>
+                  Portrait{" "}
+                  <select
+                    value={portraitChosen ?? ""}
+                    onChange={(event) => setPortraitKey(event.target.value)}
+                  >
+                    {portraits.length === 0 && <option value="">none</option>}
+                    {portraits.map((entry) => (
+                      <option key={keyOf(entry)} value={keyOf(entry)}>
+                        {describe(entry)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+          )}
+
+          <div className="preview-selectors preview-key-selectors">
+            {focusKind !== "portrait" && subjectEntry?.kind === "sprite" && (
+              <>
+                <label>
+                  State{" "}
+                  <select
+                    value={state}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      const first = firstAnimationForState(subjectEntry, next);
+                      setState(next);
+                      setDirection(first?.direction ?? "");
+                      setAbility(first?.ability);
+                    }}
+                  >
+                    {statesForEntry(subjectEntry).map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Direction{" "}
+                  <select
+                    value={direction}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      const first = subjectEntry.animations.find(
+                        (key) => key.state === state && key.direction === next,
+                      );
+                      setDirection(next);
+                      setAbility(first?.ability);
+                    }}
+                  >
+                    {directionsForState(subjectEntry, state).map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {abilityOptions.length > 0 && (
+                  <label>
+                    Ability{" "}
+                    <select
+                      value={ability ?? ""}
+                      onChange={(event) =>
+                        setAbility(event.target.value || undefined)
+                      }
+                    >
+                      {abilityOptions.map((value) => (
+                        <option key={value || "none"} value={value}>
+                          {value || "no ability"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </>
             )}
-            {sprites.map((entry) => (
-              <option key={keyOf(entry)} value={keyOf(entry)}>
-                {describe(entry)}
-              </option>
-            ))}
-          </select>
-        </label>{" "}
-        <label>
-          State{" "}
-          <select
-            value={state}
-            onChange={(event) => setState(event.target.value)}
-          >
-            {STATES.map((value) => (
-              <option key={value}>{value}</option>
-            ))}
-          </select>
-        </label>{" "}
-        <label>
-          Direction{" "}
-          <select
-            value={direction}
-            onChange={(event) => setDirection(event.target.value)}
-          >
-            {DIRECTIONS.map((value) => (
-              <option key={value}>{value}</option>
-            ))}
-          </select>
-        </label>{" "}
-        <label>
-          Portrait{" "}
-          <select
-            value={portraitChosen ?? ""}
-            onChange={(event) => setPortraitKey(event.target.value)}
-          >
-            {portraits.length === 0 && <option value="">none</option>}
-            {portraits.map((entry) => (
-              <option key={keyOf(entry)} value={keyOf(entry)}>
-                {describe(entry)}
-              </option>
-            ))}
-          </select>
-        </label>{" "}
-        <label>
-          Expression{" "}
-          <select
-            value={expression}
-            onChange={(event) => setExpression(event.target.value)}
-          >
-            {EXPRESSIONS.map((value) => (
-              <option key={value}>{value}</option>
-            ))}
-          </select>
-        </label>{" "}
-        <fieldset style={{ display: "inline" }}>
-          <legend>Zoom</legend>
-          {ZOOMS.map((value) => (
-            <label key={value}>
-              <input
-                type="radio"
-                name="zoom"
-                checked={zoom === value}
-                onChange={() => setZoom(value)}
-              />
-              {value}×{" "}
-            </label>
-          ))}
-        </fieldset>{" "}
-        <label>
-          Occlusion{" "}
-          <select
-            value={occlusion}
-            onChange={(event) =>
-              setOcclusion(event.target.value as OcclusionPair)
-            }
-          >
-            <option value="subject-front">subject in front</option>
-            <option value="structure-front">structure in front</option>
-          </select>
-        </label>{" "}
-        <label>
-          <input
-            type="checkbox"
-            checked={companion}
-            onChange={(event) => setCompanion(event.target.checked)}
-          />
-          seated companion
-        </label>
-      </fieldset>
+            {focusKind !== "sprite" && portraitEntry?.kind === "portrait" && (
+              <label>
+                Expression{" "}
+                <select
+                  value={expression}
+                  onChange={(event) => setExpression(event.target.value)}
+                >
+                  {portraitEntry.expressions.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+
+          {(missingSpriteKey !== undefined ||
+            missingExpression !== undefined) && (
+            <p className="preview-key-message" role="status">
+              not in this asset
+            </p>
+          )}
+
+          <fieldset className="preview-transport">
+            <legend>Playback</legend>
+            <button
+              type="button"
+              onClick={() => {
+                playback.toggle();
+                setIsPlaying(playback.playing());
+              }}
+            >
+              {isPlaying ? "Pause" : "Play"}
+            </button>
+            <button
+              type="button"
+              disabled={frameDurations.length === 0}
+              onClick={() => {
+                playback.step();
+                setIsPlaying(false);
+                setFrameIndex(playback.frame());
+                preview?.tick(playback.elapsed());
+              }}
+            >
+              Step
+            </button>
+            <span aria-live="polite">
+              {frameDurations.length === 0
+                ? "No frames"
+                : `Frame ${frameIndex + 1} of ${frameDurations.length}`}
+            </span>
+            <fieldset className="preview-zoom">
+              <legend>Zoom</legend>
+              {ZOOMS.map((value) => (
+                <label key={value}>
+                  <input
+                    type="radio"
+                    name={compact ? "compact-zoom" : "zoom"}
+                    checked={zoom === value}
+                    onChange={() => setZoom(value)}
+                  />
+                  {value}×
+                </label>
+              ))}
+            </fieldset>
+          </fieldset>
+          {frameDurations.length > 0 && (
+            <fieldset className="preview-frame-strip">
+              <legend>Frames</legend>
+              {frameControls.map(({ duration, frame, key }) => (
+                <button
+                  type="button"
+                  key={key}
+                  className={frameIndex === frame ? "is-current" : undefined}
+                  aria-label={`Frame ${frame + 1}, ${duration} milliseconds`}
+                  aria-pressed={frameIndex === frame}
+                  onClick={() => {
+                    playback.scrub(frame);
+                    setIsPlaying(false);
+                    setFrameIndex(playback.frame());
+                    preview?.tick(playback.elapsed());
+                  }}
+                >
+                  {frame + 1}
+                </button>
+              ))}
+            </fieldset>
+          )}
+          {!compact && (
+            <div className="preview-more-controls">
+              <label>
+                <select
+                  aria-label="Occlusion"
+                  value={occlusion}
+                  onChange={(event) =>
+                    setOcclusion(event.target.value as OcclusionPair)
+                  }
+                >
+                  <option value="subject-front">subject in front</option>
+                  <option value="structure-front">structure in front</option>
+                </select>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={companion}
+                  onChange={(event) => setCompanion(event.target.checked)}
+                />
+                seated companion
+              </label>
+            </div>
+          )}
+        </section>
+      )}
 
       <div
         ref={container}

@@ -24,6 +24,8 @@ export interface PreviewParams {
   readonly forceWebGL: boolean;
   readonly animate: boolean;
   readonly zoom: Zoom;
+  readonly elapsed?: () => number;
+  readonly onTick?: () => void;
 }
 
 export type PreviewStatus = "starting" | "ready" | "failed";
@@ -132,7 +134,8 @@ export function usePreview(
 
     const start = performance.now();
     const loop = () => {
-      preview.tick(performance.now() - start);
+      preview.tick(options.elapsed?.() ?? performance.now() - start);
+      options.onTick?.();
       frame = requestAnimationFrame(loop);
     };
     if (options.animate) frame = requestAnimationFrame(loop);

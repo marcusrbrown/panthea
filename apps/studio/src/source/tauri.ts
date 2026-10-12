@@ -83,6 +83,29 @@ function problems(value: unknown, path: string): AssetProblem[] {
   });
 }
 
+function animationKeys(value: unknown, path: string) {
+  return list(value, path).map((item, i) => {
+    const itemPath = `${path}[${i}]`;
+    const o = object(item, itemPath);
+    const state = text(o.state, `${itemPath}.state`);
+    const direction = text(o.direction, `${itemPath}.direction`);
+    if (!KEY.test(state)) refuse(`${itemPath}.state`, "not a key");
+    if (!KEY.test(direction)) refuse(`${itemPath}.direction`, "not a key");
+    if (o.ability === undefined) return { state, direction };
+    const ability = text(o.ability, `${itemPath}.ability`);
+    if (!KEY.test(ability)) refuse(`${itemPath}.ability`, "not a key");
+    return { state, direction, ability };
+  });
+}
+
+function expressions(value: unknown, path: string): string[] {
+  return list(value, path).map((item, i) => {
+    const expression = text(item, `${path}[${i}]`);
+    if (!KEY.test(expression)) refuse(`${path}[${i}]`, "not a key");
+    return expression;
+  });
+}
+
 const ENTRY_KINDS = ["sprite", "portrait", "unknown"] as const;
 
 function entry(value: unknown, path: string): ListingEntry {
@@ -101,6 +124,8 @@ function entry(value: unknown, path: string): ListingEntry {
     assetId: text(o.assetId, `${path}.assetId`),
     kind,
     state,
+    animations: animationKeys(o.animations, `${path}.animations`),
+    expressions: expressions(o.expressions, `${path}.expressions`),
     ok: o.ok as boolean,
   };
 }

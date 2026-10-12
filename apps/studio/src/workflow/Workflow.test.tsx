@@ -235,6 +235,51 @@ describe("WorkflowView controls", () => {
     expect(css).toMatch(/\.scale-conform-form\s*\{[^}]*row-gap:\s*10px;/s);
   });
 
+  test("keeps the isometric preview above selected-record details", () => {
+    const html = render(
+      stateFor(undefined, {
+        assets: [
+          {
+            id: "draft-a",
+            assetId: "zeus-sprite",
+            state: "draft",
+            manifestRevision: "rev-draft-a",
+          },
+        ],
+      }),
+    );
+    const preview = html.indexOf("Isometric preview");
+    const record = html.indexOf('class="asset-select workflow-field"');
+
+    expect(preview).toBeGreaterThanOrEqual(0);
+    expect(record).toBeGreaterThan(preview);
+  });
+
+  test("gives preview controls a visible group title over the scene", () => {
+    const css = readFileSync(
+      new URL("./workflow.css", import.meta.url),
+      "utf8",
+    );
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+    expect(css).toMatch(
+      /\.preview-controls\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*1;/s,
+    );
+    expect(css).toMatch(
+      /\.preview-controls-title\s*\{[^}]*color:\s*var\(--ink-soft\);/s,
+    );
+    expect(css).toMatch(
+      /\.preview-compact #preview\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*0;/s,
+    );
+    expect(css).toContain(".preview-compact > section:not(.preview-controls)");
+    expect(app).toMatch(
+      /<section\s+className="preview-controls"\s+aria-label="Preview controls">/,
+    );
+    expect(app).toContain(
+      '<span className="preview-controls-title">Preview controls</span>',
+    );
+  });
+
   test("empty queue has no job actions", () => {
     const html = render(stateFor());
     expect(html).toContain("Queue is empty");
