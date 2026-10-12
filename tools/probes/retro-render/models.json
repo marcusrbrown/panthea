@@ -12,7 +12,7 @@
       "licence": "CC0 1.0 Universal",
       "licenceUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
       "status": "used",
-      "usedFor": "Zeus (Superhero_Male_FullBody, Hair_Beard, Hair_SimpleParted) and the mortal (Superhero_Female_FullBody, Hair_SimpleParted); skinned to the UAL clips",
+      "usedFor": "Zeus (Superhero_Male_FullBody, Hair_Beard, Hair_SimpleParted, Hair_Long: side locks and back mass) and the mortal (Superhero_Female_FullBody, Hair_SimpleParted); skinned to the UAL clips",
       "note": "Material textures are not used: every material is replaced by a palette ramp. The Standard tier ships two base characters.",
       "zip": {
         "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard].zip",
@@ -64,6 +64,16 @@
           "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_SimpleParted.bin",
           "sha256": "ecd7c81959f3985d6254458a440daaaa18a8bfbb1dbe111c68a04a72374d54db",
           "bytes": 51332
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Long.gltf",
+          "sha256": "27e2c63e8f98c79fb600268ffcc92b36c621b8653b5a7dcbadb08328f3f887a9",
+          "bytes": 23813
+        },
+        {
+          "file": "<main-checkout>/tools/probes/retro-render/models/Universal Base Characters[Standard]/Universal Base Characters[Standard]/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Long.bin",
+          "sha256": "268fd531d2c2ac321783d36fcf106d15c5c76e8923eec2c8704d5fe9de953589",
+          "bytes": 181756
         }
       ]
     },

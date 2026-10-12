@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -18,9 +19,9 @@ PLACEHOLDER = "<main-checkout>/tools/probes/retro-render/models"
 DATE = "2026-10-11"
 CC0 = "https://creativecommons.org/publicdomain/zero/1.0/"
 
-UBC_DIR = "Universal Base Characters[Standard]/Universal Base Characters[Standard]"
-MEDIEVAL_DIR = "Medieval Village Pack - Dec 2020-20261012T081001Z-1-001/Medieval Village Pack - Dec 2020"
-UA_DIR = "Ultimate Animated Animals - July 2021-20261012T171708Z-1-001/Ultimate Animated Animals - July 2021"
+sys.path.insert(0, str(ROOT))
+from retro_assets import KENNEY_DIR, MEDIEVAL_DIR, UA_DIR, UBC_DIR  # noqa: E402  (the directories the renderer imports from)
+
 KAYKIT_DIR = "KayKit_Forest_Nature_Pack_1.0_FREE/KayKit_Forest_Nature_Pack_1.0_FREE"
 
 PACKS = [
@@ -34,7 +35,7 @@ PACKS = [
         "licence": "CC0 1.0 Universal",
         "licenceUrl": CC0,
         "status": "used",
-        "usedFor": "Zeus (Superhero_Male_FullBody, Hair_Beard, Hair_SimpleParted) and the mortal (Superhero_Female_FullBody, Hair_SimpleParted); skinned to the UAL clips",
+        "usedFor": "Zeus (Superhero_Male_FullBody, Hair_Beard, Hair_SimpleParted, Hair_Long: side locks and back mass) and the mortal (Superhero_Female_FullBody, Hair_SimpleParted); skinned to the UAL clips",
         "files": [
             f"{UBC_DIR}/Base Characters/Godot - UE/Superhero_Male_FullBody.gltf",
             f"{UBC_DIR}/Base Characters/Godot - UE/Superhero_Male_FullBody.bin",
@@ -44,6 +45,8 @@ PACKS = [
             f"{UBC_DIR}/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Beard.bin",
             f"{UBC_DIR}/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_SimpleParted.gltf",
             f"{UBC_DIR}/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_SimpleParted.bin",
+            f"{UBC_DIR}/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Long.gltf",
+            f"{UBC_DIR}/Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)/Hair_Long.bin",
         ],
         "note": "Material textures are not used: every material is replaced by a palette ramp. The Standard tier ships two base characters.",
     },
@@ -109,13 +112,13 @@ PACKS = [
         "title": "Nature Kit 2.1",
         "author": "Kenney",
         "sourcePage": "https://kenney.nl/assets/nature-kit",
-        "zip": "kenney_nature-kit.zip",
-        "licenceFile": "kenney_nature-kit/License.txt",
+        "zip": f"{KENNEY_DIR}.zip",
+        "licenceFile": f"{KENNEY_DIR}/License.txt",
         "licence": "Creative Commons Zero, CC0 (credit not mandatory)",
         "licenceUrl": "http://creativecommons.org/publicdomain/zero/1.0/",
         "status": "used",
         "usedFor": "the tree (Models/GLTF format/tree_cone.glb); tree_pineTallA, tree_thin, tree_pineSmallA and tree_oak were rendered for comparison only",
-        "files": ["kenney_nature-kit/Models/GLTF format/tree_cone.glb"],
+        "files": [f"{KENNEY_DIR}/Models/GLTF format/tree_cone.glb"],
         "note": "",
     },
 ]

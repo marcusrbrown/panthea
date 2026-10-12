@@ -1,10 +1,11 @@
 """Retro-render renderer: one item per Blender process, 4x beauty renders in two shading variants plus part-ID and depth passes.
 
     blender --background --factory-startup --python-exit-code 1 --python render_retro.py -- \\
-        --item zeus --models <main-checkout>/tools/probes --out <dir>
+        --item zeus --models <main-checkout>/tools/probes --tag r3
 
-Items: zeus, mortal (Universal Base Characters on UAL clips), tree (Kenney, wind loop), temple (primitives), house (Quaternius
-medieval), tile (path and grass). Everything is built from a factory start in the process; nothing is saved as a .blend.
+`--tag T` writes `scratch/render-T/<item>/`, the directory postprocess_retro.py reads for the same tag (`--out DIR` overrides it).
+Items: zeus, zeus-tall, mortal (Universal Base Characters on UAL clips), bull (Quaternius animals), tree (Kenney, wind loop),
+temple (primitives), house (Quaternius medieval), tile (path and grass). Everything is built from a factory start in the process; nothing is saved as a .blend.
 """
 
 from __future__ import annotations
@@ -25,14 +26,14 @@ from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Vector, kdtree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import retro_assets as assets  # noqa: E402
 import retro_lib as rl  # noqa: E402
+import retro_paths as rpaths  # noqa: E402
 from retro_lib import base, pal, rp, sp, zp  # noqa: E402
 import tile_geom as tg  # noqa: E402
 import wind_plan as wp  # noqa: E402
 
 REPO = rl.REPO
-UBC = "Universal Base Characters[Standard]/Universal Base Characters[Standard]"
-UAL = "blender-sprite/models/Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard.glb"
 POSE_OFFSETS = REPO / "tools/probes/blender-sprite/pose_offsets.json"
 ARM_NAMES = zp.ARM_NAMES
 FIST_AXIS = (1.0, 0.0, 0.0)  # finger curl axis in each finger bone's own space (X; the sign is the curl direction)
@@ -45,16 +46,23 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--item", required=True, choices=sorted(rp.ITEMS))
     ap.add_argument("--models", required=True, help="the main checkout's tools/probes directory")
     ap.add_argument("--palette", default=str(Path(__file__).resolve().parent / "palette/scene-palette.json"))
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", default=None, help="render directory (one subdirectory per item); or use --tag")
+    ap.add_argument("--tag", default=None, help="write scratch/render-<tag>, the directory postprocess_retro.py reads for that tag")
+    ap.add_argument("--scratch", default=str(rpaths.DEFAULT_SCRATCH))
     ap.add_argument("--variants", default="toon")
     ap.add_argument("--only", default="", help="clip:facing:index, one pose")
     ap.add_argument("--no-passes", action="store_true")
     ap.add_argument("--hair", default="", help="override the profile hair, comma separated")
     ap.add_argument("--fist", type=float, default=None, help="override the fist curl in degrees")
     ap.add_argument("--pitch", type=float, default=None, help="override the extra head pitch in degrees")
-    ap.add_argument("--tree", default="tree_cone")
-    ap.add_argument("--house", default="House_1")
-    return ap.parse_args(argv)
+    ap.add_argument("--tree", default=assets.DEFAULT_TREE)
+    ap.add_argument("--house", default=assets.DEFAULT_HOUSE)
+    args = ap.parse_args(argv)
+    try:
+        args.out = str(rpaths.resolve_render_out(args.out, args.tag, Path(args.scratch)))
+    except ValueError as e:
+        ap.error(str(e))
+    return args
 
 
 class Pose:
@@ -120,13 +128,11 @@ class Character:
         models = Path(args.models)
         bpy.context.view_layer.update()
         # animation source: the UAL actions (same bone names as the Universal Base Characters rig)
-        ual_objs = rl.import_gltf(str(models / UAL))
+        ual_objs = rl.import_gltf(str(models / assets.UAL))
         for o in ual_objs:
             bpy.data.objects.remove(o, do_unlink=True)
-        base_dir = models / "retro-render/models" / UBC / "Base Characters/Godot - UE"
         self.profile = rp.PROFILES[kind]
-        gender = "Male" if kind == "zeus" else "Female"
-        objs = rl.import_gltf(str(base_dir / f"Superhero_{gender}_FullBody.gltf"))
+        objs = rl.import_gltf(str(models / assets.character_gltf(kind)))
         self.arm = next(o for o in objs if o.type == "ARMATURE")
         meshes = {o.name: o for o in objs if o.type == "MESH"}
         self.body = next(o for n, o in meshes.items() if n.startswith("SuperHero") or n.startswith("Superhero"))
@@ -169,8 +175,7 @@ class Character:
 
     def add_hair(self, models: Path, piece: rp.HairPiece):
         file, role, part = piece.file, piece.role, piece.part
-        hair_dir = models / "retro-render/models" / UBC / "Hairstyles/Rigged to Head Bone/glTF (Godot -Unreal)"
-        objs = rl.import_gltf(str(hair_dir / f"{file}.gltf"))
+        objs = rl.import_gltf(str(models / assets.hair_gltf(file)))
         mesh = next(o for o in objs if o.type == "MESH" and o.name.startswith(("Hair", "Beard")))
         for o in objs:
             if o is not mesh:
@@ -407,15 +412,13 @@ def build_mortal(args, scene, axes, cam, item, book):
 
 # --- animal (Quaternius Ultimate Animated Animals: Bull) -------------------------------------------------------------
 
-ANIMALS_DIR = "Ultimate Animated Animals - July 2021-20261012T171708Z-1-001/Ultimate Animated Animals - July 2021/glTF"
-
 
 class Animal:
     """The Bull with its own rig and clips (Idle, Walk), at mortal scale. Forward is -Y in the rig."""
 
     def __init__(self, args, item: rp.Item, scene, axes, cam, book: rl.MaterialBook):
         self.scene, self.axes, self.cam, self.item, self.book = scene, axes, cam, item, book
-        objs = rl.import_gltf(str(Path(args.models) / "retro-render/models" / ANIMALS_DIR / "Bull.gltf"))
+        objs = rl.import_gltf(str(Path(args.models) / assets.bull_gltf()))
         self.arm = next(o for o in objs if o.type == "ARMATURE")
         self.body = next(o for o in objs if o.type == "MESH" and o.parent is self.arm)
         for o in objs:
@@ -496,8 +499,7 @@ TREE_AMPLITUDE_M = 0.14
 class Tree:
     def __init__(self, args, scene, axes, cam, item, book):
         self.scene, self.axes, self.cam, self.item, self.book = scene, axes, cam, item, book
-        path = Path(args.models) / f"retro-render/models/kenney_nature-kit/Models/GLTF format/{args.tree}.glb"
-        objs = rl.import_gltf(str(path))
+        objs = rl.import_gltf(str(Path(args.models) / assets.tree_glb(args.tree)))
         mesh = next(o for o in objs if o.type == "MESH")
         mesh.data.transform(mesh.matrix_world)
         mesh.parent = None
@@ -696,8 +698,7 @@ class House:
     def __init__(self, args, scene, axes, cam, item, book):
         self.scene, self.axes, self.cam, self.item, self.book = scene, axes, cam, item, book
         ux, uy, s = tile_basis(axes)
-        path = Path(args.models) / f"retro-render/models/Medieval Village Pack - Dec 2020-20261012T081001Z-1-001/Medieval Village Pack - Dec 2020/Buildings/OBJ/{args.house}.obj"
-        objs = rl.import_obj(str(path))
+        objs = rl.import_obj(str(Path(args.models) / assets.house_obj(args.house)))
         meshes = [o for o in objs if o.type == "MESH"]
         for o in meshes:
             o.data.transform(o.matrix_world)

@@ -2,7 +2,9 @@
 the 8-frame against 16-frame walk comparison, Zeus key-pose sheets, and the scene mockup (stills at 1x and 3x, animated GIFs at
 1x and 3x) once for each Zeus height variant.
 
-    python3 tools/probes/retro-render/build_report.py [--tag r2] [--variants toon] [--skip-gifs]
+    python3 tools/probes/retro-render/build_report.py --tag r3 [--variants toon] [--skip-gifs]
+
+Reads `scratch/cells-<tag>/` from postprocess_retro.py for the same tag and exits 1 when any scene item has no cells.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ sys.path.insert(0, str(REPO / "tools/probes/blender-sprite"))
 sys.path.insert(0, str(ROOT))
 
 import postprocess as p1  # noqa: E402  (blender-sprite: canon atlas path)
+import retro_paths as paths  # noqa: E402
 import retro_plan as rp  # noqa: E402
 import retro_sheets as rs  # noqa: E402
 import scene_plan as sc  # noqa: E402
@@ -135,17 +138,20 @@ def write_walk_compare(item: rp.Item, cells: dict, out: Path, prefix: str) -> di
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--scratch", default=str(ROOT / "scratch"))
-    ap.add_argument("--tag", default="r2")
+    ap.add_argument("--scratch", default=str(paths.DEFAULT_SCRATCH))
+    ap.add_argument("--tag", default=paths.DEFAULT_TAG)
     ap.add_argument("--variants", default="toon")
     ap.add_argument("--skip-gifs", action="store_true")
     args = ap.parse_args()
     scratch = Path(args.scratch)
-    suffix = f"-{args.tag}" if args.tag else ""
-    prefix = f"retro{suffix}"
-    cells_dir, out = scratch / f"cells{suffix}", scratch / "report"
-    out.mkdir(parents=True, exist_ok=True)
+    prefix = paths.report_prefix(args.tag)
+    cells_dir, out = paths.cells_dir(scratch, args.tag), paths.report_dir(scratch)
     variant = args.variants.split(",")[0]
+    missing = [i for i in paths.DEFAULT_ITEMS if not any((cells_dir / i / variant).glob("*.png"))]
+    if missing:
+        print(f"build_report: no cells for {', '.join(missing)} in {cells_dir} (tag {args.tag!r}); run postprocess_retro.py --tag {args.tag} first.", file=sys.stderr)
+        return 1
+    out.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     canon = canon_frames()
     result: dict = {"sheets": {}, "keypose": {}, "item_gifs": {}, "walk_compare": {}, "scene": {}}

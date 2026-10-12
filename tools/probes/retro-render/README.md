@@ -59,11 +59,11 @@ No frame is hand-edited. Two kinds of **authored** pixel art are composited by s
 
 ## Provenance
 
-Source pages, licence text, date (2026-10-11), and sha256 of every zip and every file used are in [`models.json`](models.json). All paths are `<main-checkout>/…`; nothing under `models/` is committed.
+Source pages, licence text, date (2026-10-11), and sha256 of every zip and every file used are in [`models.json`](models.json). All paths are `<main-checkout>/…`; nothing under `models/` is committed. `retro_assets.py` lists every file the renderer imports (`render_retro.py` builds all its import paths through it), and `test_provenance.py` checks that list against `models.json`, both ways: an imported file without a hash fails, and so does a recorded file nothing imports.
 
 | pack | source | licence | status |
 | --- | --- | --- | --- |
-| Universal Base Characters [Standard] | quaternius.com/packs/universalbasecharacters.html | CC0 1.0 (`License_Standard.txt`) | used |
+| Universal Base Characters [Standard] | quaternius.com/packs/universalbasecharacters.html | CC0 1.0 (`License_Standard.txt`) | used (both base bodies, `Hair_Beard`, `Hair_SimpleParted`, and Zeus's `Hair_Long`) |
 | Medieval Village Pack - Dec 2020 | quaternius.com/packs/medievalvillage.html | CC0 1.0 (`License.txt`) | used (`House_1`) |
 | Nature Kit 2.1 | kenney.nl/assets/nature-kit | CC0 (`License.txt`) | used (`tree_cone`) |
 | KayKit Forest Nature Pack 1.0 FREE | kaylousberg.itch.io/kaykit-forest | CC0 (`License.txt`) | inspected, not used |
@@ -78,22 +78,58 @@ Source pages, licence text, date (2026-10-11), and sha256 of every zip and every
 
 ## Commands
 
+A tag selects one consistent set of directories (`retro_paths.py`): `render_retro.py --tag T` writes `scratch/render-T/<item>/`, `postprocess_retro.py --tag T` reads it and writes `scratch/cells-T/` and `scratch/report/retro-T-<item>-results.json`, `build_report.py --tag T` and `check_resample.py --tag T` read those. `postprocess_retro.py` exits 1, before processing anything, when a requested item has no render; `build_report.py` and `check_resample.py` exit 1 when their inputs are missing.
+
+### Current round (round 3): render, post, report, resample check
+
+Run it as a script from the repository root; it stops at the first failure. `MODELS` is the checkout that holds `models/` (the `<main-checkout>/tools/probes` directory); set `TAG` to render into a fresh scratch tag instead of `r3`.
+
 ```sh
-MODELS="<main-checkout>/tools/probes"          # the checkout that holds models/
+set -euo pipefail
+: "${MODELS:?set MODELS to <main-checkout>/tools/probes}"
+TAG="${TAG:-r3}"
+BLENDER="${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}"
+PROBE=tools/probes/retro-render
 
+for ITEM in zeus zeus-tall mortal bull tree temple house tile; do
+  "$BLENDER" --background --factory-startup --python-exit-code 1 \
+    --python "$PROBE/render_retro.py" -- \
+    --item "$ITEM" --models "$MODELS" --tag "$TAG"
+done
+python3 "$PROBE/postprocess_retro.py" --tag "$TAG"   # cells, measurements, per-item results
+python3 "$PROBE/build_report.py" --tag "$TAG"        # sheets, GIFs, scene mockup
+python3 "$PROBE/check_resample.py" --tag "$TAG"      # walk[i] == walk16[2i]; exit 1 on RED
+```
+
+Run end to end from a clean shell into a fresh tag, this block took 290 s of wall-clock on this machine (eight Blender processes one after another, then the post step, the report build at about 110 s, and the resample check) and ended with `GREEN` (32 of 32 pairs for Zeus and tall Zeus, 16 of 16 for the mortal, 0 pixels differing).
+
+Regenerate the committed files when their inputs change (neither is part of a render run):
+
+```sh
 python3 tools/probes/retro-render/palette_plan.py             # palette/scene-palette.json
-python3 tools/probes/retro-render/make_models_json.py --models "$MODELS/retro-render/models"
+python3 tools/probes/retro-render/make_models_json.py --models "$MODELS/retro-render/models"   # models.json
+```
 
+`render_retro.py` options: `--tag T` (or `--out DIR`), `--variants toon`, `--only clip:facing:index`, `--no-passes`, `--tree`, `--house`. Blender 5.2.2 LTS (hash `d13f752e3b9c`, built 2026-09-15). Everything is built from a factory start in the process; no `.blend` is saved.
+
+### Historical (round 1/2)
+
+These are the round 1 and round 2 invocations, rewritten for the current tool flags, and kept for the record. The code has changed since (profiles, canvases, shadows, the walk resampling fix), so they do not reproduce the round 1 and 2 outputs; use the current-round sequence above. Round 1 rendered six items into the untagged `scratch/render` (it had no Zeus tall and no bull), round 2 added both and used the tag `r2`:
+
+```sh
+# round 1 (untagged directories: --tag "" selects scratch/render and scratch/cells)
 for ITEM in tile tree temple house zeus mortal; do
   /Applications/Blender.app/Contents/MacOS/Blender --background --factory-startup --python-exit-code 1 \
     --python tools/probes/retro-render/render_retro.py -- \
     --item $ITEM --models "$MODELS" --out tools/probes/retro-render/scratch/render
 done
-python3 tools/probes/retro-render/postprocess_retro.py        # cells, measurements, per-item results
-python3 tools/probes/retro-render/build_report.py             # sheets, GIFs, scene mockup
+python3 tools/probes/retro-render/postprocess_retro.py --tag "" --items tile,tree,temple,house,zeus,mortal
+# build_report.py now requires cells for all eight items, which round 1 did not have
+
+# round 2 (the same loop over all eight items with --tag r2, then postprocess_retro.py --tag r2 and build_report.py --tag r2)
 ```
 
-`render_retro.py` options: `--variants toon,dither`, `--only clip:facing:index`, `--no-passes`, `--tree`, `--house`. Blender 5.2.2 LTS (hash `d13f752e3b9c`, built 2026-09-15). Everything is built from a factory start in the process; no `.blend` is saved.
+The round 1/2 README listed the round 1 render loop with no tag and ran postprocess and build with their default tag (`r2`), which read `scratch/render-r2` and `scratch/cells-r2`: every item was skipped, the exit status was 0 and no report was written. That is the defect `retro_paths.py` and the exit-1 check close.
 
 ## Results
 
@@ -237,7 +273,7 @@ The pivot started at (48, 88). The first full pass showed the nearer toe 8 px be
 
 ### Results
 
-All 393 cells have 0 pixels outside the palette, binary alpha, the exact origin anchor, and a complete exterior outline (round 1 failed the outline measure on 35 Zeus cells). Colours per cell: Zeus 18, mortal 22, bull 16, far under the 48 limit. Heights include the outline. The stamps and the shadow are included in the colour counts.
+All 393 cells have 0 pixels outside the palette, binary alpha, the exact origin anchor, and a complete exterior outline (round 1 failed the outline measure on 35 Zeus cells). Colours per cell: Zeus 18, mortal 22, bull 16, far under the 48 limit. Heights include the outline. The stamps are included in the colour counts. *(Round 3 correction: the colour and palette counts here and in the table below were measured on the figure before the contact shadow was drawn, not on the final cell as this sentence said; see [Measurement scope](#measurement-scope-colours-with-the-shadow-everything-else-without).)*
 
 | item | clip | cells | height px | bottom row | colours (max) |
 | --- | --- | --- | --- | --- | --- |
@@ -389,11 +425,32 @@ The standard Zeus stays on 96×96 at pivot (48, 78). The tall Zeus moves to **11
 | Zeus | 96×96, (48, 78) | 59 / 8 / 42 / 42 | 19 / 10 / 6 / 6 |
 | Zeus (tall) | 112×96, (56, 78) | 68 / 9 / 47 / 47 | 10 / 9 / **9 / 9** |
 
-Both keep at least 6 px on every side (the tall Zeus's old 1 px side margin is now 9). Heights are unchanged except the corrected `walk16`: Zeus 46–59 (was 46–54), tall 55–67 (was 55–65); standing heights stay 51–55 and 61–63. All 393 cells still have 0 pixels outside the palette, binary alpha, the exact anchor, a full exterior outline, and at most 22 colours.
+Both keep at least 6 px on every side (the tall Zeus's old 1 px side margin is now 9). Heights are unchanged except the corrected `walk16`: Zeus 46–59 (was 46–54), tall 55–67 (was 55–65); standing heights stay 51–55 and 61–63. All 393 cells still have 0 pixels outside the palette, binary alpha, the exact anchor, a full exterior outline, and at most 23 colours on the final cell (22 on the figure alone; see below).
 
 ### Contact shadow
 
 The checkerboard rim is gone. The shadow is one solid 2:1 ellipse in one palette colour (`olive`, one step lighter than the outline shade), drawn on empty pixels after the outline, and a little smaller: Zeus 9×4.5 px, tall 10×5, mortal 6.5×3.25, bull 13×5.5, tree trunk 8×4. This is a post-step change only.
+
+### Measurement scope: colours with the shadow, everything else without
+
+`postprocess_retro.py` used to measure every fact on the figure before the contact shadow, while this README said the shadow was in the colour counts. Now there are two labelled scopes, written to every results file under `measured_on`:
+
+| scope | facts | results keys |
+| --- | --- | --- |
+| final cell, **shadow included** | colour count, outside-palette pixels | `colours`, `outside_palette` (summary: `colours_max`, `outside_palette`) |
+| figure, **shadow-free** | height, width, bottom row, outline, the box the envelope is built from | `height`, `width`, `bottom_row`, `outline`, `box`, `envelope`; the old colour numbers are kept as `colours_figure`, `outside_palette_figure` (summary: `colours_max_figure`) |
+
+The cells themselves did not change (a fresh run is byte-identical to the shipped round 3 cells), only what is counted. The shadow is one palette colour, so the count goes up by 1 on every cell where that colour is not already in the figure:
+
+| item | cells | colours max, figure | colours max, final cell | cells changed |
+| --- | --- | --- | --- | --- |
+| Zeus | 144 | 18 | **19** | 144 (+1 each) |
+| Zeus (tall) | 144 | 18 | **19** | 144 (+1 each) |
+| Mortal | 60 | 22 | **23** | 60 (+1 each) |
+| Bull | 28 | 15–16 | **16–17** (idle 16, walk 17) | 28 (+1 each) |
+| Tree, temple, house, tile | 17 | 10, 18, 20, 6–7 | same | 0 (the tree's shadow colour is already one of its foliage colours) |
+
+Outside-palette pixels stay 0 on the final cell in all 393 cells, and the limit of 48 colours is far away. Height, bottom row, outline and the envelope are unchanged.
 
 ### Outputs and cost
 
@@ -418,4 +475,10 @@ Stills and contact sheets only; I did not watch the GIFs, only checked their fra
 
 ### Tests
 
-137 in `tools/probes/retro-render` (9 new for this round): the state of each clip, override keys shared by `walk` and `walk16`, only `walk16` being a variant, exact coarse-against-fine sample times, `resample_pairs`, `pixel_mismatches`, the resample report (green only when both time and pixels match), the 112×96 tall canvas and the solid shadow.
+137 for rounds 1 to 3 in `tools/probes/retro-render` (9 new for the resampling fix): the state of each clip, override keys shared by `walk` and `walk16`, only `walk16` being a variant, exact coarse-against-fine sample times, `resample_pairs`, `pixel_mismatches`, the resample report (green only when both time and pixels match), the 112×96 tall canvas and the solid shadow.
+
+167 after the review fixes (30 new, in three files; no Blender needed):
+
+- `test_handoff.py` (18): the render step's `--tag` resolves to the directory postprocess reads (the real `render_retro.parse_args` runs against stand-in Blender modules); postprocess exits 1 and writes nothing on a wrong tag, and for each of the eight items missing in turn; build_report and check_resample read the same tag's cells and results; every item the scene needs is in the item list; the README's current-round block loops over exactly that list and passes the same `--tag "$TAG"` to all four steps.
+- `test_provenance.py` (8): every file `retro_assets.imported_assets()` lists, and its `.bin`/`.mtl` companion, is in `models.json` with a sha256 and size; nothing recorded as used is unimported; the animation source matches; `render_retro.py` takes every import path from `retro_assets` and spells none out. Run against the old `models.json` it fails on `Hair_Long.gltf` and `Hair_Long.bin`.
+- `test_measure.py` (4): the shadow's colour is counted and palette-checked on the final cell, height and outline stay on the figure.

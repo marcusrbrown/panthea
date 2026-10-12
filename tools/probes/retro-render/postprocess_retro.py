@@ -1,11 +1,16 @@
 """Retro-render post step: 4x renders -> palette-exact cells (mode downscale, 1 px exterior outline, overlap lines, authored
 stamps), per-cell measurements, boil (information only) and loop seams.
 
-    python3 tools/probes/retro-render/postprocess_retro.py [--items zeus,mortal,...] [--scratch DIR]
+    python3 tools/probes/retro-render/postprocess_retro.py --tag r3 [--items zeus,mortal,...] [--scratch DIR]
 
-Reads `<scratch>/render/<item>/meta.json` from render_retro.py and writes `<scratch>/cells/<item>/<variant>/<pose>.png` plus
-`<scratch>/report/retro-<item>-results.json`. No frame is hand-edited; the bolt and face stamps are authored art composited by
-script and are named as such in the results.
+Reads `<scratch>/render-<tag>/<item>/meta.json` from `render_retro.py --tag <tag>` and writes
+`<scratch>/cells-<tag>/<item>/<variant>/<pose>.png` plus `<scratch>/report/retro-<tag>-<item>-results.json`. Exits 1, before
+processing anything, when a requested item has no render (a wrong tag must not look like success). No frame is hand-edited; the
+bolt and face stamps are authored art composited by script and are named as such in the results.
+
+Two measurement scopes, labelled in every results file under `measured_on`: height, width, bottom row, outline and the envelope
+are measured on the figure **without** the contact shadow; the colour count and the outside-palette check are measured on the
+final cell **with** the shadow.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 import bake_plan as bp  # noqa: E402  (blender-sprite: stamp placement)
 import overlap  # noqa: E402  (blender-sprite)
 import palette_plan as pal  # noqa: E402
+import retro_paths as paths  # noqa: E402
 import shadow_plan as sh  # noqa: E402
 import retro_metrics as rm  # noqa: E402
 import retro_plan as rp  # noqa: E402
@@ -154,6 +160,16 @@ def with_shadow(item: rp.Item, figure: Raster, palette_doc: dict) -> Raster:
     return Raster(figure.width, figure.height, sh.apply_shadow(figure.rgba, figure.width, figure.height, shadow, colour))
 
 
+def measure_scopes(figure: Raster, cell: Raster, palette, interior: Raster) -> tuple[dict, dict]:
+    """The two measurement scopes of a cell. Returns (figure facts, final-cell facts): the first is measured on the figure without
+    the contact shadow (height, width, bottom row, outline), the second on the final cell with it (colours, outside-palette)."""
+    on_figure = measure(figure, palette, interior)
+    on_cell = measure(cell, palette, interior)
+    on_figure.pop("palette_entries")
+    on_cell.pop("palette_entries")
+    return on_figure, on_cell
+
+
 def opaque_box(image: Raster) -> tuple[int, int, int, int]:
     xs = [i % image.width for i in range(image.width * image.height) if image.rgba[i * 4 + 3]]
     ys = [i // image.width for i in range(image.width * image.height) if image.rgba[i * 4 + 3]]
@@ -266,14 +282,14 @@ def process_item(item_id: str, render_dir: Path, cells_dir: Path, palette, palet
             boxes.append(box)
             path = cells_dir / item_id / variant / f"{entry['name']}.png"
             encode_png(cell, path)
-            m = measure(figure, palette, interior)
-            m.pop("palette_entries")
+            m, final = measure_scopes(figure, cell, palette, interior)
             alphas = {cell.rgba[a + 3] for a in range(0, len(cell.rgba), 4)}
             anchor = entry["anchor_px"]
             facts.append(
                 {
                     "variant": variant, "clip": entry["clip"], "facing": entry["facing"], "index": entry["index"], "source_frame": entry["source_frame"],
-                    "height": m["height"], "width": m["width"], "bottom_row": m["bottom_row"], "colours": m["colours"], "outside_palette": m["outside_palette"],
+                    "height": m["height"], "width": m["width"], "bottom_row": m["bottom_row"], "colours": final["colours"], "outside_palette": final["outside_palette"],
+                    "colours_figure": m["colours"], "outside_palette_figure": m["outside_palette"],
                     "outline": m["outline"] if item.outline else None,
                     "binary_alpha": alphas <= {0, 255},
                     "anchor_px": anchor, "anchor_ok": abs(anchor[0] - item.origin_px[0]) < 1e-3 and abs(anchor[1] - item.origin_px[1]) < 1e-3,
@@ -350,6 +366,12 @@ def seam_check(done: dict, render_dir: Path) -> dict | None:
     return out
 
 
+MEASURED_ON = {
+    "figure_without_shadow": ["height", "width", "bottom_row", "outline", "box", "envelope", "colours_figure", "outside_palette_figure"],
+    "final_cell_with_shadow": ["colours", "outside_palette"],
+}
+
+
 def summarise(done: dict) -> list[dict]:
     rows = []
     groups: dict = {}
@@ -362,8 +384,9 @@ def summarise(done: dict) -> list[dict]:
                 "item": done["item"].id, "variant": variant, "clip": clip, "cells": len(items),
                 "height": f"{min(heights)}-{max(heights)}" if min(heights) != max(heights) else str(heights[0]),
                 "bottom_row": f"{min(f['bottom_row'] for f in items)}-{max(f['bottom_row'] for f in items)}",
-                "colours_max": max(f["colours"] for f in items),
-                "outside_palette": sum(f["outside_palette"] for f in items),
+                "colours_max": max(f["colours"] for f in items),  # final cell, shadow included
+                "colours_max_figure": max(f["colours_figure"] for f in items),  # shadow-free figure
+                "outside_palette": sum(f["outside_palette"] for f in items),  # final cell, shadow included
                 "outline_all": None if items[0]["outline"] is None else all(f["outline"] for f in items),
                 "binary_alpha_all": all(f["binary_alpha"] for f in items),
                 "anchor_ok_all": all(f["anchor_ok"] for f in items),
@@ -376,30 +399,39 @@ def summarise(done: dict) -> list[dict]:
 def main() -> int:
     global VARIANT_IDS
     ap = argparse.ArgumentParser()
-    ap.add_argument("--scratch", default=str(ROOT / "scratch"))
-    ap.add_argument("--items", default="tile,tree,temple,house,zeus,zeus-tall,mortal,bull")
-    ap.add_argument("--tag", default="r2", help="selects scratch/render-<tag>, scratch/cells-<tag> and the report prefix retro-<tag>")
+    ap.add_argument("--scratch", default=str(paths.DEFAULT_SCRATCH))
+    ap.add_argument("--items", default=",".join(paths.DEFAULT_ITEMS))
+    ap.add_argument("--tag", default=paths.DEFAULT_TAG, help="selects scratch/render-<tag>, scratch/cells-<tag> and the report prefix retro-<tag>")
     ap.add_argument("--variants", default="toon")
     args = ap.parse_args()
     VARIANT_IDS = tuple(args.variants.split(","))
     scratch = Path(args.scratch)
-    suffix = f"-{args.tag}" if args.tag else ""
-    render_dir, cells_dir, report = scratch / f"render{suffix}", scratch / f"cells{suffix}", scratch / "report"
+    render_dir, cells_dir, report = paths.render_dir(scratch, args.tag), paths.cells_dir(scratch, args.tag), paths.report_dir(scratch)
+    try:
+        item_ids = paths.split_items(args.items)
+    except ValueError as e:
+        print(f"postprocess: {e}", file=sys.stderr)
+        return 2
+    missing = paths.missing_renders(render_dir, item_ids)
+    if missing:
+        expected = ", ".join(str(paths.meta_path(render_dir, i)) for i in missing)
+        print(f"postprocess: no render input for {', '.join(missing)} (tag {args.tag!r}); expected {expected}. Render with render_retro.py --tag {args.tag} first.", file=sys.stderr)
+        return 1
     palette_doc = json.loads(PALETTE_PATH.read_text())
     palette = load_palette(PALETTE_PATH, pal.FAMILY_ID)
     report.mkdir(parents=True, exist_ok=True)
-    for item_id in args.items.split(","):
-        if not (render_dir / item_id / "meta.json").exists():
-            print(json.dumps({"item": item_id, "skipped": "no render"}))
-            continue
+    for item_id in item_ids:
         done = process_item(item_id, render_dir, cells_dir, palette, palette_doc)
+        if not done["facts"]:
+            print(f"postprocess: {item_id} has a render but no frames for variants {','.join(VARIANT_IDS)}", file=sys.stderr)
+            return 1
         result = {
-            "item": item_id, "cell": list(done["item"].cell), "seconds": done["seconds"],
+            "item": item_id, "cell": list(done["item"].cell), "seconds": done["seconds"], "measured_on": MEASURED_ON,
             "render": {"blender": done["meta"]["blender"], "timings_ms": done["meta"]["timings_ms"], "dims": done["meta"].get("dims"), "character": done["meta"].get("character"), "tree": done["meta"].get("tree"), "animal": done["meta"].get("animal")},
             "envelope": envelope_report(done),
             "summary": summarise(done), "boil_and_seams": measurements(done), "wind_seam": seam_check(done, render_dir), "cells": done["facts"],
         }
-        (report / f"retro{suffix}-{item_id}-results.json").write_text(json.dumps(result, indent=1) + "\n")
+        (report / f"{paths.report_prefix(args.tag)}-{item_id}-results.json").write_text(json.dumps(result, indent=1) + "\n")
         print(json.dumps({"item": item_id, "cells": len(done["facts"]), "seconds": done["seconds"], "envelope": result["envelope"], "summary": result["summary"]}, indent=None)[:1800])
     return 0
 
