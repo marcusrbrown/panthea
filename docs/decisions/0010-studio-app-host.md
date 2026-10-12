@@ -53,6 +53,8 @@ The session no longer holds the root's writer lock for the life of the app. When
 - **Header and button.** The sidecar's polled `rootLock` becomes `host.lock` (`held`, `free` or `other`, only while the sidecar runs): held by this app, free, or held by pid N (read-only). The Release button is disabled unless the app holds the lock and the host says it is idle. A write that another process's lock refused keeps the form as it is and offers Retry.
 - **Measured:** the grace is 15 s and artifact verification is cached per process; see [the probe](../../tools/probes/studio-release/README.md).
 
+**`derive` is callable (2026-10-11, amends the schema paragraph above).** The first line there said `derive` was not callable through the table; that held while `derive` was a stub. It is now a write op in all three tables (the CLI's `OPS`, `schema.rs`, and `STUDIO_OPS`), so a session takes the writer lock for it like any other write. Its row names an asset, an op, a source slot, an optional target and recipe params, never a path; the reply carries the working set it made. `open`, `import`, `export`, `conform` and `source-bytes` stay as the paragraph said. See [the derivation plan](../plans/2026-10-11-001-feat-studio-derivation-repair-plan.md), Unit 4.
+
 ## Evidence/links
 
 [Plan Unit 3](../plans/2026-10-08-003-feat-studio-tauri-app-plan.md), [ADR-0003](0003-simulation-service.md) (sidecar lifecycle), [ADR-0008](0008-world-state-and-client-transport.md) (changed-frame channel), [ADR-0009](0009-asset-registry-lifecycle-and-uris.md), `apps/studio/src-tauri/tests/sidecar_integration.rs`, [CSP learning](../solutions/integration-issues/koota-new-function-tauri-csp-2026-09-27.md).

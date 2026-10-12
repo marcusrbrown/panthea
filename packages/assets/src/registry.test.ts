@@ -21,7 +21,9 @@ import {
   canonicalJson,
   canonicalManifestText,
   newCandidate,
+  type RealmVariant,
   type Sha256,
+  type SpriteManifest,
   transitionAsset,
 } from "@panthea/contracts";
 import {
@@ -33,6 +35,7 @@ import {
 } from "./fixtures";
 import { sha256Hex } from "./hash";
 import type { Palette } from "./palette";
+import { encodeRgbaPng } from "./placeholder";
 import {
   checkBlob,
   loadRegistry,
@@ -799,6 +802,95 @@ describe("publishing needs the approved palette the manifest names", () => {
     );
     expect(result.ok).toBe(true);
     expect(loadRegistry(dir, vocabulary).problems).toEqual([]);
+  });
+
+  describe("a realm variant's own atlas blob", () => {
+    const variantPng = encodeRgbaPng(
+      new Uint8Array(256 * 80 * 4).fill(9),
+      256,
+      80,
+    );
+    const variantHash = sha256Hex(variantPng);
+    const withOwnAtlas = (): FixtureAsset => {
+      const asset = withVariant("fixture-master");
+      const manifest = asset.manifest as SpriteManifest;
+      const [variant] = manifest.realmVariants;
+      return {
+        blobs: new Map([...asset.blobs, [variantHash, variantPng]]),
+        manifest: {
+          ...manifest,
+          realmVariants: [
+            {
+              ...(variant as RealmVariant),
+              atlas: { blob: variantHash, width: 256, height: 80 },
+            },
+          ],
+        },
+      };
+    };
+
+    it("is stored with the revision and read back by hash", () => {
+      const dir = root();
+      const asset = withOwnAtlas();
+      const result = publishAsset(
+        dir,
+        approved(asset),
+        asset.blobs,
+        vocabulary,
+        palette,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(existsSync(join(dir, "blobs", `${variantHash}.png`))).toBe(true);
+      expect(loadRegistry(dir, vocabulary).problems).toEqual([]);
+      const read = readRevision(
+        dir,
+        asset.manifest.id,
+        result.value.revision,
+        vocabulary,
+      );
+      expect(read.ok && [...read.value.variantAtlases.keys()]).toEqual([
+        variantHash,
+      ]);
+      expect(read.ok && read.value.variantAtlases.get(variantHash)).toEqual(
+        variantPng,
+      );
+    });
+
+    it("must be provided or already stored: nothing is written without it", () => {
+      const dir = root();
+      const asset = withOwnAtlas();
+      const result = writeRevision(
+        dir,
+        asset.manifest,
+        asset.blobs.size === 0
+          ? asset.blobs
+          : new Map([...asset.blobs].slice(0, 1)),
+        vocabulary,
+      );
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.message).toContain(variantHash);
+      expect(existsSync(join(dir, "manifests"))).toBe(false);
+    });
+
+    it("is verified on load: a missing or corrupt variant blob drops the entry", () => {
+      const asset = withOwnAtlas();
+      for (const damage of ["missing", "corrupt"] as const) {
+        const dir = root();
+        expect(
+          publishAsset(dir, approved(asset), asset.blobs, vocabulary, palette)
+            .ok,
+        ).toBe(true);
+        const path = join(dir, "blobs", `${variantHash}.png`);
+        if (damage === "missing") rmSync(path);
+        else writeFileSync(path, new Uint8Array([1, 2, 3]));
+        const load = loadRegistry(dir, vocabulary);
+        expect(load.snapshot.entries.size).toBe(0);
+        expect(load.problems.map((p) => p.file)).toEqual([
+          `blobs/${variantHash}.png`,
+        ]);
+      }
+    });
   });
 
   it("refuses a draft palette", () => {

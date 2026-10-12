@@ -63,6 +63,7 @@ export const STUDIO_OPS = [
   "reject",
   "discard",
   "finish",
+  "derive",
   "pack",
   "approve",
   "approve-with-exception",

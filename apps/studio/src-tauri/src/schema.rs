@@ -106,6 +106,9 @@ pub const OPS: &[OpSpec] = &[
         &["id", "reviewed", "method", "description"],
         Write,
     ),
+    // Derives slots from a published revision into a working set: a mirror, a
+    // bob, or a palette swap. It names the asset and the slots, never a file.
+    spec("derive", &["asset", "op", "from", "to", "params"], Write),
     spec(
         "pack",
         &[
@@ -214,6 +217,7 @@ mod tests {
                 "reject",
                 "discard",
                 "finish",
+                "derive",
                 "pack",
                 "approve",
                 "approve-with-exception",
@@ -348,9 +352,31 @@ mod tests {
     }
 
     #[test]
-    fn derive_and_the_path_ops_are_not_callable() {
-        for op in [
+    fn derive_is_a_write_that_names_an_asset_and_its_slots_and_never_a_place() {
+        let row = lookup("derive").unwrap();
+        assert_eq!(row.args, ["asset", "op", "from", "to", "params"]);
+        assert_eq!(row.class, Write);
+        for arg in row.args {
+            assert!(!PATHISH.contains(arg), "derive takes {arg}");
+        }
+        assert!(check(
             "derive",
+            &json!({ "asset": "zeus-sprite", "op": "mirror", "from": "idle/east" })
+        )
+        .is_ok());
+        for stray in ["dir", "path", "png", "root", "toString"] {
+            assert_eq!(
+                check("derive", &json!({ stray: "x" })),
+                Err(Refusal::UnknownArgument(stray.into())),
+                "{stray}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_path_ops_and_an_op_the_table_never_had_are_not_callable() {
+        for op in [
+            "rotate",
             "open",
             "edit-workspace",
             "import",

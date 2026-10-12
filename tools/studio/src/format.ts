@@ -185,6 +185,21 @@ export function setSummary(record: WorkingSetRecord): Json {
         { editId: frames.editId, frames: frames.frames.length },
       ]),
     ),
+    // Slots recomputed from a published revision: what made each, and from what.
+    derived: Object.fromEntries(
+      Object.entries(record.derived ?? {}).map(([slot, entry]) => [
+        slot,
+        {
+          recipe: entry.step.recipe,
+          version: entry.step.version,
+          from: `${entry.step.source.assetId} ${entry.step.source.slotKey}`,
+          revision: entry.step.source.revision,
+          frames: entry.frames.length,
+        },
+      ]),
+    ),
+    // Realm variants this set adds at pack, by palette family.
+    variants: Object.keys(record.variants ?? {}).sort(),
   };
 }
 
@@ -196,6 +211,23 @@ export function editSummary(record: EditRecord): Json {
     status: record.status,
     previewSheetHash: record.preview?.sheetHash ?? null,
   };
+}
+
+type Manifest = StudioAssetRecord["record"]["manifest"];
+
+/** A manifest's slot keys: `state/direction[/ability]`, an expression, or an effect animation's name. */
+function slotsOf(manifest: Manifest): string[] {
+  switch (manifest.kind) {
+    case "sprite":
+      return manifest.animations.map(
+        (a) =>
+          `${a.state}/${a.direction}${a.ability === undefined ? "" : `/${a.ability}`}`,
+      );
+    case "portrait":
+      return manifest.expressions.map((e) => e.expression);
+    case "effect":
+      return manifest.animations.map((a) => a.name);
+  }
 }
 
 export function assetSummary(record: StudioAssetRecord): Json {
@@ -212,6 +244,15 @@ export function assetSummary(record: StudioAssetRecord): Json {
     manifestRevision: record.manifestRevision,
     prior: record.prior,
     published: record.published?.revision ?? null,
+    kind: state.manifest.kind,
+    method: state.manifest.provenance.method,
+    // The slots the manifest holds, and the realm palettes it already has a variant for.
+    slots: slotsOf(state.manifest),
+    realms:
+      state.manifest.kind === "sprite"
+        ? state.manifest.realmVariants.map((v) => v.paletteFamily)
+        : [],
+    paletteFamily: state.manifest.paletteFamily,
     report:
       report === undefined
         ? null

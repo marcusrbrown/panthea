@@ -478,6 +478,64 @@ export function swapPalette(input: SwapInput): DeriveRefusal | SwapDerivation {
   };
 }
 
+/** A whole image recoloured under a recorded colour map: what a realm variant's atlas is. */
+export interface SwappedImage {
+  readonly ok: true;
+  /** RGB under alpha 0 is zero. */
+  readonly image: RgbaImage;
+  readonly png: Uint8Array;
+}
+
+/**
+ * Applies `map` to every opaque pixel of `image`, looking each ramp shade up in
+ * `ramps` by id. Alpha is untouched. Refused when the map names a ramp or shade
+ * the palette lacks, or when an opaque pixel's colour is in no mapped shade.
+ */
+export function swapImage(
+  image: RgbaImage,
+  map: readonly ColourMapping[],
+  ramps: ReadonlyMap<string, PaletteRamp>,
+): DeriveRefusal | SwappedImage {
+  const lookup = new Map<string, Rgb>();
+  for (const { source, target } of map) {
+    const from = ramps.get(source.ramp)?.shades[source.index];
+    const to = ramps.get(target.ramp)?.shades[target.index];
+    if (from === undefined || to === undefined)
+      return refuse(
+        "invalid-params",
+        `the colour map names ${source.ramp}[${source.index}] -> ${target.ramp}[${target.index}], which the palette does not have`,
+      );
+    const key = hex(from);
+    if (!lookup.has(key)) lookup.set(key, to);
+  }
+  const { rgba, width, height } = image;
+  const out = new Uint8Array(rgba.length);
+  for (let at = 0; at < rgba.length; at += 4) {
+    const alpha = rgba[at + 3] as number;
+    if (alpha === 0) continue;
+    const colour = hex([
+      rgba[at] as number,
+      rgba[at + 1] as number,
+      rgba[at + 2] as number,
+    ]);
+    const target = lookup.get(colour);
+    if (target === undefined) {
+      const pixel = at / 4;
+      return refuse(
+        "unmapped-colour",
+        `${colour} at ${pixel % width},${Math.floor(pixel / width)} is in none of the mapped ramps`,
+        { colour },
+      );
+    }
+    out.set([target[0], target[1], target[2], alpha], at);
+  }
+  return {
+    ok: true,
+    image: { rgba: out, width, height },
+    png: encodeRgbaPng(out, width, height),
+  };
+}
+
 // --- Bob -----------------------------------------------------------------------------------------
 
 export interface Box {

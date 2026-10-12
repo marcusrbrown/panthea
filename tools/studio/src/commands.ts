@@ -337,15 +337,6 @@ async function afterEnqueue(
   );
 }
 
-const unsupported = (): Outcome =>
-  refuse(
-    "unsupported",
-    "derive is not supported: no frames are made or changed",
-    {
-      verb: "derive",
-    },
-  );
-
 function resolveParams(studio: Studio, a: Args) {
   if ((a.set === undefined) === (a.params === undefined))
     return refuse("invalid-arguments", "give exactly one of --set or --params");
@@ -666,7 +657,44 @@ const OPS: Record<string, OpDef> = {
     spec: str("candidateId", true),
     run: (studio, a) => candidateReply(studio, a, true),
   },
-  derive: { spec: {}, run: () => unsupported() },
+  // Reads a published revision and writes a working set of derived slots (a
+  // mirror, a bob, or a palette swap into a realm variant); it queues nothing
+  // and packs nothing. The same inputs answer with the set they made before.
+  derive: {
+    spec: {
+      ...str("asset", true),
+      ...str("op", true),
+      ...str("from", true),
+      ...str("to"),
+      params: { t: "json" },
+    },
+    run: async (studio, a) => {
+      const session = await studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const registry = studio.registryRoot();
+      if (isOutcome(registry)) return registry;
+      const result = session.derive(
+        {
+          asset: a.asset as string,
+          op: a.op as string,
+          from: a.from as string,
+          ...(a.to === undefined ? {} : { to: a.to as string }),
+          ...(a.params === undefined ? {} : { params: a.params }),
+        },
+        content,
+        registry,
+      );
+      return result.ok
+        ? done({
+            workingSetId: result.workingSetId,
+            created: result.created,
+            slots: [...result.slots],
+          })
+        : refuse(result.reason, safeMessage(result.message));
+    },
+  },
   // Gives the writer lock back if the app is idle. It takes no lock itself (it
   // is in READ_ONLY), and a process that holds nothing answers `free`.
   release: { spec: {}, counted: false, run: (studio) => studio.release() },
@@ -1367,7 +1395,6 @@ export const READ_ONLY = new Set([
   "source-resolve",
   "source-bytes",
   "source-keys",
-  "derive",
   "release",
 ]);
 

@@ -90,6 +90,7 @@ export const COMMAND_TYPES = [
   "open-edit",
   "finish-edit",
   "discard-edit",
+  "derive",
   "pack",
   "approve",
   "publish",

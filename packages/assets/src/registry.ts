@@ -25,6 +25,7 @@ import {
   type AssetRecord,
   type AssetResult,
   type AssetVocabulary,
+  type Atlas,
   assetFail,
   assetOk,
   canonicalJson,
@@ -143,13 +144,27 @@ export function checkBlob(
   return { ok: true, value: true };
 }
 
-/** Reads and verifies one revision: manifest bytes, canonical form, schema, and its blob. */
+/** Every atlas a manifest names, once each: its own, then each realm variant's. */
+function atlasesOf(manifest: AssetManifest): readonly Atlas[] {
+  const atlases: Atlas[] = [manifest.atlas];
+  if (manifest.kind === "sprite")
+    for (const variant of manifest.realmVariants)
+      if (!atlases.some((a) => a.blob === variant.atlas.blob))
+        atlases.push(variant.atlas);
+  return atlases;
+}
+
+/** Reads and verifies one revision: manifest bytes, canonical form, schema, and its blobs. */
 function verifyRevision(
   root: string,
   assetId: AssetId,
   revision: Sha256,
   vocabulary: AssetVocabulary,
-): Checked<{ manifest: AssetManifest; atlas: Uint8Array }> {
+): Checked<{
+  manifest: AssetManifest;
+  atlas: Uint8Array;
+  variantAtlases: ReadonlyMap<Sha256, Uint8Array>;
+}> {
   const file = manifestFile(revision);
   const bytes = readIfPresent(join(root, file));
   if (bytes === undefined)
@@ -179,24 +194,39 @@ function verifyRevision(
       `manifest is for "${parsed.value.id}", not "${assetId}"`,
     );
   }
-  const blob = blobFile(parsed.value.atlas.blob);
-  const blobBytes = readIfPresent(join(root, blob));
-  if (blobBytes === undefined)
-    return bad("missing-blob", blob, "atlas blob is missing");
-  const checked = checkBlob(
-    blobBytes,
-    parsed.value.atlas.blob,
-    parsed.value.atlas,
-    blob,
+  const found = new Map<Sha256, Uint8Array>();
+  for (const [index, atlas] of atlasesOf(parsed.value).entries()) {
+    const blob = blobFile(atlas.blob);
+    const blobBytes = readIfPresent(join(root, blob));
+    if (blobBytes === undefined)
+      return bad(
+        "missing-blob",
+        blob,
+        index === 0
+          ? "atlas blob is missing"
+          : "realm variant atlas blob is missing",
+      );
+    const checked = checkBlob(blobBytes, atlas.blob, atlas, blob);
+    if (!checked.ok) return checked;
+    found.set(atlas.blob, blobBytes);
+  }
+  const atlas = found.get(parsed.value.atlas.blob) as Uint8Array;
+  const variantAtlases = new Map(
+    [...found].filter(([hash]) => hash !== parsed.value.atlas.blob),
   );
-  if (!checked.ok) return checked;
-  return { ok: true, value: { manifest: parsed.value, atlas: blobBytes } };
+  return {
+    ok: true,
+    value: { manifest: parsed.value, atlas, variantAtlases },
+  };
 }
 
 const toFailure = (located: Located) =>
   assetFail(located.code, `${located.file}: ${located.message}`);
 
-/** One verified published revision, current or older: its manifest and the exact atlas PNG bytes it names. */
+/**
+ * One verified published revision, current or older: its manifest, the exact
+ * atlas PNG bytes it names, and the bytes of each realm variant's atlas by hash.
+ */
 export function readRevision(
   root: string,
   assetId: AssetId,
@@ -205,6 +235,7 @@ export function readRevision(
 ): AssetResult<{
   readonly manifest: AssetManifest;
   readonly atlas: Uint8Array;
+  readonly variantAtlases: ReadonlyMap<Sha256, Uint8Array>;
 }> {
   const verified = verifyRevision(root, assetId, revision, vocabulary);
   return verified.ok ? assetOk(verified.value) : toFailure(verified);
@@ -228,36 +259,34 @@ export function writeRevision(
   if (!parsed.ok)
     return assetFail("invalid-manifest", `${parsed.path}: ${parsed.message}`);
 
-  const hash = parsed.value.atlas.blob;
-  const blobPath = join(root, blobFile(hash));
-  const provided = blobs.get(hash);
-  const stored = readIfPresent(blobPath);
-  let blobToWrite: Uint8Array | undefined;
-  if (provided !== undefined) {
-    if (sha256Hex(provided) !== hash) {
-      return assetFail(
-        "hash-mismatch",
-        `${blobFile(hash)}: provided bytes do not hash to ${hash}`,
-      );
+  // Every atlas the manifest names is checked before anything is written.
+  const toWrite: { path: string; bytes: Uint8Array }[] = [];
+  for (const atlas of atlasesOf(parsed.value)) {
+    const hash = atlas.blob;
+    const blobPath = join(root, blobFile(hash));
+    const provided = blobs.get(hash);
+    const stored = readIfPresent(blobPath);
+    if (provided !== undefined) {
+      if (sha256Hex(provided) !== hash) {
+        return assetFail(
+          "hash-mismatch",
+          `${blobFile(hash)}: provided bytes do not hash to ${hash}`,
+        );
+      }
+      const checked = checkBlob(provided, hash, atlas, blobFile(hash));
+      if (!checked.ok) return toFailure(checked);
     }
-    const checked = checkBlob(
-      provided,
-      hash,
-      parsed.value.atlas,
-      blobFile(hash),
-    );
-    if (!checked.ok) return toFailure(checked);
-  }
-  if (stored !== undefined) {
-    const checked = checkBlob(stored, hash, parsed.value.atlas, blobFile(hash));
-    if (!checked.ok) return toFailure(checked);
-  } else if (provided === undefined) {
-    return assetFail(
-      "missing-blob",
-      `${blobFile(hash)}: no bytes provided and none stored`,
-    );
-  } else {
-    blobToWrite = provided;
+    if (stored !== undefined) {
+      const checked = checkBlob(stored, hash, atlas, blobFile(hash));
+      if (!checked.ok) return toFailure(checked);
+    } else if (provided === undefined) {
+      return assetFail(
+        "missing-blob",
+        `${blobFile(hash)}: no bytes provided and none stored`,
+      );
+    } else {
+      toWrite.push({ path: blobPath, bytes: provided });
+    }
   }
 
   const text = new TextEncoder().encode(canonicalManifestText(parsed.value));
@@ -271,7 +300,7 @@ export function writeRevision(
     );
   }
 
-  if (blobToWrite !== undefined) writeAtomic(blobPath, blobToWrite);
+  for (const { path, bytes } of toWrite) writeAtomic(path, bytes);
   if (storedManifest === undefined) writeAtomic(manifestPath, text);
   return assetOk({ revision });
 }

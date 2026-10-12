@@ -542,7 +542,8 @@ mod tests {
         runtime().block_on(async {
             let (mux, sidecar, dirty) = attached(echo);
             let calls = [
-                ("derive", json!({})),
+                ("rotate", json!({})),
+                ("derive", json!({ "asset": "zeus-sprite", "dir": "/tmp" })),
                 ("open", json!({ "id": "e" })),
                 ("export", json!({ "id": "e", "dir": "/tmp" })),
                 (
@@ -609,7 +610,7 @@ mod tests {
     fn a_bad_call_is_named_as_bad_even_when_nothing_is_configured() {
         runtime().block_on(async {
             let (mux, _sidecar, dirty) = attached(echo);
-            let error = studio_call(&mux, false, &dirty, "derive", json!({}))
+            let error = studio_call(&mux, false, &dirty, "rotate", json!({}))
                 .await
                 .unwrap_err();
             assert_eq!(error.code, "unknown-op");

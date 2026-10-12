@@ -200,6 +200,19 @@ describe("asset summaries", () => {
         state: "draft",
         manifest: {
           id: "zeus-sprite",
+          kind: "sprite",
+          paletteFamily: "olympus",
+          provenance: { method: "derived" },
+          realmVariants: [{ paletteFamily: "underworld" }],
+          animations: [
+            { state: "idle", direction: "east", frames: [] },
+            {
+              state: "act",
+              direction: "south",
+              ability: "thunderbolt",
+              frames: [],
+            },
+          ],
           styleTag: "SECRET STYLE",
           atlas: { blob: hash },
         },
@@ -246,6 +259,11 @@ describe("asset summaries", () => {
       manifestRevision: hash,
       prior: null,
       published: null,
+      kind: "sprite",
+      method: "derived",
+      slots: ["idle/east", "act/south/thunderbolt"],
+      realms: ["underworld"],
+      paletteFamily: "olympus",
       report: { status: "fail", failedChecks: ["idle/south#0:palette"] },
       licences: [{ subject: "m", role: "model", status: "compatible" }],
     });

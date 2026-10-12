@@ -1134,7 +1134,7 @@ function parseDerivedSource(
   );
 }
 
-function parseDerivedStep(
+export function parseDerivedStep(
   value: unknown,
   path: string,
 ): ParseResult<DerivedStep> {
@@ -1673,17 +1673,7 @@ function parsePalette(
   return ok({ paletteFamily: paletteFamily.value, paletteId: paletteId.value });
 }
 
-function parseRampShade(value: unknown, path: string): ParseResult<RampShade> {
-  return parseStrictRecord(value, path, ["ramp", "index"], (record) => {
-    const ramp = parseSlug(record.ramp, `${path}.ramp`);
-    if (!ramp.ok) return ramp;
-    const index = parseIntegerAtLeast(record.index, `${path}.index`, 0);
-    if (!index.ok) return index;
-    return ok({ ramp: ramp.value, index: index.value });
-  });
-}
-
-function parseColourMapping(
+export function parseColourMapping(
   value: unknown,
   path: string,
 ): ParseResult<ColourMapping> {
@@ -1693,6 +1683,16 @@ function parseColourMapping(
     const target = parseRampShade(record.target, `${path}.target`);
     if (!target.ok) return target;
     return ok({ source: source.value, target: target.value });
+  });
+}
+
+function parseRampShade(value: unknown, path: string): ParseResult<RampShade> {
+  return parseStrictRecord(value, path, ["ramp", "index"], (record) => {
+    const ramp = parseSlug(record.ramp, `${path}.ramp`);
+    if (!ramp.ok) return ramp;
+    const index = parseIntegerAtLeast(record.index, `${path}.index`, 0);
+    if (!index.ok) return index;
+    return ok({ ramp: ramp.value, index: index.value });
   });
 }
 

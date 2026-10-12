@@ -30,6 +30,7 @@ import { decodePng } from "./png/decode";
 import type { StudioContent } from "./request";
 import {
   type AuthoredFrames,
+  type DerivedEntry,
   deriveStatus,
   type FrameLimits,
   type FrameRef,
@@ -149,15 +150,30 @@ export function checkFinishStep(
   };
 }
 
-/** The provenance step an edit becomes: the plain "hand edit <id>" unless it was finished with its own step. */
-export function handStepOf(edit: Pick<EditRecord, "id" | "step">): {
+/**
+ * The provenance step an edit becomes: the plain "hand edit <id>" unless it was
+ * finished with its own step. A slot the edit started from a derived slot keeps
+ * its recipe and source in the description, as history: the slot is a hand
+ * step from here on, and is never recomputed.
+ */
+export function handStepOf(edit: Pick<EditRecord, "id" | "step" | "base">): {
   readonly description: string;
   readonly method?: "script";
 } {
   const step = edit.step;
+  const history = Object.entries(edit.base).flatMap(([slot, basis]) =>
+    basis.kind === "derived"
+      ? [
+          `${slot} was derived by ${basis.recipe} v${basis.version} from ${basis.assetId} ${basis.revision} ${basis.slotKey}`,
+        ]
+      : [],
+  );
+  const suffix = history.length === 0 ? "" : ` (${history.join("; ")})`;
   if (step?.method === "script")
-    return { description: step.description, method: "script" };
-  return { description: step?.description ?? `hand edit ${edit.id}` };
+    return { description: `${step.description}${suffix}`, method: "script" };
+  return {
+    description: `${step?.description ?? `hand edit ${edit.id}`}${suffix}`,
+  };
 }
 
 export type Checked<T> =
@@ -620,6 +636,8 @@ export function baseFrameRefs(
 ): readonly FrameRef[] | undefined {
   const authored = set.frames[slot];
   if (authored !== undefined) return authored.frames;
+  const derived = set.derived?.[slot];
+  if (derived !== undefined) return derived.frames;
   const pick = set.picks[slot];
   return pick === undefined
     ? undefined
@@ -729,6 +747,7 @@ export function applyFinish(args: {
 }): Checked<WorkingSetRecord> {
   const { set, edit, preview } = args;
   const frames: Record<string, AuthoredFrames> = { ...set.frames };
+  const derived: Record<string, DerivedEntry> = { ...set.derived };
   for (const slot of edit.slots) {
     const made = preview.slots[slot];
     const limit = set.limits[slot];
@@ -743,6 +762,8 @@ export function applyFinish(args: {
       return bad(
         `slot ${slot} has ${made.frames.length} frames; it takes at most ${limit.max}`,
       );
+    // A derived slot an edit finishes becomes a hand step: it leaves the derived entries.
+    if (derived[slot] !== undefined) delete derived[slot];
     frames[slot] = {
       editId: edit.id,
       basis,
@@ -755,17 +776,20 @@ export function applyFinish(args: {
       ],
     };
   }
+  const { derived: _earlier, ...rest } = set;
   return {
     ok: true,
     value: {
-      ...set,
+      ...rest,
       frames,
+      ...(Object.keys(derived).length === 0 ? {} : { derived }),
       status: deriveStatus(
         set.kind,
         set.required,
         set.picks,
         frames,
         set.limits,
+        derived,
       ),
     },
   };

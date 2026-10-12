@@ -26,6 +26,7 @@ import {
   type SlotInput,
   type SourceRef,
   slotHash,
+  swapImage,
   swapPalette,
 } from "./derive";
 import { decodePng } from "./png/decode";
@@ -575,6 +576,51 @@ describe("palette swap", () => {
     );
     expect(refusal(swapPalette({ ...input, slots })).reason).toBe(
       "unmapped-colour",
+    );
+  });
+});
+
+describe("swapping a whole image under a recorded colour map", () => {
+  const ramps = new Map(
+    [...olympus.ramps, ...underworld.ramps].map((r) => [r.id, r] as const),
+  );
+  const map = olympus.ramps.flatMap((source, i) =>
+    source.shades.map((_, index) => ({
+      source: { ramp: source.id, index },
+      target: {
+        ramp: (underworld.ramps[i] as { id: string }).id,
+        index,
+      },
+    })),
+  );
+
+  it("recolours every opaque pixel, keeps alpha, zeroes hidden RGB and encodes the PNG", () => {
+    const image = symmetricFigure();
+    paint(image, 2, 2, 1, 1, shade(3, 3), 128);
+    image.rgba.set([5, 6, 7, 0], 0);
+    const done = must(swapImage(image, map, ramps));
+    expect(pixel(done.image, 0, 0)).toEqual([0, 0, 0, 0]);
+    expect(pixel(done.image, 2, 2)[3]).toBe(128);
+    expect(pixel(done.image, 30, 12).slice(0, 3)).toEqual([
+      ...(underworld.ramps[0] as { shades: readonly Rgb[] }).shades[2],
+    ]);
+    expect(done.png).toEqual(
+      encodeRgbaPng(done.image.rgba, done.image.width, done.image.height),
+    );
+  });
+
+  it("refuses an opaque colour no mapped shade has, and a map the palette lacks", () => {
+    const stray = symmetricFigure();
+    paint(stray, 1, 1, 1, 1, [0x12, 0x34, 0x56]);
+    expect(refusal(swapImage(stray, map, ramps)).colour).toBe("#123456");
+    const missing = [
+      {
+        source: { ramp: "marble", index: 9 },
+        target: { ramp: "ash", index: 0 },
+      },
+    ];
+    expect(refusal(swapImage(symmetricFigure(), missing, ramps)).reason).toBe(
+      "invalid-params",
     );
   });
 });

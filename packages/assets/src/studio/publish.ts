@@ -30,6 +30,7 @@ import {
   readRevision,
 } from "../registry";
 import { checkAssessments, licenceBlock, reviewLicences } from "./approval";
+import { auditDerivation, type PublishedSource } from "./derivation";
 import type { EditFailure, EditHost } from "./edit-session";
 import {
   logicalCells,
@@ -192,7 +193,11 @@ export function createAssetOps(host: EditHost): AssetOps {
     asset: StudioAssetRecord,
     content: StudioContent,
     palette: Palette,
-  ): Result<{ manifest: AssetManifest; atlas: Uint8Array }> {
+  ): Result<{
+    manifest: AssetManifest;
+    atlas: Uint8Array;
+    variantAtlases: ReadonlyMap<Sha256, Uint8Array>;
+  }> {
     const parsed = parseAssetManifest(
       asset.record.manifest,
       content.vocabulary,
@@ -225,6 +230,17 @@ export function createAssetOps(host: EditHost): AssetOps {
         ok: false,
         message: "the palette changed since the report was measured",
       };
+    const variantAtlases = new Map<Sha256, Uint8Array>();
+    if (manifest.kind === "sprite")
+      for (const variant of manifest.realmVariants) {
+        const held = store.readBlob(variant.atlas.blob);
+        if (held === undefined || sha256Hex(held) !== variant.atlas.blob)
+          return {
+            ok: false,
+            message: `the studio's ${variant.paletteFamily} realm variant atlas is missing or does not match its hash`,
+          };
+        variantAtlases.set(variant.atlas.blob, held);
+      }
     const refusal = paletteRefusal(manifest, palette);
     if (refusal !== undefined) return { ok: false, message: refusal };
     const audit = checkProvenanceAgainstJobs(
@@ -236,7 +252,7 @@ export function createAssetOps(host: EditHost): AssetOps {
         ok: false,
         message: `the job ledger disagrees with the provenance: ${audit.message}`,
       };
-    return { ok: true, value: { manifest, atlas } };
+    return { ok: true, value: { manifest, atlas, variantAtlases } };
   }
 
   function pack(
@@ -300,7 +316,7 @@ export function createAssetOps(host: EditHost): AssetOps {
       ...(prior === undefined ? {} : { prior }),
     });
     if (!packed.ok) return refused("wrong-state", packed.message);
-    const { manifest, atlas, report } = packed.value;
+    const { manifest, atlas, report, variantAtlases } = packed.value;
     const picked = transitionAsset(newCandidate(manifest, report), {
       type: "pick",
     });
@@ -324,6 +340,7 @@ export function createAssetOps(host: EditHost): AssetOps {
     };
     const stored = host.write(() => {
       store.putBlob(atlas);
+      for (const png of variantAtlases.values()) store.putBlob(png);
     });
     if (!stored.ok) return stored;
     const written = host.ledgered("pack", input.id, () =>
@@ -409,7 +426,7 @@ export function createAssetOps(host: EditHost): AssetOps {
       );
     const checked = revalidate(asset, content, palette);
     if (!checked.ok) return refused("wrong-state", checked.message);
-    const { manifest, atlas } = checked.value;
+    const { manifest, atlas, variantAtlases } = checked.value;
 
     const valid = checkAssessments(
       manifest.provenance.licences,
@@ -434,6 +451,7 @@ export function createAssetOps(host: EditHost): AssetOps {
       );
 
     const sources: { manifest: AssetManifest; atlas: Uint8Array }[] = [];
+    const byRevision = new Map<Sha256, PublishedSource>();
     for (const ref of manifest.provenance.sourceAssets) {
       const read = readRevision(
         registryRoot,
@@ -447,6 +465,7 @@ export function createAssetOps(host: EditHost): AssetOps {
           `source revision ${ref.assetId} ${ref.revision} cannot be read: ${read.message}`,
         );
       sources.push(read.value);
+      byRevision.set(ref.revision, read.value);
     }
     const set = store.readWorkingSet(asset.workingSetId);
     if (set.kind !== "found")
@@ -454,6 +473,18 @@ export function createAssetOps(host: EditHost): AssetOps {
         "wrong-state",
         `working set ${asset.workingSetId} is not readable`,
       );
+    // Everything derived is recomputed from its published source, through the
+    // pinned encoder, and must match what was approved: a step, a variant.
+    const derivedMismatch = auditDerivation({
+      manifest,
+      atlas,
+      variantAtlases,
+      sources: byRevision,
+      content,
+      subject: set.value.subject,
+    });
+    if (derivedMismatch !== undefined)
+      return refused("wrong-state", derivedMismatch);
     const mismatch = carriedCellsMismatch({
       manifest,
       atlas,
@@ -495,7 +526,7 @@ export function createAssetOps(host: EditHost): AssetOps {
         published = publishToRegistry(
           registryRoot,
           asset.record,
-          new Map([[manifest.atlas.blob, atlas]]),
+          new Map([[manifest.atlas.blob, atlas], ...variantAtlases]),
           content.vocabulary,
           palette,
         );

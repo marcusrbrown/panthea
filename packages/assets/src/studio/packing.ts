@@ -9,12 +9,14 @@ import {
   type AssetVocabulary,
   type ConformanceReport,
   canonicalJson,
+  type DerivedStep,
   type Frame,
   type GenerationRef,
   type JobRef,
   type LicenceRecord,
   parseAssetId,
   parseAssetManifest,
+  type RealmVariant,
   type Sha256,
 } from "@panthea/contracts";
 import {
@@ -28,11 +30,13 @@ import { sha256Hex } from "../hash";
 import type { Palette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateParams } from "./candidates";
+import { regenerateVariantAtlas } from "./derivation";
+import { derivationRuntime } from "./derive";
 import { type EditRecord, handStepOf } from "./export-import";
 import { decodePng } from "./png/decode";
 import { buildSpec, type StudioContent } from "./request";
 import type { CommandRecord, JobRecord, RequestRecord } from "./store";
-import type { WorkingSetRecord } from "./working-set";
+import type { DerivedBasis, WorkingSetRecord } from "./working-set";
 
 export interface PackInput {
   /** The studio's own id for this packed record. */
@@ -72,6 +76,8 @@ export interface PackSources {
 export interface Packed {
   readonly manifest: AssetManifest;
   readonly atlas: Uint8Array;
+  /** The atlas of each realm variant, by blob hash: regenerated from `atlas` at every pack. */
+  readonly variantAtlases: ReadonlyMap<Sha256, Uint8Array>;
   readonly report: ConformanceReport;
   readonly carried: readonly string[];
 }
@@ -195,8 +201,11 @@ function decoded(
 interface Ancestry {
   /** Finished edit ids, oldest first. */
   readonly edits: readonly string[];
-  readonly job: JobRecord;
-  readonly inputHash: Sha256;
+  /** The succeeded job a pick came from; absent for a slot that started from a derived slot. */
+  readonly job?: JobRecord;
+  readonly inputHash?: Sha256;
+  /** Present when the slot's oldest edit started from a derived slot. */
+  readonly derivedFrom?: DerivedBasis;
 }
 
 /** Follows a slot's frames back through its finished edits to the pick, and from the pick to its succeeded job. */
@@ -208,6 +217,7 @@ function trace(
   const finished = (id: string) =>
     commands.some((c) => c.type === "finish-edit" && c.jobId === id);
   const chain: EditRecord[] = [];
+  let derivedFrom: DerivedBasis | undefined;
   const authored = set.frames[slot];
   let basis =
     authored === undefined
@@ -251,6 +261,9 @@ function trace(
           message: `slot ${slot}: edit ${edit.id} was made from a sheet that is not edit ${next.editId}'s`,
         };
       basis = next;
+    } else if (next.kind === "derived") {
+      derivedFrom = next;
+      basis = undefined;
     } else {
       const pick = set.picks[slot];
       if (
@@ -285,6 +298,8 @@ function trace(
         message: `slot ${slot}: its frames are not from its last edit's sheet`,
       };
   }
+  if (derivedFrom !== undefined)
+    return { ok: true, value: { edits: oldest.map((e) => e.id), derivedFrom } };
   const pick = set.picks[slot];
   if (pick === undefined)
     return {
@@ -376,7 +391,48 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
   const colours = familyColours(palette, spec.palette.family);
   const ancestry = new Map<string, Ancestry>();
 
+  if (
+    prior === undefined &&
+    (Object.keys(set.derived ?? {}).length > 0 ||
+      Object.keys(set.variants ?? {}).length > 0)
+  )
+    return refuse(
+      "a derived working set packs against a published revision, and this asset has none",
+    );
   for (const slot of newSlots) {
+    const derivedEntry = set.derived?.[slot];
+    if (derivedEntry !== undefined) {
+      // A derived slot's pixels are the recipe's: stored when the set was
+      // derived, recomputed from the published source again at publish.
+      if (
+        prior === undefined ||
+        derivedEntry.step.source.assetId !== input.assetId ||
+        derivedEntry.step.source.revision !== prior.revision
+      )
+        return refuse(
+          `slot ${slot} was derived from ${derivedEntry.step.source.assetId} ${derivedEntry.step.source.revision}, which is no longer the published revision: derive it again`,
+        );
+      for (const [index, frame] of derivedEntry.frames.entries()) {
+        const image = decoded(
+          sources.readBlob(frame.hash),
+          frame.hash,
+          cell,
+          `${slot} frame ${index}`,
+        );
+        if (!image.ok) return refuse(image.message);
+        cells.push({
+          slot,
+          image: image.image,
+          durationMs: frame.durationMs,
+          params: {
+            background: derivedEntry.params.background,
+            alphaCutoff: derivedEntry.params.alphaCutoff,
+            grid: derivedEntry.params.grid,
+          },
+        });
+      }
+      continue;
+    }
     const authored = set.frames[slot];
     const pick = set.picks[slot];
     const stored: { hash: Sha256; durationMs: number }[] = [];
@@ -415,6 +471,32 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     const traced = trace(slot, sources);
     if (!traced.ok) return refuse(traced.message);
     ancestry.set(slot, traced.value);
+  }
+
+  // Derived and generated lineage never share a revision: a repair lands in its own.
+  const derivedSlots = newSlots.filter(
+    (slot) =>
+      set.derived?.[slot] !== undefined ||
+      ancestry.get(slot)?.derivedFrom !== undefined,
+  );
+  const generatedSlots = newSlots.filter(
+    (slot) => ancestry.get(slot)?.job !== undefined,
+  );
+  if (derivedSlots.length > 0 && generatedSlots.length > 0)
+    return refuse(
+      `the working set mixes derived slots (${derivedSlots.join(", ")}) with generated slots (${generatedSlots.join(", ")}): pack them in separate revisions`,
+    );
+  for (const slot of newSlots) {
+    const from = ancestry.get(slot)?.derivedFrom;
+    if (
+      from !== undefined &&
+      (prior === undefined ||
+        from.assetId !== input.assetId ||
+        from.revision !== prior.revision)
+    )
+      return refuse(
+        `slot ${slot} was hand-edited from a slot derived from ${from.assetId} ${from.revision}, which is no longer the published revision`,
+      );
   }
 
   // Cells of the published revision that this working set does not replace.
@@ -508,6 +590,19 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     [];
   for (const [index, entry] of ordered.entries()) {
     if (entry.params === undefined) continue;
+    // A west cell is held to its east cell, flipped, unless the subject declares
+    // an asymmetry (then the pair is not compared).
+    const key = parseSlotKey(entry.slot);
+    const east =
+      kind === "sprite" && key.direction === "west"
+        ? ordered.filter(
+            (c) =>
+              c.slot ===
+              [key.state, "east", key.ability]
+                .filter((p) => p !== undefined)
+                .join("/"),
+          )[(spans.get(entry.slot) ?? []).indexOf(index)]
+        : undefined;
     const result = conformImage({
       rgba: entry.image.rgba,
       width: entry.image.width,
@@ -521,6 +616,15 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       alphaCutoff: entry.params.alphaCutoff,
       grid: entry.params.grid,
       scale: 1,
+      ...(east === undefined
+        ? {}
+        : {
+            mirror: {
+              east: east.image,
+              west: entry.image,
+              asymmetry: visual?.asymmetry !== undefined,
+            },
+          }),
     });
     if (result.status !== "done")
       return refuse(
@@ -571,7 +675,13 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
   const generations = new Map<string, GenerationRef>();
   const editIds = new Set<string>();
   for (const slot of newSlots) {
-    const found = ancestry.get(slot) as Ancestry;
+    const found = ancestry.get(slot);
+    if (found === undefined) continue;
+    // A slot a hand edit took from a derived slot has no job behind it.
+    if (found.job === undefined || found.inputHash === undefined) {
+      for (const id of found.edits) editIds.add(id);
+      continue;
+    }
     const { job } = found;
     const engine = job.engine as NonNullable<JobRecord["engine"]>;
     const before = generations.get(job.job.id);
@@ -628,6 +738,12 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     }
   }
   const licences: LicenceRecord[] = [];
+  const derivedMode =
+    derivedSlots.length > 0 || Object.keys(set.variants ?? {}).length > 0;
+  // Derived work carries the licences of the revision it was made from.
+  if (derivedMode && prior !== undefined)
+    for (const licence of prior.manifest.provenance.licences)
+      licences.push(licence);
   for (const record of [
     ...[...generations.keys()].map((id) => sources.jobs.get(id) as JobRecord),
     ...baseJobs.values(),
@@ -701,17 +817,89 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
           },
     );
 
-  const provenance = {
-    method: "generated",
-    generations: [...generations.values()],
-    licences,
-    relatedJobs,
-    handEdits,
-    sourceAssets:
-      carriedKeys.length > 0 && prior !== undefined
-        ? [{ assetId: input.assetId, revision: prior.revision }]
-        : [],
-  };
+  // Derived provenance: every step the set records, ordered like the slots, then the variants'.
+  const steps: DerivedStep[] = [
+    ...newSlots.flatMap((slot) => {
+      const step = set.derived?.[slot]?.step;
+      return step === undefined ? [] : [step];
+    }),
+    ...Object.keys(set.variants ?? {})
+      .sort()
+      .flatMap((family) => set.variants?.[family]?.steps ?? []),
+  ];
+  const recipes = [...new Set(steps.map((step) => step.recipe))];
+  if (recipes.length > 1)
+    return refuse(
+      `the working set derives with more than one recipe (${recipes.join(", ")}); derive them in separate revisions`,
+    );
+  const sourceAssets =
+    (derivedMode || carriedKeys.length > 0) && prior !== undefined
+      ? [{ assetId: input.assetId, revision: prior.revision }]
+      : [];
+  let provenance: Record<string, unknown>;
+  if (steps.length > 0) {
+    const first = steps[0] as DerivedStep;
+    provenance = {
+      method: "derived",
+      operation: first.recipe,
+      runtime: derivationRuntime(
+        first.recipe as Parameters<typeof derivationRuntime>[0],
+        first.version,
+      ),
+      steps,
+      resultHashes: [...new Set(steps.map((step) => step.resultHash))],
+      licences,
+      relatedJobs,
+      handEdits,
+      sourceAssets,
+    };
+  } else if (derivedMode) {
+    // Every slot this set made started derived and was then redrawn by hand.
+    provenance = {
+      method: "hand",
+      licences,
+      relatedJobs,
+      handEdits,
+      sourceAssets,
+    };
+  } else {
+    provenance = {
+      method: "generated",
+      generations: [...generations.values()],
+      licences,
+      relatedJobs,
+      handEdits,
+      sourceAssets,
+    };
+  }
+  // Realm variants are recolours of this very atlas under a recorded map, made
+  // fresh at every pack; a variant atlas is never carried from the prior revision.
+  const variantAtlases = new Map<Sha256, Uint8Array>();
+  const realmVariants: RealmVariant[] = [];
+  if (kind === "sprite") {
+    const wanted = new Map<string, RealmVariant["map"]>();
+    if (prior?.manifest.kind === "sprite")
+      for (const variant of prior.manifest.realmVariants)
+        wanted.set(variant.paletteFamily, variant.map);
+    for (const [family, request] of Object.entries(set.variants ?? {}))
+      wanted.set(family, request.map);
+    for (const family of [...wanted.keys()].sort()) {
+      const map = wanted.get(family) as RealmVariant["map"];
+      const made = regenerateVariantAtlas(atlas, map, palette);
+      if (!made.ok)
+        return refuse(
+          `the ${family} realm variant cannot be regenerated: ${made.message}`,
+        );
+      const blob = sha256Hex(made.png);
+      variantAtlases.set(blob, made.png);
+      realmVariants.push({
+        paletteFamily: family,
+        paletteId: palette.id,
+        atlas: { blob, width, height: cell.h },
+        map,
+      });
+    }
+  }
   const common = {
     schemaVersion: 1,
     id: input.assetId,
@@ -743,13 +931,11 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
           directions: vocabulary.directions.filter((d) =>
             allKeys.some((key) => parseSlotKey(key).direction === d),
           ),
-          ...(prior?.manifest.kind === "sprite" && prior.manifest.asymmetry
-            ? { asymmetry: prior.manifest.asymmetry }
-            : {}),
-          realmVariants:
-            prior?.manifest.kind === "sprite"
-              ? prior.manifest.realmVariants
-              : [],
+          // The subject is authoritative; the prior revision's value is not carried.
+          ...(visual?.asymmetry === undefined
+            ? {}
+            : { asymmetry: visual.asymmetry }),
+          realmVariants,
           animations: allKeys.map((key) => {
             const slot = parseSlotKey(key);
             const carried =
@@ -766,9 +952,14 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
               state: slot.state,
               direction: slot.direction,
               ...(slot.ability === undefined ? {} : { ability: slot.ability }),
-              ...(carried?.loopStart === undefined
+              ...(carried?.loopStart === undefined &&
+              set.derived?.[key]?.loopStart === undefined
                 ? {}
-                : { loopStart: carried.loopStart }),
+                : {
+                    loopStart:
+                      carried?.loopStart ??
+                      (set.derived?.[key]?.loopStart as number),
+                  }),
               frames: spans2(key),
             };
           }),
@@ -780,6 +971,12 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     );
   return {
     ok: true,
-    value: { manifest: manifest.value, atlas, report, carried: carriedKeys },
+    value: {
+      manifest: manifest.value,
+      atlas,
+      variantAtlases,
+      report,
+      carried: carriedKeys,
+    },
   };
 }

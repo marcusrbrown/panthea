@@ -14,6 +14,11 @@ import {
   conformCandidate,
 } from "./candidates";
 import {
+  createDeriveOps,
+  type DeriveInput,
+  type DeriveResult,
+} from "./derivation";
+import {
   createEditOps,
   type EditCommandResult,
   type EditResult,
@@ -24,6 +29,7 @@ import {
   type ApproveOptions,
   type AssetOpResult,
   createAssetOps,
+  currentRevision,
 } from "./publish";
 import { planJobs, type StudioContent } from "./request";
 import {
@@ -110,6 +116,16 @@ export interface StudioSession {
   ): EditResult;
   /** Ends an edit and leaves the working set exactly as it was. */
   discardEdit(id: string): EditCommandResult;
+  /**
+   * Reads a published revision and writes a working set of derived slots (a
+   * mirror, a bob, or a palette swap into a realm variant). The same inputs
+   * return the set they made before. Nothing is packed or approved.
+   */
+  derive(
+    input: DeriveInput,
+    content: StudioContent,
+    registryRoot: string,
+  ): DeriveResult;
   /** Packs a complete working set into a draft asset record; never approves. */
   pack(
     input: PackInput,
@@ -410,6 +426,19 @@ export function openStudioSession(root: string): StudioOpen {
       hasLedgered: (type, id) =>
         store.status().commands.some((c) => c.type === type && c.jobId === id),
     });
+    const deriveOps = createDeriveOps(
+      {
+        store,
+        isClosed: () => closed,
+        ledgered,
+        write: writeRecord,
+        hasLedgered: (type, id) =>
+          store
+            .status()
+            .commands.some((c) => c.type === type && c.jobId === id),
+      },
+      currentRevision,
+    );
     const closedWrite = <A extends unknown[], R>(write: (...args: A) => R) => {
       return (...args: A): R => {
         if (closed) throw new Error(CLOSED);
@@ -575,6 +604,7 @@ export function openStudioSession(root: string): StudioOpen {
         importEdit: editOps.importEdit,
         finishEdit: editOps.finishEdit,
         discardEdit: editOps.discardEdit,
+        derive: deriveOps.derive,
         pack: assetOps.pack,
         approveAsset: assetOps.approveAsset,
         publishAsset: assetOps.publishAsset,

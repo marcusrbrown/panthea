@@ -198,6 +198,11 @@ export function createEditOps(host: EditHost): EditOps {
         evidence[slot] = carried;
         continue;
       }
+      const derived = set.derived?.[slot];
+      if (derived !== undefined) {
+        evidence[slot] = { params: derived.params, palette: derived.palette };
+        continue;
+      }
       const pick = set.picks[slot];
       if (pick === undefined)
         return refused("wrong-state", `slot ${slot} has nothing to start from`);

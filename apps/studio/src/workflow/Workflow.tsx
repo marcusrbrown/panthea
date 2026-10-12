@@ -28,6 +28,8 @@ import {
   conformJob,
   createLatest,
   createStableHandlers,
+  deriveChoices,
+  deriveGuarded,
   detailText,
   type EditorSession,
   editableSlotsForSet,
@@ -464,6 +466,7 @@ export function WorkflowView({
   const [originalWorkAttribution, setOriginalWorkAttribution] = useState("");
   const [exception, setException] = useState("");
   const [rejectReason, setRejectReason] = useState("");
+  const [deriveKey, setDeriveKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [conformBusy, setConformBusy] = useState<Record<string, boolean>>({});
   const [conformSet, setConformSet] = useState("");
@@ -892,6 +895,16 @@ export function WorkflowView({
         dispatch?.({ type: "select-asset", assetId: recordId });
       },
     );
+  };
+  const derive = async (choices: ReturnType<typeof deriveChoices>) => {
+    const choice = choices.find((c) => c.key === deriveKey) ?? choices[0];
+    if (!choice) return;
+    await deriveGuarded(host, guardUi(mayMutate), choice.args, (reply) => {
+      // The derived set is the one the pack form acts on next, packed over the same asset.
+      setWorkingSetId(reply.workingSetId);
+      setAssetId(choice.args.asset);
+      setStillFrameMs("");
+    });
   };
   const approve = async (withException: boolean) => {
     if (!activeAsset) return;
@@ -1587,7 +1600,30 @@ export function WorkflowView({
                   <h3>Isometric preview</h3>
                   <span>integer zoom · nearest pixels</span>
                 </div>
-                {activePreviewWithKind && renderPreview ? (
+                {activePreviewWithKind &&
+                renderPreview &&
+                activeAsset &&
+                activeAssetState === "draft" &&
+                recordText(activeAsset, "method") === "derived" ? (
+                  <div className="derive-compare">
+                    <figure>
+                      <figcaption>
+                        Source: published{" "}
+                        {recordText(activeAsset, "assetId") ?? activeAsset.id}
+                      </figcaption>
+                      {renderPreview({
+                        source: "canon",
+                        id:
+                          recordText(activeAsset, "assetId") ?? activeAsset.id,
+                        kind: "sprite",
+                      })}
+                    </figure>
+                    <figure>
+                      <figcaption>Derived: this draft</figcaption>
+                      {renderPreview(activePreviewWithKind)}
+                    </figure>
+                  </div>
+                ) : activePreviewWithKind && renderPreview ? (
                   renderPreview(activePreviewWithKind)
                 ) : (
                   <p className="muted">
@@ -1681,6 +1717,46 @@ export function WorkflowView({
                           )}
                         </div>
                       )}
+                      {activeAssetState === "canon" &&
+                        (() => {
+                          const choices = deriveChoices(activeAsset);
+                          return choices.length === 0 ? null : (
+                            <div className="derive-panel">
+                              <h3>Derive from this revision</h3>
+                              <p className="muted">
+                                Makes a working set from the published pixels.
+                                Nothing is changed until you pack, approve and
+                                publish it.
+                              </p>
+                              <label className="workflow-field">
+                                Derivation
+                                <select
+                                  className="workflow-control"
+                                  value={
+                                    choices.find((c) => c.key === deriveKey)
+                                      ?.key ?? choices[0]?.key
+                                  }
+                                  onChange={(event) =>
+                                    setDeriveKey(event.target.value)
+                                  }
+                                >
+                                  {choices.map((choice) => (
+                                    <option key={choice.key} value={choice.key}>
+                                      {choice.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                disabled={!mutationsEnabled}
+                                onClick={() => void derive(choices)}
+                              >
+                                Derive
+                              </button>
+                            </div>
+                          );
+                        })()}
                       {activeAssetState === "draft" && (
                         <div className="asset-actions">
                           <button
