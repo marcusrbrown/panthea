@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Headless Blender renderer: UAL mannequin -> isometric sprite cells, 4 facings, direct 64x80 and 4x.
 
 Run (no UI state; every setting is in this file or on the command line):

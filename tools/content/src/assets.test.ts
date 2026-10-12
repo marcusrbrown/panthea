@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveAsset, sha256Hex } from "@panthea/assets";
 import {
   committedVocabulary,
@@ -744,5 +744,145 @@ describe("cross references", () => {
     );
     publish(root, portraitFixture("zeus-portrait", "hera"));
     expect(diagnosticsOf(root)).toHaveLength(1);
+  });
+});
+
+const REPO_ROOT = join(COMMITTED, "..", "..");
+
+/**
+ * A repository root holding only tools/render with one kit (a single `.bin` that the profile
+ * "fixture" references) plus the given Python files, so the render checks start from known state.
+ */
+function renderRepo(
+  options: {
+    readonly spdx?: string;
+    readonly ownerAssessment?: object;
+    readonly python?: Readonly<Record<string, string>>;
+  } = {},
+): string {
+  const root = mkdtempSync(join(tmpdir(), "assets-render-"));
+  dirs.push(root);
+  const kitDir = join(root, "tools", "render", "kits", "pack-a");
+  mkdirSync(kitDir, { recursive: true });
+  const licence = new TextEncoder().encode("CC0 text");
+  const body = new TextEncoder().encode("BIN!");
+  writeFileSync(join(kitDir, "LICENCE.txt"), licence);
+  writeFileSync(join(kitDir, "Body.bin"), body);
+  writeFileSync(
+    join(root, "tools", "render", "kits.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      sizeCapBytes: 1000,
+      kits: [
+        {
+          id: "pack-a",
+          sourceUrl: "https://example.invalid/pack-a",
+          licence: {
+            spdx: options.spdx ?? "CC0-1.0",
+            ...(options.ownerAssessment === undefined
+              ? {}
+              : { ownerAssessment: options.ownerAssessment }),
+          },
+          licenceFile: { path: "LICENCE.txt", sha256: sha256Hex(licence) },
+          status: "inspected-not-used",
+          textureSkip: [],
+          files: [
+            {
+              path: "Body.bin",
+              sha256: sha256Hex(body),
+              size: body.length,
+              referencedBy: ["fixture"],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  for (const [name, text] of Object.entries(options.python ?? {})) {
+    mkdirSync(dirname(join(root, name)), { recursive: true });
+    writeFileSync(join(root, name), text);
+  }
+  return root;
+}
+
+const FIXTURE_PROFILE = {
+  profile: "fixture",
+  files: [{ kit: "pack-a", path: "Body.bin" }],
+};
+
+describe("render kits and the licence boundary", () => {
+  it("passes the committed repository", () => {
+    expect(
+      validateAssets(COMMITTED, { repoRoot: REPO_ROOT, kitProfiles: [] }),
+    ).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("runs the render checks only when asked, so a content-only root is untouched", () => {
+    expect(validateAssets(contentRoot()).diagnostics).toEqual([]);
+  });
+
+  it("passes a fixture profile that references an assessed kit file", () => {
+    const repoRoot = renderRepo();
+    expect(
+      validateAssets(contentRoot(), {
+        repoRoot,
+        kitProfiles: [FIXTURE_PROFILE],
+      }).diagnostics,
+    ).toEqual([]);
+  });
+
+  it("refuses a fixture profile that references an unassessed kit file, with the same file passing once assessed", () => {
+    const refused = validateAssets(contentRoot(), {
+      repoRoot: renderRepo({ spdx: "CC-BY-4.0" }),
+      kitProfiles: [FIXTURE_PROFILE],
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.diagnostics).toHaveLength(1);
+    expect(refused.diagnostics[0]?.file).toBe(
+      "tools/render/kits/pack-a/Body.bin",
+    );
+    expect(refused.diagnostics[0]?.message).toContain("ownerAssessment");
+
+    const assessed = validateAssets(contentRoot(), {
+      repoRoot: renderRepo({
+        spdx: "CC-BY-4.0",
+        ownerAssessment: {
+          by: "owner",
+          date: "2026-10-12",
+          summary: "Reviewed.",
+        },
+      }),
+      kitProfiles: [FIXTURE_PROFILE],
+    });
+    expect(assessed.diagnostics).toEqual([]);
+  });
+
+  it("refuses a Python file that imports a Blender module without the GPL header", () => {
+    const repoRoot = renderRepo({
+      python: { "tools/x/tool.py": "import bpy_extras\n" },
+    });
+    const result = validateAssets(contentRoot(), {
+      repoRoot,
+      kitProfiles: [],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual([
+      {
+        file: "tools/x/tool.py",
+        message: expect.stringContaining("bpy_extras"),
+      },
+    ]);
+  });
+
+  it("passes the same Python file under the GPL header", () => {
+    const repoRoot = renderRepo({
+      python: {
+        "tools/x/tool.py":
+          "# SPDX-License-Identifier: GPL-3.0-or-later\nimport bpy_extras\n",
+      },
+    });
+    expect(
+      validateAssets(contentRoot(), { repoRoot, kitProfiles: [] }).diagnostics,
+    ).toEqual([]);
   });
 });

@@ -7,3 +7,7 @@
 *.jpeg binary
 *.woff binary
 *.woff2 binary
+
+# Curated render kits: hashed exactly as committed (tools/render/kits.json), so no line-ending
+# or text normalisation. Licence texts ship with CRLF endings and are hashed too.
+tools/render/kits/** binary

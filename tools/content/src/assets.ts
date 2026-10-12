@@ -8,6 +8,10 @@
 //   <root>/assets/registry/                index.json, manifests/, blobs/
 //   <root>/palette/                        palette.json, master.gpl, master.hex
 //
+// With a repository root, it also runs the render checks: the curated kit library under
+// <repo>/tools/render (kits.json against the kit files and the profiles' references) and the
+// GPL/MIT licence boundary over every Python file in the repository.
+//
 // A published manifest is validated from plain files alone: its provenance
 // carries the job refs and licences it needs, so no authoring ledger is read.
 
@@ -18,6 +22,11 @@ import {
   paletteRefusal,
   readRevision,
 } from "@panthea/assets/registry";
+import {
+  checkKits,
+  checkLicenceBoundary,
+  type ProfileKitRefs,
+} from "@panthea/assets/render";
 import {
   type GodProfile,
   type GodVisualProfile,
@@ -145,10 +154,38 @@ function isRecordWithArray(
   return Array.isArray(found) ? found : undefined;
 }
 
-export function validateAssets(contentRoot: string): AssetValidation {
+export interface AssetValidationOptions {
+  /** The repository root. When given, the render kit and licence-boundary checks run against it. */
+  readonly repoRoot?: string;
+  /** The kit files each render profile references; empty until the profiles exist (U6). */
+  readonly kitProfiles?: readonly ProfileKitRefs[];
+}
+
+/** Kit library and licence boundary. Diagnostics name paths relative to the repository root. */
+function validateRender(
+  repoRoot: string,
+  profiles: readonly ProfileKitRefs[],
+  report: (file: string, message: string) => void,
+): void {
+  for (const problem of checkKits(join(repoRoot, "tools", "render"), profiles)
+    .problems) {
+    report(`tools/render/${problem.file}`, problem.message);
+  }
+  for (const violation of checkLicenceBoundary(repoRoot)) {
+    report(violation.file, `line ${violation.line}: ${violation.message}`);
+  }
+}
+
+export function validateAssets(
+  contentRoot: string,
+  options: AssetValidationOptions = {},
+): AssetValidation {
   const diagnostics: AssetDiagnostic[] = [];
   const report = (file: string, message: string) =>
     diagnostics.push({ file, message });
+  if (options.repoRoot !== undefined) {
+    validateRender(options.repoRoot, options.kitProfiles ?? [], report);
+  }
   const done = (): AssetValidation => ({
     ok: diagnostics.length === 0,
     diagnostics,

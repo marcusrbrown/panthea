@@ -13,7 +13,8 @@
     "./browser": "./src/browser.ts",
     "./registry": "./src/registry.ts",
     "./fixtures": "./src/fixtures.ts",
-    "./studio": "./src/studio/index.ts"
+    "./studio": "./src/studio/index.ts",
+    "./render": "./src/render/index.ts"
   },
   "dependencies": {
     "@panthea/content": "workspace:*",

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Retro-render renderer: one item per Blender process, 4x beauty renders in two shading variants plus part-ID and depth passes.
 
     blender --background --factory-startup --python-exit-code 1 --python render_retro.py -- \\

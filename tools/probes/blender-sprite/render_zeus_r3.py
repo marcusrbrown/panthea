@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Round 3 renderer: the Zeus proxy with surface-anchored shading, no 3D bolt (a locator only), a fixed-size seat.
 
 Differs from render_zeus.py (round 2): variants s3 (baked unlit 3-shade) and b2; the bolt mesh is hidden from every pass and
