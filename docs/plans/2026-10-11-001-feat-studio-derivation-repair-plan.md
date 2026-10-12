@@ -632,7 +632,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 - On GO or PARTIAL, one real repair candidate is generated through the CLI and reviewed.
 - On NO-GO, the refusal is covered by tests and traceability marks R14's generated route as partial.
 
-- [ ] **U6: Preview every published key, with playback and scrubbing**
+- [x] **U6: Preview every published key, with playback and scrubbing**
 
 **Goal:** The studio preview selects and plays any published state, direction, ability or expression at manifest timing, with scrubbing.
 
@@ -667,7 +667,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 - A window screenshot of the packaged app shows act at 1×.
 - The owner confirms the visuals through the question tool (memory 9133).
 
-- [ ] **U7: Release the writer lock when idle, plus a Release button**
+- [x] **U7: Release the writer lock when idle, plus a Release button**
 
 **Goal:** The app holds the store lock only while working, so CLI steps work without quitting the app.
 
@@ -700,7 +700,7 @@ U7 and U8 both edit `apps/studio/src-tauri/src/schema.rs`, so one lane owns that
 - The probe README records the measured costs and the chosen grace period.
 - A run of the packaged app shows a CLI write succeeding while the app is open and idle.
 
-- [ ] **U8: App ergonomics: scripted finish, seed, queue performance, slot hint**
+- [x] **U8: App ergonomics: scripted finish, seed, queue performance, slot hint**
 
 **Goal:** Remove the remaining friction from sittings.
 
