@@ -10,6 +10,7 @@ Status: probe, 2026-10-11 and 2026-10-12, three rounds; [Round 2: Zeus proxy](#r
 - **Not met:** against hand-pixel canon, rendered motion shows up as frame-to-frame churn. Idle flash pixels run 6–7× canon's rate (about 80–94 per frame against 13), and the idle silhouette-stable change rate is 7–25% against canon's 3.0% (limit 6%).
 - **Next step (owner):** a style-target probe for a pre-rendered retro look, with relaxed palette and outline rules and chunkier proportions, built from kitbashed CC0 kits.
 - **This probe stays** as a pose and silhouette reference.
+- **Requirement:** [X02](../../../docs/product/requirements.md) (art quality). The route fails X02's bar as it stands; X02's acceptance status is unchanged (planned) and the probe is recorded as 2026-10-11 evidence in [traceability.md](../../../docs/product/traceability.md).
 
 **Question.** Can an agent drive headless Blender to turn a CC0 rigged humanoid into 64×80 isometric pixel sprites that meet [the art guide](../../../docs/product/art-guide.md), with directions and animation frames coming from renders instead of pixel-by-pixel specs?
 
@@ -317,18 +318,20 @@ All 112 cells pass report-only conformance, run the same way as round 1 (`confor
 
 ### Sub-pixel palette stability (idle south frame 0, shifted, with overlap lines)
 
+Corrected 2026-10-12: the first run of this set posed the cell from the library `Idle_Loop` without the bone offsets and bolt-arm aims the main render applies, so it measured the wrong pose. The set now uses the main render's exact pose sequence, and `--check-subpixel` shows that its zero-offset cell equals the main idle/south/0 cell pixel for pixel (see [Sub-pixel control check](#sub-pixel-control-check)). The first run gave a3 9.7% / 8.7% and b2 7.4% / 7.2% (horizontal / vertical quarter pixel); no verdict or criterion used these numbers.
+
 | variant | offset px (dx, dy) | silhouette XOR px | index changed, stable px | index changed, all shared px |
 | --- | --- | --- | --- | --- |
-| a3 | 0.25, 0 | 26 | 79/813 (9.7%) | 100/904 (11.1%) |
-| a3 | 0.5, 0 | 58 | 123/740 (16.6%) | 175/887 (19.7%) |
-| a3 | 0.75, 0 | 91 | 166/678 (24.5%) | 262/872 (30.0%) |
-| a3 | 0, 0.25 | 27 | 71/819 (8.7%) | 94/900 (10.4%) |
-| a3 | 0, 0.5 | 46 | 110/746 (14.7%) | 159/894 (17.8%) |
-| b2 | 0.25, 0 | 26 | 60/813 (7.4%) | 83/904 (9.2%) |
-| b2 | 0.5, 0 | 58 | 92/740 (12.4%) | 142/887 (16.0%) |
-| b2 | 0.75, 0 | 91 | 146/678 (21.5%) | 234/872 (26.8%) |
-| b2 | 0, 0.25 | 27 | 59/819 (7.2%) | 82/900 (9.1%) |
-| b2 | 0, 0.5 | 46 | 98/746 (13.1%) | 143/894 (16.0%) |
+| a3 | 0.25, 0 | 31 | 74/823 (9.0%) | 97/930 (10.4%) |
+| a3 | 0.5, 0 | 64 | 130/758 (17.2%) | 187/915 (20.4%) |
+| a3 | 0.75, 0 | 100 | 165/690 (23.9%) | 268/899 (29.8%) |
+| a3 | 0, 0.25 | 31 | 88/834 (10.6%) | 116/930 (12.5%) |
+| a3 | 0, 0.5 | 50 | 126/761 (16.6%) | 176/922 (19.1%) |
+| b2 | 0.25, 0 | 31 | 55/823 (6.7%) | 81/930 (8.7%) |
+| b2 | 0.5, 0 | 64 | 94/758 (12.4%) | 150/915 (16.4%) |
+| b2 | 0.75, 0 | 100 | 148/690 (21.4%) | 244/899 (27.1%) |
+| b2 | 0, 0.25 | 31 | 65/834 (7.8%) | 91/930 (9.8%) |
+| b2 | 0, 0.5 | 50 | 103/761 (13.5%) | 152/922 (16.5%) |
 
 ### Repairs that would need hand pixels (logged, not applied)
 
@@ -379,7 +382,7 @@ Wall clock for the whole render script: 12837.4 ms.
 - **Heights.** Idle 52–54, walk 48–53, cast 51–55, sit 42–48, all inside the guide's 48–56 apart from the seated pose, which is shorter because it is seated. **The cast is at or under 56 px in every cell.** Getting there took pose work: the first aims put a raised bolt hand at 58–66 px.
 - **Colours.** 8 in idle, walk and cast, 10–11 with the stone seat in sit; the limit is 16.
 - **Flicker** is the same measure as round 1 and is inflated by real shading change. Compared with round 1's mannequin (idle 14.2%, walk 39.2%, cast 9.2%, sit 3.3% in the 4× route), the proxy's `a3` is 16.5 / 41.0 / 11.6 / 5.5% and `b2` is 12.4 / 32.2 / 9.1 / 3.9%: the two-tone variant is calmer, the three-band one is no better than the mannequin.
-- **Sub-pixel test (rerun, with overlap lines).** The same idle pose shifted a quarter pixel changes 9.7% (horizontal) and 8.7% (vertical) of stable pixels in `a3`, and 7.4% / 7.2% in `b2`, against round 1's 11.3% / 7.7% for the mannequin in the 4× route. Lower, but the same order: band edges crossing a moving surface are the cause.
+- **Sub-pixel test (rerun, with overlap lines, corrected pose).** The posed Zeus idle shifted a quarter pixel changes 9.0% (horizontal) and 10.6% (vertical) of stable pixels in `a3`, and 6.7% / 7.8% in `b2`, against round 1's 11.3% / 7.7% for the mannequin in the 4× route. The same order: band edges crossing a moving surface are the cause. `b2` is steadier than `a3` in every row.
 - **Timing.** Render time per image about 50–60 ms (a3 48.63 ms, b2 46.22 ms, ID 42.66 ms, depth 41.49 ms mean over 62 poses each); the whole script took 12.8 s including the sub-pixel set and import; the post step about 50 s including conformance, sheets and playback.
 
 ## The repair count (the deciding number)
@@ -453,7 +456,7 @@ MODEL="<main-checkout>/tools/probes/blender-sprite/models/Universal Animation Li
 python3 tools/probes/blender-sprite/postprocess_zeus.py
 ```
 
-`render_zeus.py` options: `--variants a3,b2`, `--clips`, `--only clip:facing:index` (one pose, for debugging), `--no-passes`. Pose aims and the mirror list are in `pose_offsets.json`; every proxy dimension is a constant at the top of `zeus_proxy.py` or in `proxy_plan.py`.
+`render_zeus.py` options: `--check-subpixel` (control check, no `--subpixel` needed; about 10 s), `--variants a3,b2`, `--clips`, `--only clip:facing:index` (one pose, for debugging), `--no-passes`. Pose aims and the mirror list are in `pose_offsets.json`; every proxy dimension is a constant at the top of `zeus_proxy.py` or in `proxy_plan.py`.
 
 ## Honest read at 1×
 
@@ -577,22 +580,28 @@ For s3 the estimate is **temporal blips 2,145 px** (idle 1,510, walk 545, cast 9
 
 ### Sub-pixel (quarter-pixel) test
 
-Same idle pose shifted, stamp included (percent of silhouette-stable pixels whose index changed):
+The posed idle shifted, stamp included (percent of silhouette-stable pixels whose index changed). Corrected 2026-10-12 as in round 2: the first run used the unaimed library pose. It gave s3 9.8% / 9.5% and b2 6.7% / 6.8% (horizontal / vertical quarter pixel); no verdict or criterion used these numbers.
+
+
 
 | variant | offset px (dx, dy) | silhouette XOR px | index changed, stable px | index changed, all shared px |
 | --- | --- | --- | --- | --- |
-| s3 | 0.25, 0 | 24 | 78/793 (9.8%) | 100/874 (11.4%) |
-| s3 | 0.5, 0 | 53 | 130/729 (17.8%) | 185/860 (21.5%) |
-| s3 | 0.75, 0 | 96 | 203/646 (31.4%) | 312/835 (37.4%) |
-| s3 | 0, 0.25 | 27 | 75/792 (9.5%) | 96/867 (11.1%) |
-| s3 | 0, 0.5 | 44 | 96/723 (13.3%) | 142/862 (16.5%) |
-| b2 | 0.25, 0 | 24 | 53/793 (6.7%) | 74/874 (8.5%) |
-| b2 | 0.5, 0 | 53 | 89/729 (12.2%) | 135/860 (15.7%) |
-| b2 | 0.75, 0 | 96 | 162/646 (25.1%) | 255/835 (30.5%) |
-| b2 | 0, 0.25 | 27 | 54/792 (6.8%) | 74/867 (8.5%) |
-| b2 | 0, 0.5 | 44 | 87/723 (12.0%) | 126/862 (14.6%) |
+| s3 | 0.25, 0 | 30 | 77/836 (9.2%) | 106/939 (11.3%) |
+| s3 | 0.5, 0 | 84 | 134/721 (18.6%) | 224/912 (24.6%) |
+| s3 | 0.75, 0 | 118 | 178/656 (27.1%) | 313/896 (34.9%) |
+| s3 | 0, 0.25 | 27 | 81/857 (9.5%) | 105/939 (11.2%) |
+| s3 | 0, 0.5 | 44 | 107/790 (13.5%) | 154/933 (16.5%) |
+| b2 | 0.25, 0 | 30 | 52/836 (6.2%) | 78/939 (8.3%) |
+| b2 | 0.5, 0 | 84 | 94/721 (13.0%) | 177/912 (19.4%) |
+| b2 | 0.75, 0 | 118 | 143/656 (21.8%) | 264/896 (29.5%) |
+| b2 | 0, 0.25 | 27 | 59/857 (6.9%) | 82/939 (8.7%) |
+| b2 | 0, 0.5 | 44 | 97/790 (12.3%) | 140/933 (15.0%) |
 
-Quarter-pixel horizontal: s3 9.8%, b2 6.7%, against round 2's a3 9.7% and b2 7.4% (round 2 b2 had no stamp and a bolt mesh). Surface-anchored shading is not steadier under sub-pixel motion; it is a few points worse, plausibly because three bands have more boundary than two.
+Quarter-pixel horizontal: s3 9.2%, b2 6.2%, against round 2's a3 9.0% and b2 6.7% (round 2 b2 had no stamp and a bolt mesh). Surface-anchored shading is not steadier under sub-pixel motion: `s3` is level with round 2's `a3` and about 3 points above `b2` in the same round, plausibly because three bands have more boundary than two.
+
+### Sub-pixel control check
+
+The sub-pixel control is only valid if its zero-offset cell is the main idle/south/0 cell. `--check-subpixel` (on `render_zeus.py` and `render_zeus_r3.py`) renders both per variant and compares the raw 4× images (256×320 = 81,920 pixels, any RGBA channel), exiting 1 on any difference. Before the fix (the sub-pixel branch lacked the bolt-arm aims): round 2 a3 3,083 and b2 2,990 pixels differed; round 3 s3 1,388 and b2 1,392. After the fix all four are 0 of 81,920. Both renderers now build every Zeus pose through one `pose_zeus` function. The corrected sub-pixel sets were rendered separately and merged into the existing render directories, so the main cells, ID and depth passes and render timings are the earlier run's; every other number in the results JSON is unchanged.
 
 ## Honest read at 1×
 
@@ -652,7 +661,7 @@ python3 tools/probes/blender-sprite/stamp_gen.py          # authored stamp (alre
 python3 tools/probes/blender-sprite/postprocess_zeus_r3.py   # about 48 s
 ```
 
-`render_zeus_r3.py` options: `--variants s3,b2`, `--seat width,depth,dy` (default `0.30,0.22,-0.13`), `--clips`, `--only clip:facing:index`, `--no-passes`.
+`render_zeus_r3.py` options: `--check-subpixel` (control check, no `--subpixel` needed; about 10 s), `--variants s3,b2`, `--seat width,depth,dy` (default `0.30,0.22,-0.13`), `--clips`, `--only clip:facing:index`, `--no-passes`.
 
 ## Final verdict
 

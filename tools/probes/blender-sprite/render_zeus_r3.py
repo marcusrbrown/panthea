@@ -76,7 +76,15 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--only", default="", help="clip:direction:index, render just that pose (debug)")
     ap.add_argument("--no-passes", action="store_true")
     ap.add_argument("--subpixel", action="store_true")
-    return ap.parse_args(argv)
+    ap.add_argument(
+        "--check-subpixel",
+        action="store_true",
+        help="render idle/south/0 and the zero-offset sub-pixel cell, compare them pixel for pixel per variant, exit 1 on any difference",
+    )
+    args = ap.parse_args(argv)
+    if args.check_subpixel:
+        args.subpixel, args.clips, args.only, args.no_passes = True, "idle", "idle:south:0", True
+    return args
 
 
 def go_to(scene, frame: float) -> None:
@@ -217,6 +225,18 @@ def main() -> int:
     totals.update(id=0.0, depth=0.0)
     counts = {k: 0 for k in totals}
 
+    def pose_zeus(clip, direction: str, index: int, frame: float) -> None:
+        """The one pose sequence for every Zeus render (main cells and the sub-pixel control): action frame, mirror,
+        bone offsets, bolt-arm aims, freeze, place."""
+        base.set_action(armature, clip.action)
+        go_to(scene, frame)
+        if clip.id in offsets.get("_mirror", []):
+            zp.mirror_pose(armature)
+        zp.apply_offsets(armature, offsets_for(offsets, clip.id, direction, index))
+        zp.aim_bones(armature, aims_for(offsets, clip.id, direction, index))
+        armature.animation_data.action = None  # freeze the offset pose; render would re-evaluate the action
+        base.place_armature(armature, yaws[direction], sole_mid, ground_z)
+
     def set_variant(v) -> None:
         zp.use_variant_materials(palettes[v.id])
         if v.id == "b2":
@@ -265,14 +285,7 @@ def main() -> int:
             for index, frame in enumerate(sources):
                 if only and (only[0], only[1], only[2]) != (clip.id, direction, str(index)):
                     continue
-                base.set_action(armature, clip.action)
-                go_to(scene, frame)
-                if clip.id in offsets.get("_mirror", []):
-                    zp.mirror_pose(armature)
-                zp.apply_offsets(armature, offsets_for(offsets, clip.id, direction, index))
-                zp.aim_bones(armature, aims_for(offsets, clip.id, direction, index))
-                armature.animation_data.action = None  # freeze the offset pose; render would re-evaluate the action
-                base.place_armature(armature, yaws[direction], sole_mid, ground_z)
+                pose_zeus(clip, direction, index, frame)
                 pts = all_points(objs)
                 ys = anchor[1] - pts @ np.array(axes.up) * ppu
                 xs = anchor[0] + pts @ np.array(axes.right) * ppu
@@ -299,13 +312,11 @@ def main() -> int:
         base_loc = cam.location.copy()
         objs["seat"].hide_render = True
         bake_for("south")
-        base.set_action(armature, "Idle_Loop")
-        go_to(scene, 0.0)
-        zp.apply_offsets(armature, offsets_for(offsets, "idle", "south"))
-        armature.animation_data.action = None
-        base.place_armature(armature, yaws["south"], sole_mid, ground_z)
+        idle = next(c for c in sp.CLIPS if c.id == "idle")
+        idle_first_frame = sp.sample_frames(*bpy.data.actions[idle.action].frame_range, idle.frames, idle.loop)[0]
+        pose_zeus(idle, "south", 0, idle_first_frame)  # the same pose as the main idle/south/0 cell
         meta["subpixel"] = []
-        for dx, dy in SUBPIXEL_OFFSETS:
+        for dx, dy in ((0.0, 0.0),) if args.check_subpixel else SUBPIXEL_OFFSETS:
             cam.location = (
                 base_loc.x - axes.right[0] * dx / ppu + axes.up[0] * dy / ppu,
                 base_loc.y - axes.right[1] * dx / ppu + axes.up[1] * dy / ppu,
@@ -317,12 +328,20 @@ def main() -> int:
             meta["subpixel"].append(rec)
         cam.location = base_loc
 
+    mismatch = 0
+    if args.check_subpixel:
+        for v in variants:
+            differing, total = base.count_pixel_diffs(out / meta["frames"][0]["files"][v.id], out / meta["subpixel"][0]["files"][v.id])
+            mismatch += differing
+            print(f"check-subpixel {v.id}: {differing} of {total} pixels differ between idle/south/0 and the zero-offset sub-pixel cell", flush=True)
+        print("check-subpixel " + ("FAIL" if mismatch else "OK"), flush=True)
+
     meta["timings_ms"] = {k: {"total": round(totals[k], 1), "images": counts[k], "mean": round(totals[k] / max(1, counts[k]), 2)} for k in totals}
     meta["timings_ms"]["wall_clock_total"] = round((time.perf_counter() - t0) * 1000.0, 1)
     out.mkdir(parents=True, exist_ok=True)
     (out / "meta.json").write_text(json.dumps(meta, indent=1) + "\n")
     print("done", json.dumps(meta["timings_ms"]), flush=True)
-    return 0
+    return 1 if mismatch else 0
 
 
 if __name__ == "__main__":

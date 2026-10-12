@@ -297,6 +297,23 @@ def pixel_hash(path: Path) -> str:
     return hashlib.sha256(data.tobytes()).hexdigest()
 
 
+def count_pixel_diffs(first: Path, second: Path) -> tuple[int, int]:
+    """(pixels whose RGBA differ in any channel, total pixels) between two same-size images."""
+    loaded = []
+    for path in (first, second):
+        image = bpy.data.images.load(str(path))
+        try:
+            data = np.empty(len(image.pixels), dtype=np.float32)
+            image.pixels.foreach_get(data)
+            loaded.append((tuple(image.size), data.reshape(-1, 4)))
+        finally:
+            bpy.data.images.remove(image)
+    if loaded[0][0] != loaded[1][0]:
+        raise ValueError(f"image sizes differ: {loaded[0][0]} vs {loaded[1][0]}")
+    differing = (loaded[0][1] != loaded[1][1]).any(axis=1)
+    return int(differing.sum()), int(differing.size)
+
+
 def main() -> int:
     args = parse_args()
     t_start = time.perf_counter()

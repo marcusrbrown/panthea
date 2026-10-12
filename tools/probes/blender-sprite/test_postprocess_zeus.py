@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -81,6 +82,7 @@ class PanelTests(unittest.TestCase):
 
 
 class BuildCellTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is not on PATH (PNG IO goes through it)")
     def test_overlap_line_is_drawn_inside_and_exterior_outline_outside(self) -> None:
         import tempfile
 
