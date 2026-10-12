@@ -138,6 +138,37 @@ describe("sampleLoop", () => {
   });
 });
 
+describe("sampleLoop when sampling falls behind", () => {
+  test("still yields between ticks when every tick takes longer than the interval, and stops when told", async () => {
+    const clock = fakeClock();
+    let sleeps = 0;
+    const sleep = clock.sleep;
+    clock.sleep = async (ms: number) => {
+      sleeps += 1;
+      await sleep(ms);
+    };
+    // Each command read costs 300 ms on the fake clock, so one tick (four reads) overruns the 250 ms interval many times over.
+    const slow: RunCommand = (command) => {
+      clock.time += 300;
+      return runner(
+        () => 500,
+        () => 1,
+      )(command);
+    };
+    let stopAfter = 3;
+    const ticks = await sampleLoop({
+      run: slow,
+      clock,
+      intervalMs: 250,
+      targets: () => [{ label: "blender", pid: 10 }],
+      stop: () => stopAfter-- <= 0,
+    });
+    expect(ticks).toHaveLength(3);
+    expect(sleeps).toBeGreaterThan(0);
+    expect(sleeps).toBe(3);
+  });
+});
+
 describe("parseProcessTable", () => {
   test("reads pid, ppid and pgid and skips malformed lines", () => {
     expect(

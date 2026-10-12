@@ -97,7 +97,8 @@ export function takeTick(
  * Ticks every `intervalMs` until `stop()` is true. `targets` is read again
  * every tick (a restarted process has a new pid). `onTick` sees each tick as it
  * is taken, so a caller can react to a critical reading at once. Chained waits,
- * so a slow `footprint` never queues the next tick behind it; the achieved
+ * so a slow `footprint` never queues the next tick behind it, and a wait of
+ * zero when sampling has fallen behind (the loop always yields); the achieved
  * spacing is in the ticks' `atMs`.
  */
 export async function sampleLoop(options: {
@@ -116,8 +117,11 @@ export async function sampleLoop(options: {
     const tick = takeTick(options.run, options.targets(), tickStart - started);
     ticks.push(tick);
     options.onTick?.(tick);
-    const wait = options.intervalMs - (clock.now() - tickStart);
-    if (wait > 0) await clock.sleep(wait);
+    // Always yield, even when this tick already overran the interval: a loop that
+    // never awaits starves the event loop, and a child's `close` event is never handled.
+    await clock.sleep(
+      Math.max(0, options.intervalMs - (clock.now() - tickStart)),
+    );
   }
   return ticks;
 }

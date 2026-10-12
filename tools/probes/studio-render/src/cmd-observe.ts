@@ -15,7 +15,6 @@ import {
   BLENDER_BUNDLE,
   ensureDir,
   mainCheckout,
-  PROBE_DIR,
   REPO,
   RUNS,
   SCRATCH,
@@ -66,11 +65,41 @@ export function readDenials(sinceMs: number): Denial[] {
 
 const extraFile = join(SCRATCH, "sandbox/extra-allow.json");
 
+/**
+ * The repo files the render reads, one literal each (found from the render's own
+ * `repo_files_loaded` and the data files it opens). Whole script directories are
+ * never allowed, so a `models/` tree beside them stays denied.
+ */
+export const SCRIPT_FILES: readonly string[] = [
+  "tools/probes/blender-sprite/proxy_plan.py",
+  "tools/probes/blender-sprite/render.py",
+  "tools/probes/blender-sprite/sprite_plan.py",
+  "tools/probes/blender-sprite/zeus_proxy.py",
+  "tools/probes/blender-sprite/pose_offsets.json",
+  "tools/probes/retro-render/palette_plan.py",
+  "tools/probes/retro-render/render_retro.py",
+  "tools/probes/retro-render/retro_assets.py",
+  "tools/probes/retro-render/retro_lib.py",
+  "tools/probes/retro-render/retro_paths.py",
+  "tools/probes/retro-render/retro_plan.py",
+  "tools/probes/retro-render/tile_geom.py",
+  "tools/probes/retro-render/wind_plan.py",
+  "tools/probes/retro-render/palette/scene-palette.json",
+  "tools/probes/studio-render/blender/probe_render.py",
+];
+
+/** Directories whose own listing the import system reads (names only, never their contents). */
+const SCRIPT_DIRS: readonly string[] = [
+  "tools/probes/blender-sprite",
+  "tools/probes/retro-render",
+  "tools/probes/studio-render/blender",
+];
+
 export function profile(staging: string, out: string): string {
   const extras: string[] = existsSync(extraFile)
     ? (JSON.parse(readFileSync(extraFile, "utf8")) as string[])
     : [];
-  const allow = [
+  const subpaths = [
     "/System",
     "/usr",
     "/bin",
@@ -81,20 +110,22 @@ export function profile(staging: string, out: string): string {
     BLENDER_BUNDLE,
     staging,
     out,
-    join(PROBE_DIR, "blender"),
-    join(REPO, "tools/probes/retro-render"),
-    join(REPO, "tools/probes/blender-sprite"),
     join(SCRATCH, "home"),
     join(SCRATCH, "tmp"),
     ...extras,
+  ];
+  const literals = [
+    "/",
+    ...SCRIPT_DIRS.map((p) => join(REPO, p)),
+    ...SCRIPT_FILES.map((p) => join(REPO, p)),
   ];
   return [
     "(version 1)",
     "(allow default)",
     "(deny file-read-data)",
     "(allow file-read-data",
-    '  (literal "/")',
-    ...allow.map((p) => `  (subpath "${p}")`),
+    ...literals.map((p) => `  (literal "${p}")`),
+    ...subpaths.map((p) => `  (subpath "${p}")`),
     ")",
     "",
   ].join("\n");
@@ -106,6 +137,8 @@ interface ObserveSpec {
   readonly models?: string;
   readonly allowedStaging: string;
   readonly readPath?: string;
+  /** Replaces the generated profile (used only by the broad-allow control). */
+  readonly profileText?: (staging: string, out: string) => string;
 }
 
 async function observe(spec: ObserveSpec) {
@@ -114,7 +147,7 @@ async function observe(spec: ObserveSpec) {
   ensureDir(out);
   ensureDir(join(SCRATCH, "sandbox"));
   const file = join(SCRATCH, `sandbox/${spec.label}.sb`);
-  writeFileSync(file, profile(spec.allowedStaging, out));
+  writeFileSync(file, (spec.profileText ?? profile)(spec.allowedStaging, out));
   const result = await runToCompletion({
     name: spec.label,
     mode: spec.mode,
@@ -252,6 +285,40 @@ export async function observeStep(which: string): Promise<void> {
         allowedStaging: dir,
       }),
     );
+  }
+  if (which === "repo-models") {
+    // A normal checkout: the kit pack directories sit under this repo's own script directories.
+    const models = join(REPO, "tools/probes/retro-render/models");
+    const planted_in_repo = join(models, "planted-control.bin");
+    const created = !existsSync(models);
+    ensureDir(models);
+    writeFileSync(
+      planted_in_repo,
+      "planted kit-like file under a models directory\n",
+    );
+    try {
+      results.push(
+        await observe({
+          label: "repo-models-narrow",
+          mode: "read",
+          allowedStaging: STAGING,
+          readPath: planted_in_repo,
+        }),
+      );
+      results.push(
+        await observe({
+          label: "repo-models-broad-control",
+          mode: "read",
+          allowedStaging: STAGING,
+          readPath: planted_in_repo,
+          profileText: (staging, out) =>
+            `${profile(staging, out)}(allow file-read-data (subpath "${join(REPO, "tools/probes/retro-render")}"))\n`,
+        }),
+      );
+    } finally {
+      rmSync(planted_in_repo, { force: true });
+      if (created) rmSync(models, { recursive: true, force: true });
+    }
   }
   if (want("unstaged"))
     results.push(

@@ -61,7 +61,7 @@ Run counts are per criterion; nothing is generalised past them.
 | e | Forced no-GPU context | **finding: forced, not mappable** | Denying the GPU user clients makes Blender die by SIGSEGV about 0.4 s in, before any script line runs. Not exit 10 |
 | f | Depth PNG precision, bytes per slot | informational | Depth written as 8-bit RGBA, which `decodePng` reads. A 16-bit grey depth PNG is refused by `decodePng`. 539,813 B on disk and 33,030,144 B decoded per 16-frame slot |
 | g | Binary pin | **pass** | sha256 of the Mach-O below, hashed in 165, 132 and 133 ms; version `5.2.2 LTS`, build `d13f752e3b9c` |
-| h | Staging isolation, observed independently | **pass** (within stated limits) | Staged render under a kernel-enforced read deny: exit 0, 48 frames, 0 kit or data-file reads outside staging. Planted texture, planted buffer and an unstaged kit root were each caught |
+| h | Staging isolation, observed independently | **pass** (within stated limits) | Staged render under a kernel-enforced read deny with a narrow allow list: exit 0, 48 frames, 0 kit or data-file reads outside staging. Planted texture, planted buffer, an unstaged kit root and a planted file under a repo `models/` directory were each caught (see the log-loss limit) |
 | i | Seated clip | **fail on the height proxy**; loop closes | `Sitting_Idle_Loop` exists and imports, first-to-last pose displacement 0.0 m. Mean figure height 53.80 px against idle's 59.76 px = **0.900**, above the 0.85 limit |
 | j | Cold start to first frame | informational | See [Cold start](#j-cold-start) |
 | k | Texture skip is output-neutral | **pass** | Staged (no textures) against unstaged kit root (textures present): 48 of 48 frames pixel-identical. 1 pair |
@@ -82,6 +82,7 @@ Run counts are per criterion; nothing is generalised past them.
 | h: planted texture | glTF `images[].uri` pointing outside staging | path in the log as a denied read; the render still exited 0 with 48 frames |
 | h: planted buffer | glTF `buffers[].uri` pointing outside staging | path in the log; import failed, exit 12 |
 | h: kit root | the unstaged kit root under the same profile | refused: the first kit read was denied, exit 12 |
+| h: repo `models/` | dummy file under `tools/probes/retro-render/models/` of this repo, narrow profile; then the same profile plus the old whole-directory allow | denied and logged; then readable ("read ok") |
 | i: closure measure can fail | `Walk_Loop`, `Idle_Loop`, and first-to-mid of `Walk_Loop` | 0.0 m (closed), 0.0043 m (non-zero, under 0.02), 0.68 m (over 0.02) |
 
 ### a) Launch and environment
@@ -164,22 +165,23 @@ A hash of the Mach-O covers that one file. The bundle's Python, Frameworks and R
 
 ### h) Staging isolation
 
-Method. `stage` copies only the nine kit files the Zeus recipe imports (male base glTF and `.bin`, three hair glTFs and `.bin` files, the animation library `.glb`; 8.3 MB), with no texture files, into a tree that mirrors the layout `retro_assets.py` expects. The render runs through `sandbox-exec -f <profile>` whose profile is `(allow default)`, `(deny file-read-data)`, then `(allow file-read-data …)` for: `/` (literal), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/private/etc`, `/dev`, the Blender bundle, the staging directory, the run's output directory, `tools/probes/studio-render/blender`, `tools/probes/retro-render`, `tools/probes/blender-sprite`, and the scratch `home` and `tmp` directories. The observation is the kernel's own `Sandbox: <name>(<pid>) deny(1) file-read-data <path>` records, read afterwards with `log show`; it does not depend on the script. A denied read returns "Operation not permitted" and is logged whether or not the script notices.
+Method. `stage` copies only the nine kit files the Zeus recipe imports (male base glTF and `.bin`, three hair glTFs and `.bin` files, the animation library `.glb`; 8.3 MB), with no texture files, into a tree that mirrors the layout `retro_assets.py` expects. The render runs through `sandbox-exec -f <profile>` whose profile is `(allow default)`, `(deny file-read-data)`, then `(allow file-read-data …)` for: `/` (literal), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/private/etc`, `/dev`, the Blender bundle, the staging directory, the run's output directory, and the scratch `home` and `tmp` directories, plus **literal entries for the 15 script and data files the render actually imports or reads** (taken from the render's own `repo_files_loaded` list) and the names-only listing of their three directories. Whole script directories and every `models/` tree are **not** allowed (a unit test of the generated profile checks that no `models` path appears and that nothing under either kit pack directory is allowed). The observation is the kernel's own `Sandbox: <name>(<pid>) deny(1) file-read-data <path>` records, read afterwards with `log show`; it does not depend on the script. A denied read returns "Operation not permitted" and is logged whether or not the script notices.
 
-Result for the staged render: exit 0, 48 of 48 frames, `probe-done.json` present, 245 denied reads by the child's pid over 10 distinct paths, **none a kit file or any file with a data extension** (`.gltf .glb .bin .png .jpg .jpeg .webp .hdr .exr .blend`), none under the kit pack directories in the main checkout. The ten, all non-kit:
+Result for the staged render (narrow profile): exit 0, 48 of 48 frames, `probe-done.json` present, 257 denied reads by the child's pid over 17 distinct paths, **none a kit file or any file with a data extension** (`.gltf .glb .bin .png .jpg .jpeg .webp .hdr .exr .blend`), none under the kit pack directories in the main checkout. The seventeen, all non-kit:
 
 | Denied path (home abbreviated) | What it is |
 | --- | --- |
 | `~/.CFUserTextEncoding` | macOS text-encoding preference in the user's home |
 | `~/Library/Application Support/Blender/5.2/extensions/.cache/compat.dat` | Blender's per-user extension cache, read despite `--factory-startup` |
-| `<repo>/tools/probes/studio-render` | a directory read of the script directory's parent |
+| `<repo>/tools/probes` and `<repo>/tools/probes/studio-render` | directory reads of the script directories' parents |
+| `<repo>/tools/probes/blender-sprite/__pycache__/*.pyc` (4) | cached bytecode of allowed scripts; Python falls back to the source |
 | `/private/tmp/blender_*` (3) | Blender's own temp directories |
-| `/private/var/db/eligibilityd/eligibility.plist`, `/private/var/db/timezone/…/icutz44l.dat` | OS data |
+| `/private/var/db/eligibilityd/eligibility.plist`, `/private/var/db/timezone/…/{icutz44l.dat,zoneinfo/UTC,zoneinfo/posixrules}` | OS data |
 | `/private/var/folders/…/C/org.blenderfoundation.blender/com.apple.metal/{functions.list,libraries.list}` | Metal shader cache |
 
-Denying them changed nothing in the output (pixel-identical to the unsandboxed run).
+Denying them changed nothing in the output (pixel-identical to the unsandboxed run, re-checked with the narrow profile).
 
-Controls. The planted texture and buffer live in `scratch/outside/` and are referenced from a staging copy of `Hair_Beard.gltf` (the copy is edited, never a kit file): the texture's path was logged as denied and the render still succeeded (Blender tolerates a failed texture read); the buffer's path was logged and the import failed with exit 12. The unstaged kit root was refused at its first read, a path under `blender-sprite/models/…/UAL1_Standard.glb`, exit 12.
+Controls (narrow profile, rerun after review). The planted texture and buffer live in `scratch/outside/` and are referenced from a staging copy of `Hair_Beard.gltf` (the copy is edited, never a kit file). **Planted texture:** the render still succeeded (exit 0, 48 frames; Blender tolerates a failed texture read) and the denial log showed the texture's path in 3 of the 4 runs (the first run, and two reruns), and only its parent directory in the fourth; see the limits. **Planted buffer:** its path was logged and the import failed with exit 12. **Unstaged kit root:** refused at its first read, a path under `blender-sprite/models/…/UAL1_Standard.glb`, exit 12. **Sandboxed read of a file outside the allow list:** denied and logged. **Kit-like file under a `models/` directory inside this repo** (what a normal checkout, where the main checkout is the repo, looks like): a dummy file at `tools/probes/retro-render/models/planted-control.bin` (created for the run and removed after) was denied and logged under the narrow profile, and was readable when the same profile was given back the old whole-directory allow of `tools/probes/retro-render`.
 
 Limits of this observation:
 
@@ -187,7 +189,7 @@ Limits of this observation:
 - `file-read-metadata` (stat, existence probes) is not denied or observed.
 - Writes and network are not covered.
 - `fs_usage`, `opensnoop` and `dtruss` need root; `sudo` here needs a password (`sudo -n true` fails), so they were not available. `sandbox-exec` is deprecated and this is one OS version. `(trace …)` in a profile produced no output on this OS.
-- Kernel log retrieval after the fact could drop or coalesce messages; that was not tested.
+- Kernel log retrieval after the fact can lose messages: in one of the four planted-texture runs the texture's own path was missing from the log while its parent directory was present. A missing line is therefore not proof of no read; the claims above rest on the lines that were seen, and a clean log is read together with the narrow allow list, not instead of it.
 
 ### i) Seated clip
 
@@ -229,6 +231,14 @@ One machine (M1 Pro, 16 GiB), one macOS version, one Blender build, one session.
 - **Startup.** Spawn to first script line is 0.7–1.3 s and scene build about 0.4 s of a 5–6 s slot, so one process per run of render jobs is reasonable and a warm worker would save about 1 s per slot at most.
 - **Pin check.** Hashing the Mach-O takes about 0.15 s; the script's version and build assertion exits 11 on a mismatch (tested with a wrong build and a wrong version). A Mach-O hash alone does not cover the bundle.
 - **Seated.** A closed seated loop exists but misses the 15% height proxy; U6/U10 decide whether it is usable or seated is a keyed static pose.
+
+## Corrections after review
+
+2026-10-12. Three defects in the probe's own tooling were fixed, each test-first (the new tests failed before the change), and the affected runs repeated. `criteria.json` is unchanged.
+
+- **Frame-set comparison.** `compareRuns` compared only the filenames both runs shared and checked list lengths, so two equal-length sets that only partly overlapped passed. It now requires the full filename set of each role to be equal and reports unmatched files before comparing any pixels. The comparisons for (d) repeatability (`rep-a` against `rep-b`) and (k) texture skip (`rep-a` against `rep-unstaged`) were rerun on the existing renders: for each of colour, part-ID and depth, 16 files matched, none were unmatched on either side, 16 of 16 were pixel-identical. Both verdicts stand. The narrow-profile sandboxed render (`obs-staged`) against `rep-a` was also 16 of 16 per role.
+- **Sampler yield.** `sampleLoop` skipped its wait whenever a tick took at least the interval, so a loop that had fallen behind never yielded to the event loop and a child's `close` event could not be handled. It now always awaits (a wait of zero at minimum). The memory runs in (c) were not rerun. The recorded tick spacing shows where the defect could have bitten: gaps between ticks were 249–256 ms in P1 (25 ticks), P2 (80) and the loaded-server generation (17), but in P3 (two processes sampled per tick, 25 ticks) 12 of 24 gaps exceeded 256 ms, up to 302 ms, so several of its ticks overran the 250 ms interval and skipped their yield. P3 still ended when Blender closed, and the critical-pressure stop was read from the pressure level on the tick itself. This is read from the recorded spacing, not re-measured.
+- **Sandbox allow list.** The profile allowed the whole `tools/probes/retro-render` and `tools/probes/blender-sprite` directories, `models/` trees included, so in a checkout where the main checkout is the repo, unstaged kit reads would not have been denied or logged. It now allows only the script and data files the render imports (found from the render's `repo_files_loaded`), plus staging, the output directory, the Blender bundle and the system roots; a unit test checks that no `models` path is in the generated profile and that nothing under either kit pack directory is allowed. Criterion (h) was rerun in full: the staged slot, the planted texture (three times), the planted buffer, the unstaged kit root, the sandboxed read, and a new control for a planted file under a `models/` directory in this repo. The results are in (h) above and the verdict stands. One observation changed the limits: in one planted-texture run the kernel log lacked the texture's own path.
 
 ## Final check
 

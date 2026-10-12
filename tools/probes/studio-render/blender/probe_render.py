@@ -349,6 +349,10 @@ def main() -> int:
         return EXIT_OK
 
     code = run_slot(args, start)
+    repo = str(HERE.parents[3])
+    start["repo_files_loaded"] = sorted(  # the repo scripts this run imported, for the sandbox allow-list
+        os.path.relpath(m.__file__, repo) for m in list(sys.modules.values()) if str(getattr(m, "__file__", None) or "").startswith(repo)
+    )
     try:
         start["rusage"] = rusage_v4()
     except Exception as e:  # reported, not fatal

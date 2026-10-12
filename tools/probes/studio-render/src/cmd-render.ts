@@ -159,44 +159,55 @@ const ROLES = [
   ["depth", "depth", ".depth.png"],
 ] as const;
 
-function roleFiles(run: string, dir: string, suffix: string): string[] {
-  const root = join(RUNS, run, "render/zeus-tall", dir);
-  return existsSync(root)
-    ? readdirSync(root)
+function roleFilesIn(root: string, dir: string, suffix: string): string[] {
+  const path = join(root, dir);
+  return existsSync(path)
+    ? readdirSync(path)
         .filter((n) => n.endsWith(suffix))
         .sort()
     : [];
 }
 
+function roleFiles(run: string, dir: string, suffix: string): string[] {
+  return roleFilesIn(join(RUNS, run, "render/zeus-tall"), dir, suffix);
+}
+
+export interface RoleComparison {
+  files: number;
+  identicalPixels: number;
+  identicalBytes: number;
+  differingFiles: string[];
+  onlyInA: string[];
+  onlyInB: string[];
+}
+
 export interface CompareReport {
   readonly a: string;
   readonly b: string;
-  readonly perRole: Record<
-    string,
-    {
-      files: number;
-      identicalPixels: number;
-      identicalBytes: number;
-      differingFiles: string[];
-    }
-  >;
+  readonly perRole: Record<string, RoleComparison>;
   readonly allPixelsIdentical: boolean;
 }
 
-/** Decoded-pixel comparison of every frame and role of two runs. */
-export function compareRuns(a: string, b: string): CompareReport {
+/** Decoded-pixel comparison of every frame and role of two render roots (`.../render/zeus-tall`). */
+export function compareRenderRoots(
+  rootA: string,
+  rootB: string,
+): CompareReport {
   const perRole: CompareReport["perRole"] = {};
   let all = true;
   for (const [role, dir, suffix] of ROLES) {
-    const namesA = roleFiles(a, dir, suffix);
-    const namesB = roleFiles(b, dir, suffix);
+    const namesA = roleFilesIn(rootA, dir, suffix);
+    const namesB = roleFilesIn(rootB, dir, suffix);
+    // The full filename sets must be equal; unmatched files are reported before any pixel is compared.
+    const onlyInA = namesA.filter((n) => !namesB.includes(n));
+    const onlyInB = namesB.filter((n) => !namesA.includes(n));
     const names = namesA.filter((n) => namesB.includes(n));
     let pixels = 0;
     let bytes = 0;
     const differing: string[] = [];
     for (const name of names) {
-      const pa = join(RUNS, a, "render/zeus-tall", dir, name);
-      const pb = join(RUNS, b, "render/zeus-tall", dir, name);
+      const pa = join(rootA, dir, name);
+      const pb = join(rootB, dir, name);
       const ia = decodeRgba(pa);
       const ib = decodeRgba(pb);
       if (ia && ib && compareRgba(ia, ib).identical) pixels += 1;
@@ -205,7 +216,8 @@ export function compareRuns(a: string, b: string): CompareReport {
     }
     if (
       names.length === 0 ||
-      namesA.length !== namesB.length ||
+      onlyInA.length > 0 ||
+      onlyInB.length > 0 ||
       differing.length > 0
     )
       all = false;
@@ -214,9 +226,20 @@ export function compareRuns(a: string, b: string): CompareReport {
       identicalPixels: pixels,
       identicalBytes: bytes,
       differingFiles: differing,
+      onlyInA,
+      onlyInB,
     };
   }
-  return { a, b, perRole, allPixelsIdentical: all };
+  return { a: rootA, b: rootB, perRole, allPixelsIdentical: all };
+}
+
+/** Decoded-pixel comparison of every frame and role of two runs under `scratch/runs`. */
+export function compareRuns(a: string, b: string): CompareReport {
+  const report = compareRenderRoots(
+    join(RUNS, a, "render/zeus-tall"),
+    join(RUNS, b, "render/zeus-tall"),
+  );
+  return { ...report, a, b };
 }
 
 /** Controls for the comparison: it must be able to report "different". */
