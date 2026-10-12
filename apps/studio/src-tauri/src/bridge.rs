@@ -172,6 +172,9 @@ pub struct CandidateRef {
 pub struct AtlasRef {
     pub source: String,
     pub id: String,
+    /// The realm palette family whose variant atlas is meant; absent for the base atlas.
+    #[serde(default)]
+    pub realm: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -229,9 +232,17 @@ pub async fn preview_bytes(
         return Err(CommandError::not_configured());
     }
     let args = match (target, version) {
-        (PreviewTarget::Atlas(AtlasRef { source, id }), Some(v)) => {
-            json!({ "source": source, "id": id, "v": v })
-        }
+        (PreviewTarget::Atlas(AtlasRef { source, id, realm }), Some(v)) => match realm {
+            None => json!({ "source": source, "id": id, "v": v }),
+            Some(realm) if is_slug(realm) => {
+                json!({ "source": source, "id": id, "realm": realm, "v": v })
+            }
+            Some(_) => {
+                return Err(invalid_arguments(
+                    "a realm is named by a lowercase hyphenated id",
+                ));
+            }
+        },
         (PreviewTarget::Atlas(_), None) => {
             return Err(invalid_arguments(
                 "an atlas needs the version it was resolved under",
@@ -763,6 +774,73 @@ mod tests {
     }
 
     #[test]
+    fn a_realm_variant_selection_carries_its_realm_to_the_sidecar() {
+        runtime().block_on(async {
+            let (mux, sidecar, _dirty) = attached(|_, _| {
+                Reply::Ok(
+                    json!({ "pixelKey": "k", "width": 1, "height": 1, "base64": encoded(PNG) }),
+                )
+            });
+
+            let bytes = preview_bytes(
+                &mux,
+                true,
+                &variant_atlas("draft", "zeus-take", "underworld"),
+                Some("k1"),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(bytes, PNG);
+            assert_eq!(
+                sidecar.seen(),
+                vec![(
+                    "source-bytes".to_string(),
+                    json!({ "source": "draft", "id": "zeus-take", "realm": "underworld", "v": "k1" })
+                )]
+            );
+        });
+    }
+
+    #[test]
+    fn a_realm_that_is_not_a_slug_is_refused_before_the_sidecar_is_asked() {
+        runtime().block_on(async {
+            for realm in ["../x", "Under World", "", "a/b"] {
+                let (mux, sidecar, _dirty) = attached(|_, _| Reply::Ok(json!({})));
+                let error = preview_bytes(
+                    &mux,
+                    true,
+                    &variant_atlas("draft", "zeus-take", realm),
+                    Some("k"),
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(error.code, "invalid-arguments", "{realm:?}");
+                assert!(sidecar.seen().is_empty(), "{realm:?}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_target_with_a_realm_is_an_atlas_and_a_candidate_or_placeholder_with_one_is_not() {
+        let with_realm: PreviewTarget =
+            serde_json::from_value(json!({ "source": "draft", "id": "a", "realm": "underworld" }))
+                .unwrap();
+        assert_eq!(with_realm, variant_atlas("draft", "a", "underworld"));
+        let plain: PreviewTarget =
+            serde_json::from_value(json!({ "source": "draft", "id": "a" })).unwrap();
+        assert_eq!(plain, atlas("draft", "a"));
+        assert!(serde_json::from_value::<PreviewTarget>(
+            json!({ "placeholder": "h", "realm": "underworld" })
+        )
+        .is_err());
+        assert!(serde_json::from_value::<PreviewTarget>(
+            json!({ "candidate": "c", "frame": 0, "realm": "underworld" })
+        )
+        .is_err());
+    }
+
+    #[test]
     fn a_stale_version_is_a_typed_error_with_no_bytes() {
         runtime().block_on(async {
             let (mux, _sidecar, _dirty) =
@@ -811,6 +889,15 @@ mod tests {
         PreviewTarget::Atlas(AtlasRef {
             source: source.into(),
             id: id.into(),
+            realm: None,
+        })
+    }
+
+    fn variant_atlas(source: &str, id: &str, realm: &str) -> PreviewTarget {
+        PreviewTarget::Atlas(AtlasRef {
+            source: source.into(),
+            id: id.into(),
+            realm: Some(realm.into()),
         })
     }
 

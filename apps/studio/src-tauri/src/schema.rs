@@ -64,6 +64,7 @@ pub const OPS: &[OpSpec] = &[
         &[
             "source",
             "id",
+            "realm",
             "state",
             "direction",
             "ability",
@@ -352,6 +353,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn source_resolve_takes_a_realm_and_stays_a_read_with_no_place_in_it() {
+        let row = lookup("source-resolve").unwrap();
+        assert!(row.args.contains(&"realm"));
+        assert_eq!(row.class, Read);
+        assert!(check(
+            "source-resolve",
+            &json!({ "source": "draft", "id": "zeus-take", "realm": "underworld" })
+        )
+        .is_ok());
     }
 
     #[test]

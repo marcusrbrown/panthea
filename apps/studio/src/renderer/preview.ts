@@ -146,7 +146,7 @@ const messageOf = (error: unknown): string =>
 
 function atlasKeyOf(resolution: SourceResolution): string {
   return resolution.kind === "frames"
-    ? `${resolution.selection.source}:${resolution.selection.id}`
+    ? `${resolution.selection.source}:${resolution.selection.id}${resolution.selection.realm === undefined ? "" : `@${resolution.selection.realm}`}`
     : `placeholder:${resolution.uri}`;
 }
 

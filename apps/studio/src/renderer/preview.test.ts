@@ -97,7 +97,8 @@ function published(overrides: Partial<Published> = {}): Published {
   };
 }
 
-const keyOf = (selection: Selection) => `${selection.source}:${selection.id}`;
+const keyOf = (selection: Selection) =>
+  `${selection.source}:${selection.id}${selection.realm === undefined ? "" : `@${selection.realm}`}`;
 
 class FakeSource implements AssetSource {
   readonly world = new Map<string, Published>();
@@ -125,7 +126,11 @@ class FakeSource implements AssetSource {
   }
 
   resolve(request: ResolveRequest): Promise<SourceResolution> {
-    const selection = { source: request.source, id: request.id };
+    const selection = {
+      source: request.source,
+      id: request.id,
+      ...(request.realm === undefined ? {} : { realm: request.realm }),
+    };
     this.resolves.push(keyOf(selection));
     const value = this.world.get(keyOf(selection));
     if (value === undefined)
@@ -490,6 +495,30 @@ describe("preview scene", () => {
       sprite(h.live, "subject").position.z,
     );
     expect(h.live.renders).toBeGreaterThan(0);
+    expect(h.problems).toEqual([]);
+    preview.dispose();
+  });
+
+  it("draws a realm variant on its own atlas beside the base of the same record: the realm is part of what an atlas is keyed by", async () => {
+    const h = new Harness();
+    const underworld = { ...DRAFT, realm: "underworld" };
+    h.source.publish(DRAFT, published({ tag: 11, pixelKey: "base-key" }));
+    h.source.publish(
+      underworld,
+      published({ tag: 22, pixelKey: "variant-key" }),
+    );
+    const preview = h.preview();
+
+    await preview.setItems([
+      { ...subject, request: DRAFT },
+      { ...subject, id: "variant", request: underworld },
+    ]);
+
+    expect(h.source.resolves).toEqual([keyOf(DRAFT), keyOf(underworld)]);
+    expect(h.source.fetches).toBe(2);
+    expect(h.live.backend.layer.stats).toEqual({ sprites: 2, textures: 2 });
+    expect(pixel0(sprite(h.live, "subject").texture)).toBe(11);
+    expect(pixel0(sprite(h.live, "variant").texture)).toBe(22);
     expect(h.problems).toEqual([]);
     preview.dispose();
   });

@@ -95,7 +95,12 @@ const malformed = (message: string) =>
  * image (no version). Frame metadata comes from `candidateFrames`.
  */
 export type BytesTarget =
-  | { readonly source: "canon" | "draft" | "approved"; readonly id: string }
+  | {
+      readonly source: "canon" | "draft" | "approved";
+      readonly id: string;
+      /** A realm palette family: its variant atlas instead of the base atlas. */
+      readonly realm?: string;
+    }
   | { readonly placeholder: string }
   | { readonly candidate: string; readonly frame: number };
 

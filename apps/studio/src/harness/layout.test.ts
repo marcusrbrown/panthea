@@ -9,6 +9,7 @@ import {
   followClipTiming,
   HARNESS_CAMERA,
   harnessItems,
+  harnessSubject,
   MISSING_SPRITE,
   PORTRAIT_PANEL_AT,
   pickIn,
@@ -27,6 +28,49 @@ function byId(items: readonly PreviewItem[], id: string): PreviewItem {
   if (found === undefined) throw new Error(`no item ${id}`);
   return found;
 }
+
+describe("a realm on the previewed record", () => {
+  const underworld = { ...zeus, realm: "underworld" } as const;
+
+  it("is applied to the subject only when the chosen subject is the selected record", () => {
+    expect(harnessSubject(zeus, { ...zeus, realm: "underworld" })).toEqual(
+      underworld,
+    );
+    expect(
+      harnessSubject(
+        { source: "draft", id: "other" },
+        { ...zeus, realm: "underworld" },
+      ),
+    ).toEqual({ source: "draft", id: "other" });
+    expect(harnessSubject(zeus, zeus)).toEqual(zeus);
+    expect(harnessSubject(zeus, undefined)).toEqual(zeus);
+    expect(harnessSubject(undefined, { ...zeus, realm: "underworld" })).toBe(
+      undefined,
+    );
+  });
+
+  it("goes into the subject's and the companion's requests, so both are drawn from the variant atlas", () => {
+    const items = harnessItems({
+      subject: underworld,
+      portrait: undefined,
+      state: "idle",
+      direction: "south",
+      ability: undefined,
+      expression: "neutral",
+      animations: zeusAnimations,
+      companion: true,
+    });
+
+    expect(byId(items, "subject")).toMatchObject({
+      request: { ...underworld, state: "idle", direction: "south" },
+    });
+    expect(byId(items, "seated")).toMatchObject({
+      request: { ...underworld, state: "seated", direction: "north" },
+    });
+    // The placeholder mortal and structure are not the record and stay on no realm.
+    expect(byId(items, "mortal")).toMatchObject({ request: MISSING_SPRITE });
+  });
+});
 
 describe("harnessItems", () => {
   const items = harnessItems({

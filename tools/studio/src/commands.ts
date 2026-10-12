@@ -751,6 +751,7 @@ const OPS: Record<string, OpDef> = {
     spec: {
       ...str("source", true),
       ...str("id", true),
+      ...str("realm"),
       ...str("state"),
       ...str("direction"),
       ...str("ability"),
@@ -769,6 +770,7 @@ const OPS: Record<string, OpDef> = {
     spec: {
       ...str("source"),
       ...str("id"),
+      ...str("realm"),
       ...str("v"),
       ...str("placeholder"),
     },
@@ -779,6 +781,7 @@ const OPS: Record<string, OpDef> = {
         if (
           a.source !== undefined ||
           a.id !== undefined ||
+          a.realm !== undefined ||
           a.v !== undefined ||
           !/^[0-9a-f]{64}$/.test(a.placeholder as string)
         )
@@ -799,15 +802,21 @@ const OPS: Record<string, OpDef> = {
       if (
         !isPreviewSourceKind(a.source) ||
         !isPreviewSlug(a.id) ||
+        (a.realm !== undefined && !isPreviewSlug(a.realm)) ||
         typeof a.v !== "string"
       )
         return refuse(
           "invalid-arguments",
-          "give source (canon, draft or approved), a lowercase hyphenated id and the version v from source-resolve",
+          "give source (canon, draft or approved), a lowercase hyphenated id, an optional realm and the version v from source-resolve",
         );
       const source = await studio.previewSource();
       if (isOutcome(source)) return source;
-      const got = source.bytes({ source: a.source, id: a.id }, a.v);
+      const selection = {
+        source: a.source,
+        id: a.id,
+        ...(a.realm === undefined ? {} : { realm: a.realm as string }),
+      };
+      const got = source.bytes(selection, a.v);
       if (!got.ok)
         return got.reason === "stale"
           ? refuse(
@@ -816,8 +825,7 @@ const OPS: Record<string, OpDef> = {
             )
           : refuse("not-found", "no validated atlas for this selection");
       return done({
-        source: a.source,
-        id: a.id,
+        ...selection,
         pixelKey: got.pixelKey,
         width: got.width,
         height: got.height,

@@ -114,6 +114,39 @@ export function withManifest(
   return { manifest: parsed.value, blobs: asset.blobs };
 }
 
+/** The sprite fixture with an underworld realm variant whose atlas is visibly not the base's. */
+export function variantSprite(id = "placeholder-zeus", tag = 1) {
+  const base = spriteFixture(id, tag);
+  const rgba = new Uint8Array(256 * 80 * 4);
+  for (let at = 0; at < rgba.length; at += 4) rgba.set([12, 200, 90, 255], at);
+  const bytes = encodeRgbaPng(rgba, 256, 80);
+  const hash = sha256Hex(bytes);
+  const asset = withManifest(base, {
+    realmVariants: [
+      {
+        paletteFamily: "underworld",
+        paletteId: base.manifest.paletteId,
+        atlas: { blob: hash, width: 256, height: 80 },
+        map: [
+          {
+            source: { ramp: "marble", index: 0 },
+            target: { ramp: "ash", index: 0 },
+          },
+        ],
+      },
+    ],
+  });
+  return {
+    asset: {
+      manifest: asset.manifest,
+      blobs: new Map([...base.blobs, [hash, bytes]]),
+    },
+    variantBytes: bytes,
+    variantHash: hash,
+    baseBytes: firstBlob(base),
+  };
+}
+
 export const firstBlob = (asset: FixtureAsset): Uint8Array =>
   [...asset.blobs.values()][0] as Uint8Array;
 

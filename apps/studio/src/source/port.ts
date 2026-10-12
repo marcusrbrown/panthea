@@ -55,7 +55,7 @@ export const bridgePaths = {
   listing: `${BRIDGE_PREFIX}/listing`,
   resolve: `${BRIDGE_PREFIX}/resolve`,
   atlas: (selection: Selection, pixelKey: string) =>
-    `${BRIDGE_PREFIX}/atlas/${selection.source}/${selection.id}?v=${pixelKey}`,
+    `${BRIDGE_PREFIX}/atlas/${selection.source}/${selection.id}${selection.realm === undefined ? "" : `/${selection.realm}`}?v=${pixelKey}`,
   placeholder: (hash: string) => `${BRIDGE_PREFIX}/placeholder/${hash}`,
 } as const;
 
@@ -71,6 +71,8 @@ export const isSourceKind = (value: unknown): value is SourceKind =>
 
 export function parseSelection(value: unknown): Selection | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { source, id } = value as Record<string, unknown>;
-  return isSourceKind(source) && isSlug(id) ? { source, id } : undefined;
+  const { source, id, realm } = value as Record<string, unknown>;
+  if (!isSourceKind(source) || !isSlug(id)) return undefined;
+  if (realm === undefined) return { source, id };
+  return isSlug(realm) ? { source, id, realm } : undefined;
 }

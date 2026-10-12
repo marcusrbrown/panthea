@@ -12,6 +12,7 @@ import {
   firstAnimationForState,
   followClipTiming,
   harnessItems,
+  harnessSubject,
   type OcclusionPair,
   type PlaybackClock,
   pickIn,
@@ -93,6 +94,7 @@ function PreviewHarness({
   const selectionSource = selection?.source;
   const selectionId = selection?.id;
   const selectionKind = selection?.kind;
+  const selectionRealm = selection?.realm;
   const selectionState = selection?.state;
   const selectionDirection = selection?.direction;
   const params = useMemo(() => {
@@ -332,7 +334,18 @@ function PreviewHarness({
     if (params.check || preview === undefined || listing === undefined) return;
     void preview.setItems(
       harnessItems({
-        subject: parseKey(subjectChosen ?? null),
+        subject: harnessSubject(
+          parseKey(subjectChosen ?? null),
+          selectionSource === undefined || selectionId === undefined
+            ? undefined
+            : {
+                source: selectionSource,
+                id: selectionId,
+                ...(selectionRealm === undefined
+                  ? {}
+                  : { realm: selectionRealm }),
+              },
+        ),
         portrait: parseKey(portraitChosen ?? null),
         state,
         direction,
@@ -352,6 +365,9 @@ function PreviewHarness({
     portraitChosen,
     subjectEntry,
     portraitEntry,
+    selectionSource,
+    selectionId,
+    selectionRealm,
     state,
     direction,
     ability,

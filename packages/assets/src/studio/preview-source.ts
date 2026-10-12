@@ -7,6 +7,7 @@
 
 import { existsSync, watch } from "node:fs";
 import { dirname } from "node:path";
+import type { Sha256 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
 import { renderPlaceholder } from "../placeholder";
 import {
@@ -27,10 +28,14 @@ export const COALESCE_MS = 150;
 export const PREVIEW_SOURCE_KINDS = ["canon", "draft", "approved"] as const;
 export type PreviewSourceKind = (typeof PREVIEW_SOURCE_KINDS)[number];
 
-/** Canon selections name the asset id; draft and approved selections name the studio record id. */
+/**
+ * Canon selections name the asset id; draft and approved selections name the studio record id.
+ * A `realm` selects that realm palette's variant atlas of the asset instead of its base atlas.
+ */
 export interface PreviewSelection {
   readonly source: PreviewSourceKind;
   readonly id: string;
+  readonly realm?: string;
 }
 
 export interface PreviewListingEntry extends PreviewSelection {
@@ -43,6 +48,8 @@ export interface PreviewListingEntry extends PreviewSelection {
     readonly ability?: string;
   }[];
   readonly expressions: readonly string[];
+  /** The realm palette families the asset publishes a variant atlas for (sprites only). */
+  readonly realms: readonly string[];
   /** False when the entry failed validation and resolves to the placeholder. */
   readonly ok: boolean;
 }
@@ -187,6 +194,7 @@ export const isPreviewSourceKind = (
 const RESOLVE_FIELDS = [
   "source",
   "id",
+  "realm",
   "state",
   "direction",
   "ability",
@@ -206,7 +214,13 @@ export function parsePreviewResolve(
     return "source must be canon, draft or approved";
   if (!isPreviewSlug(id)) return "id must be a lowercase hyphenated id";
   const optional: Record<string, string> = {};
-  for (const name of ["state", "direction", "ability", "expression"] as const) {
+  for (const name of [
+    "realm",
+    "state",
+    "direction",
+    "ability",
+    "expression",
+  ] as const) {
     const value = input[name];
     if (value === undefined || value === null) continue;
     if (!isPreviewSlug(value))
@@ -216,8 +230,9 @@ export function parsePreviewResolve(
   return { source, id, ...optional };
 }
 
+/** `source:id`, or `source:id@realm` for a variant: ids and realms are slugs, so `@` never occurs in either. */
 const keyOf = (selection: PreviewSelection) =>
-  `${selection.source}:${selection.id}`;
+  `${selection.source}:${selection.id}${selection.realm === undefined ? "" : `@${selection.realm}`}`;
 const utf8 = (text: string) => new TextEncoder().encode(text);
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "unreadable";
@@ -260,14 +275,23 @@ const kindOf = (manifest: unknown): PreviewListingEntry["kind"] => {
 
 function keysOf(
   manifest: unknown,
-): Pick<PreviewListingEntry, "animations" | "expressions"> {
+): Pick<PreviewListingEntry, "animations" | "expressions" | "realms"> {
   const record = manifest as {
     animations?: unknown;
     expressions?: unknown;
+    realmVariants?: unknown;
     kind?: unknown;
   } | null;
   if (record?.kind === "sprite" && Array.isArray(record.animations)) {
+    const realms = Array.isArray(record.realmVariants)
+      ? record.realmVariants.flatMap((item) => {
+          const family = (item as Record<string, unknown> | null)
+            ?.paletteFamily;
+          return typeof family === "string" ? [family] : [];
+        })
+      : [];
     return {
+      realms,
       animations: record.animations.flatMap((item) => {
         if (typeof item !== "object" || item === null) return [];
         const key = item as Record<string, unknown>;
@@ -289,6 +313,7 @@ function keysOf(
   if (record?.kind === "portrait" && Array.isArray(record.expressions)) {
     return {
       animations: [],
+      realms: [],
       expressions: record.expressions.flatMap((item) => {
         if (typeof item !== "object" || item === null) return [];
         const expression = (item as Record<string, unknown>).expression;
@@ -296,7 +321,57 @@ function keysOf(
       }),
     };
   }
-  return { animations: [], expressions: [] };
+  return { animations: [], expressions: [], realms: [] };
+}
+
+/**
+ * Holds a manifest's realm variants: each its own selection with its own atlas,
+ * checked like the base. `read` fetches a variant's bytes by blob hash; one that
+ * is missing or fails the blob checks is a problem and holds nothing.
+ */
+function holdVariants(
+  selection: PreviewSelection,
+  entry: SnapshotEntry,
+  read: (hash: string) => Uint8Array | undefined,
+  into: {
+    held: Map<string, Held>;
+    tokens: Map<string, { selection: PreviewSelection; token: string }>;
+    problem: (realm: string, message: string) => void;
+  },
+): void {
+  const { manifest } = entry;
+  if (manifest.kind !== "sprite") return;
+  for (const variant of manifest.realmVariants) {
+    const realm = variant.paletteFamily;
+    const file = `blobs/${variant.atlas.blob}.png`;
+    let bytes: Uint8Array | undefined;
+    try {
+      bytes = read(variant.atlas.blob);
+    } catch (error) {
+      into.problem(realm, `${file}: ${errorText(error)}`);
+      continue;
+    }
+    if (bytes === undefined) {
+      into.problem(realm, `${file}: realm variant atlas blob is missing`);
+      continue;
+    }
+    const checked = checkBlob(bytes, variant.atlas.blob, variant.atlas, file);
+    if (!checked.ok) {
+      into.problem(realm, `${checked.file}: ${checked.message}`);
+      continue;
+    }
+    const variantSelection: PreviewSelection = { ...selection, realm };
+    const complete = hold(
+      variantSelection,
+      { ...entry, manifest: { ...manifest, atlas: variant.atlas } },
+      bytes,
+    );
+    into.held.set(keyOf(variantSelection), complete);
+    into.tokens.set(keyOf(variantSelection), {
+      selection: variantSelection,
+      token: complete.token,
+    });
+  }
 }
 
 function scan(options: PreviewSourceOptions): Model {
@@ -364,6 +439,20 @@ function scan(options: PreviewSourceOptions): Model {
       );
       held.set(keyOf(selection), checked);
       tokens.set(keyOf(selection), { selection, token: checked.token });
+      holdVariants(
+        selection,
+        { ...entry, manifest: revision.value.manifest },
+        (hash) => revision.value.variantAtlases.get(hash as never),
+        {
+          held,
+          tokens,
+          problem: (realm, message) =>
+            canonProblems.push({
+              scope: `canon:${entry.assetId}@${realm}`,
+              message,
+            }),
+        },
+      );
       entries.push({
         ...selection,
         assetId: entry.assetId,
@@ -451,6 +540,18 @@ function scan(options: PreviewSourceOptions): Model {
       const complete = hold(selection, entry, bytes);
       held.set(key, complete);
       tokens.set(key, { selection, token: complete.token });
+      holdVariants(
+        selection,
+        entry,
+        (variantHash) =>
+          readStudioBlob(options.studioRoot, variantHash as Sha256),
+        {
+          held,
+          tokens,
+          problem: (realm, message) =>
+            problems.push({ scope: `${key}@${realm}`, message }),
+        },
+      );
       entries.push({
         ...selection,
         assetId: asset.assetId,
@@ -532,11 +633,13 @@ export function createPreviewSource(
       const selection: PreviewSelection = {
         source: request.source,
         id: request.id,
+        ...(request.realm === undefined ? {} : { realm: request.realm }),
       };
       const key = keyOf(selection);
       const found = model.held.get(key);
+      const baseKey = keyOf({ source: request.source, id: request.id });
       const problemsFor =
-        model.problems.get(key) ??
+        model.problems.get(baseKey) ??
         (request.source === "canon" ? model.canonProblems : []);
       const missing = (
         reason: "missing-id" | "missing-state" | "wrong-kind",
@@ -549,7 +652,12 @@ export function createPreviewSource(
         problems,
         bytes: placeholderAtlas,
       });
-      if (found === undefined) return missing("missing-id", problemsFor);
+      if (found === undefined) {
+        // A realm the asset does not publish is "not in this asset", like a state it lacks.
+        return request.realm !== undefined && model.held.has(baseKey)
+          ? missing("missing-state", [])
+          : missing("missing-id", problemsFor);
+      }
 
       const resolved = resolveAsset(found.snapshot, {
         spriteId: found.assetId,

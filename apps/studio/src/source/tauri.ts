@@ -126,6 +126,7 @@ function entry(value: unknown, path: string): ListingEntry {
     state,
     animations: animationKeys(o.animations, `${path}.animations`),
     expressions: expressions(o.expressions, `${path}.expressions`),
+    realms: expressions(o.realms ?? [], `${path}.realms`),
     ok: o.ok as boolean,
   };
 }
@@ -189,11 +190,11 @@ function asset(value: unknown) {
 
 // The opaque references this module hands out and takes back.
 const ATLAS_REF =
-  /^studio-host:atlas\/(canon|draft|approved)\/([^/?#]+)\?v=([0-9A-Za-z_-]{1,128})$/;
+  /^studio-host:atlas\/(canon|draft|approved)\/([^/?#]+)(?:\/([^/?#]+))?\?v=([0-9A-Za-z_-]{1,128})$/;
 const PLACEHOLDER_REF = /^studio-host:placeholder\/([0-9a-f]{64})$/;
 
 const atlasRef = (selection: Selection, key: string) =>
-  `studio-host:atlas/${selection.source}/${selection.id}?v=${key}`;
+  `studio-host:atlas/${selection.source}/${selection.id}${selection.realm === undefined ? "" : `/${selection.realm}`}?v=${key}`;
 const placeholderRef = (hash: string) => `studio-host:placeholder/${hash}`;
 
 export function readResolution(value: unknown): SourceResolution {
@@ -236,18 +237,24 @@ export function readResolution(value: unknown): SourceResolution {
 
 // --- Changes ----------------------------------------------------------------
 
-const keyOf = (selection: Selection) => `${selection.source}:${selection.id}`;
+const keyOf = (selection: Selection) =>
+  `${selection.source}:${selection.id}${selection.realm === undefined ? "" : `@${selection.realm}`}`;
+
+const selectionOf = ({ source, id, realm }: Selection): Selection => ({
+  source,
+  id,
+  ...(realm === undefined ? {} : { realm }),
+});
 
 function diff(previous: SourceKeys, next: SourceKeys): SourceChange {
   const before = new Map(previous.selections.map((s) => [keyOf(s), s]));
   const after = new Map(next.selections.map((s) => [keyOf(s), s]));
   const changed = new Map<string, Selection>();
   for (const [key, now] of after) {
-    if (before.get(key)?.key !== now.key)
-      changed.set(key, { source: now.source, id: now.id });
+    if (before.get(key)?.key !== now.key) changed.set(key, selectionOf(now));
   }
   for (const [key, was] of before) {
-    if (!after.has(key)) changed.set(key, { source: was.source, id: was.id });
+    if (!after.has(key)) changed.set(key, selectionOf(was));
   }
   return {
     changed: [...changed.entries()]
@@ -261,7 +268,7 @@ function diff(previous: SourceKeys, next: SourceKeys): SourceChange {
 function everything(keys: SourceKeys): SourceChange {
   return {
     changed: [...keys.selections]
-      .map(({ source, id }) => ({ source, id }))
+      .map(selectionOf)
       .sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0)),
     listing: true,
   };
@@ -344,8 +351,12 @@ export function createTauriSource(
       return host.previewBytes({ placeholder: placeholder[1] });
 
     const atlas = ATLAS_REF.exec(bytes.url);
-    const selection = parseSelection({ source: atlas?.[1], id: atlas?.[2] });
-    const key = atlas?.[3];
+    const selection = parseSelection({
+      source: atlas?.[1],
+      id: atlas?.[2],
+      ...(atlas?.[3] === undefined ? {} : { realm: atlas[3] }),
+    });
+    const key = atlas?.[4];
     if (selection === undefined || key === undefined)
       throw new HostError({
         code: "invalid-reference",
