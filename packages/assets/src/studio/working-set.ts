@@ -2,6 +2,7 @@ import {
   type AssetId,
   type ColourMapping,
   type ConformanceReport,
+  canonicalJson,
   type DerivedStep,
   fail,
   type HandEditStep,
@@ -74,6 +75,10 @@ export interface DerivedBasis {
   readonly assetId: AssetId;
   readonly revision: Sha256;
   readonly slotKey: string;
+  /** The source slot's hash, as the step recorded it. */
+  readonly slotHash: Sha256;
+  /** The step's params as canonical JSON text: what the recipe was run with. */
+  readonly params: string;
   readonly resultHash: Sha256;
 }
 
@@ -195,6 +200,8 @@ export function slotBasisOf(
       assetId: derived.step.source.assetId,
       revision: derived.step.source.revision,
       slotKey: derived.step.source.slotKey,
+      slotHash: derived.step.source.slotHash,
+      params: canonicalJson(derived.step.params),
       resultHash: derived.step.resultHash,
     };
   return undefined;
@@ -249,6 +256,8 @@ export function parseSlotBasis(
         "assetId",
         "revision",
         "slotKey",
+        "slotHash",
+        "params",
         "resultHash",
       ],
       (record) => {
@@ -266,6 +275,10 @@ export function parseSlotBasis(
         if (!revision.ok) return revision;
         const slotKey = parseString(record.slotKey, `${path}.slotKey`);
         if (!slotKey.ok) return slotKey;
+        const slotHash = parseSha256(record.slotHash, `${path}.slotHash`);
+        if (!slotHash.ok) return slotHash;
+        const params = parseString(record.params, `${path}.params`);
+        if (!params.ok) return params;
         const resultHash = parseSha256(record.resultHash, `${path}.resultHash`);
         if (!resultHash.ok) return resultHash;
         return ok({
@@ -275,6 +288,8 @@ export function parseSlotBasis(
           assetId: assetId.value,
           revision: revision.value,
           slotKey: slotKey.value,
+          slotHash: slotHash.value,
+          params: params.value,
           resultHash: resultHash.value,
         } as const);
       },

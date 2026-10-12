@@ -30,7 +30,12 @@ import { sha256Hex } from "../hash";
 import type { Palette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateParams } from "./candidates";
-import { regenerateVariantAtlas } from "./derivation";
+import {
+  DEFAULT_CONFORM,
+  regenerateVariantAtlas,
+  swapMapOf,
+  swapStepFor,
+} from "./derivation";
 import { derivationRuntime } from "./derive";
 import { type EditRecord, handStepOf } from "./export-import";
 import { cutFrame } from "./frame-ref";
@@ -539,6 +544,23 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         durationMs: carried.durationMs,
       });
 
+  // What the prior revision recorded for the cells and realm variants carried
+  // from it: each step travels with the cell it made, so a carried cell never
+  // loses its lineage, and a carried variant keeps the swap that made it.
+  const carriedFamilies =
+    prior?.manifest.kind === "sprite"
+      ? prior.manifest.realmVariants
+          .map((v) => v.paletteFamily)
+          .filter((family) => set.variants?.[family] === undefined)
+      : [];
+  const carriedSteps: DerivedStep[] =
+    prior?.manifest.provenance.method === "derived"
+      ? prior.manifest.provenance.steps.filter((step) =>
+          step.recipe === "palette-swap"
+            ? carriedFamilies.includes(String(step.params.targetFamily))
+            : carriedKeys.includes(step.outputSlot),
+        )
+      : [];
   const allKeys = [...new Set(cells.map((c) => c.slot))].sort(order);
   if (kind === "portrait") {
     const missing = vocabulary.expressions.filter((e) => !allKeys.includes(e));
@@ -643,20 +665,73 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         ...(check.message === undefined ? {} : { message: check.message }),
       });
   }
-  const report: ConformanceReport = {
-    schemaVersion: 1,
-    status: checks.some((c) => c.status === "fail") ? "fail" : "pass",
-    checks,
-    ...(prior === undefined || carriedKeys.length === 0
-      ? {}
-      : {
-          carried: carriedKeys
-            .slice()
-            .sort(order)
-            .map((key) => ({ key, revision: prior.revision })),
-        }),
-  };
-
+  // A pair is held to its flip whenever either side is new in this pack: a carried
+  // west against a new east, and a west frame with no east frame to match.
+  if (kind === "sprite" && visual?.asymmetry === undefined) {
+    const withAbility = (direction: string, from: SlotKey) =>
+      [from.state, direction, from.ability]
+        .filter((p) => p !== undefined)
+        .join("/");
+    for (const westKey of allKeys) {
+      const west = parseSlotKey(westKey);
+      if (west.direction !== "west") continue;
+      const eastKey = withAbility("east", west);
+      const eastCells = ordered.filter((c) => c.slot === eastKey);
+      if (eastCells.length === 0) continue;
+      const westCells = ordered.filter((c) => c.slot === westKey);
+      if (![...eastCells, ...westCells].some((c) => c.params !== undefined))
+        continue;
+      for (const [index, entry] of westCells.entries()) {
+        const partner = eastCells[index];
+        const name = `${westKey}#${index}`;
+        if (partner === undefined) {
+          checks.push({
+            check: `${name}:mirror`,
+            status: "fail",
+            message: `no east frame to compare: ${eastKey} has ${eastCells.length}, ${westKey} has ${westCells.length}`,
+          });
+          continue;
+        }
+        // A new west was measured above, with its mirror check; a carried west is measured here.
+        if (entry.params !== undefined || partner.params === undefined)
+          continue;
+        const result = conformImage({
+          rgba: entry.image.rgba,
+          width: entry.image.width,
+          height: entry.image.height,
+          kind,
+          mode: "report-only",
+          cell,
+          ...(pivot === undefined ? {} : { pivot }),
+          paletteRgb: colours,
+          background: partner.params.background,
+          alphaCutoff: partner.params.alphaCutoff,
+          grid: partner.params.grid,
+          scale: 1,
+          mirror: { east: partner.image, west: entry.image, asymmetry: false },
+        });
+        if (result.status !== "done")
+          return refuse(
+            `${entry.slot} cannot be reported on: ${result.status === "invalid-input" ? `${result.field}: ${result.message}` : result.message}`,
+          );
+        for (const check of result.report.checks)
+          if (check.check === "mirror")
+            checks.push({
+              check: `${name}:mirror`,
+              status: check.status,
+              ...(check.message === undefined
+                ? {}
+                : { message: check.message }),
+            });
+      }
+      if (eastCells.length > westCells.length)
+        checks.push({
+          check: `${westKey}:mirror`,
+          status: "fail",
+          message: `${westKey} has ${westCells.length} frames, ${eastKey} has ${eastCells.length}`,
+        });
+    }
+  }
   // The atlas: one untrimmed row of native cells, pixels copied as they are.
   const width = ordered.length * cell.w;
   const rgba = new Uint8Array(width * cell.h * 4);
@@ -765,7 +840,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
   const derivedMode =
     derivedSlots.length > 0 || Object.keys(set.variants ?? {}).length > 0;
   // Derived work carries the licences of the revision it was made from.
-  if ((derivedMode || editsPublished) && prior !== undefined)
+  if (
+    (derivedMode || editsPublished || carriedSteps.length > 0) &&
+    prior !== undefined
+  )
     for (const licence of prior.manifest.provenance.licences)
       licences.push(licence);
   for (const record of [
@@ -856,11 +934,50 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     return refuse(
       `the working set derives with more than one recipe (${recipes.join(", ")}); derive them in separate revisions`,
     );
-  const sourceAssets =
-    (derivedMode || editsPublished || carriedKeys.length > 0) &&
+  // A revision that is generated cannot record the steps of what it carries.
+  if (!derivedMode && carriedSteps.length > 0)
+    return refuse(
+      `this revision carries derived cells or realm variants (${[...new Set(carriedSteps.map((step) => `${step.recipe} ${step.outputSlot}`))].join(", ")}) and adds drawn slots: a drawn revision cannot record their steps, so the derivation would lose its record`,
+    );
+  // Every carried realm variant keeps the swap step whose map it is.
+  for (const family of carriedFamilies) {
+    const step = swapStepFor(carriedSteps, family);
+    const made = step === undefined ? undefined : swapMapOf(step, palette);
+    const variant =
+      prior?.manifest.kind === "sprite"
+        ? prior.manifest.realmVariants.find((v) => v.paletteFamily === family)
+        : undefined;
+    if (step === undefined || made === undefined || variant === undefined)
+      return refuse(
+        `the ${family} realm variant carried from the published revision has no palette-swap step recording it: derive the swap again`,
+      );
+    if (!made.ok)
+      return refuse(`the ${family} realm variant's swap step: ${made.message}`);
+    if (canonicalJson(made.map) !== canonicalJson(variant.map))
+      return refuse(
+        `the ${family} realm variant's colour map is not the map its palette-swap step records`,
+      );
+  }
+  steps.push(...carriedSteps);
+  const sourceAssets = [
+    ...((derivedMode ||
+      editsPublished ||
+      carriedKeys.length > 0 ||
+      carriedSteps.length > 0) &&
     prior !== undefined
       ? [{ assetId: input.assetId, revision: prior.revision }]
-      : [];
+      : []),
+    ...carriedSteps.map((step) => ({
+      assetId: step.source.assetId,
+      revision: step.source.revision,
+    })),
+  ].filter(
+    (ref, at, all) =>
+      all.findIndex(
+        (other) =>
+          other.assetId === ref.assetId && other.revision === ref.revision,
+      ) === at,
+  );
   let provenance: Record<string, unknown>;
   if (steps.length > 0) {
     const first = steps[0] as DerivedStep;
@@ -915,6 +1032,40 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         return refuse(
           `the ${family} realm variant cannot be regenerated: ${made.message}`,
         );
+      // The recoloured cells are measured against the target realm's own palette: a
+      // swap draft is not a pass for having measured nothing.
+      const recoloured = decodePng(made.png);
+      if (!recoloured.ok)
+        return refuse(`the ${family} realm variant atlas cannot be decoded`);
+      const targetColours = familyColours(palette, family);
+      for (const [index, entry] of ordered.entries()) {
+        const result = conformImage({
+          ...crop(recoloured.image, index * cell.w, 0, cell.w, cell.h),
+          kind,
+          mode: "report-only",
+          cell,
+          ...(pivot === undefined ? {} : { pivot }),
+          paletteRgb: targetColours,
+          background: DEFAULT_CONFORM.background,
+          alphaCutoff: DEFAULT_CONFORM.alphaCutoff,
+          grid: DEFAULT_CONFORM.grid,
+          scale: 1,
+        });
+        if (result.status !== "done")
+          return refuse(
+            `the ${family} variant of ${entry.slot} cannot be reported on: ${result.status === "invalid-input" ? `${result.field}: ${result.message}` : result.message}`,
+          );
+        const where = spans.get(entry.slot) ?? [];
+        for (const check of result.report.checks)
+          if (check.check === "palette")
+            checks.push({
+              check: `${family}:${entry.slot}#${where.indexOf(index)}:palette`,
+              status: check.status,
+              ...(check.message === undefined
+                ? {}
+                : { message: check.message }),
+            });
+      }
       const blob = sha256Hex(made.png);
       variantAtlases.set(blob, made.png);
       realmVariants.push({
@@ -925,6 +1076,25 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       });
     }
   }
+  // A derived pack that measured nothing is not a pass.
+  if ((derivedMode || steps.length > 0) && checks.length === 0)
+    return refuse(
+      "the derived pack measured no cell: a report with no checks is not a pass",
+    );
+  const report: ConformanceReport = {
+    schemaVersion: 1,
+    status: checks.some((c) => c.status === "fail") ? "fail" : "pass",
+    checks,
+    ...(prior === undefined || carriedKeys.length === 0
+      ? {}
+      : {
+          carried: carriedKeys
+            .slice()
+            .sort(order)
+            .map((key) => ({ key, revision: prior.revision })),
+        }),
+  };
+
   const common = {
     schemaVersion: 1,
     id: input.assetId,

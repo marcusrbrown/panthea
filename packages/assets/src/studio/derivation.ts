@@ -91,7 +91,7 @@ export interface DeriveOps {
 }
 
 /** The conformance a derived cell is measured with when its source recorded none in this studio. */
-const DEFAULT_CONFORM: CandidateParams = {
+export const DEFAULT_CONFORM: CandidateParams = {
   background: { type: "alpha" },
   alphaCutoff: 128,
   grid: { edgeTolerance: 8, minConfidence: 0.6, minEdges: 20 },
@@ -420,6 +420,66 @@ export function recomputeStep(
   }
 }
 
+/**
+ * The colour map a palette-swap step's params say: each shade of each source
+ * ramp to the shade at the same index of its paired target ramp. A variant's
+ * recorded map must equal this one.
+ */
+export function swapMapOf(
+  step: DerivedStep,
+  palette: Palette,
+):
+  | { readonly ok: true; readonly map: readonly ColourMapping[] }
+  | { readonly ok: false; readonly message: string } {
+  const { sourceFamily, targetFamily, ramps } = step.params as {
+    sourceFamily?: unknown;
+    targetFamily?: unknown;
+    ramps?: unknown;
+  };
+  if (
+    typeof sourceFamily !== "string" ||
+    typeof targetFamily !== "string" ||
+    !Array.isArray(ramps)
+  )
+    return { ok: false, message: "the swap step's params are malformed" };
+  const map: ColourMapping[] = [];
+  for (const pair of ramps as { source?: unknown; target?: unknown }[]) {
+    const from = rampsOf(palette, sourceFamily).find(
+      (r) => r.id === pair?.source,
+    );
+    const to = rampsOf(palette, targetFamily).find(
+      (r) => r.id === pair?.target,
+    );
+    if (from === undefined || to === undefined)
+      return {
+        ok: false,
+        message: `the palette lacks a ramp of the swap step's pair ${String(pair?.source)} -> ${String(pair?.target)}`,
+      };
+    if (from.shades.length !== to.shades.length)
+      return {
+        ok: false,
+        message: `ramp "${from.id}" and "${to.id}" differ in length`,
+      };
+    for (const index of from.shades.keys())
+      map.push({
+        source: { ramp: from.id, index },
+        target: { ramp: to.id, index },
+      });
+  }
+  return { ok: true, map };
+}
+
+/** The first palette-swap step that records the swap into `family`, if the manifest has one. */
+export function swapStepFor(
+  steps: readonly DerivedStep[],
+  family: string,
+): DerivedStep | undefined {
+  return steps.find(
+    (step) =>
+      step.recipe === "palette-swap" && step.params.targetFamily === family,
+  );
+}
+
 /** A step recomputed must equal the step recorded: recipe, params, source slot hash and result hash. */
 export const sameStep = (a: DerivedStep, b: DerivedStep): boolean =>
   canonicalJson(a) === canonicalJson(b);
@@ -518,27 +578,13 @@ export function auditDerivation(audit: DerivationAudit): string | undefined {
       const made = again.steps[0];
       if (made === undefined || !sameStep(made, step))
         return `${named}: recomputing it from its published source gives a different step (result ${made?.resultHash ?? "none"}, recorded ${step.resultHash})`;
+      // A palette swap's pixels are the variant's, which is checked below as the packed
+      // atlas recoloured under the variant's map; the map is tied to this step there. A
+      // carried swap describes the source it was made from, not the slot as it is now.
+      if (step.recipe === "palette-swap") continue;
       const slot = again.slots[0];
       if (slot === undefined) return `${named}: the recipe made no slot`;
-      let held: { rgba: Uint8Array; durationMs: number }[] | undefined;
-      if (step.recipe === "palette-swap") {
-        const variant = manifest.realmVariants.find(
-          (v) =>
-            v.paletteFamily ===
-            (step.params as { targetFamily?: string }).targetFamily,
-        );
-        const bytes =
-          variant === undefined
-            ? undefined
-            : audit.variantAtlases.get(variant.atlas.blob);
-        const decoded = bytes === undefined ? undefined : decodePng(bytes);
-        held =
-          decoded?.ok === true
-            ? atlasFrames(manifest, decoded.image, step.outputSlot)
-            : undefined;
-      } else {
-        held = atlasFrames(manifest, packed.image, step.outputSlot);
-      }
+      const held = atlasFrames(manifest, packed.image, step.outputSlot);
       if (held === undefined || held.length !== slot.frames.length)
         return `${named}: the manifest does not hold the frames the recipe makes`;
       for (const [index, frame] of slot.frames.entries()) {
@@ -551,19 +597,26 @@ export function auditDerivation(audit: DerivationAudit): string | undefined {
         )
           return `${named}: frame ${index} is not what the recipe makes from its source`;
       }
-      if (step.recipe !== "palette-swap") {
-        const animation = manifest.animations.find(
-          (a) => slotKeyOf(a) === step.outputSlot,
-        );
-        if (animation?.loopStart !== slot.loopStart)
-          return `${named}: the loop start is not what the recipe makes`;
-      }
+      const animation = manifest.animations.find(
+        (a) => slotKeyOf(a) === step.outputSlot,
+      );
+      if (animation?.loopStart !== slot.loopStart)
+        return `${named}: the loop start is not what the recipe makes`;
     }
   }
 
   const ramps = rampIndex(audit.content.palette);
   for (const variant of manifest.realmVariants) {
     const named = `the ${variant.paletteFamily} realm variant`;
+    // The variant's map is the map of the palette-swap step that records it.
+    const steps =
+      manifest.provenance.method === "derived" ? manifest.provenance.steps : [];
+    const step = swapStepFor(steps, variant.paletteFamily);
+    if (step === undefined) return `${named}: no palette-swap step records it`;
+    const expected = swapMapOf(step, audit.content.palette);
+    if (!expected.ok) return `${named}: ${expected.message}`;
+    if (canonicalJson(expected.map) !== canonicalJson(variant.map))
+      return `${named}: its colour map is not the map its palette-swap step records`;
     const held = audit.variantAtlases.get(variant.atlas.blob);
     if (held === undefined)
       return `${named}: its atlas ${variant.atlas.blob} is missing`;
@@ -588,34 +641,50 @@ function setIdFor(identity: unknown): string {
   return `derive-${hash.slice(0, 12)}`;
 }
 
-/** The recorded conformance of a published slot in this studio, else the default. */
+/**
+ * The recorded conformance of a published slot in this studio, else the default.
+ * The default stands in only for a record that is not there; a record that is
+ * there but invalid is a refusal, never a silent fallback.
+ */
 function conformanceOf(
   store: Store,
   assetId: string,
   revision: Sha256,
   slotKey: string,
   fallback: DerivedEntry["palette"],
-): { params: CandidateParams; palette: DerivedEntry["palette"] } {
+):
+  | { ok: true; params: CandidateParams; palette: DerivedEntry["palette"] }
+  | { ok: false; message: string } {
   for (const asset of store.status().assets) {
     if (asset.assetId !== assetId || asset.published?.revision !== revision)
       continue;
     const set = store.readWorkingSet(asset.workingSetId);
+    if (set.kind === "invalid")
+      return {
+        ok: false,
+        message: `working set ${asset.workingSetId} behind the published ${assetId} is invalid: ${set.message}`,
+      };
     if (set.kind !== "found") continue;
     const authored = set.value.frames[slotKey];
     if (authored !== undefined) {
       const edit = store.readEdit(authored.editId);
+      if (edit.kind === "invalid")
+        return {
+          ok: false,
+          message: `edit ${authored.editId} behind the published ${assetId} is invalid: ${edit.message}`,
+        };
       const evidence =
         edit.kind === "found" ? edit.value.evidence[slotKey] : undefined;
-      if (evidence !== undefined) return evidence;
+      if (evidence !== undefined) return { ok: true, ...evidence };
     }
     const pick = set.value.picks[slotKey];
     if (pick !== undefined)
-      return { params: pick.params, palette: pick.palette };
+      return { ok: true, params: pick.params, palette: pick.palette };
     const derived = set.value.derived?.[slotKey];
     if (derived !== undefined)
-      return { params: derived.params, palette: derived.palette };
+      return { ok: true, params: derived.params, palette: derived.palette };
   }
-  return { params: DEFAULT_CONFORM, palette: fallback };
+  return { ok: true, params: DEFAULT_CONFORM, palette: fallback };
 }
 
 const hexOf = (rgb: readonly number[]) =>
@@ -916,6 +985,7 @@ export function createDeriveOps(
           step.source.slotKey,
           fallback,
         );
+        if (!recorded.ok) return failure("wrong-state", recorded.message);
         for (const frame of slot.frames) blobs.push(frame.png);
         derived[slot.key] = {
           step,

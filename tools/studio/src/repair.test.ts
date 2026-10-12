@@ -20,7 +20,7 @@ import {
   SPRITE_CELL,
 } from "../../../packages/assets/src/studio/_test-fixtures";
 import { frameHashOf } from "../../../packages/assets/src/studio/frame-ref";
-import { assetRig, removeTempRoots, run } from "./_testkit";
+import { assetRig, heldBy, removeTempRoots, run } from "./_testkit";
 import type { StudioConfig } from "./config";
 import type { Outcome } from "./format";
 import { parseArgv } from "./index";
@@ -120,7 +120,16 @@ function setup() {
     ).then((r) => r.outcome);
   const published = (frameIndex = 1) =>
     `zeus-sprite@${revision}:idle/east#${frameIndex}`;
-  return { rig, revision, frameHash, mask, maskBytes, generate, published };
+  return {
+    rig,
+    revision,
+    frameHash,
+    mask,
+    maskBytes,
+    config,
+    generate,
+    published,
+  };
 }
 
 const code = (outcome: Outcome) => (outcome.ok ? "ok" : outcome.error.code);
@@ -242,6 +251,23 @@ describe("generate with a published frame as the edit base", () => {
   });
 });
 
+describe("deriving from Zeus on the command line", () => {
+  test("a mirror of the published Zeus idle/east is refused as asymmetric, naming the declared feature", async () => {
+    const t = setup();
+
+    const { outcome } = await run(
+      t.config,
+      "derive",
+      { asset: "zeus-sprite", op: "mirror", from: "idle/east", params: {} },
+      { loadContent: () => ({ ok: true as const, content: t.rig.content }) },
+    );
+
+    expect(code(outcome)).toBe("asymmetric");
+    expect(JSON.stringify(outcome)).toContain("bolt hand");
+    expect(outcome.ok).toBe(false);
+  });
+});
+
 describe("reference conditioning", () => {
   test("a request that asks for it is refused as unavailable, naming the probe's README, and nothing is stored", async () => {
     const t = setup();
@@ -275,5 +301,42 @@ describe("reference conditioning", () => {
 
     expect(code(outcome)).toBe("unavailable");
     expect(requests(t.rig)).not.toContain("zeus-repair");
+  });
+
+  test("it is refused as unavailable even when another process holds the root: the writer lock is never asked for", async () => {
+    const t = setup();
+    const deps = heldBy(process.pid, {
+      loadContent: () => ({ ok: true as const, content: t.rig.content }),
+    });
+
+    const { outcome } = await run(
+      t.config,
+      "generate",
+      {
+        id: "zeus-repair",
+        subject: "zeus",
+        kind: "sprite",
+        slots: [{ state: "idle", direction: "east" }],
+        reference: [],
+      },
+      deps,
+    );
+
+    expect(code(outcome)).toBe("unavailable");
+    expect(deps.probes()).toBe(0);
+    // The same call without a reference does meet the lock.
+    const meets = await run(
+      t.config,
+      "generate",
+      {
+        id: "zeus-repair",
+        subject: "zeus",
+        kind: "sprite",
+        slots: [{ state: "idle", direction: "east" }],
+      },
+      deps,
+    );
+    expect(code(meets.outcome)).toBe("busy");
+    expect(deps.probes()).toBeGreaterThan(0);
   });
 });

@@ -26,6 +26,8 @@ export type PublishedFrameRef = Extract<EditBase, { kind: "published" }>;
 /** Why a published frame could not be used as an edit base. */
 export type FrameRefusal =
   | "missing-revision"
+  /** The revision is stored but fails the registry's checks (a tampered or corrupt file); the message says how. */
+  | "unreadable-revision"
   | "missing-slot"
   | "missing-frame"
   | "frame-hash-mismatch"
@@ -157,11 +159,20 @@ export function registryFrameReader(
       vocabulary,
     );
     if (!read.ok)
-      return {
-        ok: false,
-        reason: "missing-revision",
-        message: `missing-revision: ${ref.assetId} has no readable revision ${ref.revision}`,
-      };
+      // An absent manifest, or one that belongs to another asset, is "missing" for this reference;
+      // anything else is the registry's own finding, kept as it said it.
+      return read.message.includes("manifest file is missing") ||
+        read.message.includes("manifest is for")
+        ? {
+            ok: false,
+            reason: "missing-revision",
+            message: `missing-revision: ${ref.assetId} has no revision ${ref.revision}`,
+          }
+        : {
+            ok: false,
+            reason: "unreadable-revision",
+            message: `unreadable-revision: ${ref.assetId} ${ref.revision} fails the registry's checks: ${read.message}`,
+          };
     const cut = cutFrame(
       read.value.manifest,
       read.value.atlas,

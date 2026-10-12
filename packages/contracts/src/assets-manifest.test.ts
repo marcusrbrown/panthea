@@ -814,12 +814,71 @@ describe("derived manifests", () => {
     },
     /steps\[1\]/,
   );
+  const swapStep = (family: string, slot = "idle/south") => ({
+    recipe: "palette-swap",
+    version: 1,
+    params: { sourceFamily: "olympus", targetFamily: family, ramps: [] },
+    source: {
+      assetId: "placeholder-zeus",
+      revision: H("e"),
+      slotKey: slot,
+      slotHash: H("a"),
+    },
+    outputSlot: slot,
+    resultHash: H("b"),
+  });
+  it("lets a palette swap step share its slot with another recipe's step and with swaps into other realms", () => {
+    const provenance = derived([
+      derivedStep("idle/south"),
+      swapStep("underworld"),
+      swapStep("town"),
+    ]);
+
+    expect(parseAssetManifest(withProvenance(provenance), vocab).ok).toBe(true);
+  });
+  derivedRejects(
+    "two palette swap steps for one realm and one slot",
+    (p) => {
+      p.steps.push(swapStep("underworld"), swapStep("underworld"));
+    },
+    /steps\[2\]/,
+  );
   derivedRejects(
     "a source asset that is absent",
     (p) => {
       p.sourceAssets = [];
     },
     /sourceAssets/,
+  );
+  derivedRejects(
+    "a step whose source revision is not among the source assets",
+    (p) => {
+      p.steps[0].source.revision = H("d");
+    },
+    /steps\[0\]\.source/,
+  );
+  derivedRejects(
+    "a step whose source asset is not among the source assets",
+    (p) => {
+      p.steps[0].source.assetId = "placeholder-hera";
+    },
+    /steps\[0\]\.source/,
+  );
+  derivedRejects(
+    "a __proto__ key in a step's params",
+    (p) => {
+      p.steps[0].params = JSON.parse(
+        '{"__proto__": {"dy": 1}, "from": "east"}',
+      );
+    },
+    /steps\[0\]\.params\.__proto__/,
+  );
+  derivedRejects(
+    "a __proto__ key nested in a step's params",
+    (p) => {
+      p.steps[0].params = JSON.parse('{"ramps": [{"__proto__": {"x": 1}}]}');
+    },
+    /steps\[0\]\.params\.ramps\[0\]\.__proto__/,
   );
 });
 

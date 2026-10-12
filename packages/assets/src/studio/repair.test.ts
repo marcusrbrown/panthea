@@ -4,6 +4,8 @@
 // cue. Every publish goes into an isolated registry root, never the canon.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   type AssetVocabulary,
   type EditBase,
@@ -178,6 +180,24 @@ describe("resolving a published frame as an edit base", () => {
     }
   });
 
+  test("a tampered atlas blob is refused as unreadable and names the hash mismatch, not a missing revision", () => {
+    const rig = assetRig();
+    const b = baseOf(rig);
+    const atlas = readRevisionOf(rig, b.revision).manifest.atlas.blob;
+    writeFileSync(
+      join(rig.registryRoot, "blobs", `${atlas}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+
+    const read = b.read(b.ref({ frameHash: b.frameHash }));
+
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.reason).toBe("unreadable-revision");
+    expect(read.message).toContain("bytes do not hash to");
+    expect(read.message).toContain(atlas);
+  });
+
   test("with no registry reader wired a published base is refused, never guessed", () => {
     const rig = assetRig();
     const b = baseOf(rig);
@@ -309,7 +329,9 @@ describe("a repair candidate through pack", () => {
     const rig = assetRig();
     const r = repaired(rig);
 
-    const packed = packRepair(rig);
+    const packed = packRepair(rig, {
+      originalWork: { licence: "MIT", attribution: "the repairer" },
+    });
 
     expect(packed.ok).toBe(true);
     if (!packed.ok) return;
@@ -338,8 +360,21 @@ describe("a repair candidate through pack", () => {
     expect(manifest.provenance.sourceAssets).toEqual([
       { assetId: "zeus-sprite" as never, revision: r.revision },
     ]);
-    // The base revision's licences travel with work made from its pixels.
-    expect(manifest.provenance.licences.length).toBeGreaterThan(0);
+    // The base revision's licence records travel with work made from its pixels. The base was
+    // published with another hand-work attribution than this repair, so its record is distinct
+    // from every record the repair itself adds.
+    const baseLicences = readRevisionOf(rig, r.revision).manifest.provenance
+      .licences;
+    const baseHandWork = baseLicences.find((l) => l.role === "original-work");
+    expect(baseHandWork).toMatchObject({ attribution: "the owner" });
+    for (const record of baseLicences)
+      expect(manifest.provenance.licences).toContainEqual(record);
+    expect(manifest.provenance.licences).toContainEqual(
+      expect.objectContaining({
+        role: "original-work",
+        attribution: "the repairer",
+      }),
+    );
   });
 
   test("the repair draft approves and publishes like any other revision", () => {

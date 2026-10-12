@@ -164,7 +164,7 @@ export function handStepOf(edit: Pick<EditRecord, "id" | "step" | "base">): {
   const history = Object.entries(edit.base).flatMap(([slot, basis]) =>
     basis.kind === "derived"
       ? [
-          `${slot} was derived by ${basis.recipe} v${basis.version} from ${basis.assetId} ${basis.revision} ${basis.slotKey}`,
+          `${slot} was derived by ${basis.recipe} v${basis.version} from ${basis.assetId} ${basis.revision} ${basis.slotKey} (source slot ${basis.slotHash}, params ${basis.params}, result ${basis.resultHash})`,
         ]
       : [],
   );

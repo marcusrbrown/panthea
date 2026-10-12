@@ -1187,7 +1187,7 @@ describe("deriving from a published sprite", () => {
     expect(labels.filter((l) => l.startsWith("Bob"))).toHaveLength(1);
   });
 
-  test("a palette swap is offered to each realm but the asset's own, and not to one it is already in", () => {
+  test("a palette swap is offered to each realm family except the asset's own", () => {
     const choices = deriveChoices(asRecord(published()));
     const swaps = choices.filter((c) => c.args.op === "palette-swap");
 

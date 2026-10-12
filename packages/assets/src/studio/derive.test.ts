@@ -609,6 +609,48 @@ describe("swapping a whole image under a recorded colour map", () => {
     );
   });
 
+  it("recolours every opaque pixel across all four ramps exactly as the swap recipe does", () => {
+    // One pixel per shade of every ramp, at varied alpha, and some hidden RGB noise.
+    const image: RgbaImage = {
+      width: 8,
+      height: 8,
+      rgba: new Uint8Array(8 * 8 * 4),
+    };
+    let at = 0;
+    for (const ramp of olympus.ramps)
+      for (const shade of ramp.shades) {
+        image.rgba.set([...shade, 255 - ((at / 4) % 3) * 40], at);
+        at += 4;
+      }
+    image.rgba.set([9, 8, 7, 0], at);
+    expect(at / 4).toBe(16);
+
+    const swapped = must(swapImage(image, map, ramps));
+    const recipe = must(
+      swapPalette({
+        source: SOURCE,
+        slots: [{ key: "idle/south", frames: [{ image, durationMs: 200 }] }],
+        sourceFamily: "olympus",
+        targetFamily: "underworld",
+        pairs: olympus.ramps.map((source, i) => ({
+          source,
+          target: underworld.ramps[i] as (typeof underworld.ramps)[number],
+        })),
+      }),
+    );
+    const expected = (recipe.slots[0] as DerivedSlot).frames[0]
+      ?.image as RgbaImage;
+    expect(swapped.image.rgba.length).toBe(expected.rgba.length);
+    let opaque = 0;
+    for (let p = 0; p < expected.rgba.length; p += 4) {
+      const want = [...expected.rgba.subarray(p, p + 4)];
+      const got = [...swapped.image.rgba.subarray(p, p + 4)];
+      expect(got, `pixel ${p / 4}`).toEqual(want);
+      if (want[3] !== 0) opaque += 1;
+    }
+    expect(opaque).toBe(16);
+  });
+
   it("refuses an opaque colour no mapped shade has, and a map the palette lacks", () => {
     const stray = symmetricFigure();
     paint(stray, 1, 1, 1, 1, [0x12, 0x34, 0x56]);

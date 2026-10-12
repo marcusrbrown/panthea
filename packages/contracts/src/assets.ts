@@ -1098,6 +1098,10 @@ function parseCanonicalParams(
   const params: { [key: string]: CanonicalJson } = {};
   for (const [key, entry] of Object.entries(value)) {
     const entryPath = `${path}.${key}`;
+    // `params["__proto__"] = x` would reparent the object and drop the key, so the
+    // canonical bytes would no longer cover what was recorded.
+    if (key === "__proto__")
+      return fail(entryPath, "params never carry a __proto__ key");
     if (SECRET_KEY.test(key))
       return fail(entryPath, "params never carry credentials or endpoints");
     const parsed = parseCanonicalJson(entry, entryPath);
@@ -1328,12 +1332,29 @@ export function parseProvenance(
     if (!steps.ok) return steps;
     if (steps.value.length === 0)
       return fail(`${path}.steps`, "a derived asset records at least one step");
+    // A slot has one step, except that a palette swap also records the realm it
+    // swaps into: a slot keeps its own step and one swap step per realm.
     const duplicateSlot = uniqueBy(
       steps.value,
-      (step) => step.outputSlot,
+      (step) =>
+        step.recipe === "palette-swap"
+          ? `palette-swap:${String(step.params.targetFamily)}:${step.outputSlot}`
+          : step.outputSlot,
       `${path}.steps`,
     );
     if (duplicateSlot) return duplicateSlot;
+    for (const [index, step] of steps.value.entries()) {
+      const { assetId, revision } = step.source;
+      if (
+        !sourceAssets.value.some(
+          (ref) => ref.assetId === assetId && ref.revision === revision,
+        )
+      )
+        return fail(
+          `${path}.steps[${index}].source`,
+          `the step's source ${assetId} ${revision} is not among sourceAssets`,
+        );
+    }
     return ok({
       method: "derived",
       operation: operation.value,
