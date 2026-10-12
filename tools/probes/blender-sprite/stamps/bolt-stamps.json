@@ -1,0 +1,73 @@
+{
+  "authored": true,
+  "note": "Authored pixel art written by stamp_gen.py, not rendered. A three-segment zigzag polyline rasterised at eight orientations.",
+  "method": "pixels within 0.65 px of the polyline are the bright core, within 1.0 px the mid-gold body, then a 1 px 4-neighbour outline",
+  "palette": {
+    "family": "olympus",
+    "ramp": "pale-gold",
+    "dark": "#76572f",
+    "mid": "#ddbf70",
+    "light": "#f4e4ae"
+  },
+  "length_px": 13.0,
+  "anchor_meaning": "pixel of the grip end of the zigzag, in the stamp's own coordinates; it is placed on the projected bolt-hand point",
+  "angle_meaning": "direction of the zigzag's long axis, degrees counter-clockwise from screen right",
+  "variants": [
+    {
+      "angle_deg": 0,
+      "file": "bolt-000.png",
+      "size": [17, 12],
+      "anchor": [2, 7],
+      "pixels": 90
+    },
+    {
+      "angle_deg": 45,
+      "file": "bolt-045.png",
+      "size": [10, 17],
+      "anchor": [2, 15],
+      "pixels": 82
+    },
+    {
+      "angle_deg": 90,
+      "file": "bolt-090.png",
+      "size": [12, 17],
+      "anchor": [7, 15],
+      "pixels": 90
+    },
+    {
+      "angle_deg": 135,
+      "file": "bolt-135.png",
+      "size": [17, 10],
+      "anchor": [15, 8],
+      "pixels": 82
+    },
+    {
+      "angle_deg": 180,
+      "file": "bolt-180.png",
+      "size": [17, 12],
+      "anchor": [15, 5],
+      "pixels": 90
+    },
+    {
+      "angle_deg": 225,
+      "file": "bolt-225.png",
+      "size": [10, 17],
+      "anchor": [8, 2],
+      "pixels": 82
+    },
+    {
+      "angle_deg": 270,
+      "file": "bolt-270.png",
+      "size": [12, 17],
+      "anchor": [5, 2],
+      "pixels": 90
+    },
+    {
+      "angle_deg": 315,
+      "file": "bolt-315.png",
+      "size": [17, 10],
+      "anchor": [2, 2],
+      "pixels": 82
+    }
+  ]
+}
