@@ -67,13 +67,14 @@ Source pages, licence text, date (2026-10-11), and sha256 of every zip and every
 | Medieval Village Pack - Dec 2020 | quaternius.com/packs/medievalvillage.html | CC0 1.0 (`License.txt`) | used (`House_1`) |
 | Nature Kit 2.1 | kenney.nl/assets/nature-kit | CC0 (`License.txt`) | used (`tree_cone`) |
 | KayKit Forest Nature Pack 1.0 FREE | kaylousberg.itch.io/kaykit-forest | CC0 (`License.txt`) | inspected, not used |
+| Ultimate Animated Animals | quaternius.com/packs/ultimateanimatedanimals.html | CC0 1.0 (`License.txt`) | used (`Bull`) |
 | Farm Animals Animated | quaternius.itch.io/lowpoly-animated-animals | **no licence file ships** | **not used** |
 | Universal Animation Library [Standard] | see `tools/probes/blender-sprite/models.json` | CC0 1.0 | animation source |
 
 **Licence surprises.**
 
-- **Farm Animals Animated has no licence file.** The archive holds OBJ, FBX and Blend files and a preview GIF, with no licence text. The itch.io page fetched without a browser did not state the licence either. Per the rule for this probe, it was not used. Its contents are Cow, Horse, Llama, Pig, Pug, Sheep and Zebra: there is no goat, and Sheep is the Mediterranean choice. It needs an owner decision before the animal slot can be rendered.
-- **The Medieval Village zip is a Google Drive re-zip** (`…-20261012T081001Z-1-001`), so its hash will not match Quaternius's own download. The inner `License.txt` is CC0.
+- **Farm Animals Animated has no licence file.** The archive holds OBJ, FBX and Blend files and a preview GIF, with no licence text. The itch.io page fetched without a browser did not state the licence either. Per the rule for this probe, it was not used. Its contents are Cow, Horse, Llama, Pig, Pug, Sheep and Zebra: there is no goat, and Sheep is the Mediterranean choice. The bull comes from Ultimate Animated Animals instead.
+- **The Medieval Village and Ultimate Animated Animals zips are Google Drive re-zips** (for example `…-20261012T081001Z-1-001`), so their hashes will not match Quaternius's own downloads. Each inner `License.txt` is CC0.
 - **Kit materials are not used.** Every material is replaced by a palette ramp; textures are never read.
 
 ## Commands
