@@ -5,7 +5,12 @@
 
 import { frameIndexAt, type Point } from "@panthea/renderer";
 import type { PreviewItem } from "../renderer/preview";
-import type { ListingEntry, Selection } from "../source/port";
+import type {
+  AssetSource,
+  ListingEntry,
+  ResolveRequest,
+  Selection,
+} from "../source/port";
 
 /** Top-left of the 480x270 viewport in screen space. */
 export const HARNESS_CAMERA: Point = { x: -240, y: -80 };
@@ -129,6 +134,71 @@ export function clockTiming(asset: {
   return {
     durations: asset.frames.map((frame) => frame.durationMs),
     loopStart: asset.loopStart,
+  };
+}
+
+/**
+ * Keeps the playback clock on the timing of the clip the owner selected, for as
+ * long as it is followed. It resolves the clip when it starts and again
+ * whenever the source reports that selection changed: a new revision can change
+ * frame durations, frame count or loop start while every key name stays the
+ * same (so the listing is unchanged), and Step, Scrub and the frame indicator
+ * must follow the timing the renderer is drawing. The selected key is kept, and
+ * so is a paused frame (clamped to the new count). Returns the stop.
+ */
+export function followClipTiming(input: {
+  readonly source: Pick<AssetSource, "resolve" | "subscribe">;
+  readonly request: ResolveRequest;
+  readonly playback: PlaybackClock;
+  readonly onTiming: (durations: readonly number[], frame: number) => void;
+}): () => void {
+  const { source, request, playback, onTiming } = input;
+  let disposed = false;
+  // Only the newest resolve may apply: an older one that lands late is stale.
+  let latest = 0;
+
+  const load = (refresh: boolean) => {
+    latest += 1;
+    const mine = latest;
+    const wasPlaying = playback.playing();
+    const heldFrame = playback.frame();
+    void source.resolve(request).then(
+      (resolved) => {
+        if (disposed || mine !== latest) return;
+        if (resolved.kind !== "frames") {
+          playback.configure([], undefined);
+          onTiming([], 0);
+          return;
+        }
+        const { durations, loopStart } = clockTiming(resolved.asset);
+        playback.configure(durations, loopStart);
+        if (refresh && !wasPlaying && durations.length > 0)
+          playback.scrub(Math.min(heldFrame, durations.length - 1));
+        onTiming(durations, playback.frame());
+      },
+      () => {
+        if (disposed || mine !== latest) return;
+        playback.configure([], undefined);
+        onTiming([], 0);
+      },
+    );
+  };
+
+  playback.configure([], undefined);
+  onTiming([], 0);
+  load(false);
+  const unsubscribe = source.subscribe((change) => {
+    if (
+      change.changed.some(
+        (selection) =>
+          selection.source === request.source && selection.id === request.id,
+      )
+    )
+      load(true);
+  });
+  return () => {
+    disposed = true;
+    unsubscribe();
   };
 }
 

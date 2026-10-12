@@ -6,6 +6,7 @@ import {
   entryKey,
   expressionAfterListing,
   expressionKeyMessage,
+  followClipTiming,
   HARNESS_CAMERA,
   harnessItems,
   MISSING_SPRITE,
@@ -571,5 +572,159 @@ describe("the playback timing a resolved asset gives the clock", () => {
     expect(clock.frame()).toBe(2);
     now = 449;
     expect(clock.frame()).toBe(2);
+  });
+});
+
+describe("following the selected clip's timing", () => {
+  const zeus = { source: "canon", id: "zeus-sprite" } as const;
+  const request = {
+    ...zeus,
+    state: "idle",
+    direction: "south",
+  } as const;
+  const clip = (durationMs: number, count = 4, loopStart?: number) => ({
+    kind: "frames" as const,
+    asset: {
+      frames: Array.from({ length: count }, () => ({ durationMs })),
+      ...(loopStart === undefined ? {} : { loopStart }),
+    },
+  });
+
+  /** A source whose clip can be replaced, and whose change events a test fires. */
+  function fakeSource(initial: ReturnType<typeof clip>) {
+    let current = initial;
+    const listeners = new Set<(change: never) => void>();
+    let resolves = 0;
+    return {
+      source: {
+        resolve: async () => {
+          resolves += 1;
+          return current as never;
+        },
+        subscribe: (listener: (change: never) => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+      replace: (next: ReturnType<typeof clip>) => {
+        current = next;
+      },
+      emit: (change: {
+        changed: readonly { source: string; id: string }[];
+        listing: boolean;
+      }) => {
+        for (const listener of listeners) listener(change as never);
+      },
+      listeners: () => listeners.size,
+      resolves: () => resolves,
+    };
+  }
+
+  function follow(world: ReturnType<typeof fakeSource>, req = request) {
+    let now = 0;
+    const playback = createPlaybackClock([], undefined, () => now);
+    const seen: { durations: readonly number[]; frame: number }[] = [];
+    const stop = followClipTiming({
+      source: world.source as never,
+      request: req as never,
+      playback,
+      onTiming: (durations, frame) => seen.push({ durations, frame }),
+    });
+    return { playback, seen, stop, advance: (ms: number) => (now += ms) };
+  }
+
+  const settle = async () => {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  };
+
+  it("takes the selected clip's timing from the source when it is selected", async () => {
+    const world = fakeSource(clip(167));
+    const { playback, seen } = follow(world);
+    await settle();
+
+    expect(seen.at(-1)?.durations).toEqual([167, 167, 167, 167]);
+    playback.scrub(2);
+    expect(playback.elapsed()).toBe(167 * 2 + 83.5);
+  });
+
+  it("a timing-only change (same keys, listing: false) refreshes the frame indicator, Step and Scrub, and holds the selected frame", async () => {
+    const world = fakeSource(clip(167));
+    const { playback, seen } = follow(world);
+    await settle();
+    playback.scrub(1);
+
+    // A new revision: idle's four 167 ms frames become four 333 ms frames.
+    world.replace(clip(333));
+    world.emit({ changed: [zeus], listing: false });
+    await settle();
+
+    expect(seen.at(-1)?.durations).toEqual([333, 333, 333, 333]);
+    // The paused frame is kept, on the new timing.
+    expect(seen.at(-1)?.frame).toBe(1);
+    expect(playback.frame()).toBe(1);
+    playback.scrub(2);
+    // Midpoint of frame 2 on the new timing, not 250.5 ms of the old one.
+    expect(playback.elapsed()).toBe(333 * 2 + 166.5);
+    expect(playback.frame()).toBe(2);
+    playback.step(1);
+    expect(playback.frame()).toBe(3);
+    playback.step(1);
+    expect(playback.frame()).toBe(0);
+  });
+
+  it("a changed frame count or loop start is taken too, and a change that is not this clip's is ignored", async () => {
+    const world = fakeSource(clip(100, 4));
+    const { playback, seen } = follow(world);
+    await settle();
+    const resolves = world.resolves();
+
+    world.emit({ changed: [{ source: "canon", id: "other" }], listing: false });
+    await settle();
+    expect(world.resolves()).toBe(resolves);
+
+    world.replace(clip(100, 6, 3));
+    world.emit({ changed: [zeus], listing: true });
+    await settle();
+
+    expect(seen.at(-1)?.durations).toHaveLength(6);
+    playback.scrub(5);
+    playback.step(1);
+    expect(playback.frame()).toBe(3);
+  });
+
+  it("a playing clip keeps playing through the refresh, and a failed refresh leaves no stale timing", async () => {
+    const world = fakeSource(clip(167));
+    const { playback, seen } = follow(world);
+    await settle();
+    playback.play();
+
+    world.replace(clip(333));
+    world.emit({ changed: [zeus], listing: false });
+    await settle();
+    expect(playback.playing()).toBe(true);
+
+    world.source.resolve = async () => {
+      throw new Error("the source is gone");
+    };
+    world.emit({ changed: [zeus], listing: false });
+    await settle();
+    expect(seen.at(-1)?.durations).toEqual([]);
+  });
+
+  it("stopping unsubscribes, and a refresh that was in flight when it stopped changes nothing", async () => {
+    const world = fakeSource(clip(167));
+    const { playback, seen, stop } = follow(world);
+    await settle();
+    expect(world.listeners()).toBe(1);
+    const before = seen.length;
+
+    world.replace(clip(333));
+    world.emit({ changed: [zeus], listing: false });
+    stop();
+    await settle();
+
+    expect(world.listeners()).toBe(0);
+    expect(seen.length).toBe(before);
+    expect(playback.elapsed()).toBe(0);
   });
 });

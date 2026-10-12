@@ -1487,7 +1487,7 @@ mod tests {
                     &dirty,
                     ImportRequest {
                         edit_id: "e1",
-                        finish: finish,
+                        finish,
                         method: None,
                         description: None,
                         reviewed: None,

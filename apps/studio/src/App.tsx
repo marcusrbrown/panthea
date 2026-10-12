@@ -4,13 +4,13 @@ import { type CheckResult, runChecks } from "./check/run";
 import {
   abilitiesForKey,
   animationKeyMessage,
-  clockTiming,
   createPlaybackClock,
   directionsForState,
   entryKey,
   expressionAfterListing,
   expressionKeyMessage,
   firstAnimationForState,
+  followClipTiming,
   harnessItems,
   type OcclusionPair,
   type PlaybackClock,
@@ -292,23 +292,22 @@ function PreviewHarness({
           : undefined;
     if (request === undefined) return;
 
-    void source.resolve(request).then(
-      (resolved) => {
-        if (cancelled || resolved.kind !== "frames") return;
-        const { durations, loopStart } = clockTiming(resolved.asset);
-        playback.configure(durations, loopStart);
+    // The clip is followed, not just resolved once: a new revision can change
+    // its timing while every key name stays the same.
+    const stop = followClipTiming({
+      source,
+      request,
+      playback,
+      onTiming: (durations, frame) => {
+        if (cancelled) return;
         setFrameDurations(durations);
-        setFrameIndex(playback.frame());
+        setFrameIndex(frame);
         preview?.tick(playback.elapsed());
       },
-      () => {
-        if (cancelled) return;
-        playback.configure([], undefined);
-        setFrameDurations([]);
-      },
-    );
+    });
     return () => {
       cancelled = true;
+      stop();
     };
   }, [
     source,
