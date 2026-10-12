@@ -1006,12 +1006,93 @@
   gap: 0.75rem;
 }
 
+.derive-compare-summary {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-align: center;
+}
+
 .derive-compare figure {
   margin: 0;
   min-width: 0;
 }
 
 .derive-compare figcaption {
-  font-size: 0.85rem;
   margin-bottom: 0.25rem;
+  color: var(--ink-soft);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.derive-compare .preview-controls {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 4px;
+  padding: 4px 5px;
+}
+
+.derive-compare .preview-controls-title,
+.derive-compare .preview-transport,
+.derive-compare .preview-frame-strip {
+  display: none;
+}
+
+.derive-compare .preview-key-selectors {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+}
+
+.derive-compare .preview-key-selectors label {
+  min-width: 0;
+  font-size: 0.6rem;
+}
+
+.derive-compare .preview-key-selectors select {
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 4px;
+  font-size: 0.62rem;
+}
+
+.derive-compare .preview-compact #preview {
+  min-height: 240px;
+}
+
+.asset-record .derive-panel h3 {
+  margin: 0;
+  font-size: 0.83rem;
+}
+
+.derive-panel > .muted {
+  margin: 0;
+  padding: 0;
+  line-height: 1.4;
+}
+
+.derive-result {
+  padding: 8px 9px;
+  border: 1px solid color-mix(in oklch, var(--accent) 35%, var(--line));
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.derive-result p {
+  margin: 0;
+}
+
+.asset-record .derive-result pre {
+  max-height: 130px;
+  margin: 6px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.66rem;
 }

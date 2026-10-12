@@ -391,6 +391,18 @@ export interface DeriveChoice {
   readonly args: DeriveArgs;
 }
 
+/** Keep a derivation choice tied to the record it was selected for. */
+export function activeDeriveChoiceKey(
+  choices: readonly DeriveChoice[],
+  selection: { readonly recordId: string; readonly key: string },
+  recordId: string,
+): string {
+  return selection.recordId === recordId &&
+    choices.some((choice) => choice.key === selection.key)
+    ? selection.key
+    : (choices[0]?.key ?? "");
+}
+
 /**
  * What can be derived from a published sprite, in plain words. A mirror is
  * offered for an east slot of idle, seated, hurt or down with no west yet; a

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { callsTo, fakeTransport, hostError } from "../host/_testkit";
 import { createStudioHost } from "../host/client";
 import {
+  activeDeriveChoiceKey,
   approvalArgsForAsset,
   deriveChoices,
   deriveGuarded,
@@ -17,7 +18,7 @@ import {
   reuseRowContext,
   workflowReducer,
 } from "./model";
-import { QueueItem, WorkflowView } from "./Workflow";
+import { DerivePanel, QueueItem, WorkflowView } from "./Workflow";
 
 const host = createStudioHost(fakeTransport());
 
@@ -1207,6 +1208,37 @@ describe("deriving from a published sprite", () => {
     expect(choices.some((c) => c.args.op === "mirror")).toBe(false);
   });
 
+  test("changing records resets an old derivation to a valid choice", () => {
+    const hera = deriveChoices(
+      asRecord(
+        published({
+          id: "hera-published",
+          assetId: "hera-sprite",
+          slots: ["idle/east"],
+          paletteFamily: undefined,
+        }),
+      ),
+    );
+    const zeus = deriveChoices(
+      asRecord(
+        published({
+          id: "zeus-published",
+          assetId: "zeus-sprite",
+          slots: ["idle/south"],
+        }),
+      ),
+    );
+
+    expect(hera.map((choice) => choice.key)).toContain("mirror:idle/east");
+    expect(
+      activeDeriveChoiceKey(
+        zeus,
+        { recordId: "hera-published", key: "mirror:idle/east" },
+        "zeus-published",
+      ),
+    ).toBe(zeus[0]?.key);
+  });
+
   test("nothing is offered for a draft, an approved record or a portrait", () => {
     for (const over of [
       { state: "draft" },
@@ -1231,6 +1263,27 @@ describe("deriving from a published sprite", () => {
     expect(html("canon")).toContain("Derive from this revision");
     expect(html("canon")).toContain("Mirror idle/east to idle/west");
     expect(html("draft")).not.toContain("Derive from this revision");
+  });
+
+  test("shows a Derive refusal beside its control, not in the page notice strip", () => {
+    const choices = deriveChoices(asRecord(published()));
+    const html = renderToStaticMarkup(
+      createElement(DerivePanel, {
+        choices,
+        selectedKey: choices[0]?.key ?? "",
+        busy: false,
+        result:
+          'the subject declares an asymmetry ("bolt hand"), so west is drawn, not mirrored',
+        resultDetails: "mirror refused",
+        onChoiceChange: () => {},
+        onDerive: () => {},
+      }),
+    );
+
+    expect(html).toContain('class="derive-result" role="status"');
+    expect(html).toContain("bolt hand");
+    expect(html).toContain("mirror refused");
+    expect(html).toContain("Derive</button>");
   });
 
   test("a derived draft shows the published source beside it", () => {
