@@ -195,6 +195,8 @@ tools/probes/backend-lifecycle/lifecycle-results.txt
 # considered.
 tools/probes/*/results/*
 tools/probes/*/scratch/
+# Downloaded third-party models (licence and hashes live in each probe's models.json); never committed
+tools/probes/*/models/
 
 # An unattended run's world store (with its WAL and SHM), its lock, and the archives exported from it stay local: they run to
 # hundreds of megabytes. The report, run record, frames, proxy records, memory series and diagnostics beside them are evidence.
