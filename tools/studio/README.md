@@ -43,6 +43,7 @@ that needs a setting you did not give says which one and exits `64`.
     "deadlines": { "httpMs": 10000, "startupMs": 120000, "generationMs": 300000, "termGraceMs": 2000, "killMs": 10000 }
   },
   "editor": { "executable": "/path/to/aseprite", "timeoutMs": 30000, "editPollMs": 500 },
+  "render": { "executable": "/Applications/Blender.app/Contents/MacOS/Blender", "watchdogMs": 60000 },
   "conform": {
     "standard": {
       "background": { "type": "alpha" },
@@ -59,6 +60,18 @@ or `{"type":"key","rgb":[r,g,b],"tolerance":n}`, and `scale` is optional.
 `artifactRoot` must already hold the staged runtime and models; nothing is
 downloaded. The editor path falls back to `PATH` and then the macOS app bundle.
 The environment is never passed to the server or the editor.
+
+`render` configures the pre-rendered retro engine (pinned Blender 5.2.2, build
+`d13f752e3b9c`). `executable` is the owner's alone and must live outside
+`artifactRoot`; the runtime hashes it against the pinned sha256 (cached by size
+and mtime) and never searches `PATH`. Without it, render jobs are marked
+`unavailable` with guidance and image jobs still run. `renderRoot` (default
+`<contentRoot>/../../tools/render`) holds the kits, profiles, camera and stamps,
+`tempParent` the per-batch scratch directories, and `watchdogMs` is how long a
+render may go without a new frame or any output before it is stopped and failed.
+One engine is live at a time: `sd-server` stops before a render batch and
+restarts after it, and at critical memory pressure (level 4) no engine launches
+and the head job stays queued until pressure drops.
 
 ## Commands
 

@@ -595,11 +595,14 @@ describe("a closed session's store", () => {
 describe("public surface", () => {
   test("the studio subpath exposes the host, the lock-free reader and the preview source, not the unlocked store factory", () => {
     expect(Object.keys(studio).sort()).toEqual([
+      "BLENDER_PIN",
       "COALESCE_MS",
+      "CRITICAL_PRESSURE",
       "DEFAULT_BATCH",
       "MAX_SEED",
       "PREVIEW_SOURCE_KINDS",
       "PROVIDER",
+      "RENDER_ENGINE",
       "SELECTED_PROFILE",
       "STUDIO_SCHEMA_VERSION",
       "adapterInput",
@@ -632,6 +635,7 @@ describe("public surface", () => {
       "sortSheet",
       "studioPaths",
       "summarizeSheet",
+      "systemMemoryPressure",
       "timerScheduler",
     ]);
   });

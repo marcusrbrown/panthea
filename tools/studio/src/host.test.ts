@@ -10,7 +10,10 @@ import { dirname, join } from "node:path";
 import {
   type DrainResult,
   type EditorAdapter,
+  loadStudioContent,
+  newRequestRecord,
   openStudioSession,
+  RENDER_ENGINE,
   readStudioStatus,
   type StudioRuntime,
   type StudioSession,
@@ -26,6 +29,7 @@ import {
   tempRoot,
 } from "./_testkit";
 import { execute, opNames, READ_ONLY } from "./commands";
+
 import type { StudioConfig } from "./config";
 import { type Deps, RELEASE_GRACE_MS, Studio } from "./host";
 
@@ -131,8 +135,13 @@ function world() {
     openThrows: undefined as Error | undefined,
     drainGate: Promise.resolve() as Promise<void>,
     drainRefusal: undefined as DrainResult | undefined,
+    /** Replaces the fake drain; gets the 1-based drain number and the session. */
+    drainHook: undefined as
+      | ((n: number, session: StudioSession) => DrainResult)
+      | undefined,
     abortGate: Promise.resolve() as Promise<void>,
     shutdownCalls: 0,
+    sleeps: 0,
     /** What each shutdown does; the n-th call (1-based, across runtimes) gets `n`. */
     shutdown: (async () => ({ ok: true })) as (
       n: number,
@@ -150,6 +159,8 @@ function world() {
       async drain() {
         runtime.drains += 1;
         if (state.drainRefusal !== undefined) return state.drainRefusal;
+        if (state.drainHook !== undefined)
+          return state.drainHook(runtime.drains, session);
         await state.drainGate;
         const queued = session.queued();
         const results: Extract<DrainResult, { ok: true }>["results"][number][] =
@@ -214,7 +225,10 @@ function world() {
   };
   const over: Partial<Deps> = {
     schedule: clock.schedule,
-    sleep: () => Promise.resolve(),
+    sleep: () => {
+      state.sleeps += 1;
+      return Promise.resolve();
+    },
     isAlive: (pid) => pid === state.holder,
     openSession: (path) => {
       if (state.openThrows !== undefined) {
@@ -1068,6 +1082,129 @@ describe("a CLI holds the lock while the app is idle", () => {
 
     expect(retried).toMatchObject({ ok: true, result: { state: "queued" } });
     await w.studio.idle();
+    await w.studio.teardown();
+  });
+});
+
+describe("render jobs in the host", () => {
+  const loadedContent = loadStudioContent(REAL_CONTENT);
+  if (!loadedContent.ok) throw new Error("content does not load");
+  const REAL_LOADED = loadedContent.content;
+  const renderRequest = (id: string) => {
+    const built = newRequestRecord(
+      REAL_LOADED,
+      {
+        id,
+        subject: "zeus",
+        kind: "sprite",
+        slots: [{ state: "idle", direction: "west" }],
+        render: { palette: "greek-retro", pivot: { x: 56, y: 78 } },
+      },
+      () => 0,
+      RENDER_ENGINE,
+    );
+    if (!built.ok) throw new Error(JSON.stringify(built.error));
+    return built.value.record;
+  };
+  const submitRender = async (w: World, id: string) => {
+    const session = await w.studio.owner();
+    if ("ok" in session) throw new Error("no session");
+    const runtime = w.studio.runtimeFor(session);
+    if ("ok" in runtime) throw new Error("no runtime");
+    const result = session.submitRequest(renderRequest(id));
+    if (!result.ok) throw new Error(result.message);
+    w.studio.kick();
+    return result.jobIds;
+  };
+
+  test("idle release is refused while a render job is queued or running", async () => {
+    const w = world();
+    const gate = defer();
+    w.state.drainGate = gate.promise;
+    const [job] = await submitRender(w, "zeus-retro");
+    await flush();
+
+    const outcome = await execute(w.studio, "release", {});
+    expect(outcome).toMatchObject({ ok: false, error: { code: "not-idle" } });
+    expect((await status(w)).idle).toBe(false);
+    expect((await status(w)).idleReason).toMatch(/drain|job/);
+    expect(lockIsFree(w.root)).toBe(false);
+    expect(w.state.runtimes[0]?.shutdowns).toBe(0);
+
+    gate.resolve();
+    await w.studio.idle();
+    expect(job).toBeDefined();
+    await w.studio.teardown();
+  });
+
+  test("an unavailable engine's stop does not end the host's drain while jobs remain queued", async () => {
+    const w = world();
+    const seen: number[] = [];
+    w.state.drainHook = (n, session) => {
+      seen.push(n);
+      const queued = session.queued();
+      const jobs = queued.ok ? queued.jobs : [];
+      const results: Extract<DrainResult, { ok: true }>["results"][number][] =
+        [];
+      if (n === 1) {
+        // The render engine is unavailable: only its jobs are marked, the image job stays queued.
+        for (const { job } of jobs)
+          if (job.provider.id === "blender-eevee") {
+            session.unavailable(job.id, "no Blender", "install Blender");
+            results.push({
+              jobId: job.id,
+              outcome: "unavailable",
+              reason: "no Blender",
+              staging: "install Blender",
+            });
+          }
+        return { ok: true, results, stopped: "unavailable" };
+      }
+      for (const { job } of jobs) {
+        session.start(job.id);
+        session.fail(job.id, "fixture failure");
+      }
+      return { ok: true, results, stopped: "empty" };
+    };
+    await generate(w, "zeus-idle");
+    const session = await w.studio.owner();
+    if ("ok" in session) throw new Error("no session");
+    const jobs = session.submitRequest(renderRequest("zeus-retro"));
+    if (!jobs.ok) throw new Error(jobs.message);
+    w.studio.kick();
+    await w.studio.idle();
+
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    const queued = session.queued();
+    expect(queued.ok && queued.jobs).toEqual([]);
+    await w.studio.teardown();
+  });
+
+  test("a drain deferred by critical memory pressure is retried after a poll, not spun on and not given up", async () => {
+    const w = world();
+    w.state.drainHook = (n, session) => {
+      if (n <= 2)
+        return {
+          ok: true,
+          results: [],
+          stopped: "deferred",
+          guidance: "System memory pressure is critical",
+        };
+      const queued = session.queued();
+      for (const { job } of queued.ok ? queued.jobs : []) {
+        session.start(job.id);
+        session.fail(job.id, "fixture failure");
+      }
+      return { ok: true, results: [], stopped: "empty" };
+    };
+    await generate(w, "zeus-idle");
+    await w.studio.idle();
+
+    expect(w.state.runtimes[0]?.drains).toBe(3);
+    expect(w.state.sleeps).toBe(2);
+    expect(w.cap.err.join("\n")).toMatch(
+      /drain deferred: System memory pressure is critical/,
+    );
     await w.studio.teardown();
   });
 });

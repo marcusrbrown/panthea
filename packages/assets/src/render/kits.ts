@@ -299,7 +299,7 @@ function* gltfUris(
  * Closure of one glTF: every `buffers[].uri` is a kit file and every `images[].uri` is a kit
  * file or on the kit's skip list. Embedded `data:` uris need nothing. Returns the problems.
  */
-function gltfClosureProblems(
+export function gltfClosureProblems(
   kit: Kit,
   gltfPath: string,
   text: string,

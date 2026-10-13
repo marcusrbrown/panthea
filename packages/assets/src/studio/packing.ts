@@ -323,6 +323,11 @@ function trace(
       ok: false,
       message: `slot ${slot}: its source job ${pick.candidateId} is not a recorded succeeded job`,
     };
+  if (job.engine.model === null)
+    return {
+      ok: false,
+      message: `slot ${slot}: its source job ${pick.candidateId} is a render job, which packs through the rendered path, not as a generated pick`,
+    };
   if (!job.job.outputs.some((output) => output.hash === pick.inputHash))
     return {
       ok: false,
@@ -771,6 +776,11 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     }
     const { job } = found;
     const engine = job.engine as NonNullable<JobRecord["engine"]>;
+    // The ancestry check refused render jobs above, so a generated pick always has a model.
+    if (engine.model === null)
+      throw new Error(
+        `job ${job.job.id} has no model but passed the ancestry check`,
+      );
     const before = generations.get(job.job.id);
     const used = before?.used ?? [];
     generations.set(job.job.id, {

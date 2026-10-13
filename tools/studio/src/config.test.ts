@@ -38,6 +38,12 @@ const full = () => ({
     tempParent: "tmp",
     editPollMs: 500,
   },
+  render: {
+    executable: "/Applications/Blender.app/Contents/MacOS/Blender",
+    renderRoot: "../tools/render",
+    tempParent: "tmp",
+    watchdogMs: 60000,
+  },
   conform: { standard: params },
 });
 
@@ -228,6 +234,12 @@ describe("the config file", () => {
       tempParent: "/base/dir/tmp",
       editPollMs: 500,
     });
+    expect(parsed.value.render).toEqual({
+      executable: "/Applications/Blender.app/Contents/MacOS/Blender",
+      renderRoot: "/base/tools/render",
+      tempParent: "/base/dir/tmp",
+      watchdogMs: 60000,
+    });
     expect(parsed.value.runtime?.port).toBe(8190);
     expect<unknown>(parsed.value.conform).toEqual({ standard: params });
   });
@@ -323,6 +335,30 @@ describe("the config file", () => {
       "an unknown runtime key",
       (c) => {
         c.runtime.platform = "linux";
+      },
+    ],
+    [
+      "a render section without a watchdog",
+      (c) => {
+        delete c.render.watchdogMs;
+      },
+    ],
+    [
+      "a zero render watchdog",
+      (c) => {
+        c.render.watchdogMs = 0;
+      },
+    ],
+    [
+      "a render pin override: the pin is the code's, not the config's",
+      (c) => {
+        c.render.sha256 = "0".repeat(64);
+      },
+    ],
+    [
+      "an empty render executable",
+      (c) => {
+        c.render.executable = "";
       },
     ],
     [

@@ -12,6 +12,7 @@ import { join, resolve } from "node:path";
 import type { PaletteSet } from "@panthea/assets";
 import {
   type AsepriteConfig,
+  BLENDER_PIN,
   createEditorAdapter,
   createPreviewSource,
   type EditorAdapter,
@@ -34,6 +35,7 @@ import {
   type StudioSession,
   type StudioStatus,
   studioPaths,
+  systemMemoryPressure,
   timerScheduler,
 } from "@panthea/assets/studio";
 import type { StudioConfig } from "./config";
@@ -73,6 +75,8 @@ export interface Deps {
   /** Whether a process id names a live process; status uses it to tell an open session from a crashed one. */
   readonly isAlive: (pid: number) => boolean;
   readonly sleep: (ms: number) => Promise<void>;
+  /** The system memory pressure level (4 is critical); at critical no engine is launched. */
+  readonly pressure: () => number | undefined;
   /** Progress and diagnostics: ids and statuses only, never prompts or output tails. */
   readonly log: (line: string) => void;
 }
@@ -99,6 +103,7 @@ export const defaultDeps = (log: (line: string) => void): Deps => ({
   schedule: timerScheduler,
   isAlive: processAlive,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  pressure: systemMemoryPressure,
   log,
 });
 
@@ -405,11 +410,40 @@ export class Studio {
         : { registryRoot: this.config.registryRoot }),
       deadlines: runtime.deadlines,
       pollMs: runtime.pollMs,
+      pressure: this.deps.pressure,
       ...(this.deps.profile === undefined
         ? {}
         : { profile: this.deps.profile }),
+      ...this.renderEngine(),
     });
     return this.runtime;
+  }
+
+  /**
+   * The render engine's config, from the owner's `render` section: the executable is theirs
+   * alone, never the webview's. Without an executable the engine is still registered, so render
+   * jobs are marked unavailable with guidance rather than failed.
+   */
+  private renderEngine(): Pick<RuntimeConfig, "render"> {
+    const { render, contentRoot } = this.config;
+    if (render === undefined) return {};
+    const renderRoot =
+      render.renderRoot ??
+      (contentRoot === undefined
+        ? undefined
+        : resolve(contentRoot, "..", "..", "tools", "render"));
+    if (renderRoot === undefined) return {};
+    return {
+      render: {
+        executable: render.executable ?? "",
+        pin: BLENDER_PIN,
+        renderRoot,
+        ...(render.tempParent === undefined
+          ? {}
+          : { tempParent: render.tempParent }),
+        watchdogMs: render.watchdogMs,
+      },
+    };
   }
 
   runtimeIfStarted(): StudioRuntime | undefined {
@@ -511,8 +545,23 @@ export class Studio {
         this.unfinished += result.results.filter(
           (r) => r.outcome === "failed" || r.outcome === "unavailable",
         ).length;
-        if (result.stopped === "empty" || result.stopped === "start-failed") {
+        if (
+          result.stopped === "empty" ||
+          result.stopped === "start-failed" ||
+          result.stopped === "unavailable"
+        ) {
+          // An unavailable engine marked only its own jobs; the others may still be queued.
           if (!queuedLeft()) return;
+          continue;
+        }
+        if (result.stopped === "deferred") {
+          // Memory pressure is critical: the jobs stay queued. Wait a poll and look again
+          // rather than spin; quit and release end the wait at the next look.
+          this.deps.log(
+            `drain deferred: ${result.guidance ?? "memory pressure is critical"}`,
+          );
+          await this.deps.sleep(pollMs);
+          if (this.stopping || this.releasing !== undefined) return;
           continue;
         }
         return;

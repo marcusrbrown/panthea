@@ -21,6 +21,16 @@ export interface EditorSettings {
   readonly editPollMs: number;
 }
 
+export interface RenderSettings {
+  /** Blender, from owner config only; it must live outside `artifactRoot`. Absent means render jobs are unavailable. */
+  readonly executable?: string;
+  /** `tools/render`: kits, profiles, camera and stamps. Defaults to `<contentRoot>/../../tools/render`. */
+  readonly renderRoot?: string;
+  readonly tempParent?: string;
+  /** A render with no new frame and no output for this long is stalled. */
+  readonly watchdogMs: number;
+}
+
 export interface StudioConfig {
   readonly studioRoot?: string;
   readonly contentRoot?: string;
@@ -28,6 +38,7 @@ export interface StudioConfig {
   readonly artifactRoot?: string;
   readonly runtime?: RuntimeSettings;
   readonly editor?: EditorSettings;
+  readonly render?: RenderSettings;
   readonly conform?: Readonly<Record<string, ConformParams>>;
 }
 
@@ -235,6 +246,32 @@ function parseEditor(
   return good(out);
 }
 
+function parseRender(
+  value: unknown,
+  path: string,
+  baseDir: string,
+): Parsed<RenderSettings> {
+  const top = record(value, path, [
+    "executable",
+    "renderRoot",
+    "tempParent",
+    "watchdogMs",
+  ]);
+  if (!top.ok) return top;
+  const watchdogMs = positive(top.value.watchdogMs, `${path}.watchdogMs`);
+  if (!watchdogMs.ok) return watchdogMs;
+  const out: { -readonly [K in keyof RenderSettings]: RenderSettings[K] } = {
+    watchdogMs: watchdogMs.value,
+  };
+  for (const key of ["executable", "renderRoot", "tempParent"] as const) {
+    if (top.value[key] === undefined) continue;
+    const p = pathValue(top.value[key], `${path}.${key}`, baseDir);
+    if (!p.ok) return p;
+    out[key] = p.value;
+  }
+  return good(out);
+}
+
 /** Parses config text; relative paths resolve against `baseDir`, the config file's directory. */
 export function parseConfig(
   text: string,
@@ -253,6 +290,7 @@ export function parseConfig(
     "artifactRoot",
     "runtime",
     "editor",
+    "render",
     "conform",
   ]);
   if (!top.ok) return top;
@@ -277,6 +315,11 @@ export function parseConfig(
     const editor = parseEditor(top.value.editor, "config.editor", baseDir);
     if (!editor.ok) return editor;
     config.editor = editor.value;
+  }
+  if (top.value.render !== undefined) {
+    const render = parseRender(top.value.render, "config.render", baseDir);
+    if (!render.ok) return render;
+    config.render = render.value;
   }
   if (top.value.conform !== undefined) {
     if (!isRecord(top.value.conform))
