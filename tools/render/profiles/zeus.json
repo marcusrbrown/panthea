@@ -315,56 +315,56 @@
           },
           {
             "z": 1.5,
-            "halfWidth": 0.32,
-            "halfDepth": 0.19,
+            "halfWidth": 0.375,
+            "halfDepth": 0.2,
             "centreY": 0.02,
             "fromDeg": -50,
-            "toDeg": 120,
+            "toDeg": 115,
             "fold": 0.03
           },
           {
             "z": 1.38,
-            "halfWidth": 0.335,
-            "halfDepth": 0.21,
+            "halfWidth": 0.38,
+            "halfDepth": 0.22,
             "centreY": 0.02,
             "fromDeg": -50,
-            "toDeg": 140,
+            "toDeg": 125,
             "fold": 0.05
           },
           {
             "z": 1.2,
-            "halfWidth": 0.33,
-            "halfDepth": 0.22,
+            "halfWidth": 0.375,
+            "halfDepth": 0.235,
             "centreY": 0.02,
             "fromDeg": -45,
-            "toDeg": 150,
+            "toDeg": 125,
             "fold": 0.07
           },
           {
             "z": 0.95,
-            "halfWidth": 0.32,
-            "halfDepth": 0.23,
+            "halfWidth": 0.365,
+            "halfDepth": 0.255,
             "centreY": 0.02,
             "fromDeg": -40,
-            "toDeg": 150,
+            "toDeg": 125,
             "fold": 0.08
           },
           {
             "z": 0.7,
-            "halfWidth": 0.31,
-            "halfDepth": 0.23,
+            "halfWidth": 0.345,
+            "halfDepth": 0.28,
             "centreY": 0.02,
             "fromDeg": -30,
-            "toDeg": 150,
+            "toDeg": 125,
             "fold": 0.08
           },
           {
             "z": 0.45,
-            "halfWidth": 0.3,
-            "halfDepth": 0.22,
+            "halfWidth": 0.33,
+            "halfDepth": 0.285,
             "centreY": 0.02,
             "fromDeg": -25,
-            "toDeg": 140,
+            "toDeg": 120,
             "fold": 0.06
           }
         ],
@@ -516,7 +516,7 @@
     },
     "hair": {
       "ramp": "marble",
-      "bias": 0.0,
+      "bias": -0.2,
       "bandShades": [2, 3, 3, 4, 4]
     },
     "beard": {
@@ -528,11 +528,6 @@
       "ramp": "lapis",
       "bias": 0.0,
       "bandShades": [1, 1, 2, 2, 3]
-    },
-    "fillet": {
-      "ramp": "pale-gold",
-      "bias": 0.0,
-      "bandShades": [3, 3, 4, 4, 4]
     }
   },
   "stampSet": "zeus",
@@ -789,7 +784,7 @@
     "strips": [
       {
         "name": "crown",
-        "folds": 0,
+        "folds": 3,
         "weights": [
           {
             "z": 1.9,
@@ -799,6 +794,15 @@
           }
         ],
         "rows": [
+          {
+            "z": 1.829,
+            "halfWidth": 0.002,
+            "halfDepth": 0.002,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
           {
             "z": 1.824,
             "halfWidth": 0.015,
@@ -810,77 +814,58 @@
           },
           {
             "z": 1.815,
-            "halfWidth": 0.048,
-            "halfDepth": 0.055,
+            "halfWidth": 0.052,
+            "halfDepth": 0.061,
             "centreY": 0.007,
             "fromDeg": 90,
             "toDeg": 450,
-            "fold": 0.0
+            "fold": 0.03
           },
           {
             "z": 1.795,
-            "halfWidth": 0.076,
-            "halfDepth": 0.066,
+            "halfWidth": 0.08,
+            "halfDepth": 0.072,
             "centreY": 0.007,
             "fromDeg": 90,
             "toDeg": 450,
-            "fold": 0.0
+            "fold": 0.084
           },
           {
             "z": 1.78,
-            "halfWidth": 0.09,
-            "halfDepth": 0.09,
+            "halfWidth": 0.094,
+            "halfDepth": 0.096,
             "centreY": 0.007,
             "fromDeg": 90,
             "toDeg": 450,
-            "fold": 0.0
+            "fold": 0.12
           },
           {
             "z": 1.76,
-            "halfWidth": 0.1,
-            "halfDepth": 0.108,
+            "halfWidth": 0.104,
+            "halfDepth": 0.114,
             "centreY": 0.007,
             "fromDeg": 90,
             "toDeg": 450,
-            "fold": 0.0
+            "fold": 0.12
           },
           {
             "z": 1.742,
-            "halfWidth": 0.096,
-            "halfDepth": 0.112,
+            "halfWidth": 0.1,
+            "halfDepth": 0.118,
             "centreY": 0.007,
             "fromDeg": 90,
             "toDeg": 450,
-            "fold": 0.0
+            "fold": 0.048
           }
         ],
         "creases": [
           {
-            "at": 0.12,
-            "width": 0.07,
-            "depth": 0.012
-          },
-          {
-            "at": 0.3,
-            "width": 0.07,
-            "depth": 0.012
-          },
-          {
             "at": 0.5,
-            "width": 0.07,
-            "depth": 0.012
-          },
-          {
-            "at": 0.7,
-            "width": 0.07,
-            "depth": 0.012
-          },
-          {
-            "at": 0.88,
-            "width": 0.07,
-            "depth": 0.012
+            "width": 1,
+            "depth": 0
           }
-        ]
+        ],
+        "columns": 9
       },
       {
         "name": "lock-l",
@@ -1015,17 +1000,17 @@
           {
             "at": 0.3,
             "width": 0.18,
-            "depth": 0.014
+            "depth": 0.008
           },
           {
             "at": 0.5,
             "width": 0.18,
-            "depth": 0.014
+            "depth": 0.008
           },
           {
             "at": 0.7,
             "width": 0.18,
-            "depth": 0.014
+            "depth": 0.008
           }
         ],
         "rows": [
@@ -1090,43 +1075,6 @@
             "centreY": 0.007,
             "fromDeg": 20,
             "toDeg": 160,
-            "fold": 0.0
-          }
-        ]
-      }
-    ]
-  },
-  "fillet": {
-    "role": "fillet",
-    "strips": [
-      {
-        "name": "band",
-        "folds": 0,
-        "weights": [
-          {
-            "z": 1.9,
-            "bones": {
-              "Head": 1
-            }
-          }
-        ],
-        "rows": [
-          {
-            "z": 1.782,
-            "halfWidth": 0.093,
-            "halfDepth": 0.094,
-            "centreY": 0.007,
-            "fromDeg": 90,
-            "toDeg": 450,
-            "fold": 0.0
-          },
-          {
-            "z": 1.759,
-            "halfWidth": 0.102,
-            "halfDepth": 0.111,
-            "centreY": 0.007,
-            "fromDeg": 90,
-            "toDeg": 450,
             "fold": 0.0
           }
         ]

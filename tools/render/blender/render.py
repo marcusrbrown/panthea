@@ -643,7 +643,7 @@ def seated_rows(rows: list, spec: dict) -> list:
     return out
 
 
-def build_himation(arm, himation: dict, columns: int = 14, name: str = "himation", part: str = "himation", seated: bool = False):
+def build_himation(arm, himation: dict, default_columns: int = 14, name: str = "himation", part: str = "himation", seated: bool = False):
     """An open draped mesh of strips of arcs (never a closed ring), each skinned to the bones its weight table names by
     height. The himation hangs over the character's left shoulder; the beard is the same construction on the head. Faces
     across a crease keep their own normals (a crisp facet); the rest of the strip shades smooth. One object, one part id,
@@ -653,6 +653,7 @@ def build_himation(arm, himation: dict, columns: int = 14, name: str = "himation
     index = 0
     for strip in himation["strips"]:
         creases = strip.get("creases", [])
+        columns = strip.get("columns", default_columns)
         strip_rows = seated_rows(strip["rows"], himation["seated"]) if seated else strip["rows"]
         rows = [[bm.verts.new(p) for p in arc_points(row, columns, strip["folds"], creases)] for row in strip_rows]
         for row, verts in zip(strip_rows, rows):
@@ -835,11 +836,10 @@ class Figure:
             beard = build_himation(self.arm, profile["beard"], 16, "beard_mesh", "beard")
             book.bind(beard, [profile["beard"]["role"]])
             self.render_objs.append(beard)
-        for key, name, columns in (("hair", "hair_mesh", 28), ("fillet", "fillet_mesh", 28)):  # built for the purpose, weighted to the head
-            if key in profile:
-                mesh = build_himation(self.arm, profile[key], columns, name, "hair")
-                book.bind(mesh, [profile[key]["role"]])
-                self.render_objs.append(mesh)
+        if "hair" in profile:  # built for the purpose, weighted to the head
+            hair = build_himation(self.arm, profile["hair"], 28, "hair_mesh", "hair")
+            book.bind(hair, [profile["hair"]["role"]])
+            self.render_objs.append(hair)
         self.neutral = {}
         for piece in profile["models"]["hair"]:
             self.render_objs.append(self.add_hair(staging, piece))

@@ -336,9 +336,10 @@ describe("the r7 construction of Zeus", () => {
 
   it("separates hair, cloth and cloak by value: the shade tables of the r7 brief", () => {
     const { materials } = parsed();
+    // Hair sits a little darker than the beard (bias -0.2, r9) so the crown's wedges fall in different bands.
     expect(materials.hair).toEqual({
       ramp: "marble",
-      bias: 0,
+      bias: -0.2,
       bandShades: [2, 3, 3, 4, 4],
     });
     expect(materials.beard).toEqual({
@@ -485,16 +486,6 @@ describe("the r7 construction of Zeus", () => {
 });
 
 describe("the r8 polish of Zeus", () => {
-  const rowsOf = (m: { strips: readonly { rows: readonly unknown[] }[] }) =>
-    m.strips.flatMap((s) => s.rows) as {
-      z: number;
-      halfWidth: number;
-      halfDepth: number;
-      centreY: number;
-      fromDeg: number;
-      toDeg: number;
-    }[];
-
   it("styles the hair as a mesh of its own: a crown with volume above a band, falling to a defined end at the nape", () => {
     const profile = parsed();
     // No kit hair any more: the kit's parted crown and long curtain left the profile (the files stay vendored for the probes).
@@ -505,9 +496,7 @@ describe("the r8 polish of Zeus", () => {
     const crown = profile.hair?.strips.find((s) => s.name === "crown");
     const nape = profile.hair?.strips.find((s) => s.name === "nape");
     expect(crown).toBeDefined();
-    // Strands: the crown is grooved, with a parting at the front (the middle of the ring, u 0.5) and four more grooves.
-    expect(crown?.creases?.length).toBeGreaterThanOrEqual(5);
-    expect(crown?.creases?.some((c) => c.at === 0.5)).toBe(true);
+    // Strands: the crown is a ring of flat wedges (see the crown test); the long hair behind carries its own grooves.
     // Short locks over the ears on both sides, ending above the jaw, and the long hair behind them.
     for (const name of ["lock-l", "lock-r"]) {
       const lock = profile.hair?.strips.find((s) => s.name === name);
@@ -536,22 +525,72 @@ describe("the r8 polish of Zeus", () => {
         expect(Object.keys(weight.bones)).toEqual(["Head"]);
   });
 
-  it("wears a thin pale-gold fillet across the crown", () => {
+  it("has no fillet: the band left the profile outright (mesh, material and parser field)", () => {
     const profile = parsed();
-    expect(profile.fillet?.role).toBe("fillet");
-    expect(profile.materials.fillet?.ramp).toBe("pale-gold");
-    const rows = rowsOf(profile.fillet ?? { strips: [] });
-    expect(rows).toHaveLength(2);
-    // A band 0.02 to 0.05 tall (about 1 to 2 px), wholly a ring, on the crown above the brow and the eyes.
-    const [top, bottom] = rows;
-    expect((top?.z ?? 0) - (bottom?.z ?? 0)).toBeGreaterThanOrEqual(0.02);
-    expect((top?.z ?? 0) - (bottom?.z ?? 0)).toBeLessThanOrEqual(0.05);
-    expect(bottom?.z).toBeGreaterThan(1.7);
-    expect(top?.z).toBeLessThan(1.8);
-    for (const row of rows) expect(row.toDeg - row.fromDeg).toBe(360);
-    // The band sits above the long hair's top row, which tucks under it.
-    const nape = profile.hair?.strips.find((s) => s.name === "nape");
-    expect(nape?.rows[0]?.z).toBeLessThanOrEqual(bottom?.z ?? 0);
+    expect("fillet" in profile).toBe(false);
+    expect(profile.materials.fillet).toBeUndefined();
+    expect(JSON.stringify(profile)).not.toMatch(/fillet/i);
+    // A profile that still carries one is refused, not read: there is no shim.
+    expect(
+      parseProfile(
+        edited((p) => {
+          p.fillet = { role: "hair", strips: p.hair.strips.slice(0, 1) };
+        }),
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("reads the crown as grouped locks, not a dome: a coarse ring of flat facets with the parting at the front, and a closed apex", () => {
+    const crown = parsed().hair?.strips.find((s) => s.name === "crown");
+    // Eight broad wedges (9 columns over the ring): about 45 degrees each, so two or three read at 1x from any side.
+    expect(crown?.columns).toBe(9);
+    // The wedges are flat-shaded (a crease over the whole arc with no depth), so each catches its own light or shadow.
+    const flat = (crown?.creases ?? []).filter((c) => c.width === 1);
+    expect(flat).toHaveLength(1);
+    expect(flat[0]?.depth).toBe(0);
+    // An odd lobe count puts a valley at the front (u 0.5) and a lobe either side, so neighbouring wedges tilt apart and
+    // read as separate locks: the lobes are at least 0.06 deep on the widest rows.
+    expect((crown?.folds ?? 0) % 2).toBe(1);
+    expect(
+      Math.max(...(crown?.rows ?? []).map((r) => r.fold)),
+    ).toBeGreaterThanOrEqual(0.06);
+    // Marble only, in the three tones of the table.
+    expect(new Set(parsed().materials.hair?.bandShades).size).toBe(3);
+    // The front of the ring (u 0.5) falls on a column boundary, so the parting is the line between two wedges: no groove
+    // cut toward the skull, which showed the scalp as a gold stripe.
+    const columns = crown?.columns ?? 0;
+    expect((0.5 * (columns - 1)) % 1).toBe(0);
+    for (const crease of crown?.creases ?? [])
+      expect(crease.depth).toBeLessThanOrEqual(0.0);
+    // The apex row is a pole, so the skull does not show through the top (the stray dark pixel on the crown).
+    const apex = crown?.rows[0];
+    expect(apex?.halfWidth).toBeLessThan(0.005);
+    expect(apex?.halfDepth).toBeLessThan(0.005);
+    expect(apex?.z).toBeGreaterThan(1.81);
+  });
+
+  it("keeps every groove clear of the skull: the long hair's creases are shallower than the cloth over the head", () => {
+    const strips = parsed().hair?.strips ?? [];
+    for (const strip of strips)
+      for (const crease of strip.creases ?? [])
+        expect(crease.depth).toBeLessThanOrEqual(0.01);
+  });
+
+  it("covers the arm: the mantle is wider over the left arm and ends clear of the exposed right arm, so no skin shows through it from behind", () => {
+    const mantle = parsed().himation?.strips.find((s) => s.name === "mantle");
+    const rows = mantle?.rows ?? [];
+    const at = (z: number) => rows.find((r) => r.z === z);
+    // Wide enough that the left arm (outer edge about 0.34 from the axis) lies inside the cloth: at the shoulder and the upper arm.
+    expect(at(1.38)?.halfWidth).toBeGreaterThanOrEqual(0.37);
+    expect(at(1.2)?.halfWidth).toBeGreaterThanOrEqual(0.36);
+    // The back edge stops at 128 degrees or less on the way down, behind the torso's corner, clear of the right arm (at 180).
+    for (const row of rows.filter((r) => r.z <= 1.38))
+      expect(row.toDeg).toBeLessThanOrEqual(128);
+    // Wider, never narrower: nothing shrank against r7.
+    expect(Math.min(...rows.map((r) => r.z))).toBe(0.45);
+    expect(Math.max(...rows.map((r) => r.halfWidth))).toBeGreaterThanOrEqual(
+      0.335,
+    );
   });
 
   it("hangs the beard down from the jaw: thin cheek roots and a chin mass whose front falls straight and then curves back", () => {
@@ -587,12 +626,12 @@ describe("the r8 polish of Zeus", () => {
     expect(seated?.flare).toBeLessThanOrEqual(1.3);
     expect(seated?.narrow).toBeGreaterThanOrEqual(0.6);
     expect(seated?.narrow).toBeLessThan(1);
-    // The standing mantle is not shrunk: its rows are as r7 left them.
+    // The standing mantle is not shrunk: it reaches as low as in r7 and is at least as wide.
     const mantle = parsed().himation?.strips.find((s) => s.name === "mantle");
     expect(Math.min(...(mantle?.rows ?? []).map((r) => r.z))).toBe(0.45);
-    expect(Math.max(...(mantle?.rows ?? []).map((r) => r.halfWidth))).toBe(
-      0.335,
-    );
+    expect(
+      Math.max(...(mantle?.rows ?? []).map((r) => r.halfWidth)),
+    ).toBeGreaterThanOrEqual(0.335);
   });
 
   it("breathes in idle: the chest lifts over the loop while the head, the pelvis and the legs stay, and walk and seated do not breathe", () => {
@@ -628,15 +667,16 @@ describe("the r8 polish of Zeus", () => {
     expect(aims?.thigh_r?.[0]).toBeGreaterThanOrEqual(-0.055);
   });
 
-  it("refuses malformed hair, fillet, seated mantle or breath", () => {
+  it("refuses malformed hair, seated mantle or breath", () => {
     const bad = (change: (p: Json) => void) => parseProfile(edited(change)).ok;
     expect(bad(() => {})).toBe(true);
     expect(bad((p) => (p.hair.role = "no-such-role"))).toBe(false);
-    expect(bad((p) => (p.fillet.role = "no-such-role"))).toBe(false);
     expect(bad((p) => (p.hair.strips[0].rows = []))).toBe(false);
     expect(bad((p) => (p.hair.strips[0].rows[0].toDeg = 900))).toBe(false);
+    expect(bad((p) => (p.hair.strips[0].columns = 2))).toBe(false);
+    expect(bad((p) => (p.hair.strips[0].columns = 200))).toBe(false);
+    expect(bad((p) => (p.hair.strips[0].columns = 4.5))).toBe(false);
     expect(bad((p) => delete p.hair)).toBe(true);
-    expect(bad((p) => delete p.fillet)).toBe(true);
     expect(bad((p) => (p.himation.seated.hemZ = "low"))).toBe(false);
     expect(bad((p) => (p.himation.seated.flare = 0.5))).toBe(false);
     expect(bad((p) => (p.himation.seated.narrow = 1.5))).toBe(false);
@@ -647,16 +687,13 @@ describe("the r8 polish of Zeus", () => {
     expect(bad((p) => (p.pose.idle.breath = {}))).toBe(false);
   });
 
-  it("hashes the new fields: a hair row, the fillet, the seated mantle and the breath each change the profile", () => {
+  it("hashes the new fields: a hair row, the seated mantle and the breath each change the profile", () => {
     const base = profileHash(parsed());
     const changed = (change: (p: Json) => void) =>
       profileHash(parsed(edited(change)));
     expect(
       changed((p) => (p.hair.strips[0].rows[0].halfWidth += 0.01)),
     ).not.toBe(base);
-    expect(changed((p) => (p.fillet.strips[0].rows[0].z += 0.01))).not.toBe(
-      base,
-    );
     expect(changed((p) => (p.himation.seated.hemZ += 0.01))).not.toBe(base);
     expect(changed((p) => (p.pose.idle.breath.spine_03[0] += 0.5))).not.toBe(
       base,
