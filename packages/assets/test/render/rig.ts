@@ -16,6 +16,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "../../src/hash";
+import { type PaletteSet, paletteDigest } from "../../src/palette";
 import { type Clock, RENDER_ENGINE } from "../../src/render/engine";
 import {
   type Behavior as SdBehavior,
@@ -259,6 +260,7 @@ export function submitRender(
   rig: Rig,
   id: string,
   slots: readonly SlotInput[] = [{ state: "idle", direction: "west" }],
+  options: { pivot?: { x: number; y: number } } = {},
 ): string[] {
   const built = newRequestRecord(
     content,
@@ -267,7 +269,10 @@ export function submitRender(
       subject: "zeus",
       kind: "sprite",
       slots,
-      render: { palette: "greek-retro", pivot: { x: 56, y: 78 } },
+      render: {
+        palette: "greek-retro",
+        pivot: options.pivot ?? { x: 56, y: 78 },
+      },
     },
     refuseDraw,
     RENDER_ENGINE,
@@ -395,4 +400,85 @@ function repin(
       if (ref.kit === kit && ref.path === file) ref.sha256 = sha;
     writeFileSync(profilePath, JSON.stringify(profile, null, 2));
   }
+}
+
+// --- Rendered assets through pack, approve and publish -------------------------------------------------
+
+/** Every palette of the content with `greek-retro` approved against its own digest: what a fixture needs to approve and publish. */
+export function approvedPalettes(): PaletteSet {
+  const retro = content.palettes.get("greek-retro");
+  if (retro === undefined)
+    throw new Error("no greek-retro palette in the content");
+  return new Map([
+    ...content.palettes,
+    [
+      "greek-retro",
+      {
+        ...retro,
+        approval: { status: "approved", digest: paletteDigest(retro) },
+      },
+    ],
+  ]);
+}
+
+/** The palettes as the content loaded them: `greek-retro` is a draft. */
+export const draftPalettes = (): PaletteSet => content.palettes;
+
+export const registryOf = (rig: Rig): string => {
+  const root = join(rig.base, "registry");
+  mkdirSync(root, { recursive: true });
+  return root;
+};
+
+/** Renders a request through the runtime, reads each job back as a rendered candidate and opens a working set on it. Returns the job ids. */
+export async function renderCandidates(
+  rig: Rig,
+  requestId: string,
+  slots: readonly SlotInput[],
+  setId?: string,
+  options: { pivot?: { x: number; y: number } } = {},
+): Promise<string[]> {
+  const ids = submitRender(rig, requestId, slots, options);
+  const result = await drain(rig);
+  for (const entry of result.results)
+    if (entry.outcome !== "rendered")
+      throw new Error(`${entry.jobId}: ${entry.outcome}`);
+  for (const id of ids) {
+    const conformed = rig.session.conformRendered(id, content);
+    if (!conformed.ok) throw new Error(`conform ${id}: ${conformed.message}`);
+  }
+  if (setId !== undefined) {
+    const opened = rig.session.openWorkingSet(setId, requestId, content);
+    if (!opened.ok) throw new Error(`open set: ${opened.message}`);
+  }
+  return ids;
+}
+
+export function pickAll(rig: Rig, setId: string, ids: readonly string[]): void {
+  for (const id of ids) {
+    const picked = rig.session.pick(setId, id);
+    if (!picked.ok) throw new Error(`pick ${id}: ${picked.message}`);
+  }
+}
+
+export const PACK_INPUT = {
+  id: "zeus-retro-pack",
+  assetId: "zeus-retro",
+  styleTag: "retro",
+  footprint: { w: 1, h: 1 },
+  originalWork: { licence: "MIT", attribution: "the owner" },
+} as const;
+
+export function packSet(
+  rig: Rig,
+  setId: string,
+  palettes: PaletteSet = approvedPalettes(),
+  over: Partial<typeof PACK_INPUT> = {},
+) {
+  return rig.session.pack(
+    { ...PACK_INPUT, ...over, workingSetId: setId },
+    content,
+    palettes,
+    registryOf(rig),
+  );
 }

@@ -1049,6 +1049,7 @@ function ingest(
         cell: hash,
         cellPixels: cellPixelHash(cell.image),
         extentPx: done.extentPx[i],
+        locators: frames[i]?.locators ?? {},
       });
     }
     const slotHash = slotRecipeHash(prepared.revision.hash, {
@@ -1062,12 +1063,15 @@ function ingest(
         canonicalJson({
           schemaVersion: 1,
           jobId: slot.recipe.id,
+          slotKey: slot.record.source.slotKey,
           slot: {
             state: slot.recipe.state,
             clip: slot.clip,
             facing: slot.recipe.facing,
             frames: slot.recipe.frames,
             seed: slot.seed,
+            loop:
+              prepared.recipe.profile.clips[slot.recipe.state]?.loop ?? false,
           },
           revisionRecipeHash: prepared.revision.hash,
           revision: prepared.revision.fields,

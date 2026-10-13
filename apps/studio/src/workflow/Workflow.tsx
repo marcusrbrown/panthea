@@ -51,6 +51,7 @@ import {
   previewForAsset,
   readExistingSheet,
   releaseWriterLock,
+  renderSubjectsOf,
   reopenEditor,
   reopenWorkingSetEdit,
   requestJobCount,
@@ -583,6 +584,11 @@ export function WorkflowView({
   const [batch, setBatch] = useState(1);
   const [styleNote, setStyleNote] = useState("");
   const [seedText, setSeedText] = useState("");
+  // A recipe request to the render engine: the palette and the declared pivot.
+  const [recipe, setRecipe] = useState(false);
+  const [recipePalette, setRecipePalette] = useState("greek-retro");
+  const [pivotX, setPivotX] = useState("56");
+  const [pivotY, setPivotY] = useState("78");
   const [requestId, setRequestId] = useState("");
   const [resolvedArgs, setResolvedArgs] = useState<Record<string, unknown>>();
   /** The form text the resolve on screen was made from. */
@@ -726,9 +732,25 @@ export function WorkflowView({
     if (outcome.kind === "released") setMessage(outcome.message);
   };
 
+  // The recipe request is offered only for a subject the host says has a render profile.
+  const renderable =
+    kind === "sprite" &&
+    renderSubjectsOf(statusData).includes(subjectSlug(subject));
+  const recipeForm =
+    recipe && renderable
+      ? { palette: recipePalette, pivotX, pivotY }
+      : undefined;
   const formArgs = () =>
     buildRequestArgs(
-      { subject, kind, slots, batch, styleNote, seedText },
+      {
+        subject,
+        kind,
+        slots,
+        batch,
+        styleNote,
+        seedText,
+        ...(recipeForm === undefined ? {} : { recipe: recipeForm }),
+      },
       requestId || `${subjectSlug(subject)}-${crypto.randomUUID().slice(0, 8)}`,
     );
 
@@ -742,6 +764,7 @@ export function WorkflowView({
     batch,
     styleNote,
     seed: seedText,
+    ...(recipeForm === undefined ? {} : { recipe: recipeForm }),
   });
   const latestResolve = useRef(createLatest());
   const latestSheet = useRef(createLatest());
@@ -763,7 +786,7 @@ export function WorkflowView({
           // A seed the host drew is held to the same range as one typed.
           const drawn = checkResolvedSeed(
             object(object(result).request).seed,
-            requestJobCount(slots, kind, batch),
+            requestJobCount(slots, kind, recipeForm === undefined ? batch : 1),
           );
           if (drawn !== undefined) {
             setResolvedArgs(undefined);
@@ -797,7 +820,9 @@ export function WorkflowView({
     if (!generateReady(resolvedFrom, formSignature.current)) return;
     const args = { ...resolvedArgs };
     const resolved = object(resolvedRequest);
-    if (typeof resolved.seed === "number") args.seed = resolved.seed;
+    // A recipe request has the fixed seed 0 and takes none.
+    if (typeof resolved.seed === "number" && args.palette === undefined)
+      args.seed = resolved.seed;
     const result = await call("generate", args, false, false, true);
     if (result !== undefined) {
       dispatch?.({ type: "resolution", value: undefined });
@@ -1368,57 +1393,128 @@ export function WorkflowView({
                     }}
                   />
                 </label>
-                <label className="workflow-field">
-                  Batch
-                  <input
-                    type="number"
-                    className="workflow-control"
-                    min={1}
-                    step={1}
-                    value={batch}
-                    onChange={(event) => {
-                      setBatch(Number(event.target.value));
-                      setRequestId("");
-                      dispatch?.({ type: "resolution", value: undefined });
-                      setResolvedArgs(undefined);
-                    }}
-                  />
-                </label>
-                <label className="workflow-field">
-                  Base seed{" "}
-                  <span className="field-hint">
-                    digits only, 0 to 4294967295; empty draws one
-                  </span>
-                  <input
-                    className="workflow-control"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="draw one"
-                    value={seedText}
-                    onChange={(event) => {
-                      setSeedText(event.target.value);
-                      setRequestId("");
-                      dispatch?.({ type: "resolution", value: undefined });
-                      setResolvedArgs(undefined);
-                      setResolvedFrom(undefined);
-                    }}
-                  />
-                </label>
-                <label className="workflow-field">
-                  Style note <span className="field-hint">optional</span>
-                  <textarea
-                    className="workflow-control"
-                    rows={2}
-                    value={styleNote}
-                    onChange={(event) => {
-                      setStyleNote(event.target.value);
-                      setRequestId("");
-                      dispatch?.({ type: "resolution", value: undefined });
-                      setResolvedArgs(undefined);
-                    }}
-                  />
-                </label>
+                {renderable && (
+                  <label className="workflow-field">
+                    <span>
+                      <input
+                        type="checkbox"
+                        checked={recipe}
+                        onChange={(event) => {
+                          setRecipe(event.target.checked);
+                          setRequestId("");
+                          dispatch?.({ type: "resolution", value: undefined });
+                          setResolvedArgs(undefined);
+                          setResolvedFrom(undefined);
+                        }}
+                      />{" "}
+                      Render recipe{" "}
+                      <span className="field-hint">
+                        Blender, from the subject&apos;s render profile
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {recipeForm !== undefined ? (
+                  <>
+                    <label className="workflow-field">
+                      Palette
+                      <input
+                        className="workflow-control"
+                        spellCheck={false}
+                        value={recipePalette}
+                        onChange={(event) => {
+                          setRecipePalette(event.target.value);
+                          setRequestId("");
+                          dispatch?.({ type: "resolution", value: undefined });
+                          setResolvedArgs(undefined);
+                        }}
+                      />
+                    </label>
+                    <label className="workflow-field">
+                      Pivot x{" "}
+                      <span className="field-hint">pixels in the cell</span>
+                      <input
+                        className="workflow-control"
+                        inputMode="numeric"
+                        value={pivotX}
+                        onChange={(event) => {
+                          setPivotX(event.target.value);
+                          setRequestId("");
+                          dispatch?.({ type: "resolution", value: undefined });
+                          setResolvedArgs(undefined);
+                        }}
+                      />
+                    </label>
+                    <label className="workflow-field">
+                      Pivot y
+                      <input
+                        className="workflow-control"
+                        inputMode="numeric"
+                        value={pivotY}
+                        onChange={(event) => {
+                          setPivotY(event.target.value);
+                          setRequestId("");
+                          dispatch?.({ type: "resolution", value: undefined });
+                          setResolvedArgs(undefined);
+                        }}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <>
+                    <label className="workflow-field">
+                      Batch
+                      <input
+                        type="number"
+                        className="workflow-control"
+                        min={1}
+                        step={1}
+                        value={batch}
+                        onChange={(event) => {
+                          setBatch(Number(event.target.value));
+                          setRequestId("");
+                          dispatch?.({ type: "resolution", value: undefined });
+                          setResolvedArgs(undefined);
+                        }}
+                      />
+                    </label>
+                    <label className="workflow-field">
+                      Base seed{" "}
+                      <span className="field-hint">
+                        digits only, 0 to 4294967295; empty draws one
+                      </span>
+                      <input
+                        className="workflow-control"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder="draw one"
+                        value={seedText}
+                        onChange={(event) => {
+                          setSeedText(event.target.value);
+                          setRequestId("");
+                          dispatch?.({ type: "resolution", value: undefined });
+                          setResolvedArgs(undefined);
+                          setResolvedFrom(undefined);
+                        }}
+                      />
+                    </label>
+                    <label className="workflow-field">
+                      Style note <span className="field-hint">optional</span>
+                      <textarea
+                        className="workflow-control"
+                        rows={2}
+                        value={styleNote}
+                        onChange={(event) => {
+                          setStyleNote(event.target.value);
+                          setRequestId("");
+                          dispatch?.({ type: "resolution", value: undefined });
+                          setResolvedArgs(undefined);
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
                 <button type="submit" disabled={!readsEnabled}>
                   Resolve request
                 </button>

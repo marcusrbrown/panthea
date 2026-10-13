@@ -6,6 +6,7 @@
 //   <root>/requests/<id>.json
 //   <root>/jobs/<id>.json
 //   <root>/candidates/<jobId>.json
+//   <root>/rendered-candidates/<jobId>.json   a render job read back through its role manifest
 //   <root>/working-sets/<id>.json
 //   <root>/edits/<id>.json
 //   <root>/edits/<id>/{sheet.png,sheet.json,workspace.aseprite}
@@ -59,6 +60,7 @@ export const studioPaths = (root: string) => ({
   requests: join(root, "requests"),
   jobs: join(root, "jobs"),
   candidates: join(root, "candidates"),
+  renderedCandidates: join(root, "rendered-candidates"),
   workingSets: join(root, "working-sets"),
   edits: join(root, "edits"),
   assets: join(root, "assets"),

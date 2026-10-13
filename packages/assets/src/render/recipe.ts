@@ -11,7 +11,11 @@
 // A hash covers decoded inputs, never raw-frame bytes: Blender writes a date and the render time
 // into every PNG, so frame identity is decoded pixels (U1).
 
-import { canonicalJson, type Sha256 } from "@panthea/contracts";
+import {
+  canonicalJson,
+  type RenderedRevisionRecipe,
+  type Sha256,
+} from "@panthea/contracts";
 import { sha256Hex } from "../hash";
 import type { PostStepSettings, StampLocators } from "./post";
 import type { KitFileRef } from "./profile";
@@ -200,4 +204,32 @@ export function kitHash(files: readonly KitFileRef[]): Sha256 {
 /** Hash of a stamp set: its manifest entry, which lists every variant file with its sha256 and anchor. */
 export function stampSetHash(set: StampSet): Sha256 {
   return sha256Hex(text(set));
+}
+
+/** The revision recipe hash of a recorded field set, as `revisionRecipe` computes it. */
+export function revisionHashOf(fields: RevisionFields): Sha256 {
+  return sha256Hex(text(fields));
+}
+
+/** The contract's recorded revision recipe, from a revision's fields and its profile id. */
+export function renderedRevisionOf(
+  fields: RevisionFields,
+  profileId: string,
+): RenderedRevisionRecipe {
+  return {
+    hash: revisionHashOf(fields),
+    profile: { id: profileId, hash: fields.profile },
+    camera: fields.camera,
+    palette: { id: fields.palette.id, digest: fields.palette.digest },
+    pivot: { x: fields.pivot.x, y: fields.pivot.y },
+    script: fields.script,
+    postStep: fields.postStep.version,
+    blender: {
+      version: fields.blender.version,
+      build: fields.blender.buildHash,
+      sha256: fields.blender.binarySha256,
+    },
+    kit: fields.kit,
+    stamps: fields.stamps,
+  };
 }

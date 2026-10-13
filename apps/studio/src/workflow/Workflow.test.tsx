@@ -471,6 +471,26 @@ describe("WorkflowView controls", () => {
     expect(html).not.toContain("No conform set configured");
   });
 
+  test("the render recipe is offered only for a subject the host says has a render profile", () => {
+    const offered = render(
+      stateFor(undefined, { status: { renderSubjects: ["zeus"] } }),
+    );
+    expect(offered).toContain("Render recipe");
+    // Control: the same form with no render subject, or another subject's, offers it nowhere.
+    expect(
+      render(stateFor(undefined, { status: { renderSubjects: [] } })),
+    ).not.toContain("Render recipe");
+    expect(
+      render(stateFor(undefined, { status: { renderSubjects: ["hera"] } })),
+    ).not.toContain("Render recipe");
+    expect(
+      render(stateFor(undefined, { status: { conformSets: [] } })),
+    ).not.toContain("Render recipe");
+    // The image request's own fields are still there until the recipe is chosen.
+    expect(offered).toContain("Base seed");
+    expect(offered).toContain("Batch");
+  });
+
   test("read-only mode keeps Resolve and existing View sheet enabled", () => {
     const html = render(
       stateFor(undefined, {

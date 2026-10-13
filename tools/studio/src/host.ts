@@ -424,15 +424,27 @@ export class Studio {
    * alone, never the webview's. Without an executable the engine is still registered, so render
    * jobs are marked unavailable with guidance rather than failed.
    */
-  private renderEngine(): Pick<RuntimeConfig, "render"> {
+  private renderRootOf(): string | undefined {
     const { render, contentRoot } = this.config;
-    if (render === undefined) return {};
-    const renderRoot =
+    if (render === undefined) return undefined;
+    return (
       render.renderRoot ??
       (contentRoot === undefined
         ? undefined
-        : resolve(contentRoot, "..", "..", "tools", "render"));
-    if (renderRoot === undefined) return {};
+        : resolve(contentRoot, "..", "..", "tools", "render"))
+    );
+  }
+
+  /** Where the committed render inputs are, for the publish-time render audit of a rendered asset. */
+  renderAudit(): { readonly renderRoot: string } | undefined {
+    const renderRoot = this.renderRootOf();
+    return renderRoot === undefined ? undefined : { renderRoot };
+  }
+
+  private renderEngine(): Pick<RuntimeConfig, "render"> {
+    const { render } = this.config;
+    const renderRoot = this.renderRootOf();
+    if (render === undefined || renderRoot === undefined) return {};
     return {
       render: {
         executable: render.executable ?? "",

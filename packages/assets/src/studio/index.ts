@@ -79,7 +79,12 @@ export {
   timerScheduler,
   type WatchFs,
 } from "./preview-source";
-export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
+export {
+  PROVIDER,
+  RENDER_PROVIDER,
+  SELECTED_PROFILE,
+  type SelectedProfile,
+} from "./provider";
 export type {
   ApproveOptions,
   AssetFailure,

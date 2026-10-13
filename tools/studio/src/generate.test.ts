@@ -541,3 +541,153 @@ describe("a session keeps answering while a generation runs", () => {
 
 void alive;
 void sleep;
+
+const omitUndefined = (value: Record<string, unknown>) =>
+  Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined));
+
+describe("a recipe request through the CLI generate", () => {
+  const WALK_WEST = [{ state: "walk", direction: "west" }];
+  const recipe = {
+    id: "zeus-retro-walk",
+    subject: "zeus",
+    kind: "sprite",
+    slots: WALK_WEST,
+    palette: "greek-retro",
+    pivot: { x: 56, y: 78 },
+  };
+
+  test("enqueues render jobs at batch 1 and seed 0, whose provider is the render engine", async () => {
+    const rig = await runtimeRig();
+
+    // No render engine is configured, so the job is unavailable with guidance: it was queued and
+    // never run, which is all this checks.
+    const { outcome } = await run(rig.config, "generate", recipe, rig.deps);
+
+    const status = readStudioStatus(rig.root);
+    expect(status.requests[0]).toMatchObject({
+      id: "zeus-retro-walk",
+      nextOrdinal: 1,
+      request: {
+        batch: 1,
+        seed: 0,
+        recipe: {
+          profile: "zeus",
+          palette: "greek-retro",
+          pivot: { x: 56, y: 78 },
+        },
+      },
+    });
+    const job = status.jobs[0];
+    expect(job?.job.provider.id).toBe("blender-eevee");
+    expect(job?.job.request).toMatchObject({ batch: 1, seed: 0 });
+    expect(job?.source).toMatchObject({ slotKey: "walk/west", ordinal: 0 });
+    expect(job?.job.status).toBe("unavailable");
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error.code).toBe("generation-failed");
+  });
+
+  test("conform routes a render job to the rendered candidate, which takes no set or params, and refuses one that has not rendered", async () => {
+    const rig = await runtimeRig();
+    await run(rig.config, "generate", recipe, rig.deps);
+    const id = "zeus-retro-walk-0000";
+
+    // Neither a set nor params: an image job would be invalid-arguments, a render job is read back.
+    const bare = await run(rig.config, "conform", { jobId: id }, rig.deps);
+    expect(bare.outcome.ok).toBe(false);
+    if (!bare.outcome.ok) expect(bare.outcome.error.code).toBe("wrong-state");
+    expect(JSON.stringify(bare.outcome)).toMatch(/not a succeeded render job/);
+    // The app always names a set; it is not used for a render job.
+    const named = await run(
+      rig.config,
+      "conform",
+      { jobId: id, set: "nope" },
+      rig.deps,
+    );
+    expect(JSON.stringify(named.outcome)).toMatch(
+      /not a succeeded render job|invalid-config/,
+    );
+    // Control: an image job with neither is still invalid-arguments.
+    const image = await run(
+      rig.config,
+      "conform",
+      { jobId: "someone-0000" },
+      rig.deps,
+    );
+    expect(image.outcome.ok === false && image.outcome.error.code).toBe(
+      "invalid-arguments",
+    );
+  });
+
+  test("resolve shows the recipe request and the god-tall spec without opening the store", async () => {
+    const rig = await runtimeRig();
+    const { outcome } = await run(rig.config, "resolve", recipe, rig.deps);
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        id: "zeus-retro-walk",
+        request: { batch: 1, seed: 0, recipe: { profile: "zeus" } },
+        spec: {
+          cell: { id: "god-tall", w: 112, h: 96 },
+          pivot: { x: 56, y: 78 },
+        },
+      },
+    });
+  });
+
+  const refused: [string, Record<string, unknown>, RegExp][] = [
+    [
+      "a palette without a pivot",
+      { pivot: undefined },
+      /both --palette and --pivot/,
+    ],
+    [
+      "a pivot without a palette",
+      { palette: undefined },
+      /both --palette and --pivot/,
+    ],
+    ["a batch", { batch: 2 }, /takes no batch/],
+    ["a seed", { seed: 5 }, /takes no seed/],
+    ["a style note", { styleNote: "x" }, /takes no styleNote/],
+    [
+      "a pivot that is not a point",
+      { pivot: { x: -1, y: 4 } },
+      /non-negative integer/,
+    ],
+    ["a portrait", { kind: "portrait" }, /only a sprite is rendered/],
+  ];
+  for (const [name, change, message] of refused)
+    test(`refuses ${name}, and stores nothing`, async () => {
+      const rig = await runtimeRig();
+      const { outcome } = await run(
+        rig.config,
+        "resolve",
+        omitUndefined({ ...recipe, ...change }),
+        rig.deps,
+      );
+      expect(outcome.ok).toBe(false);
+      expect(JSON.stringify(outcome)).toMatch(message);
+      expect(readStudioStatus(rig.root).requests).toEqual([]);
+    });
+
+  test("an image request is unchanged: the same arguments without a palette and pivot build an image request", async () => {
+    const rig = await runtimeRig();
+    const { outcome } = await run(
+      rig.config,
+      "resolve",
+      {
+        id: "zeus-idle",
+        subject: "zeus",
+        kind: "sprite",
+        slots: SOUTH,
+        batch: 1,
+        seed: 3,
+      },
+      rig.deps,
+    );
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: { request: { batch: 1, seed: 3 }, spec: { cell: { id: "god" } } },
+    });
+    expect(JSON.stringify(outcome)).not.toMatch(/recipe/);
+  });
+});
