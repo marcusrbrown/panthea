@@ -450,6 +450,58 @@ describe("glTF closure", () => {
     ).toContain("outside the kit");
   });
 
+  describe("uris that name a file outside the kit (U08, ADR-0012 source gate)", () => {
+    /** Body.bin is listed in the manifest, so only the uri shape can cause a refusal. */
+    const closureMessages = (
+      role: "buffers" | "images",
+      uri: string,
+    ): string => {
+      const { root } = fixture([
+        bodyKit({
+          files: {
+            "Body.gltf": {
+              content: gltf({ [role]: [{ uri }] }),
+              referencedBy: ["zeus"],
+            },
+            "Body.bin": { content: "BIN!", referencedBy: ["zeus"] },
+          },
+        }),
+      ]);
+      return messages(checkKits(root, [ZEUS]).problems);
+    };
+
+    /** The reason matters: a refusal for "not in kits.json" would pass by accident. */
+    const PATH = "is not a kit-relative path";
+    const SCHEME = "is an external uri";
+    it.each([
+      ["/Body.bin", PATH],
+      ["%2FBody.bin", PATH],
+      ["//host/Body.bin", PATH],
+      ["C:\\Body.bin", PATH],
+      ["%5CBody.bin", PATH],
+      ["Sub%5CBody.bin", PATH],
+      ["file:///Body.bin", SCHEME],
+      ["file%3A%2F%2F%2FBody.bin", SCHEME],
+    ])(
+      "refuses the buffer uri %p although Body.bin is listed",
+      (uri, reason) => {
+        const text = closureMessages("buffers", uri);
+        expect(text).toContain("buffers[0].uri");
+        expect(text).toContain(reason);
+      },
+    );
+
+    it("refuses an absolute image uri although its basename is on the skip list", () => {
+      const text = closureMessages("images", "/Tex.png");
+      expect(text).toContain("images[0].uri");
+      expect(text).toContain(PATH);
+    });
+
+    it("passes the relative uri against the same manifest (positive control)", () => {
+      expect(closureMessages("buffers", "Body.bin")).toBe("");
+    });
+  });
+
   it("accepts embedded data uris, and a .glb needs nothing", () => {
     const { root } = fixture([
       {

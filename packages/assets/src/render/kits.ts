@@ -278,6 +278,9 @@ function filesUnder(dir: string): string[] {
 
 type GltfUriRole = "buffers" | "images";
 
+/** A uri scheme of two or more characters; a single letter is a drive letter, handled apart. */
+const SCHEME_URI = /^[a-z][a-z0-9+.-]+:/i;
+
 function* gltfUris(
   gltf: Record<string, unknown>,
 ): Generator<{ role: GltfUriRole; where: string; uri: string }> {
@@ -314,18 +317,34 @@ function gltfClosureProblems(
   const problems: KitProblem[] = [];
   for (const { role, where, uri } of gltfUris(parsed)) {
     if (uri.startsWith("data:")) continue;
-    if (/^[a-z][a-z0-9+.-]*:/i.test(uri)) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(uri);
+    } catch {
+      problems.push({ file, message: `${where} "${uri}" is not a valid uri` });
+      continue;
+    }
+    // Judged on the decoded form, before any join: posix.join/normalize would otherwise strip a
+    // leading slash and an absolute path would read as kit-relative.
+    if (decoded.includes("\\") || /^[a-z]:/i.test(decoded)) {
+      problems.push({
+        file,
+        message: `${where} "${uri}" is not a kit-relative path (backslash or drive letter); only kit files and embedded data are read`,
+      });
+      continue;
+    }
+    if (SCHEME_URI.test(uri) || SCHEME_URI.test(decoded)) {
       problems.push({
         file,
         message: `${where} "${uri}" is an external uri; only kit files and embedded data are read`,
       });
       continue;
     }
-    let decoded: string;
-    try {
-      decoded = decodeURIComponent(uri);
-    } catch {
-      problems.push({ file, message: `${where} "${uri}" is not a valid uri` });
+    if (decoded.startsWith("/")) {
+      problems.push({
+        file,
+        message: `${where} "${uri}" is not a kit-relative path (absolute); only kit files and embedded data are read`,
+      });
       continue;
     }
     const resolved = posix.normalize(
