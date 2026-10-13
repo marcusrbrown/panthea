@@ -30,7 +30,9 @@ import {
   checkKits,
   checkLicenceBoundary,
   checkStamps,
+  loadRenderInputs,
   type ProfileKitRefs,
+  profileKitRefs,
 } from "@panthea/assets/render";
 import {
   type GodProfile,
@@ -207,18 +209,36 @@ function validateRenderMatrix(
 export interface AssetValidationOptions {
   /** The repository root. When given, the render kit and licence-boundary checks run against it. */
   readonly repoRoot?: string;
-  /** The kit files each render profile references; empty until the profiles exist (U6). */
+  /**
+   * The kit files each render profile references. Omitted, the profiles under tools/render/profiles
+   * are loaded and checked (with the camera) and a subject's render.profile must name one. Given,
+   * it stands in for them (fixtures), and neither the camera nor the subject check runs.
+   */
   readonly kitProfiles?: readonly ProfileKitRefs[];
 }
 
-/** Kit library and licence boundary. Diagnostics name paths relative to the repository root. */
+/**
+ * Camera, model profiles, kit library and licence boundary. Diagnostics name paths relative to
+ * the repository root. Returns the ids of the profiles that loaded, or undefined when the caller
+ * supplied the profile refs itself.
+ */
 function validateRender(
   repoRoot: string,
-  profiles: readonly ProfileKitRefs[],
+  suppliedProfiles: readonly ProfileKitRefs[] | undefined,
   report: (file: string, message: string) => void,
-): void {
-  for (const problem of checkKits(join(repoRoot, "tools", "render"), profiles)
-    .problems) {
+): ReadonlySet<string> | undefined {
+  const renderRoot = join(repoRoot, "tools", "render");
+  let profiles = suppliedProfiles;
+  let profileIds: ReadonlySet<string> | undefined;
+  if (profiles === undefined) {
+    const inputs = loadRenderInputs(renderRoot);
+    for (const problem of inputs.problems) {
+      report(`tools/render/${problem.file}`, problem.message);
+    }
+    profiles = inputs.profiles.map(profileKitRefs);
+    profileIds = new Set(inputs.profileIds);
+  }
+  for (const problem of checkKits(renderRoot, profiles).problems) {
     report(`tools/render/${problem.file}`, problem.message);
   }
   for (const problem of checkStamps(join(repoRoot, "tools", "render"))
@@ -228,6 +248,7 @@ function validateRender(
   for (const violation of checkLicenceBoundary(repoRoot)) {
     report(violation.file, `line ${violation.line}: ${violation.message}`);
   }
+  return profileIds;
 }
 
 export function validateAssets(
@@ -237,9 +258,10 @@ export function validateAssets(
   const diagnostics: AssetDiagnostic[] = [];
   const report = (file: string, message: string) =>
     diagnostics.push({ file, message });
-  if (options.repoRoot !== undefined) {
-    validateRender(options.repoRoot, options.kitProfiles ?? [], report);
-  }
+  const renderProfileIds =
+    options.repoRoot === undefined
+      ? undefined
+      : validateRender(options.repoRoot, options.kitProfiles, report);
   const done = (): AssetValidation => ({
     ok: diagnostics.length === 0,
     diagnostics,
@@ -350,6 +372,15 @@ export function validateAssets(
     if (visual.render === undefined) continue;
     const { matrix } = visual.render;
     const subjectFile = subjectFiles.get(visual.godId) ?? "assets/subjects";
+    if (
+      renderProfileIds !== undefined &&
+      !renderProfileIds.has(visual.render.profile)
+    ) {
+      report(
+        subjectFile,
+        `render.profile "${visual.render.profile}" names no model profile under tools/render/profiles (${[...renderProfileIds].join(", ") || "none"})`,
+      );
+    }
     let honoured = true;
     validateRenderMatrix(matrix, vocabulary, (message) => {
       honoured = false;

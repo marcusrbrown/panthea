@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "projection": "orthographic",
+  "rotationDeg": [60, 0, 45],
+  "pixelsPerUnit": 29.0788,
+  "supersample": 4,
+  "distance": 20,
+  "clip": [0.1, 100],
+  "depthRange": [18, 22],
+  "cell": {
+    "id": "god-tall",
+    "width": 112,
+    "height": 96,
+    "pivot": [56, 78]
+  },
+  "light": {
+    "sunStrength": 3.6,
+    "ambientStrength": 0.32,
+    "keyScreen": [-0.62, 0.55, 0.56]
+  },
+  "shading": {
+    "bandStarts": [0, 0.4, 0.58, 0.76, 0.92],
+    "bandShades": [1, 2, 3, 4, 5]
+  }
+}
