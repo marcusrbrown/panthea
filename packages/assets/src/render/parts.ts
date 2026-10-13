@@ -6,37 +6,10 @@
 /** Supersampling of the raw passes: each cell pixel is a FACTOR x FACTOR block. */
 export const SUPERSAMPLE = 4;
 
-export const PART_IDS = [
-  "head",
-  "torso",
-  "arm_l",
-  "hand_l",
-  "arm_r",
-  "hand_r",
-  "leg_l",
-  "leg_r",
-  "robe_upper",
-  "robe_skirt",
-  "belt",
-  "beard",
-  "hair",
-  "tunic",
-  "tunic_skirt",
-  "bolt",
-  "trunk",
-  "foliage",
-  "stylobate",
-  "column",
-  "entablature",
-  "pediment",
-  "cella",
-  "roof",
-  "wall",
-  "door",
-  "prop",
-  "ground",
-  "animal",
-] as const;
+import { PART_IDS } from "./script-contract";
+
+// One part table, owned by the script contract and pinned to `render.py` by its test.
+export { PART_IDS };
 
 export type PartId = (typeof PART_IDS)[number];
 

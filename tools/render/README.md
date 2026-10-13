@@ -10,9 +10,8 @@ Data and the GPL render script for the pre-rendered retro sprite pipeline (ADR-0
 - `camera.json`: the one calibrated camera. The 2:1 orthographic view (60° tilt, 45° turn), 29.0788 px per unit, 4× supersample, the 112×96 `god-tall` cell with pivot (56, 78), the key light and the toon bands. Parsed by `packages/assets/src/render/camera.ts`; its hash joins the revision recipe hash. Requests carry no camera id.
 - `profiles/<id>.json`: a model profile (render input, not game content). Kit file refs (kit id, path, sha256, matching `kits.json`), body proportions, garment rings, hair pieces, material roles, the stamp set id, a clip map from semantic state to animation clip and a pose policy keyed by semantic state (`state`, `state:facing`, `state:facing:key`), never by an output clip name. Parsed by `profile.ts`; `validate:assets` checks every ref against `kits.json` and passes the refs to the kit gate.
 - `blender/render.py`: the GPL render script, the only new code that imports `bpy`. It reads a recipe (`RenderRecipe` in `script-contract.ts`, which embeds the camera and the profile), builds the figure from the staged kit files only, poses every clip through one function keyed by semantic state, renders colour, part-ID and depth per frame and commits each slot with a `done.json` sentinel. Exit codes: 0 ok, 1 script error, 10 no GPU context, 11 Blender version or build mismatch, 12 input error.
+- `stamps/`: authored bolt and face stamps per subject, with `stamps.json` (anchors, variants, per-file sha256). Checked by `validate:assets`; composited by the TypeScript post step.
 - `scratch/`: gitignored; hand-run staging and render output.
-
-Stamps arrive with U5.
 
 ## Zeus profile: art changes against the probe's round 3
 
