@@ -3,6 +3,8 @@
 // reader the test sets; the only waits are for real child processes to reach a state.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   type LaunchBehavior,
   readLog as readBlenderLog,
@@ -434,6 +436,31 @@ describe("failures are failed, never unavailable", () => {
       expect(job.error).toMatch(/did not finish within 5000 ms/);
       expect(alive(startPids(rig)[0] as number)).toBe(false);
       expect(scratchLeft(rig)).toEqual([]);
+    },
+    T,
+  );
+
+  test(
+    "a shadow ramp the palette does not have fails the job before launch; the profile's own ramp runs",
+    async () => {
+      const rig = await openRig({
+        launches: [{}],
+        mutateRenderRoot: (root) => {
+          const path = join(root, "profiles", "zeus.json");
+          const profile = JSON.parse(readFileSync(path, "utf8"));
+          profile.shadow = { ramp: "no-such-ramp" };
+          writeFileSync(path, JSON.stringify(profile, null, 2));
+        },
+      });
+      const [id] = submitRender(rig, "zeus-retro");
+      await drain(rig);
+      const job = jobsById(rig)[id as string]?.job;
+      if (job?.status !== "failed")
+        throw new Error(`expected failed, got ${job?.status}`);
+      expect(job.error).toMatch(
+        /shadow ramp "no-such-ramp" is not in palette "greek-retro"/,
+      );
+      expect(events(rig, "start")).toHaveLength(0);
     },
     T,
   );

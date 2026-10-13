@@ -6,12 +6,15 @@ import type { Sha256 } from "@panthea/contracts";
 import { loadRenderFixture } from "../../test/render/fixture";
 import {
   cellPixelHash,
+  POST_STEP_VERSION,
   postProcessSlot,
   type RawFrame,
   type StampLocators,
 } from "./post";
 import {
   POST_SETTINGS,
+  postSettingsFor,
+  postStepSettings,
   type RevisionInputs,
   revisionRecipe,
   slotRecipeHash,
@@ -132,7 +135,7 @@ const inputs = (over: Partial<RevisionInputs> = {}): RevisionInputs => ({
   palette: { id: "greek-retro", digest: H("3") },
   pivot: { x: 56, y: 78 },
   script: H("4"),
-  postStep: { version: 1, settings: POST_SETTINGS },
+  postStep: { version: 2, settings: postSettingsFor("lapis") },
   blender: {
     version: "5.2.2",
     buildHash: "d13f752e3b9c",
@@ -141,6 +144,29 @@ const inputs = (over: Partial<RevisionInputs> = {}): RevisionInputs => ({
   kit: H("6"),
   stamps: H("7"),
   ...over,
+});
+
+describe("the post step's fixed settings", () => {
+  it("is post step v2, with the contact shadow taken from the darkest shade of a ramp the profile names", () => {
+    expect(POST_STEP_VERSION).toBe(2);
+    expect(POST_SETTINGS.shadow.shade).toBe(0);
+    expect(postSettingsFor("lapis")).toEqual({
+      overlapThresholdM: 0.05,
+      shadow: { rx: 10, ry: 5, ramp: "lapis", shade: 0 },
+    });
+    // The ramp is not hard-coded: another profile's ramp is what the settings carry.
+    expect(postSettingsFor("marble").shadow?.ramp).toBe("marble");
+    const camera = {
+      cell: { width: 112, height: 96, pivot: [56, 78] as const },
+      depthRange: [18, 22] as const,
+    };
+    expect(
+      postStepSettings(camera, { x: 56, y: 78 }, postSettingsFor("cloud")),
+    ).toMatchObject({
+      shadow: { ramp: "cloud", shade: 0 },
+      overlapThresholdM: 0.05,
+    });
+  });
 });
 
 describe("recipe hashes", () => {
@@ -171,11 +197,12 @@ describe("recipe hashes", () => {
       { palette: { id: "greek-master", digest: H("3") } },
       { pivot: { x: 56, y: 77 } },
       { script: H("a") },
-      { postStep: { version: 2, settings: POST_SETTINGS } },
+      { postStep: { version: 3, settings: postSettingsFor("lapis") } },
+      { postStep: { version: 2, settings: postSettingsFor("marble") } },
       {
         postStep: {
-          version: 1,
-          settings: { ...POST_SETTINGS, overlapThresholdM: 0.06 },
+          version: 2,
+          settings: { ...postSettingsFor("lapis"), overlapThresholdM: 0.06 },
         },
       },
       { blender: { ...inputs().blender, buildHash: "000000000000" } },

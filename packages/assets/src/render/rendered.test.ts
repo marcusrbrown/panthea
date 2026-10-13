@@ -69,19 +69,6 @@ async function oneSlot(over: Parameters<typeof openRig>[0] = {}) {
   return { rig, ids };
 }
 
-/**
- * Every rendered cell fails the palette check on one colour: the contact shadow is `olive` shade 1
- * (#515c3d, the probe's ground tone), which belongs to the town family, and the report measures
- * Zeus against olympus. Approval therefore needs an owner exception until the shadow ramp or the
- * check's colour set is decided (U10); the exception never clears the palette's own approval.
- */
-const SHADOW_EXCEPTION = {
-  exception: {
-    reason:
-      "the contact shadow ramp (olive, town family) is outside the olympus family the report measures; palette decision pending (U10)",
-  },
-};
-
 /** What publish is given for the audit: the render root, and the Blender the fake engine pinned (the real one's hash is the code's). */
 const cfg = (rig: Rig, renderRoot = RENDER_ROOT) => ({
   renderRoot,
@@ -95,7 +82,7 @@ function approveAndPublish(
 ) {
   const approved = rig.session.approveAsset(
     PACK_INPUT.id,
-    SHADOW_EXCEPTION,
+    {},
     content,
     palettes,
   );
@@ -149,7 +136,7 @@ describe("render, pick, pack, approve and publish", () => {
         profile: { id: "zeus" },
         palette: { id: "greek-retro" },
         pivot: { x: 56, y: 78 },
-        postStep: 1,
+        postStep: 2,
         blender: { version: "5.2.2", build: "d13f752e3b9c" },
       });
       expect(provenance.slots[0]?.raw.colour).toHaveLength(16);
@@ -174,29 +161,22 @@ describe("render, pick, pack, approve and publish", () => {
       ]);
       expect(provenance.handEdits).toEqual([]);
 
-      // The report's only failures are the shadow colour, on every frame; nothing else is wrong.
-      const failing = (
+      // No cell fails the palette check: the contact shadow is a shade of the olympus family.
+      const checks = (
         packed.asset.record as unknown as {
           report: {
+            status: string;
             checks: { check: string; status: string; message?: string }[];
           };
         }
-      ).report.checks.filter((c) => c.status === "fail");
-      expect(failing?.length).toBe(16);
+      ).report;
+      expect(checks.checks.filter((c) => c.status === "fail")).toEqual([]);
       expect(
-        failing?.every(
-          (c) =>
-            c.check.endsWith(":palette") && /#515c3d/.test(c.message ?? ""),
-        ),
-      ).toBe(true);
-      const noException = rig.session.approveAsset(
-        PACK_INPUT.id,
-        {},
-        content,
-        approvedPalettes(),
-      );
-      expect(noException.ok).toBe(false);
-      // Approval refuses a draft palette (positive control: the approved one passes).
+        checks.checks.filter((c) => c.check.endsWith(":palette")),
+      ).toHaveLength(16);
+      expect(checks.status).toBe("pass");
+      // Approval refuses a draft palette (positive control: the approved one passes, with no
+      // exception, in approveAndPublish below).
       const draft = rig.session.approveAsset(
         PACK_INPUT.id,
         {},
@@ -388,7 +368,7 @@ async function approved() {
   const manifest = manifestOf(packed.asset);
   const approvedAsset = rig.session.approveAsset(
     PACK_INPUT.id,
-    SHADOW_EXCEPTION,
+    {},
     content,
     approvedPalettes(),
   );
@@ -423,6 +403,43 @@ const rawHash = (
   (manifest.provenance as RenderedProvenance).slots[0]?.raw[role][
     index
   ] as Sha256;
+
+describe("the contact shadow's palette", () => {
+  test(
+    "a shadow from a town ramp (the old olive) fails the palette check on every frame; the profile's olympus ramp passes",
+    async () => {
+      const failing = async (mutate?: (root: string) => void) => {
+        const rig = await openRig({
+          launches: [{}],
+          ...(mutate === undefined ? {} : { mutateRenderRoot: mutate }),
+        });
+        const ids = await renderCandidates(
+          rig,
+          "zeus-retro",
+          [west("idle")],
+          "zeus-set",
+        );
+        pickAll(rig, "zeus-set", ids);
+        const packed = packOk(rig, "zeus-set");
+        return (
+          packed.asset.record as unknown as {
+            report: { checks: { check: string; status: string }[] };
+          }
+        ).report.checks.filter((c) => c.status === "fail");
+      };
+      expect(await failing()).toEqual([]);
+      const olive = await failing((root) => {
+        const path = join(root, "profiles", "zeus.json");
+        const profile = JSON.parse(readFileSync(path, "utf8"));
+        profile.shadow = { ramp: "olive" };
+        writeFileSync(path, JSON.stringify(profile, null, 2));
+      });
+      expect(olive).toHaveLength(16);
+      expect(olive.every((c) => c.check.endsWith(":palette"))).toBe(true);
+    },
+    T,
+  );
+});
 
 describe("the publish-time render audit", () => {
   test(
@@ -589,8 +606,14 @@ describe("the publish-time render audit", () => {
           current: { script: "9".repeat(64) as Sha256 },
         }),
       ).toMatch(/script hash differs/);
+      // A v1-recorded revision checked under the current (v2) post step.
+      const v1 = structuredClone(manifest) as typeof manifest;
+      (
+        v1.provenance as { revisionRecipe: { postStep: number } }
+      ).revisionRecipe.postStep = 1;
+      expect(auditOf(rig, v1, atlas)).toMatch(/post-step version differs/);
       expect(
-        auditOf(rig, manifest, atlas, { current: { postStepVersion: 2 } }),
+        auditOf(rig, manifest, atlas, { current: { postStepVersion: 3 } }),
       ).toMatch(/post-step version differs/);
       expect(
         auditOf(rig, manifest, atlas, {

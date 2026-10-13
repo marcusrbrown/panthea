@@ -226,6 +226,7 @@
     }
   },
   "stampSet": "zeus",
+  "shadow": { "ramp": "lapis" },
   "clips": {
     "idle": {
       "action": "Idle_Loop",

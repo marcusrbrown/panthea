@@ -87,6 +87,20 @@ describe("the Zeus profile", () => {
     expect(profile.clips.act.loop).toBe(false);
   });
 
+  it("declares the palette ramp its contact shadow is taken from, an olympus ramp", () => {
+    expect(parsed().shadow).toEqual({ ramp: "lapis" });
+    expect(parseProfile(edited((p) => delete p.shadow)).ok).toBe(false);
+    expect(parseProfile(edited((p) => (p.shadow = { ramp: "" }))).ok).toBe(
+      false,
+    );
+    expect(
+      parseProfile(edited((p) => (p.shadow = { ramp: "lapis", shade: 1 }))).ok,
+    ).toBe(false);
+    expect(
+      parseProfile(edited((p) => (p.shadow = { ramp: "marble" }))).ok,
+    ).toBe(true);
+  });
+
   it("resolves every kit ref in kits.json with a matching hash", () => {
     const profile = parsed();
     expect(profileKitProblems(profile, manifest())).toEqual([]);

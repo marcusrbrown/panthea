@@ -44,7 +44,7 @@ import { profileHash } from "./profile";
 import {
   type BlenderBinaryPin,
   kitHash,
-  POST_SETTINGS,
+  postSettingsFor,
   postStepSettings,
   revisionRecipe,
   slotRecipeHash,
@@ -217,7 +217,10 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     palette: { id: recorded.palette.id, digest: paletteDigest(palette) },
     pivot: recorded.pivot,
     script: scriptNow,
-    postStep: { version: postStepNow, settings: POST_SETTINGS },
+    postStep: {
+      version: postStepNow,
+      settings: postSettingsFor(profile.shadow.ramp),
+    },
     blender: blenderNow,
     kit: kitHash(profile.kitFiles),
     stamps: stampSetHash(stampSet),
@@ -233,7 +236,11 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     return `slots ${mixed.map((s) => s.slotKey).join(", ")} were not rendered under the revision recipe hash ${recorded.hash}: the revision mixes recipes`;
 
   const related = new Set(provenance.relatedJobs.map((j) => j.jobId));
-  const settings = postStepSettings(camera, recorded.pivot);
+  const settings = postStepSettings(
+    camera,
+    recorded.pivot,
+    postSettingsFor(profile.shadow.ramp),
+  );
   const postPalette = postPaletteFrom(audit.palettes, recorded.palette.id);
   if (!postPalette.ok) return postPalette.message;
   const cell = manifest.cell;

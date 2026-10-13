@@ -150,6 +150,11 @@ export interface ModelProfile {
   readonly materials: Readonly<Record<string, MaterialRole>>;
   /** Id of the stamp set (face and bolt stamps) the post step composites. */
   readonly stampSet: string;
+  /**
+   * The palette ramp the contact shadow is taken from (its shade 0, the darkest). It belongs to the
+   * asset's own palette family, so a god's shadow is a colour the god's report already allows.
+   */
+  readonly shadow: { readonly ramp: string };
   /** Semantic state to clip. */
   readonly clips: Readonly<Record<string, ClipSpec>>;
   /** Pose policy keyed `state`, `state:facing` or `state:facing:key`. */
@@ -600,6 +605,7 @@ export function parseProfile(
     "garment",
     "materials",
     "stampSet",
+    "shadow",
     "clips",
     "pose",
   ]);
@@ -691,6 +697,15 @@ export function parseProfile(
   }
   const stampSet = parseString(record.value.stampSet, `${path}.stampSet`);
   if (!stampSet.ok) return stampSet;
+  const shadowRecord = strict(record.value.shadow, `${path}.shadow`, ["ramp"]);
+  if (!shadowRecord.ok) return shadowRecord;
+  const shadowRamp = parseString(
+    shadowRecord.value.ramp,
+    `${path}.shadow.ramp`,
+  );
+  if (!shadowRamp.ok) return shadowRamp;
+  if (shadowRamp.value === "")
+    return fail(`${path}.shadow.ramp`, "expected a palette ramp id");
   const clips = parseClips(record.value.clips, `${path}.clips`);
   if (!clips.ok) return clips;
   const pose = parsePose(
@@ -714,6 +729,7 @@ export function parseProfile(
     garment: garment.value,
     materials: materials.value,
     stampSet: stampSet.value,
+    shadow: { ramp: shadowRamp.value },
     clips: clips.value,
     pose: pose.value,
   });

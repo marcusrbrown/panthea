@@ -235,6 +235,8 @@ A recipe request renders each slot once (`generate` above). Each succeeded job h
 4. `pack` writes `rendered` provenance: the revision recipe, a slot entry per rendered slot (raw frame hashes per role), the kit licences and the related jobs. It refuses a revision whose slots were not all rendered under one revision recipe hash, a generated (image-model) pick, and any cell carried from an earlier revision.
 5. `publish` runs a render audit on top of the usual gates, offline and without Blender: it recomputes the revision recipe from the committed profile, camera, kit files, stamp set, script, post-step version, Blender pin and the palette on disk, runs the post step again from the stored raw frames and compares every cell and the atlas (a hand-edited slot keeps its hand pixels), and checks the job ledger. It needs `render.renderRoot` (default `<contentRoot>/../../tools/render`).
 
+The contact shadow is shade 0 of the ramp the render profile names in `shadow.ramp` (Zeus: `lapis`, `#243f63`, in the olympus family), so a rendered cell passes the palette check against the asset's own family without an exception. Post step v2.
+
 Manifest timing for a rendered slot is its state's fastest allowed rate (`1000 / fps.max` ms a frame, so walk is 50 ms); a looping clip (idle, walk, seated) has `loopStart` 0, the act clip none. `status` lists `renderSubjects`, the subjects that name a render profile.
 
 ## Approval and publication

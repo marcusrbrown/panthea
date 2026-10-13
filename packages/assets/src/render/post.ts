@@ -27,7 +27,7 @@ import { applyStamps, StampError } from "./stamp-composite";
 import type { LoadedStampSet } from "./stamps";
 
 /** Bumped with any change to the golden cells; the recipe pins it. */
-export const POST_STEP_VERSION = 1;
+export const POST_STEP_VERSION = 2;
 
 export type Facing = "south" | "east" | "north" | "west";
 

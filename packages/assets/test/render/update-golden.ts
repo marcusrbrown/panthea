@@ -4,7 +4,8 @@
 //
 // Run it only for a deliberate change to the post step's output, in the same commit that bumps
 // POST_STEP_VERSION. It does not touch the probe's expected cells (expected.json, expected/),
-// which stay as the record of what the probe made.
+// which stay as the record of what the probe made (and which the parity test holds at the
+// probe's own settings, not the current ones).
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,7 +16,7 @@ import {
 } from "../../src/render/post";
 import { FIXTURE_DIR, loadRenderFixture } from "./fixture";
 
-const result = postProcessSlot(loadRenderFixture().input);
+const result = postProcessSlot(loadRenderFixture().current);
 if (!result.ok) {
   console.error(result.message);
   process.exit(1);

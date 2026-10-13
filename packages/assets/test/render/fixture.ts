@@ -14,6 +14,7 @@ import type {
   StampLocators,
 } from "../../src/render/post";
 import { type PostPalette, postPaletteOf } from "../../src/render/post-palette";
+import { postSettingsFor } from "../../src/render/recipe";
 import { type LoadedStampSet, loadStampSet } from "../../src/render/stamps";
 import { decodePng } from "../../src/studio/png/decode";
 
@@ -105,6 +106,7 @@ export interface ExpectedFile {
 
 export interface RenderFixture {
   readonly slot: string;
+  /** The probe's settings (post-step v1: its ground tone, `olive` shade 1), for the parity test. */
   readonly settings: PostStepSettings;
   readonly palette: PostPalette;
   readonly stamps: LoadedStampSet;
@@ -112,7 +114,10 @@ export interface RenderFixture {
   readonly expected: ExpectedFile;
   /** The probe's cells, decoded. */
   readonly expectedImages: ReadonlyMap<string, RgbaImage>;
+  /** The probe's input: parity with the probe is held at these settings. */
   readonly input: PostStepInput;
+  /** The same slot under the current post step: the contact shadow from the Zeus profile's olympus ramp. */
+  readonly current: PostStepInput;
 }
 
 const readJson = <T>(...parts: string[]): T =>
@@ -122,6 +127,14 @@ export function decodeFile(path: string): RgbaImage {
   const decoded = decodePng(new Uint8Array(readFileSync(path)));
   if (!decoded.ok) throw new Error(`${path}: ${decoded.message}`);
   return decoded.image;
+}
+
+/** The ramp the committed Zeus profile takes its contact shadow from. */
+function zeusShadowRamp(): string {
+  const profile = JSON.parse(
+    readFileSync(join(RENDER_ROOT, "profiles", "zeus.json"), "utf8"),
+  ) as { shadow: { ramp: string } };
+  return profile.shadow.ramp;
 }
 
 export function loadRenderFixture(): RenderFixture {
@@ -174,6 +187,16 @@ export function loadRenderFixture(): RenderFixture {
     input: {
       slot: file.slot,
       settings,
+      palette: palette.value,
+      stamps: stamps.set,
+      frames,
+    },
+    current: {
+      slot: file.slot,
+      settings: {
+        ...settings,
+        shadow: postSettingsFor(zeusShadowRamp()).shadow,
+      },
       palette: palette.value,
       stamps: stamps.set,
       frames,

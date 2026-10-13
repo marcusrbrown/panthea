@@ -7,11 +7,11 @@ One slot, six frames, for `src/render/post.ts` (retro build-out U5). It lets the
 | Path | Contents |
 | --- | --- |
 | `frames/<name>.{colour,id,depth}.png` | The probe's raw 4x passes (448x384, 8-bit RGBA), byte for byte. Depth is 8-bit through the sRGB curve, which is the quantisation `decodePng` reads. |
-| `frames.json` | Slot settings (cell 112x96, origin and pivot (56, 78), depth range 18-22 m, overlap threshold 0.05 m, shadow 10x5 px in `olive` shade 1) and each frame's facing and stamp locators (bolt base/tip/depth, eye pixels and depths). |
+| `frames.json` | Slot settings (cell 112x96, origin and pivot (56, 78), depth range 18-22 m, overlap threshold 0.05 m, shadow 10x5 px in `olive` shade 1, the probe's ground tone and post-step v1's setting) and each frame's facing and stamp locators (bolt base/tip/depth, eye pixels and depths). |
 | `expected/<name>.png` | The probe's own cells for the same frames. |
 | `expected.json` | Per-cell facts (height, width, bottom row, colours with and without the shadow, outline, box, overlap pixels, stamp counts), decoded-pixel hashes, and the slot envelope. |
 | `palette/` | `palette.json`, `master.gpl`, `master.hex` copied from `content/greek/palette/greek-retro` when the fixture was made (a draft palette). The fixture keeps its own copy so the parity result does not move when the draft palette is edited. |
-| `golden.json` | The TypeScript step's decoded-pixel hashes and envelope, with the `POST_STEP_VERSION` they belong to. `src/render/post.test.ts` holds the step to it. |
+| `golden.json` | The TypeScript step's decoded-pixel hashes and envelope, with the `POST_STEP_VERSION` they belong to (v2: the contact shadow is shade 0 of the Zeus profile's `lapis` ramp, `#243f63`, not the probe's olive). `src/render/post.test.ts` holds the step to it. The parity test still runs the step at the probe's own settings (olive shade 1, passed explicitly through `fixture.input`) and matches the probe's cells pixel for pixel; only the goldens use the current settings (`fixture.current`). |
 
 About 260 KB in all.
 

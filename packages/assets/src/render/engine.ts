@@ -82,7 +82,7 @@ import { type ModelProfile, profileHash } from "./profile";
 import {
   type BlenderBinaryPin,
   kitHash,
-  POST_SETTINGS,
+  postSettingsFor,
   postStepSettings,
   type RevisionRecipe,
   revisionRecipe,
@@ -352,6 +352,12 @@ function prepare(
       `palette "${recipeRequest.palette}" cannot drive the post step`,
     );
 
+  // The contact shadow is shade 0 of the profile's ramp: refuse before a render if the palette has none.
+  if (postPalette.ramps.get(profile.shadow.ramp)?.[0] === undefined)
+    return problem(
+      `the profile's shadow ramp "${profile.shadow.ramp}" is not in palette "${palette.id}"`,
+    );
+
   let stampsJson: unknown;
   try {
     stampsJson = JSON.parse(
@@ -429,7 +435,10 @@ function prepare(
       palette: { id: palette.id, digest: paletteDigest(palette) },
       pivot: recipeRequest.pivot,
       script: RENDER_SCRIPT_SHA256,
-      postStep: { version: POST_STEP_VERSION, settings: POST_SETTINGS },
+      postStep: {
+        version: POST_STEP_VERSION,
+        settings: postSettingsFor(profile.shadow.ramp),
+      },
       blender: render.pin,
       kit: kitHash(profile.kitFiles),
       stamps: stampSetHash(stampSet),
@@ -514,7 +523,11 @@ function prepare(
       recipe: recipe.value,
       revision,
       slots: placed,
-      settings: postStepSettings(camera, recipeRequest.pivot),
+      settings: postStepSettings(
+        camera,
+        recipeRequest.pivot,
+        postSettingsFor(profile.shadow.ramp),
+      ),
       palette: postPalette,
       stamps: stamps.set,
       paletteId: palette.id,

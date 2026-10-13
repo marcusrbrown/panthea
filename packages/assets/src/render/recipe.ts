@@ -32,7 +32,8 @@ export const DEPTH_BITS = 8;
  */
 export const POST_SETTINGS = {
   overlapThresholdM: 0.05,
-  shadow: { rx: 10, ry: 5, ramp: "olive", shade: 1 },
+  /** Shade 0 is the ramp's darkest. The ramp is the profile's (`postSettingsFor`). */
+  shadow: { rx: 10, ry: 5, shade: 0 },
 } as const;
 
 export type PostFixedSettings = {
@@ -44,6 +45,18 @@ export type PostFixedSettings = {
     readonly shade: number;
   } | null;
 };
+
+/**
+ * The fixed settings with the profile's shadow ramp resolved: the shadow is shade 0 of that ramp in
+ * the asset's palette, so it is a colour of the asset's own family. This is what the revision
+ * recipe records and the post step runs.
+ */
+export function postSettingsFor(shadowRamp: string): PostFixedSettings {
+  return {
+    overlapThresholdM: POST_SETTINGS.overlapThresholdM,
+    shadow: { ...POST_SETTINGS.shadow, ramp: shadowRamp },
+  };
+}
 
 /**
  * The post step's settings for a camera and a declared pivot. The world origin projects to the
@@ -59,7 +72,7 @@ export function postStepSettings(
     readonly depthRange: readonly [number, number];
   },
   pivot: { readonly x: number; readonly y: number },
-  fixed: PostFixedSettings = POST_SETTINGS,
+  fixed: PostFixedSettings,
 ): PostStepSettings {
   return {
     cell: { w: camera.cell.width, h: camera.cell.height },

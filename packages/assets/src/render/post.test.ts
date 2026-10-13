@@ -1,6 +1,7 @@
 // The TypeScript post step: goldens over the committed raw-frame fixture, the stamp occlusion
 // rules, edge contact, input refusals and the hand-off to conformance. The probe's own cells for
-// the same fixture are compared in test/render/post.parity.test.ts. Synthetic frames are built
+// the same fixture are compared in test/render/post.parity.test.ts, at the probe's own settings
+// (its olive shadow); the goldens here run the current step (the profile's olympus shadow). Synthetic frames are built
 // here, in 4x passes, at the size a small cell needs.
 
 import { describe, expect, it } from "bun:test";
@@ -59,7 +60,7 @@ describe("goldens over the committed fixture", () => {
   };
 
   it("pins the cells of the fixture slot, pixel for pixel, to the golden hashes", () => {
-    const result = run(fixture.input);
+    const result = run(fixture.current);
     expect(result.cells.map((c) => c.name)).toEqual(
       golden.cells.map((c) => c.name),
     );
@@ -71,17 +72,17 @@ describe("goldens over the committed fixture", () => {
   });
 
   it("pins the slot envelope", () => {
-    expect(run(fixture.input).envelope).toEqual(golden.envelope as never);
+    expect(run(fixture.current).envelope).toEqual(golden.envelope as never);
   });
 
   it("ties the golden to the post-step version: a changed golden needs a bumped version", () => {
     expect(golden.postStepVersion).toBe(POST_STEP_VERSION);
-    expect(run(fixture.input).version).toBe(POST_STEP_VERSION);
+    expect(run(fixture.current).version).toBe(POST_STEP_VERSION);
   });
 
   it("is deterministic: a second run gives the same bytes", () => {
-    const a = run(fixture.input);
-    const b = run(fixture.input);
+    const a = run(fixture.current);
+    const b = run(fixture.current);
     for (const [i, cell] of a.cells.entries()) {
       expect(
         Buffer.from(cell.image.rgba).equals(
@@ -92,7 +93,7 @@ describe("goldens over the committed fixture", () => {
   });
 
   it("emits binary alpha, canonical alpha-0 RGB and only palette colours", () => {
-    for (const cell of run(fixture.input).cells) {
+    for (const cell of run(fixture.current).cells) {
       expect(cell.image.width).toBe(112);
       expect(cell.image.height).toBe(96);
       for (let at = 0; at < cell.image.rgba.length; at += 4) {
@@ -114,8 +115,10 @@ describe("goldens over the committed fixture", () => {
   });
 
   it("draws the contact shadow as one palette colour on empty pixels only, never outlined over the figure", () => {
-    const olive = fixture.palette.ramps.get("olive")?.[1] as readonly number[];
-    for (const cell of run(fixture.input).cells) {
+    // The current step takes it from shade 0 of the profile's olympus ramp (lapis, #243f63).
+    const lapis = fixture.palette.ramps.get("lapis")?.[0] as readonly number[];
+    expect([...lapis]).toEqual([0x24, 0x3f, 0x63]);
+    for (const cell of run(fixture.current).cells) {
       let shadowPixels = 0;
       for (let at = 0; at < cell.image.rgba.length; at += 4) {
         const same = [0, 1, 2, 3].every(
@@ -124,6 +127,26 @@ describe("goldens over the committed fixture", () => {
         if (same) continue;
         shadowPixels += 1;
         expect(cell.figure.rgba[at + 3]).toBe(0);
+        expect([...cell.image.rgba.subarray(at, at + 4)]).toEqual([
+          ...lapis,
+          255,
+        ]);
+      }
+      expect(shadowPixels).toBeGreaterThan(0);
+    }
+  });
+
+  it("still draws the probe's olive shade 1 when the settings say so (post step v1's explicit shadow)", () => {
+    const olive = fixture.palette.ramps.get("olive")?.[1] as readonly number[];
+    expect([...olive]).toEqual([0x51, 0x5c, 0x3d]);
+    for (const cell of run(fixture.input).cells) {
+      let shadowPixels = 0;
+      for (let at = 0; at < cell.image.rgba.length; at += 4) {
+        const same = [0, 1, 2, 3].every(
+          (k) => cell.image.rgba[at + k] === cell.figure.rgba[at + k],
+        );
+        if (same) continue;
+        shadowPixels += 1;
         expect([...cell.image.rgba.subarray(at, at + 4)]).toEqual([
           ...olive,
           255,
@@ -134,7 +157,7 @@ describe("goldens over the committed fixture", () => {
   });
 
   it("measures colours on the final cell and height, outline and envelope on the shadow-free figure", () => {
-    const result = run(fixture.input);
+    const result = run(fixture.current);
     for (const cell of result.cells) {
       const figureColours = new Set<number>();
       const cellColours = new Set<number>();
@@ -148,7 +171,10 @@ describe("goldens over the committed fixture", () => {
       }
       expect(cell.facts.coloursFigure).toBe(figureColours.size);
       expect(cell.facts.colours).toBe(cellColours.size);
-      expect(cell.facts.colours).toBeGreaterThan(cell.facts.coloursFigure);
+      // The shadow colour (lapis shade 0) is also an eye-stamp colour, so it may add none.
+      expect(cell.facts.colours).toBeGreaterThanOrEqual(
+        cell.facts.coloursFigure,
+      );
       const [x0, y0, x1, y1] = cell.facts.box;
       expect(cell.facts.height).toBe(y1 - y0);
       expect(cell.facts.width).toBe(x1 - x0);
@@ -163,6 +189,9 @@ describe("goldens over the committed fixture", () => {
       expect(Math.max(...rows)).toBe(y1 - 1);
     }
     expect(result.envelope.up).toBeGreaterThan(0);
+    // With a shadow colour the figure does not use (the probe's olive), the final cell counts one more.
+    for (const cell of run(fixture.input).cells)
+      expect(cell.facts.colours).toBe(cell.facts.coloursFigure + 1);
   });
 });
 
@@ -442,7 +471,7 @@ describe("hand-off to conformance", () => {
     const retro = loaded.palettes.get("greek-retro");
     expect(retro?.approval.status).toBe("draft");
     expect(retro?.limits?.colours.sprite).toBe(48);
-    for (const cell of run(fixture.input).cells) {
+    for (const cell of run(fixture.current).cells) {
       const result = conformImage({
         rgba: cell.image.rgba,
         width: cell.image.width,
@@ -468,11 +497,44 @@ describe("hand-off to conformance", () => {
     }
   });
 
+  it("passes the palette check against the olympus family alone with the current shadow, and fails it with the probe's olive shadow (positive control)", () => {
+    const loaded = loadStudioPalettes(COMMITTED_CONTENT, PALETTE_FAMILIES);
+    if (!loaded.ok) throw new Error(JSON.stringify(loaded.diagnostics));
+    const retro = loaded.palettes.get("greek-retro");
+    const olympus = (retro?.families ?? [])
+      .filter((f) => f.id === "olympus")
+      .flatMap((f) => f.ramps.flatMap((r) => r.shades));
+    expect(olympus.length).toBeGreaterThan(0);
+    const paletteStatus = (image: RgbaImage) => {
+      const result = conformImage({
+        rgba: image.rgba,
+        width: 112,
+        height: 96,
+        kind: "sprite",
+        mode: "report-only",
+        cell: { w: 112, h: 96 },
+        pivot: { x: 56, y: 78 },
+        paletteRgb: olympus as never,
+        colourLimit: 48,
+        background: { type: "alpha" },
+        alphaCutoff: 128,
+        grid: { edgeTolerance: 8, minConfidence: 0.9, minEdges: 50 },
+        scale: 1,
+      });
+      if (result.status !== "done") throw new Error("conform did not finish");
+      return result.report.checks.find((c) => c.check === "palette")?.status;
+    };
+    for (const cell of run(fixture.current).cells)
+      expect(paletteStatus(cell.image)).toBe("pass");
+    for (const cell of run(fixture.input).cells)
+      expect(paletteStatus(cell.image)).toBe("fail");
+  });
+
   it("holds the same cells to the legacy limits and fails them (negative control)", () => {
     const loaded = loadStudioPalettes(COMMITTED_CONTENT, PALETTE_FAMILIES);
     if (!loaded.ok) throw new Error("palettes did not load");
     const master = loaded.palettes.get("greek-master");
-    const cell = run(fixture.input).cells[0] as { image: RgbaImage };
+    const cell = run(fixture.current).cells[0] as { image: RgbaImage };
     const result = conformImage({
       rgba: cell.image.rgba,
       width: 112,
