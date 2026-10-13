@@ -1102,7 +1102,7 @@ test("genesis gives every actor its sprite id: a god's from its profile alone, a
   const sprites = new Map(
     [...state.actors.values()].map((actor) => [actor.id, actor.sprite]),
   );
-  expect(sprites.get(toEntityId("zeus"))).toBe("zeus-sprite");
+  expect(sprites.get(toEntityId("zeus"))).toBe("zeus-retro");
   const pack = loadEmbeddedGreekWorldPack();
   if (!pack.ok) throw new Error(pack.message);
   const profiles = loadEmbeddedGreekGodProfiles(pack.value);
@@ -1141,9 +1141,9 @@ test("an archive's content hash covers each actor's sprite: changing one in the 
     const row = archiveDb
       .query("SELECT data FROM genesis WHERE id = 1")
       .get() as { data: string };
-    expect(row.data).toContain('"sprite":"zeus-sprite"');
+    expect(row.data).toContain('"sprite":"zeus-retro"');
     archiveDb.run("UPDATE genesis SET data = ? WHERE id = 1", [
-      row.data.replace('"sprite":"zeus-sprite"', '"sprite":"zeus-redrawn"'),
+      row.data.replace('"sprite":"zeus-retro"', '"sprite":"zeus-redrawn"'),
     ]);
     const rehashed = computeContentHash(archiveDb, {
       formatVersion: manifest.formatVersion,

@@ -209,7 +209,7 @@ describe("committed content", () => {
         ? [[sprite, resolveAsset(snapshot, { spriteId: sprite })] as const]
         : [];
     });
-    expect(resolved.map(([sprite]) => sprite)).toEqual(["zeus-sprite"]);
+    expect(resolved.map(([sprite]) => sprite)).toEqual(["zeus-retro"]);
     for (const [, result] of resolved)
       expect(result).toMatchObject({ source: "canon", kind: "sprite" });
   });
@@ -835,7 +835,92 @@ describe("a blob that is only a PNG header", () => {
   });
 });
 
+describe("the promoted Zeus", () => {
+  const { snapshot } = loadRegistry(
+    join(COMMITTED, "assets", "registry"),
+    vocabulary,
+  );
+
+  it("points Zeus's stable sprite at the published rendered revision, 12 slots on the god-tall cell", () => {
+    const god = JSON.parse(
+      readFileSync(join(COMMITTED, "gods", "zeus.json"), "utf8"),
+    );
+    expect(god.sprite).toBe("zeus-retro");
+    const retro = snapshot.entries.get("zeus-retro");
+    expect(String(retro?.revision)).toBe(
+      "f254faa3c1fc6fe0ca2ac2b1f88d9556f9dfdd134b4ad9241f77a5fb37369fa6",
+    );
+    const manifest = retro?.manifest;
+    if (manifest === undefined || manifest.kind !== "sprite")
+      throw new Error("zeus-retro is not a published sprite");
+    expect(String(manifest.atlas.blob)).toBe(
+      "fe9fdb0846e8e25042f76ca67ba28650a0cf6141a0c6654e0946e4cb4f5c0cc4",
+    );
+    expect(manifest.cell).toEqual({ w: 112, h: 96 });
+    expect(manifest.pivot).toEqual({ x: 56, y: 78 });
+    expect(manifest.animations).toHaveLength(12);
+    expect(manifest.provenance.method).toBe("rendered");
+    if (manifest.provenance.method !== "rendered")
+      throw new Error("not rendered");
+    expect(manifest.provenance.slots).toHaveLength(12);
+    expect(manifest.asymmetry).toEqual({ feature: "left-shoulder himation" });
+  });
+
+  it("keeps zeus-sprite published and resolvable, so an actor created before promotion still draws it", () => {
+    const before = snapshot.entries.get("zeus-sprite");
+    expect(before?.manifest.kind).toBe("sprite");
+    expect(resolveAsset(snapshot, { spriteId: "zeus-sprite" })).toMatchObject({
+      source: "canon",
+      kind: "sprite",
+    });
+    expect(
+      resolveAsset(snapshot, {
+        spriteId: "zeus-retro",
+        state: "walk",
+        direction: "west",
+      }),
+    ).toMatchObject({ source: "canon", kind: "sprite" });
+    const subject = JSON.parse(
+      readFileSync(join(COMMITTED, "assets", "subjects", "zeus.json"), "utf8"),
+    );
+    expect(subject.legacySprites).toEqual(["zeus-sprite"]);
+  });
+});
+
 describe("cross references", () => {
+  it("accepts an ability on a sprite its god lists as legacy, and still refuses one that is not the god's", () => {
+    const root = contentRoot();
+    const subjectFile = join(root, "assets", "subjects", "zeus.json");
+    const subject = JSON.parse(readFileSync(subjectFile, "utf8"));
+    const legacy = (id: string) => {
+      const base = actSprite("thunderbolt");
+      return { ...base, manifest: { ...base.manifest, id: id as AssetId } };
+    };
+    // Positive control: unlisted, the ability on an ownerless sprite is refused.
+    publish(root, legacy("old-zeus-sprite"));
+    expect(diagnosticsOf(root)).toHaveLength(1);
+    // Listed as Zeus's legacy sprite, it validates.
+    writeFileSync(
+      subjectFile,
+      JSON.stringify({ ...subject, legacySprites: ["old-zeus-sprite"] }),
+    );
+    expect(diagnosticsOf(root)).toEqual([]);
+    // An ability Zeus does not have is still refused on a legacy sprite.
+    const other = contentRoot();
+    writeFileSync(
+      join(other, "assets", "subjects", "zeus.json"),
+      JSON.stringify({ ...subject, legacySprites: ["old-zeus-sprite"] }),
+    );
+    publish(other, {
+      ...legacy("old-zeus-sprite"),
+      manifest: {
+        ...actSprite("lightning").manifest,
+        id: "old-zeus-sprite" as AssetId,
+      },
+    });
+    expect(diagnosticsOf(other)).toHaveLength(1);
+  });
+
   it("reports an ability the owning god does not have", () => {
     const root = contentRoot();
     publish(root, actSprite("lightning"));
@@ -1444,16 +1529,22 @@ describe("the retro matrix completeness rule", () => {
         readFileSync(join(root, "assets", "subjects", "zeus.json"), "utf8"),
       ).render.matrix.cellClass,
     ).toBe("god-tall");
+    // Before promotion, zeus-sprite was the god's own sprite, so it is no legacy sprite of this root.
+    const subjectPath = join(root, "assets", "subjects", "zeus.json");
+    const { legacySprites: _legacy, ...subject } = JSON.parse(
+      readFileSync(subjectPath, "utf8"),
+    );
+    writeFileSync(subjectPath, JSON.stringify(subject));
     publish(root, spriteFixture("zeus-sprite"));
     pointGodAt(root, "zeus-sprite");
     expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
   });
 
-  it("validates the committed legacy zeus-sprite against the committed subject", () => {
+  it("validates the committed promoted Zeus against the committed subject: zeus-retro holds the matrix, zeus-sprite is legacy", () => {
     const god = JSON.parse(
       readFileSync(join(COMMITTED, "gods", "zeus.json"), "utf8"),
     );
-    expect(god.sprite).toBe("zeus-sprite");
+    expect(god.sprite).toBe("zeus-retro");
     expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
   });
 

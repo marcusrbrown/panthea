@@ -577,6 +577,8 @@ flowchart TB
 
 **Verification:** Packaged-app check through the inspection route at zoom 1–4.
 
+**Status (2026-10-12):** the code and tests are done (624×592 target, 112×96 and 64×80 actors in one scene, zoom 1 at 1280×720 as before). The packaged-app inspection check is pending an owner-gated GUI step, so this unit stays unticked.
+
 - [ ] **U10. Complete retro Zeus revision and promotion**
 
 **Goal:** Publish `zeus-retro` and make it Zeus's sprite.
@@ -611,6 +613,8 @@ flowchart TB
 - The required matrix is **12 slots**: idle, walk and seated by four facings. `act/thunderbolt` is deferred beside `act/pronouncement`; it needs no art, no matrix slot and no `act` frames before promotion. The shared `act` state contract and Zeus's gameplay thunderbolt stay.
 - **No props on characters.** The bolt, its stamps and locators are gone (post step v3); Zeus's identity comes from a lapis himation over the left shoulder and a regal stance. Test scenarios above that read "act" or "every required slot" mean the 12.
 - **Frames and timing are per state** in the profile and used by the engine and the manifest: idle 10 × 250 ms, seated 8 frames of 208–209 ms, walk 16 × 50 ms, all looping with `loopStart` 0. The preregistered criteria record these as proposals the owner critiques from the animated preview. The packaged inspection check must read back every one of the 12 slots, including the 16-frame walk, at zoom 1–4 (`INSPECT_SIZE` is already 576×432 for a 16-frame 112×96 clip).
+
+**Status (2026-10-12, promotion).** Done: the owner approved and published `zeus-retro` (manifest f254faa3…, atlas fe9fdb08…); `GodProfile.sprite` for Zeus is `zeus-retro`; `zeus-sprite` stays published and resolvable (Zeus's subject lists it under `legacySprites`, which the validator and derivation read); inspection digests cover all 12 slots (136 frames) at zoom 1–4; simulation, content and client goldens follow the promotion. Content validation passes with Zeus on `zeus-retro` and fails with a required slot removed. **Pending, owner-gated:** the packaged game showing retro Zeus in idle and the packaged inspection readback of every `zeus-retro` slot at zoom 1–4 (needs a release build and a GUI sitting), plus the owner's approval of the promotion commit (the core-lane agreement, origin R24). This unit stays unticked until then.
 
 ## System-Wide Impact
 

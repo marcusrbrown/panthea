@@ -98,6 +98,69 @@ describe("parseGodVisualProfile", () => {
   });
 });
 
+describe("a subject's legacy sprites", () => {
+  const labeled = (...values: object[]) =>
+    values.map((value, i) => ({ label: `subjects/${i}.json`, value }));
+
+  it("parses a list of superseded sprite ids and leaves it absent otherwise (positive control)", () => {
+    const plain = parseGodVisualProfile(visual);
+    expect(plain.ok && "legacySprites" in plain.value).toBe(false);
+    const declared = parseGodVisualProfile({
+      ...visual,
+      legacySprites: ["zeus-sprite"],
+    });
+    expect(declared.ok && declared.value.legacySprites).toEqual([
+      "zeus-sprite",
+    ]);
+  });
+
+  it("refuses an empty list, a duplicate and a bad asset id with a path", () => {
+    for (const legacySprites of [
+      [],
+      ["zeus-sprite", "zeus-sprite"],
+      ["Bad Id"],
+      "zeus-sprite",
+    ]) {
+      const parsed = parseGodVisualProfile({ ...visual, legacySprites });
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) expect(parsed.path).toStartWith("visual.legacySprites");
+    }
+  });
+
+  it("refuses the god's own current sprite as a legacy sprite, and a sprite another god already lists", () => {
+    const own = parseGodVisualProfiles(
+      labeled({ ...visual, legacySprites: [zeus.sprite] }),
+      [zeus, hera],
+      FAMILIES,
+    );
+    expect(own.ok).toBe(false);
+    if (!own.ok) expect(own.path).toBe("subjects/0.json.legacySprites[0]");
+    const shared = parseGodVisualProfiles(
+      labeled(
+        { ...visual, legacySprites: ["old-sprite"] },
+        { ...visual, godId: "hera", legacySprites: ["old-sprite"] },
+      ),
+      [zeus, hera],
+      FAMILIES,
+    );
+    expect(shared.ok).toBe(false);
+    if (!shared.ok)
+      expect(shared.path).toBe("subjects/1.json.legacySprites[0]");
+    expect(
+      parseGodVisualProfiles(
+        labeled({ ...visual, legacySprites: ["old-sprite"] }),
+        [zeus, hera],
+        FAMILIES,
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("is declared on the committed Zeus subject: zeus-sprite, the pre-promotion drawing", () => {
+    const parsed = parseGodVisualProfile(zeusSubject);
+    expect(parsed.ok && parsed.value.legacySprites).toEqual(["zeus-sprite"]);
+  });
+});
+
 describe("parseGodVisualProfiles", () => {
   const labeled = (...values: object[]) =>
     values.map((value, i) => ({ label: `subjects/${i}.json`, value }));
@@ -169,7 +232,8 @@ describe("the core god profile is unchanged", () => {
         "variants",
       ].sort(),
     );
-    expect(zeus.sprite).toBe("zeus-sprite");
+    // Promoted 2026-10-12 (retro Zeus): the stable sprite id is the rendered revision; zeus-sprite is a declared legacy sprite.
+    expect(zeus.sprite).toBe("zeus-retro");
     const withVisual = parseGodProfile({
       ...zeusJson,
       paletteFamily: "olympus",

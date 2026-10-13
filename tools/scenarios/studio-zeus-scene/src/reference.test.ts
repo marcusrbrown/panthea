@@ -53,7 +53,37 @@ test("the generator test fails when a committed digest is edited", () => {
 test("the committed digests cover every published asset, state and expression", () => {
   const byId = new Map(REFERENCE.assets.map((asset) => [asset.assetId, asset]));
 
-  expect([...byId.keys()]).toEqual(["zeus-portrait", "zeus-sprite"]);
+  expect([...byId.keys()]).toEqual([
+    "zeus-portrait",
+    "zeus-retro",
+    "zeus-sprite",
+  ]);
+  // The promoted retro Zeus: all 12 slots (walk and the four facings included), 136 frames of 112x96.
+  const retro = byId.get("zeus-retro");
+  expect(retro?.selections.map((s) => s.key)).toEqual(
+    ["idle", "seated", "walk"].flatMap((state) =>
+      ["east", "north", "south", "west"].map((d) => `${state}/${d}`),
+    ),
+  );
+  const frameCount = (key: string) =>
+    retro?.selections.find((s) => s.key === key)?.frames.length;
+  for (const d of ["south", "east", "north", "west"]) {
+    expect([
+      frameCount(`idle/${d}`),
+      frameCount(`seated/${d}`),
+      frameCount(`walk/${d}`),
+    ]).toEqual([10, 8, 16]);
+  }
+  expect(retro?.selections.reduce((sum, s) => sum + s.frames.length, 0)).toBe(
+    136,
+  );
+  for (const frame of retro?.selections.flatMap((s) => s.frames) ?? []) {
+    expect([frame.rect.w, frame.rect.h]).toEqual([112, 96]);
+    expect(Object.keys(frame.digests)).toEqual(["1", "2", "3", "4"]);
+  }
+  expect(retro?.atlas.blob).toBe(
+    "fe9fdb0846e8e25042f76ca67ba28650a0cf6141a0c6654e0946e4cb4f5c0cc4",
+  );
   const sprite = byId.get("zeus-sprite");
   // selections sort by key, so the act (with its ability) comes first
   expect(sprite?.selections.map((s) => s.key)).toEqual([

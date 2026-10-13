@@ -2,6 +2,11 @@ import { expect, test } from "bun:test";
 import { EMPTY_SNAPSHOT } from "@panthea/assets/browser";
 import { fakeSource, zeusPayload } from "../../test/canon-fixture";
 import { viewWithZeus } from "../../test/view-fixture";
+import {
+  RETRO_ATLAS_HASH,
+  RETRO_REVISION,
+  retroPayload,
+} from "../../test/zeus-retro-fixture";
 import { createCanonClient } from "../assets/canon";
 import type { ViewActor } from "../store";
 import { type ActorItem, actorInstances, planActors } from "./actors";
@@ -166,4 +171,43 @@ test("an actor beyond the slots at one depth is reported, not drawn", () => {
 
   expect(instances).toHaveLength(256);
   expect(dropped).toHaveLength(44);
+});
+
+test("promoted Zeus resolves to zeus-retro idle-south (10 frames of 250 ms, pivot 56,78), and a pre-promotion actor on zeus-sprite still resolves to its own cells", async () => {
+  const canon = createCanonClient({
+    source: fakeSource(retroPayload()),
+  });
+  const { snapshot } = await canon.load();
+  const view = viewWithZeus({}, "zeus-retro");
+  const locations = view.realms.olympus;
+  const [promoted] = planActors(
+    locations,
+    locationPoints(locations),
+    snapshot,
+  ).filter((item) => item.actor.id === "zeus");
+  if (promoted?.art.source !== "canon")
+    throw new Error("expected canon art for promoted Zeus");
+  expect(String(promoted.art.resolution.assetId)).toBe("zeus-retro");
+  expect(String(promoted.art.resolution.revision)).toBe(RETRO_REVISION);
+  expect(String(promoted.art.resolution.atlas.blob)).toBe(RETRO_ATLAS_HASH);
+  expect(promoted.art.resolution.frames).toHaveLength(10);
+  expect(
+    promoted.art.resolution.frames.every((frame) => frame.durationMs === 250),
+  ).toBe(true);
+  expect(promoted.art.resolution.pivot).toEqual({ x: 56, y: 78 });
+
+  const legacyView = viewWithZeus({}, "zeus-sprite");
+  const legacyLocations = legacyView.realms.olympus;
+  const [elder] = planActors(
+    legacyLocations,
+    locationPoints(legacyLocations),
+    snapshot,
+  ).filter((item) => item.actor.id === "zeus");
+  if (elder?.art.source !== "canon")
+    throw new Error("expected canon art for the pre-promotion actor");
+  expect(String(elder.art.resolution.assetId)).toBe("zeus-sprite");
+  expect(elder.art.resolution.pivot).toEqual({ x: 32, y: 80 });
+  expect(elder.art.resolution.frames.map((frame) => frame.durationMs)).toEqual([
+    333, 167, 333, 167,
+  ]);
 });
