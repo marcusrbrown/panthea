@@ -43,25 +43,25 @@
           "path": "Hair_Long.bin",
           "sha256": "268fd531d2c2ac321783d36fcf106d15c5c76e8923eec2c8704d5fe9de953589",
           "size": 181756,
-          "referencedBy": ["zeus"]
+          "referencedBy": []
         },
         {
           "path": "Hair_Long.gltf",
           "sha256": "27e2c63e8f98c79fb600268ffcc92b36c621b8653b5a7dcbadb08328f3f887a9",
           "size": 23813,
-          "referencedBy": ["zeus"]
+          "referencedBy": []
         },
         {
           "path": "Hair_SimpleParted.bin",
           "sha256": "ecd7c81959f3985d6254458a440daaaa18a8bfbb1dbe111c68a04a72374d54db",
           "size": 51332,
-          "referencedBy": ["zeus"]
+          "referencedBy": []
         },
         {
           "path": "Hair_SimpleParted.gltf",
           "sha256": "fe0f354d7f95d83d38e15c60794dcc063fa4d60550706f3d7ba51491cdc07c56",
           "size": 23114,
-          "referencedBy": ["zeus"]
+          "referencedBy": []
         },
         {
           "path": "Superhero_Male_FullBody.bin",

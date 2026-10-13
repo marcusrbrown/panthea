@@ -1169,7 +1169,7 @@ describe("render profiles and the camera", () => {
     const omitted = renderCopy();
     editJson(kitsPath(omitted), (k) => {
       k.kits[0].files.find(
-        (f: { path: string }) => f.path === "Hair_Long.bin",
+        (f: { path: string }) => f.path === "Superhero_Male_FullBody.bin",
       ).referencedBy = [];
     });
     expect(run(omitted).map((d) => d.message)).toEqual([
@@ -1177,14 +1177,11 @@ describe("render profiles and the camera", () => {
     ]);
 
     const stray = renderCopy();
-    editJson(profilePath(stray), (p) => {
-      // Dropping a hair piece's model leaves its file listed in kitFiles but unused; dropping the
-      // kit ref itself leaves kits.json listing a file the profile no longer references.
-      p.models.hair = p.models.hair.slice(0, 1);
-      p.kitFiles = p.kitFiles.filter(
-        (r: { path: string }) =>
-          r.path !== "Hair_Long.gltf" && r.path !== "Hair_Long.bin",
-      );
+    editJson(kitsPath(stray), (k) => {
+      // The profile builds its hair, so the kit's hair files are unread; listing them as read by it is refused.
+      for (const file of k.kits[0].files) {
+        if (/^Hair_Long\./.test(file.path)) file.referencedBy = ["zeus"];
+      }
     });
     const messages = run(stray).map((d) => d.message);
     expect(messages).toHaveLength(2);

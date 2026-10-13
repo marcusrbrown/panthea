@@ -347,7 +347,7 @@ export function copyRenderRoot(base: string): string {
  */
 export function plantUnlistedBuffer(renderRoot: string): string {
   const kit = "universal-base-characters";
-  const file = "Hair_Long.gltf";
+  const file = "Superhero_Male_FullBody.gltf";
   const path = join(renderRoot, "kits", kit, file);
   const gltf = JSON.parse(readFileSync(path, "utf8")) as {
     buffers: { uri?: string; byteLength: number }[];
@@ -365,7 +365,7 @@ export function plantUnlistedBuffer(renderRoot: string): string {
  */
 export function plantMalformedBufferUri(renderRoot: string): string {
   const kit = "universal-base-characters";
-  const file = "Hair_Long.gltf";
+  const file = "Superhero_Male_FullBody.gltf";
   const path = join(renderRoot, "kits", kit, file);
   const gltf = JSON.parse(readFileSync(path, "utf8")) as {
     buffers: { uri?: string; byteLength: number }[];
@@ -380,7 +380,7 @@ export function plantMalformedBufferUri(renderRoot: string): string {
 /** Changes a non-glTF kit file's bytes without re-pinning it: the closure check cannot see it. */
 export function corruptKitFile(renderRoot: string): string {
   const kit = "universal-base-characters";
-  const file = "Hair_Long.bin";
+  const file = "Superhero_Male_FullBody.bin";
   const path = join(renderRoot, "kits", kit, file);
   const bytes = Buffer.from(readFileSync(path));
   bytes[0] = (bytes[0] as number) ^ 0xff;

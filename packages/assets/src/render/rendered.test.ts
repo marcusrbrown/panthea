@@ -540,7 +540,7 @@ describe("the publish-time render audit", () => {
     [
       "a kit file whose bytes changed",
       (root) => void corruptKitFile(root),
-      /kit file .*Hair_Long\.bin differs from its pinned hash/,
+      /kit file .*Superhero_Male_FullBody\.bin differs from its pinned hash/,
     ],
     [
       "a profile that changed",

@@ -9,26 +9,6 @@
     },
     {
       "kit": "universal-base-characters",
-      "path": "Hair_Long.bin",
-      "sha256": "268fd531d2c2ac321783d36fcf106d15c5c76e8923eec2c8704d5fe9de953589"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_Long.gltf",
-      "sha256": "27e2c63e8f98c79fb600268ffcc92b36c621b8653b5a7dcbadb08328f3f887a9"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_SimpleParted.bin",
-      "sha256": "ecd7c81959f3985d6254458a440daaaa18a8bfbb1dbe111c68a04a72374d54db"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_SimpleParted.gltf",
-      "sha256": "fe0f354d7f95d83d38e15c60794dcc063fa4d60550706f3d7ba51491cdc07c56"
-    },
-    {
-      "kit": "universal-base-characters",
       "path": "Superhero_Male_FullBody.bin",
       "sha256": "459003f9745853ae562a85506a2b94dd56515c1f37728f9fa3d2ce1a3e4cd92f"
     },
@@ -48,27 +28,7 @@
       "path": "UAL1_Standard.glb"
     },
     "restAction": "A_TPose",
-    "hair": [
-      {
-        "model": {
-          "kit": "universal-base-characters",
-          "path": "Hair_SimpleParted.gltf"
-        },
-        "role": "hair",
-        "part": "hair",
-        "dropFrontBelow": [-0.02, 1.772]
-      },
-      {
-        "model": {
-          "kit": "universal-base-characters",
-          "path": "Hair_Long.gltf"
-        },
-        "role": "hair",
-        "part": "hair",
-        "keepSidesBack": [0.085, 0.02],
-        "cutBelow": 1.63
-      }
-    ]
+    "hair": []
   },
   "body": {
     "scale": [1.16, 1.08, 1.0],
@@ -532,7 +492,12 @@
           }
         ]
       }
-    ]
+    ],
+    "seated": {
+      "hemZ": 0.78,
+      "flare": 1.25,
+      "narrow": 0.72
+    }
   },
   "materials": {
     "skin": {
@@ -563,6 +528,11 @@
       "ramp": "lapis",
       "bias": 0.0,
       "bandShades": [1, 1, 2, 2, 3]
+    },
+    "fillet": {
+      "ramp": "pale-gold",
+      "bias": 0.0,
+      "bandShades": [3, 3, 4, 4, 4]
     }
   },
   "stampSet": "zeus",
@@ -608,15 +578,21 @@
     },
     "idle": {
       "aims": {
-        "thigh_l": [0.07, 0.0, -1.0],
+        "thigh_l": [0.05, 0.0, -1.0],
         "calf_l": [0.0, 0.05, -1.0],
         "foot_l": [0.1, -0.88, -0.45],
         "ball_l": [0.1, -1.0, 0.0],
-        "thigh_r": [-0.07, -0.1, -1.0],
+        "thigh_r": [-0.05, -0.1, -1.0],
         "calf_r": [0.0, 0.05, -1.0],
         "foot_r": [-0.1, -0.88, -0.45],
         "ball_r": [-0.1, -1.0, 0.0]
-      }
+      },
+      "breath": {
+        "spine_02": [0, 0.014, 0],
+        "spine_03": [0, 0.024, 0],
+        "neck_01": [0, -0.024, 0]
+      },
+      "groundFeet": true
     },
     "walk": {
       "damp": {
@@ -648,7 +624,7 @@
             "halfDepth": 0.105,
             "centreY": 0.005,
             "fromDeg": -188,
-            "toDeg": -150,
+            "toDeg": -166,
             "fold": 0.0
           },
           {
@@ -657,7 +633,7 @@
             "halfDepth": 0.104,
             "centreY": 0.005,
             "fromDeg": -188,
-            "toDeg": -150,
+            "toDeg": -166,
             "fold": 0.0
           },
           {
@@ -665,8 +641,8 @@
             "halfWidth": 0.078,
             "halfDepth": 0.103,
             "centreY": 0.005,
-            "fromDeg": -186,
-            "toDeg": -146,
+            "fromDeg": -188,
+            "toDeg": -166,
             "fold": 0.0
           }
         ],
@@ -688,7 +664,7 @@
             "halfWidth": 0.088,
             "halfDepth": 0.105,
             "centreY": 0.005,
-            "fromDeg": -30,
+            "fromDeg": -14,
             "toDeg": 8,
             "fold": 0.0
           },
@@ -697,7 +673,7 @@
             "halfWidth": 0.084,
             "halfDepth": 0.104,
             "centreY": 0.005,
-            "fromDeg": -30,
+            "fromDeg": -14,
             "toDeg": 8,
             "fold": 0.0
           },
@@ -706,8 +682,8 @@
             "halfWidth": 0.078,
             "halfDepth": 0.103,
             "centreY": 0.005,
-            "fromDeg": -34,
-            "toDeg": 6,
+            "fromDeg": -14,
+            "toDeg": 8,
             "fold": 0.0
           }
         ],
@@ -729,8 +705,8 @@
             "halfWidth": 0.072,
             "halfDepth": 0.105,
             "centreY": 0.005,
-            "fromDeg": -168,
-            "toDeg": -12,
+            "fromDeg": -152,
+            "toDeg": -28,
             "fold": 0.0
           },
           {
@@ -738,53 +714,62 @@
             "halfWidth": 0.07,
             "halfDepth": 0.102,
             "centreY": 0.005,
-            "fromDeg": -168,
-            "toDeg": -12,
+            "fromDeg": -152,
+            "toDeg": -28,
             "fold": 0.0
           },
           {
             "z": 1.572,
-            "halfWidth": 0.062,
-            "halfDepth": 0.094,
-            "centreY": 0.005,
-            "fromDeg": -165,
-            "toDeg": -15,
+            "halfWidth": 0.064,
+            "halfDepth": 0.1,
+            "centreY": 0.002,
+            "fromDeg": -150,
+            "toDeg": -30,
             "fold": 0.0
           },
           {
             "z": 1.545,
-            "halfWidth": 0.052,
-            "halfDepth": 0.082,
-            "centreY": 0.0,
-            "fromDeg": -160,
-            "toDeg": -20,
-            "fold": 0.0
-          },
-          {
-            "z": 1.515,
-            "halfWidth": 0.038,
-            "halfDepth": 0.07,
-            "centreY": 0.0,
-            "fromDeg": -155,
-            "toDeg": -25,
-            "fold": 0.0
-          },
-          {
-            "z": 1.49,
-            "halfWidth": 0.02,
-            "halfDepth": 0.052,
+            "halfWidth": 0.056,
+            "halfDepth": 0.098,
             "centreY": 0.0,
             "fromDeg": -150,
             "toDeg": -30,
             "fold": 0.0
           },
           {
-            "z": 1.47,
-            "halfWidth": 0.006,
-            "halfDepth": 0.035,
-            "centreY": 0.0,
+            "z": 1.515,
+            "halfWidth": 0.046,
+            "halfDepth": 0.094,
+            "centreY": -0.002,
+            "fromDeg": -148,
+            "toDeg": -32,
+            "fold": 0.0
+          },
+          {
+            "z": 1.485,
+            "halfWidth": 0.032,
+            "halfDepth": 0.084,
+            "centreY": -0.006,
+            "fromDeg": -145,
+            "toDeg": -35,
+            "fold": 0.0
+          },
+          {
+            "z": 1.462,
+            "halfWidth": 0.014,
+            "halfDepth": 0.06,
+            "centreY": -0.012,
             "fromDeg": -140,
             "toDeg": -40,
+            "fold": 0.0
+          },
+          {
+            "z": 1.445,
+            "halfWidth": 0.005,
+            "halfDepth": 0.03,
+            "centreY": -0.02,
+            "fromDeg": -135,
+            "toDeg": -45,
             "fold": 0.0
           }
         ],
@@ -794,6 +779,355 @@
             "bones": {
               "Head": 1
             }
+          }
+        ]
+      }
+    ]
+  },
+  "hair": {
+    "role": "hair",
+    "strips": [
+      {
+        "name": "crown",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.824,
+            "halfWidth": 0.015,
+            "halfDepth": 0.018,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.815,
+            "halfWidth": 0.048,
+            "halfDepth": 0.055,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.795,
+            "halfWidth": 0.076,
+            "halfDepth": 0.066,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.78,
+            "halfWidth": 0.09,
+            "halfDepth": 0.09,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.76,
+            "halfWidth": 0.1,
+            "halfDepth": 0.108,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.742,
+            "halfWidth": 0.096,
+            "halfDepth": 0.112,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          }
+        ],
+        "creases": [
+          {
+            "at": 0.12,
+            "width": 0.07,
+            "depth": 0.012
+          },
+          {
+            "at": 0.3,
+            "width": 0.07,
+            "depth": 0.012
+          },
+          {
+            "at": 0.5,
+            "width": 0.07,
+            "depth": 0.012
+          },
+          {
+            "at": 0.7,
+            "width": 0.07,
+            "depth": 0.012
+          },
+          {
+            "at": 0.88,
+            "width": 0.07,
+            "depth": 0.012
+          }
+        ]
+      },
+      {
+        "name": "lock-l",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.745,
+            "halfWidth": 0.094,
+            "halfDepth": 0.108,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.0
+          },
+          {
+            "z": 1.72,
+            "halfWidth": 0.1,
+            "halfDepth": 0.116,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.01
+          },
+          {
+            "z": 1.69,
+            "halfWidth": 0.108,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.02
+          },
+          {
+            "z": 1.66,
+            "halfWidth": 0.108,
+            "halfDepth": 0.123,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.02
+          },
+          {
+            "z": 1.635,
+            "halfWidth": 0.098,
+            "halfDepth": 0.112,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.0
+          }
+        ]
+      },
+      {
+        "name": "lock-r",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.745,
+            "halfWidth": 0.094,
+            "halfDepth": 0.108,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.0
+          },
+          {
+            "z": 1.72,
+            "halfWidth": 0.1,
+            "halfDepth": 0.116,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.01
+          },
+          {
+            "z": 1.69,
+            "halfWidth": 0.108,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.02
+          },
+          {
+            "z": 1.66,
+            "halfWidth": 0.108,
+            "halfDepth": 0.123,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.02
+          },
+          {
+            "z": 1.635,
+            "halfWidth": 0.098,
+            "halfDepth": 0.112,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.0
+          }
+        ]
+      },
+      {
+        "name": "nape",
+        "folds": 2,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "creases": [
+          {
+            "at": 0.3,
+            "width": 0.18,
+            "depth": 0.014
+          },
+          {
+            "at": 0.5,
+            "width": 0.18,
+            "depth": 0.014
+          },
+          {
+            "at": 0.7,
+            "width": 0.18,
+            "depth": 0.014
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.745,
+            "halfWidth": 0.094,
+            "halfDepth": 0.108,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.0
+          },
+          {
+            "z": 1.72,
+            "halfWidth": 0.1,
+            "halfDepth": 0.116,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.01
+          },
+          {
+            "z": 1.69,
+            "halfWidth": 0.108,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.02
+          },
+          {
+            "z": 1.65,
+            "halfWidth": 0.112,
+            "halfDepth": 0.126,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.03
+          },
+          {
+            "z": 1.61,
+            "halfWidth": 0.106,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.03
+          },
+          {
+            "z": 1.58,
+            "halfWidth": 0.092,
+            "halfDepth": 0.11,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.02
+          },
+          {
+            "z": 1.555,
+            "halfWidth": 0.07,
+            "halfDepth": 0.09,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.0
+          }
+        ]
+      }
+    ]
+  },
+  "fillet": {
+    "role": "fillet",
+    "strips": [
+      {
+        "name": "band",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.782,
+            "halfWidth": 0.093,
+            "halfDepth": 0.094,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.759,
+            "halfWidth": 0.102,
+            "halfDepth": 0.111,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
           }
         ]
       }

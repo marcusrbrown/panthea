@@ -67,8 +67,6 @@ export interface HairPiece {
   readonly scale?: Vec3;
   /** Rest-space metres the piece is moved by after scaling (x left, y back, z up): clear of the chest. */
   readonly offset?: Vec3;
-  /** Drop faces whose centre is below this height (a shorter curtain with a visible end), rest space metres. */
-  readonly cutBelow?: number;
 }
 
 export interface Legs {
@@ -202,6 +200,21 @@ export interface Himation {
   /** Material role (a key of `materials`). */
   readonly role: string;
   readonly strips: readonly HimationStrip[];
+  /** How the mantle drapes when the figure sits: a second mesh from the same strips (the himation only). */
+  readonly seated?: SeatedMantle;
+}
+
+/**
+ * The seated variant of a mantle: its rows end at `hemZ` in a flared lip where the cloth meets the
+ * seat, and the rows below the hips narrow, so the chiton shows at the sides.
+ */
+export interface SeatedMantle {
+  /** Height the mantle's rows end at, rest space metres. */
+  readonly hemZ: number;
+  /** Width and depth scale of the lip below the hem (more than 1). */
+  readonly flare: number;
+  /** Width and depth scale reached at the hem by the rows below z 1.0 (at most 1). */
+  readonly narrow: number;
 }
 
 export interface MaterialRole {
@@ -243,6 +256,13 @@ export interface PoseEntry {
    * gait keeps one foot planted, whatever the clip's own pelvis height does.
    */
   readonly groundFeet?: boolean;
+  /**
+   * Bone name to the peak additive local location (metres, in the bone's own frame: Y runs along
+   * the bone) of a breath: applied through the loop with weight (1 - cos 2 pi t) / 2 on the clip's
+   * own phase, so the loop's seam is clean. A lift of the upper spine raises the chest, the arms
+   * and the head together while the pelvis and the legs stay where they are.
+   */
+  readonly breath?: Readonly<Record<string, Vec3>>;
 }
 
 export interface ModelProfile {
@@ -262,6 +282,10 @@ export interface ModelProfile {
   readonly himation?: Himation;
   /** A beard built for the purpose, skinned to the head: strips of arcs about the face. */
   readonly beard?: Himation;
+  /** Hair built for the purpose, skinned to the head: a crown ring with volume, and the long hair below it. */
+  readonly hair?: Himation;
+  /** A thin band across the crown, skinned to the head. */
+  readonly fillet?: Himation;
   readonly materials: Readonly<Record<string, MaterialRole>>;
   /** Id of the stamp set (face stamps) the post step composites. */
   readonly stampSet: string;
@@ -351,7 +375,6 @@ function parseHairPiece(value: unknown, path: string): ParseResult<HairPiece> {
     "taper",
     "scale",
     "offset",
-    "cutBelow",
   ]);
   if (!record.ok) return record;
   const model = parseKitPath(record.value.model, `${path}.model`);
@@ -409,17 +432,10 @@ function parseHairPiece(value: unknown, path: string): ParseResult<HairPiece> {
     if (!parsed.ok) return parsed;
     offset = parsed.value;
   }
-  let cutBelow: number | undefined;
-  if (record.value.cutBelow !== undefined) {
-    const parsed = parseFiniteNumber(record.value.cutBelow, `${path}.cutBelow`);
-    if (!parsed.ok) return parsed;
-    cutBelow = parsed.value;
-  }
   return ok({
     model: model.value,
     role: role.value,
     part: part.value,
-    ...(cutBelow === undefined ? {} : { cutBelow }),
     ...(dropFrontBelow === undefined ? {} : { dropFrontBelow }),
     ...(keepSidesBack === undefined ? {} : { keepSidesBack }),
     ...(smooth === undefined ? {} : { smooth }),
@@ -855,8 +871,35 @@ function parseHimationStrip(
   });
 }
 
-function parseHimation(value: unknown, path: string): ParseResult<Himation> {
-  const record = strict(value, path, ["role", "strips"]);
+function parseSeatedMantle(
+  value: unknown,
+  path: string,
+): ParseResult<SeatedMantle> {
+  const record = strict(value, path, ["hemZ", "flare", "narrow"]);
+  if (!record.ok) return record;
+  const hemZ = parseFiniteNumber(record.value.hemZ, `${path}.hemZ`);
+  if (!hemZ.ok) return hemZ;
+  const flare = parseFiniteNumber(record.value.flare, `${path}.flare`);
+  if (!flare.ok) return flare;
+  if (flare.value < 1)
+    return fail(`${path}.flare`, "expected a flare of at least 1");
+  const narrow = parseFiniteNumber(record.value.narrow, `${path}.narrow`);
+  if (!narrow.ok) return narrow;
+  if (narrow.value <= 0 || narrow.value > 1)
+    return fail(`${path}.narrow`, "expected a scale above 0 and at most 1");
+  return ok({ hemZ: hemZ.value, flare: flare.value, narrow: narrow.value });
+}
+
+function parseHimation(
+  value: unknown,
+  path: string,
+  allowSeated = false,
+): ParseResult<Himation> {
+  const record = strict(
+    value,
+    path,
+    allowSeated ? ["role", "strips", "seated"] : ["role", "strips"],
+  );
   if (!record.ok) return record;
   const role = parseString(record.value.role, `${path}.role`);
   if (!role.ok) return role;
@@ -871,7 +914,17 @@ function parseHimation(value: unknown, path: string): ParseResult<Himation> {
   const names = strips.value.map((strip) => strip.name);
   if (new Set(names).size !== names.length)
     return fail(`${path}.strips`, "expected unique strip names");
-  return ok({ role: role.value, strips: strips.value });
+  let seated: SeatedMantle | undefined;
+  if (record.value.seated !== undefined) {
+    const parsed = parseSeatedMantle(record.value.seated, `${path}.seated`);
+    if (!parsed.ok) return parsed;
+    seated = parsed.value;
+  }
+  return ok({
+    role: role.value,
+    strips: strips.value,
+    ...(seated === undefined ? {} : { seated }),
+  });
 }
 
 function parseMaterials(
@@ -999,8 +1052,17 @@ function parsePoseEntry(value: unknown, path: string): ParseResult<PoseEntry> {
     "damp",
     "dampLocation",
     "groundFeet",
+    "breath",
   ]);
   if (!record.ok) return record;
+  let breath: PoseEntry["breath"];
+  if (record.value.breath !== undefined) {
+    const parsed = parseVec3Record(record.value.breath, `${path}.breath`);
+    if (!parsed.ok) return parsed;
+    if (Object.keys(parsed.value).length === 0)
+      return fail(`${path}.breath`, "expected at least one bone");
+    breath = parsed.value;
+  }
   let groundFeet: boolean | undefined;
   if (record.value.groundFeet !== undefined) {
     const parsed = parseBoolean(record.value.groundFeet, `${path}.groundFeet`);
@@ -1058,6 +1120,7 @@ function parsePoseEntry(value: unknown, path: string): ParseResult<PoseEntry> {
       ? {}
       : { dampLocation: dampLocation.value }),
     ...(groundFeet === undefined ? {} : { groundFeet }),
+    ...(breath === undefined ? {} : { breath }),
   });
 }
 
@@ -1106,6 +1169,8 @@ export function parseProfile(
     "garment",
     "himation",
     "beard",
+    "hair",
+    "fillet",
     "materials",
     "stampSet",
     "shadow",
@@ -1185,7 +1250,11 @@ export function parseProfile(
   if (!garment.ok) return garment;
   let himation: Himation | undefined;
   if (record.value.himation !== undefined) {
-    const parsed = parseHimation(record.value.himation, `${path}.himation`);
+    const parsed = parseHimation(
+      record.value.himation,
+      `${path}.himation`,
+      true,
+    );
     if (!parsed.ok) return parsed;
     himation = parsed.value;
   }
@@ -1195,6 +1264,18 @@ export function parseProfile(
     if (!parsed.ok) return parsed;
     beard = parsed.value;
   }
+  let hairMesh: Himation | undefined;
+  if (record.value.hair !== undefined) {
+    const parsed = parseHimation(record.value.hair, `${path}.hair`);
+    if (!parsed.ok) return parsed;
+    hairMesh = parsed.value;
+  }
+  let fillet: Himation | undefined;
+  if (record.value.fillet !== undefined) {
+    const parsed = parseHimation(record.value.fillet, `${path}.fillet`);
+    if (!parsed.ok) return parsed;
+    fillet = parsed.value;
+  }
   const materials = parseMaterials(record.value.materials, `${path}.materials`);
   if (!materials.ok) return materials;
   const roleNames = [
@@ -1203,6 +1284,8 @@ export function parseProfile(
     ...hair.value.map((h) => h.role),
     ...(himation === undefined ? [] : [himation.role]),
     ...(beard === undefined ? [] : [beard.role]),
+    ...(hairMesh === undefined ? [] : [hairMesh.role]),
+    ...(fillet === undefined ? [] : [fillet.role]),
   ];
   for (const role of roleNames) {
     if (materials.value[role] === undefined) {
@@ -1246,6 +1329,8 @@ export function parseProfile(
     garment: garment.value,
     ...(himation === undefined ? {} : { himation }),
     ...(beard === undefined ? {} : { beard }),
+    ...(hairMesh === undefined ? {} : { hair: hairMesh }),
+    ...(fillet === undefined ? {} : { fillet }),
     materials: materials.value,
     stampSet: stampSet.value,
     shadow: { ramp: shadowRamp.value },
@@ -1327,6 +1412,7 @@ export function posePolicy(
   let damp: Record<string, number> | undefined;
   let dampLocation: Record<string, number> | undefined;
   let groundFeet: boolean | undefined;
+  let breath: Record<string, Vec3> | undefined;
   for (const key of keys) {
     const entry = profile.pose[key];
     if (entry === undefined) continue;
@@ -1337,6 +1423,7 @@ export function posePolicy(
     if (entry.dampLocation !== undefined)
       dampLocation = { ...dampLocation, ...entry.dampLocation };
     if (entry.groundFeet !== undefined) groundFeet = entry.groundFeet;
+    if (entry.breath !== undefined) breath = { ...breath, ...entry.breath };
   }
   return {
     ...(aims === undefined ? {} : { aims }),
@@ -1344,6 +1431,7 @@ export function posePolicy(
     ...(damp === undefined ? {} : { damp }),
     ...(dampLocation === undefined ? {} : { dampLocation }),
     ...(groundFeet === undefined ? {} : { groundFeet }),
+    ...(breath === undefined ? {} : { breath }),
   };
 }
 

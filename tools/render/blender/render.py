@@ -177,7 +177,7 @@ def pose_policy(profile: dict, state: str, facing: str) -> dict:
         entry = profile["pose"].get(k)
         if entry is None:
             continue
-        for field in ("aims", "rotations", "damp", "dampLocation"):
+        for field in ("aims", "rotations", "damp", "dampLocation", "breath"):
             if field in entry:
                 merged[field] = {**merged.get(field, {}), **entry[field]}
         if "groundFeet" in entry:
@@ -618,7 +618,32 @@ def weights_at(table: list, z: float) -> dict:
     return dict(table[-1]["bones"])
 
 
-def build_himation(arm, himation: dict, columns: int = 14, name: str = "himation", part: str = "himation"):
+ROW_FIELDS = ("z", "halfWidth", "halfDepth", "centreY", "fromDeg", "toDeg", "fold")
+
+
+def seated_rows(rows: list, spec: dict) -> list:
+    """The rows of a mantle strip as it hangs over a seat: they end at `hemZ` in a lip that flares outward, and the rows
+    below the hips narrow toward the hem (linearly from 1 at z 1.0 to `narrow`), so the chiton shows at the sides."""
+    hem, flare, narrow = spec["hemZ"], spec["flare"], spec["narrow"]
+    kept = [r for r in rows if r["z"] > hem]
+    out = [dict(r) for r in kept]
+    if len(kept) < len(rows):
+        hi, lo = kept[-1], rows[len(kept)]
+        t = (hi["z"] - hem) / (hi["z"] - lo["z"])
+        out.append({k: hi[k] + (lo[k] - hi[k]) * t for k in ROW_FIELDS})
+        out[-1]["z"] = hem
+        out.append({**out[-1], "z": hem - 0.05})
+    for r in out:
+        shrink = 1.0 + (narrow - 1.0) * min(1.0, max(0.0, (1.0 - r["z"]) / max(1.0 - hem, 1e-6)))
+        r["halfWidth"] *= shrink
+        r["halfDepth"] *= shrink
+    if len(kept) < len(rows):
+        out[-1]["halfWidth"] *= flare
+        out[-1]["halfDepth"] *= flare
+    return out
+
+
+def build_himation(arm, himation: dict, columns: int = 14, name: str = "himation", part: str = "himation", seated: bool = False):
     """An open draped mesh of strips of arcs (never a closed ring), each skinned to the bones its weight table names by
     height. The himation hangs over the character's left shoulder; the beard is the same construction on the head. Faces
     across a crease keep their own normals (a crisp facet); the rest of the strip shades smooth. One object, one part id,
@@ -628,8 +653,9 @@ def build_himation(arm, himation: dict, columns: int = 14, name: str = "himation
     index = 0
     for strip in himation["strips"]:
         creases = strip.get("creases", [])
-        rows = [[bm.verts.new(p) for p in arc_points(row, columns, strip["folds"], creases)] for row in strip["rows"]]
-        for row, verts in zip(strip["rows"], rows):
+        strip_rows = seated_rows(strip["rows"], himation["seated"]) if seated else strip["rows"]
+        rows = [[bm.verts.new(p) for p in arc_points(row, columns, strip["folds"], creases)] for row in strip_rows]
+        for row, verts in zip(strip_rows, rows):
             for _ in verts:
                 weights[index] = weights_at(strip["weights"], row["z"])
                 index += 1
@@ -793,14 +819,27 @@ class Figure:
                 book.bind(piece, roles)
                 piece.hide_render = True
                 self.render_objs.append(piece)
+        self.standing_mantle, self.seated_mantle = [], []
         if "himation" in profile:
             himation = build_himation(self.arm, profile["himation"])
             book.bind(himation, [profile["himation"]["role"]])
             self.render_objs.append(himation)
+            self.standing_mantle = [himation]
+            if "seated" in profile["himation"]:  # the same strips as they hang over a seat
+                lap = build_himation(self.arm, profile["himation"], 14, "himation_seated", "himation", True)
+                book.bind(lap, [profile["himation"]["role"]])
+                lap.hide_render = True
+                self.render_objs.append(lap)
+                self.seated_mantle = [lap]
         if "beard" in profile:
             beard = build_himation(self.arm, profile["beard"], 16, "beard_mesh", "beard")
             book.bind(beard, [profile["beard"]["role"]])
             self.render_objs.append(beard)
+        for key, name, columns in (("hair", "hair_mesh", 28), ("fillet", "fillet_mesh", 28)):  # built for the purpose, weighted to the head
+            if key in profile:
+                mesh = build_himation(self.arm, profile[key], columns, name, "hair")
+                book.bind(mesh, [profile[key]["role"]])
+                self.render_objs.append(mesh)
         self.neutral = {}
         for piece in profile["models"]["hair"]:
             self.render_objs.append(self.add_hair(staging, piece))
@@ -820,8 +859,8 @@ class Figure:
         for m in mesh.modifiers:
             if m.type == "ARMATURE":
                 m.object = self.arm
-        drop, keep, cut = piece.get("dropFrontBelow"), piece.get("keepSidesBack"), piece.get("cutBelow")
-        if drop or keep or cut is not None:
+        drop, keep = piece.get("dropFrontBelow"), piece.get("keepSidesBack")
+        if drop or keep:
             bm = bmesh.new()
             bm.from_mesh(mesh.data)
             doomed = []
@@ -830,8 +869,6 @@ class Figure:
                 if drop and y < drop[0] and z < drop[1]:
                     doomed.append(f)
                 elif keep and not (abs(x) >= keep[0] or y >= keep[1]):
-                    doomed.append(f)
-                elif cut is not None and z < cut:
                     doomed.append(f)
             bmesh.ops.delete(bm, geom=doomed, context="FACES")
             bm.to_mesh(mesh.data)
@@ -968,6 +1005,11 @@ class Figure:
             piece.hide_render = seated
         for piece in self.seated_garment:
             piece.hide_render = not seated
+        seated_cloak = state == "seated" and bool(self.seated_mantle)
+        for piece in self.standing_mantle:
+            piece.hide_render = seated_cloak
+        for piece in self.seated_mantle:
+            piece.hide_render = not seated_cloak
         aims = policy.get("aims", {})
         order = sorted(aims, key=lambda b: AIM_ORDER.index(b) if b in AIM_ORDER else len(AIM_ORDER))
         for bone in order:
@@ -976,6 +1018,16 @@ class Figure:
         aim_bones(self.arm, {b: aims[b] for b in order})
         rotate_bones(self.arm, profile["body"]["stance"])  # the bearing, then the state's own refinement on top of it
         rotate_bones(self.arm, policy.get("rotations", {}))
+        breath = policy.get("breath")
+        if breath:  # the chest lifts and settles once per loop, 0 at the seam; the pelvis and the legs are not named
+            start, end = bpy.data.actions[clip["action"]].frame_range
+            weight = 0.5 * (1.0 - math.cos(2.0 * math.pi * (frame - start) / (end - start)))
+            for bone, offset in breath.items():
+                pb = self.arm.pose.bones.get(bone)
+                if pb is None:
+                    raise InputError(f"breath names bone {bone!r}, which the rig does not have")
+                pb.location = pb.location + Vector(offset) * weight
+            bpy.context.view_layer.update()
         for name, scale in self.bone_scales().items():
             if name in self.arm.pose.bones:
                 self.arm.pose.bones[name].scale = scale

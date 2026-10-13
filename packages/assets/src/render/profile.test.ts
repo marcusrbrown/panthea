@@ -334,18 +334,6 @@ describe("the r7 construction of Zeus", () => {
     ).toBe(true);
   });
 
-  it("shortens the hair curtain at the nape and keeps the parted crown", () => {
-    const hair = parsed().models.hair;
-    const curtain = hair.find((h) => h.model.path === "Hair_Long.gltf");
-    // The kit curtain reaches z 1.50; cutting it at 1.63 (the cheek, above the mouth) ends the side locks at the ear and
-    // the back hair at the nape, about 7 projected px shorter, so the hair is no longer one hood around the beard.
-    expect(curtain?.cutBelow).toBeGreaterThanOrEqual(1.58);
-    expect(curtain?.cutBelow).toBeLessThanOrEqual(1.66);
-    expect(hair.some((h) => h.model.path === "Hair_SimpleParted.gltf")).toBe(
-      true,
-    );
-  });
-
   it("separates hair, cloth and cloak by value: the shade tables of the r7 brief", () => {
     const { materials } = parsed();
     expect(materials.hair).toEqual({
@@ -445,7 +433,8 @@ describe("the r7 construction of Zeus", () => {
     // Walk keeps the clip's feet: it is tempered, not re-aimed, and each frame's lowest sole is set on the ground.
     expect(walk?.aims).toBeUndefined();
     expect(walk?.groundFeet).toBe(true);
-    expect(parsed().pose.idle?.groundFeet).toBeUndefined();
+    // Idle grounds its feet too (r8): the clip's own 0.15 px of foot motion flickered the bottom row.
+    expect(parsed().pose.idle?.groundFeet).toBe(true);
     expect(
       posePolicy(parsed(), { state: "walk", facing: "east" }).groundFeet,
     ).toBe(true);
@@ -464,7 +453,6 @@ describe("the r7 construction of Zeus", () => {
     expect(bad((p) => (p.pose.walk.damp.thigh_l = -0.1))).toBe(false);
     expect(bad((p) => (p.pose.walk.dampLocation.pelvis = 2))).toBe(false);
     expect(bad((p) => (p.pose.walk.groundFeet = "yes"))).toBe(false);
-    expect(bad((p) => (p.models.hair[1].cutBelow = "low"))).toBe(false);
     expect(bad((p) => (p.garment.seated.keepRings = 1))).toBe(false);
     expect(bad((p) => (p.garment.seated.keepRings = 99))).toBe(false);
     expect(bad((p) => (p.garment.seated.legs = []))).toBe(false);
@@ -493,6 +481,186 @@ describe("the r7 construction of Zeus", () => {
     expect(
       changed((p) => (p.garment.seated.legs[0].halfWidth += 0.01)),
     ).not.toBe(base);
+  });
+});
+
+describe("the r8 polish of Zeus", () => {
+  const rowsOf = (m: { strips: readonly { rows: readonly unknown[] }[] }) =>
+    m.strips.flatMap((s) => s.rows) as {
+      z: number;
+      halfWidth: number;
+      halfDepth: number;
+      centreY: number;
+      fromDeg: number;
+      toDeg: number;
+    }[];
+
+  it("styles the hair as a mesh of its own: a crown with volume above a band, falling to a defined end at the nape", () => {
+    const profile = parsed();
+    // No kit hair any more: the kit's parted crown and long curtain left the profile (the files stay vendored for the probes).
+    expect(profile.models.hair).toEqual([]);
+    expect(profile.kitFiles.some((f) => /Hair_/.test(f.path))).toBe(false);
+    expect(profile.hair?.role).toBe("hair");
+    expect(profile.materials.hair?.ramp).toBe("marble");
+    const crown = profile.hair?.strips.find((s) => s.name === "crown");
+    const nape = profile.hair?.strips.find((s) => s.name === "nape");
+    expect(crown).toBeDefined();
+    // Strands: the crown is grooved, with a parting at the front (the middle of the ring, u 0.5) and four more grooves.
+    expect(crown?.creases?.length).toBeGreaterThanOrEqual(5);
+    expect(crown?.creases?.some((c) => c.at === 0.5)).toBe(true);
+    // Short locks over the ears on both sides, ending above the jaw, and the long hair behind them.
+    for (const name of ["lock-l", "lock-r"]) {
+      const lock = profile.hair?.strips.find((s) => s.name === name);
+      expect(lock).toBeDefined();
+      expect((lock?.rows.at(-1)?.z ?? 0) > 1.62).toBe(true);
+    }
+    expect(nape).toBeDefined();
+    // The crown is a full ring that rises to an apex above the skull (1.81) and swells above the band.
+    for (const row of crown?.rows ?? [])
+      expect(row.toDeg - row.fromDeg).toBe(360);
+    expect(crown?.rows[0]?.z).toBeGreaterThan(1.81);
+    const widest = Math.max(...(crown?.rows ?? []).map((r) => r.halfWidth));
+    const atBand = crown?.rows.at(-1)?.halfWidth ?? 0;
+    expect(widest).toBeGreaterThan(atBand);
+    // The long hair below the band covers the sides and the back and leaves the face open.
+    for (const row of nape?.rows ?? [])
+      expect(row.toDeg - row.fromDeg).toBeLessThanOrEqual(260);
+    // It ends at the nape: its last row is above the shoulders (1.50) and below the ear (1.62).
+    expect(nape?.rows.at(-1)?.z).toBeGreaterThan(1.5);
+    expect(nape?.rows.at(-1)?.z).toBeLessThan(1.62);
+    // The back reads in tone steps: broad creases kept as facets, three of them on the long hair.
+    expect(nape?.creases?.length).toBeGreaterThanOrEqual(3);
+    // Skinned to the head only, like the beard.
+    for (const strip of profile.hair?.strips ?? [])
+      for (const weight of strip.weights)
+        expect(Object.keys(weight.bones)).toEqual(["Head"]);
+  });
+
+  it("wears a thin pale-gold fillet across the crown", () => {
+    const profile = parsed();
+    expect(profile.fillet?.role).toBe("fillet");
+    expect(profile.materials.fillet?.ramp).toBe("pale-gold");
+    const rows = rowsOf(profile.fillet ?? { strips: [] });
+    expect(rows).toHaveLength(2);
+    // A band 0.02 to 0.05 tall (about 1 to 2 px), wholly a ring, on the crown above the brow and the eyes.
+    const [top, bottom] = rows;
+    expect((top?.z ?? 0) - (bottom?.z ?? 0)).toBeGreaterThanOrEqual(0.02);
+    expect((top?.z ?? 0) - (bottom?.z ?? 0)).toBeLessThanOrEqual(0.05);
+    expect(bottom?.z).toBeGreaterThan(1.7);
+    expect(top?.z).toBeLessThan(1.8);
+    for (const row of rows) expect(row.toDeg - row.fromDeg).toBe(360);
+    // The band sits above the long hair's top row, which tucks under it.
+    const nape = profile.hair?.strips.find((s) => s.name === "nape");
+    expect(nape?.rows[0]?.z).toBeLessThanOrEqual(bottom?.z ?? 0);
+  });
+
+  it("hangs the beard down from the jaw: thin cheek roots and a chin mass whose front falls straight and then curves back", () => {
+    const strips = parsed().beard?.strips ?? [];
+    for (const name of ["cheek-r", "cheek-l"]) {
+      const cheek = strips.find((s) => s.name === name);
+      for (const row of cheek?.rows ?? [])
+        expect(row.toDeg - row.fromDeg).toBeLessThanOrEqual(40);
+    }
+    const chin = strips.find((s) => s.name === "chin");
+    const front = (chin?.rows ?? []).map((r) => ({
+      z: r.z,
+      y: r.centreY - r.halfDepth,
+    }));
+    // From the lip down to z 1.50 the front line moves back by less than 0.025 (it hangs, it does not recede or jut),
+    // and it never reaches further forward than the kit beard's -0.097.
+    const upper = front.filter((f) => f.z <= 1.6 && f.z >= 1.5);
+    expect(upper.length).toBeGreaterThanOrEqual(3);
+    const ys = upper.map((f) => f.y);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(0.025);
+    expect(Math.min(...front.map((f) => f.y))).toBeGreaterThan(-0.115);
+    // The hanging mass is longer than r7's (which ended at 1.47) and still ends in a rounded point.
+    expect(chin?.rows.at(-1)?.z).toBeLessThanOrEqual(1.46);
+    expect(chin?.rows.at(-1)?.halfWidth).toBeLessThan(0.012);
+  });
+
+  it("drapes the mantle over the seat: it ends in a flared hem, narrower, so the chiton shows at the sides", () => {
+    const seated = parsed().himation?.seated;
+    expect(seated).toBeDefined();
+    expect(seated?.hemZ).toBeGreaterThanOrEqual(0.7);
+    expect(seated?.hemZ).toBeLessThanOrEqual(0.9);
+    expect(seated?.flare).toBeGreaterThan(1);
+    expect(seated?.flare).toBeLessThanOrEqual(1.3);
+    expect(seated?.narrow).toBeGreaterThanOrEqual(0.6);
+    expect(seated?.narrow).toBeLessThan(1);
+    // The standing mantle is not shrunk: its rows are as r7 left them.
+    const mantle = parsed().himation?.strips.find((s) => s.name === "mantle");
+    expect(Math.min(...(mantle?.rows ?? []).map((r) => r.z))).toBe(0.45);
+    expect(Math.max(...(mantle?.rows ?? []).map((r) => r.halfWidth))).toBe(
+      0.335,
+    );
+  });
+
+  it("breathes in idle: the chest lifts over the loop while the head, the pelvis and the legs stay, and walk and seated do not breathe", () => {
+    const profile = parsed();
+    const breath = profile.pose.idle?.breath;
+    expect(Object.keys(breath ?? {}).sort()).toEqual([
+      "neck_01",
+      "spine_02",
+      "spine_03",
+    ]);
+    // Lifts along the bones only (local Y), 1 to 4 cm in all on the spine.
+    for (const [x, , z] of Object.values(breath ?? {})) {
+      expect(x).toBe(0);
+      expect(z).toBe(0);
+    }
+    const spine = (breath?.spine_02?.[1] ?? 0) + (breath?.spine_03?.[1] ?? 0);
+    expect(spine).toBeGreaterThanOrEqual(0.01);
+    expect(spine).toBeLessThanOrEqual(0.06);
+    // The neck gives back what spine_03 lifts, so the head does not rise with the chest (and idle's height does not grow).
+    expect(breath?.neck_01?.[1]).toBe(-(breath?.spine_03?.[1] ?? 0));
+    expect(profile.pose.walk?.breath).toBeUndefined();
+    expect(profile.pose.seated?.breath).toBeUndefined();
+    expect(
+      posePolicy(profile, { state: "idle", facing: "east" }).breath,
+    ).toEqual(breath);
+  });
+
+  it("plants a narrower idle stance, so the near foot sits closer to the far one in the side views", () => {
+    const aims = parsed().pose.idle?.aims;
+    expect(aims?.thigh_l?.[0]).toBeGreaterThan(0);
+    expect(aims?.thigh_l?.[0]).toBeLessThanOrEqual(0.055);
+    expect(aims?.thigh_r?.[0]).toBeLessThan(0);
+    expect(aims?.thigh_r?.[0]).toBeGreaterThanOrEqual(-0.055);
+  });
+
+  it("refuses malformed hair, fillet, seated mantle or breath", () => {
+    const bad = (change: (p: Json) => void) => parseProfile(edited(change)).ok;
+    expect(bad(() => {})).toBe(true);
+    expect(bad((p) => (p.hair.role = "no-such-role"))).toBe(false);
+    expect(bad((p) => (p.fillet.role = "no-such-role"))).toBe(false);
+    expect(bad((p) => (p.hair.strips[0].rows = []))).toBe(false);
+    expect(bad((p) => (p.hair.strips[0].rows[0].toDeg = 900))).toBe(false);
+    expect(bad((p) => delete p.hair)).toBe(true);
+    expect(bad((p) => delete p.fillet)).toBe(true);
+    expect(bad((p) => (p.himation.seated.hemZ = "low"))).toBe(false);
+    expect(bad((p) => (p.himation.seated.flare = 0.5))).toBe(false);
+    expect(bad((p) => (p.himation.seated.narrow = 1.5))).toBe(false);
+    expect(bad((p) => (p.himation.seated.extra = 1))).toBe(false);
+    expect(bad((p) => delete p.himation.seated)).toBe(true);
+    expect(bad((p) => (p.pose.idle.breath.spine_03 = [1, 2]))).toBe(false);
+    expect(bad((p) => (p.pose.idle.breath.spine_03 = "up"))).toBe(false);
+    expect(bad((p) => (p.pose.idle.breath = {}))).toBe(false);
+  });
+
+  it("hashes the new fields: a hair row, the fillet, the seated mantle and the breath each change the profile", () => {
+    const base = profileHash(parsed());
+    const changed = (change: (p: Json) => void) =>
+      profileHash(parsed(edited(change)));
+    expect(
+      changed((p) => (p.hair.strips[0].rows[0].halfWidth += 0.01)),
+    ).not.toBe(base);
+    expect(changed((p) => (p.fillet.strips[0].rows[0].z += 0.01))).not.toBe(
+      base,
+    );
+    expect(changed((p) => (p.himation.seated.hemZ += 0.01))).not.toBe(base);
+    expect(changed((p) => (p.pose.idle.breath.spine_03[0] += 0.5))).not.toBe(
+      base,
+    );
   });
 });
 
@@ -556,10 +724,10 @@ describe("kit refs", () => {
     const raw = JSON.parse(readFileSync(join(root, "kits.json"), "utf8"));
 
     const omitted = structuredClone(raw);
-    const long = omitted.kits[0].files.find(
-      (f: Json) => f.path === "Hair_Long.bin",
+    const body = omitted.kits[0].files.find(
+      (f: Json) => f.path === "Superhero_Male_FullBody.bin",
     );
-    long.referencedBy = [];
+    body.referencedBy = [];
     writeFileSync(join(root, "kits.json"), JSON.stringify(omitted));
     const omittedProblems = checkKits(root, [
       profileKitRefs(parsed()),
@@ -670,7 +838,7 @@ describe("the pose policy", () => {
     );
     const south = posePolicy(refined, { state: "idle", facing: "south" });
     const west = posePolicy(refined, { state: "idle", facing: "west" });
-    expect(south.aims?.thigh_l).toEqual([0.07, 0, -1]);
+    expect(south.aims?.thigh_l).toEqual([0.05, 0, -1]);
     expect(west.aims?.thigh_l).toEqual([0.2, 0, -1]);
     // The facing entry replaces one bone and leaves the state's others.
     expect(west.aims?.thigh_r).toEqual(south.aims?.thigh_r);
