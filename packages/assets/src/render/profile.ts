@@ -286,6 +286,8 @@ export interface ModelProfile {
   readonly beard?: Himation;
   /** Hair built for the purpose, skinned to the head: a crown ring with volume, and the long hair below it. */
   readonly hair?: Himation;
+  /** A thin band across the crown, skinned to the head. */
+  readonly fillet?: Himation;
   readonly materials: Readonly<Record<string, MaterialRole>>;
   /** Id of the stamp set (face stamps) the post step composites. */
   readonly stampSet: string;
@@ -1183,6 +1185,7 @@ export function parseProfile(
     "himation",
     "beard",
     "hair",
+    "fillet",
     "materials",
     "stampSet",
     "shadow",
@@ -1282,6 +1285,12 @@ export function parseProfile(
     if (!parsed.ok) return parsed;
     hairMesh = parsed.value;
   }
+  let fillet: Himation | undefined;
+  if (record.value.fillet !== undefined) {
+    const parsed = parseHimation(record.value.fillet, `${path}.fillet`);
+    if (!parsed.ok) return parsed;
+    fillet = parsed.value;
+  }
   const materials = parseMaterials(record.value.materials, `${path}.materials`);
   if (!materials.ok) return materials;
   const roleNames = [
@@ -1291,6 +1300,7 @@ export function parseProfile(
     ...(himation === undefined ? [] : [himation.role]),
     ...(beard === undefined ? [] : [beard.role]),
     ...(hairMesh === undefined ? [] : [hairMesh.role]),
+    ...(fillet === undefined ? [] : [fillet.role]),
   ];
   for (const role of roleNames) {
     if (materials.value[role] === undefined) {
@@ -1335,6 +1345,7 @@ export function parseProfile(
     ...(himation === undefined ? {} : { himation }),
     ...(beard === undefined ? {} : { beard }),
     ...(hairMesh === undefined ? {} : { hair: hairMesh }),
+    ...(fillet === undefined ? {} : { fillet }),
     materials: materials.value,
     stampSet: stampSet.value,
     shadow: { ramp: shadowRamp.value },

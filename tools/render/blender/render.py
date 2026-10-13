@@ -836,10 +836,11 @@ class Figure:
             beard = build_himation(self.arm, profile["beard"], 16, "beard_mesh", "beard")
             book.bind(beard, [profile["beard"]["role"]])
             self.render_objs.append(beard)
-        if "hair" in profile:  # built for the purpose, weighted to the head
-            hair = build_himation(self.arm, profile["hair"], 28, "hair_mesh", "hair")
-            book.bind(hair, [profile["hair"]["role"]])
-            self.render_objs.append(hair)
+        for key, name, columns in (("hair", "hair_mesh", 28), ("fillet", "fillet_mesh", 28)):  # built for the purpose, weighted to the head
+            if key in profile:
+                mesh = build_himation(self.arm, profile[key], columns, name, "hair")
+                book.bind(mesh, [profile[key]["role"]])
+                self.render_objs.append(mesh)
         self.neutral = {}
         for piece in profile["models"]["hair"]:
             self.render_objs.append(self.add_hair(staging, piece))

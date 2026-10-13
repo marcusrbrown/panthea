@@ -315,7 +315,7 @@
           },
           {
             "z": 1.5,
-            "halfWidth": 0.375,
+            "halfWidth": 0.385,
             "halfDepth": 0.2,
             "centreY": 0.02,
             "fromDeg": -50,
@@ -324,48 +324,48 @@
           },
           {
             "z": 1.38,
-            "halfWidth": 0.38,
+            "halfWidth": 0.405,
             "halfDepth": 0.22,
             "centreY": 0.02,
             "fromDeg": -50,
             "toDeg": 125,
-            "fold": 0.05
+            "fold": 0.04
           },
           {
             "z": 1.2,
-            "halfWidth": 0.375,
+            "halfWidth": 0.42,
             "halfDepth": 0.235,
             "centreY": 0.02,
             "fromDeg": -45,
             "toDeg": 125,
-            "fold": 0.07
+            "fold": 0.05
           },
           {
             "z": 0.95,
-            "halfWidth": 0.365,
+            "halfWidth": 0.435,
             "halfDepth": 0.255,
             "centreY": 0.02,
             "fromDeg": -40,
             "toDeg": 125,
-            "fold": 0.08
+            "fold": 0.05
           },
           {
             "z": 0.7,
-            "halfWidth": 0.345,
+            "halfWidth": 0.425,
             "halfDepth": 0.28,
             "centreY": 0.02,
             "fromDeg": -30,
             "toDeg": 125,
-            "fold": 0.08
+            "fold": 0.05
           },
           {
             "z": 0.45,
-            "halfWidth": 0.33,
+            "halfWidth": 0.385,
             "halfDepth": 0.285,
             "centreY": 0.02,
             "fromDeg": -25,
             "toDeg": 120,
-            "fold": 0.06
+            "fold": 0.05
           }
         ],
         "weights": [
@@ -528,6 +528,11 @@
       "ramp": "lapis",
       "bias": 0.0,
       "bandShades": [1, 1, 2, 2, 3]
+    },
+    "fillet": {
+      "ramp": "pale-gold",
+      "bias": 0.0,
+      "bandShades": [3, 3, 4, 4, 4]
     }
   },
   "stampSet": "zeus",
@@ -1075,6 +1080,43 @@
             "centreY": 0.007,
             "fromDeg": 20,
             "toDeg": 160,
+            "fold": 0.0
+          }
+        ]
+      }
+    ]
+  },
+  "fillet": {
+    "role": "fillet",
+    "strips": [
+      {
+        "name": "band",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.782,
+            "halfWidth": 0.093,
+            "halfDepth": 0.094,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.759,
+            "halfWidth": 0.102,
+            "halfDepth": 0.111,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
             "fold": 0.0
           }
         ]
