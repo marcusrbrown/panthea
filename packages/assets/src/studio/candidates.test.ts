@@ -11,8 +11,10 @@ import {
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { sha256Hex } from "../hash";
+import { paletteDigest } from "../palette";
 import {
   loadContent,
+  masterOf,
   nativeFigure,
   noiseImage,
   PROVISIONAL_TEST_PARAMS,
@@ -193,7 +195,7 @@ describe("the conformed candidate", () => {
       params: { ...PROVISIONAL_TEST_PARAMS, scale: null },
       target: { cell: { id: "god", w: 64, h: 80 }, pivot: { x: 32, y: 80 } },
     });
-    const family = content.palette.families.find((f) => f.id === "olympus");
+    const family = masterOf(content).families.find((f) => f.id === "olympus");
     const hexes = [
       ...new Set(
         (family?.ramps ?? []).flatMap((r) =>
@@ -207,8 +209,8 @@ describe("the conformed candidate", () => {
       id: "greek-master",
       family: "olympus",
       digest:
-        content.palette.approval.status === "approved"
-          ? content.palette.approval.digest
+        masterOf(content).approval.status === "approved"
+          ? paletteDigest(masterOf(content))
           : null,
       colours: hexes,
     });

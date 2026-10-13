@@ -13,7 +13,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { encodeRgbaPng, resolveAsset, sha256Hex } from "@panthea/assets";
+import {
+  encodeRgbaPng,
+  paletteDigest,
+  parsePalette,
+  resolveAsset,
+  sha256Hex,
+} from "@panthea/assets";
 import {
   committedVocabulary,
   type FixtureAsset,
@@ -451,6 +457,131 @@ describe("the master palette", () => {
         message: expect.stringContaining("other-master"),
       },
     ]);
+  });
+});
+
+describe("the palette set", () => {
+  const RETRO_DIR = (root: string) => join(root, "palette", "greek-retro");
+  const manifestOf = (revision: string) =>
+    `assets/registry/manifests/${revision}.json`;
+  const retroFile = (root: string) => join(RETRO_DIR(root), "palette.json");
+
+  /** The committed greek-retro, approved against its own current digest, on disk under `root` and as a palette. */
+  function approveRetro(root: string) {
+    const json = JSON.parse(readFileSync(retroFile(root), "utf8"));
+    const draft = parsePalette(
+      {
+        json,
+        gpl: readFileSync(join(RETRO_DIR(root), "master.gpl"), "utf8"),
+        hex: readFileSync(join(RETRO_DIR(root), "master.hex"), "utf8"),
+      },
+      vocabulary.paletteFamilies,
+    );
+    if (!draft.ok) throw new Error(draft.message);
+    const approval = { status: "approved", digest: paletteDigest(draft.value) };
+    writeFileSync(retroFile(root), JSON.stringify({ ...json, approval }));
+    const approved = parsePalette(
+      {
+        json: JSON.parse(readFileSync(retroFile(root), "utf8")),
+        gpl: readFileSync(join(RETRO_DIR(root), "master.gpl"), "utf8"),
+        hex: readFileSync(join(RETRO_DIR(root), "master.hex"), "utf8"),
+      },
+      vocabulary.paletteFamilies,
+    );
+    if (!approved.ok) throw new Error(approved.message);
+    return approved.value;
+  }
+
+  /** A fixture sprite published under the retro palette. */
+  function publishOnRetro(root: string): string {
+    const palette = approveRetro(root);
+    const asset = spriteFixture("zeus-retro");
+    const manifest = { ...asset.manifest, paletteId: "greek-retro" };
+    let record = newCandidate(manifest, pass);
+    for (const action of [{ type: "pick" }, { type: "approve" }] as const) {
+      const next = transitionAsset(record, action);
+      if (!next.ok) throw new Error(next.message);
+      record = next.value;
+    }
+    const result = publishAsset(
+      registryOf(root),
+      record,
+      asset.blobs,
+      vocabulary,
+      palette,
+    );
+    if (!result.ok) throw new Error(result.message);
+    return result.value.revision;
+  }
+
+  it("accepts the committed set: greek-master approved, greek-retro a draft that backs no canon", () => {
+    expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("checks each canon entry against the palette its manifest names: an approved greek-retro backs a retro asset", () => {
+    const root = contentRoot();
+    publishOnRetro(root);
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("blocks a retro canon entry once greek-retro is a draft again, and the same entry passes while it is approved", () => {
+    const root = contentRoot();
+    const revision = publishOnRetro(root);
+    expect(validateAssets(root).ok).toBe(true);
+    const json = JSON.parse(readFileSync(retroFile(root), "utf8"));
+    writeFileSync(
+      retroFile(root),
+      JSON.stringify({ ...json, approval: { status: "draft" } }),
+    );
+    const found = diagnosticsOf(root);
+    expect(found).toEqual([
+      { file: manifestOf(revision), message: expect.stringContaining("draft") },
+    ]);
+    expect(found[0]?.message).toContain("greek-retro");
+  });
+
+  it("blocks a retro canon entry whose palette limits were edited after approval", () => {
+    const root = contentRoot();
+    publishOnRetro(root);
+    const json = JSON.parse(readFileSync(retroFile(root), "utf8"));
+    json.limits.colours.sprite = 64;
+    writeFileSync(retroFile(root), JSON.stringify(json));
+    expect(diagnosticsOf(root)).toEqual([
+      {
+        file: "palette/greek-retro/palette.json",
+        message: expect.stringContaining("approval.digest"),
+      },
+    ]);
+  });
+
+  it("reports a manifest whose palette is among none of the palettes, naming those there are", () => {
+    const root = contentRoot();
+    const asset = spriteFixture("zeus-retro");
+    const palette = paletteFixture("approved", "greek-ancient");
+    let record = newCandidate(
+      { ...asset.manifest, paletteId: "greek-ancient" },
+      pass,
+    );
+    for (const action of [{ type: "pick" }, { type: "approve" }] as const) {
+      const next = transitionAsset(record, action);
+      if (!next.ok) throw new Error(next.message);
+      record = next.value;
+    }
+    const published = publishAsset(
+      registryOf(root),
+      record,
+      asset.blobs,
+      vocabulary,
+      palette.palette,
+    );
+    if (!published.ok) throw new Error(published.message);
+    // The palettes on disk are greek-master (the root) and greek-retro; greek-ancient was only ever used to publish.
+    const found = diagnosticsOf(root);
+    expect(found.map((d) => d.file)).toEqual([
+      manifestOf(published.value.revision),
+    ]);
+    expect(found[0]?.message).toContain('"greek-ancient"');
+    expect(found[0]?.message).toContain("greek-retro");
   });
 });
 

@@ -21,7 +21,13 @@ import {
   stateIds,
   stateRuleFor,
 } from "@panthea/contracts";
-import type { Palette, PaletteRamp } from "../palette";
+import {
+  colourLimit,
+  MASTER_PALETTE_ID,
+  type Palette,
+  type PaletteRamp,
+  type PaletteSet,
+} from "../palette";
 import { PROVIDER, RENDER_PROVIDER, SELECTED_PROFILE } from "./provider";
 import { MAX_SEED } from "./seed";
 import type { JobSource, RequestRecord } from "./store";
@@ -37,10 +43,6 @@ const EDIT_NEGATIVE_PROMPT =
 
 const KINDS = ["sprite", "portrait"] as const;
 type StudioKind = (typeof KINDS)[number];
-
-// docs/product/art-guide.md: world sprites use at most 16 colours including
-// outline, portraits at most 32.
-const MAX_COLOURS: Record<StudioKind, number> = { sprite: 16, portrait: 32 };
 
 /**
  * An engine as the size gate sees it: the provider its jobs name, the sizes it
@@ -71,7 +73,8 @@ export interface StudioContent {
   readonly vocabulary: AssetVocabulary;
   readonly gods: readonly GodProfile[];
   readonly visuals: readonly GodVisualProfile[];
-  readonly palette: Palette;
+  /** Every palette of the content root by id; image requests use `greek-master`, a recipe request the palette it names. */
+  readonly palettes: PaletteSet;
 }
 
 export interface RequestInput {
@@ -358,8 +361,9 @@ export function spriteCellClassOf(
 /**
  * Joins the content for a root request; unknown or mismatched values are typed
  * errors. `engine` declares the sizes the size gate checks against; it defaults
- * to the image engine and is required for a recipe request, which no default
- * engine can serve.
+ * to the image engine. A recipe request is gated only when its engine is given
+ * (`newRequestRecord` requires it), so the spec of a stored one can be rebuilt
+ * without the engine.
  */
 export function buildSpec(
   content: StudioContent,
@@ -384,12 +388,6 @@ export function buildSpec(
     });
 
   const { recipe } = request;
-  if (recipe !== undefined && engine === undefined)
-    return bad({
-      kind: "invalid-request",
-      path: "engine",
-      message: "a recipe request needs the render engine's declared cells",
-    });
   const { measuredCells, generationScale, spriteCellClass } =
     engine ?? SD_ENGINE;
   let spriteCell = spriteCellClass;
@@ -420,12 +418,6 @@ export function buildSpec(
       message: `no cell for ${kind}`,
     });
   if (recipe !== undefined) {
-    if (recipe.palette !== content.palette.id)
-      return bad({
-        kind: "unknown-palette",
-        palette: recipe.palette,
-        valid: [content.palette.id],
-      });
     if (recipe.pivot.x > cell.w || recipe.pivot.y > cell.h)
       return bad({
         kind: "invalid-request",
@@ -433,23 +425,35 @@ export function buildSpec(
         message: `pivot lies outside the ${cell.w}x${cell.h} cell`,
       });
   }
-  const generated = measuredCells.find(
-    (m) => m.w === cell.w * generationScale && m.h === cell.h * generationScale,
-  );
+  // A stored recipe request passed the gate when it was made; building its spec
+  // again, with no engine to hand, takes the cell as the size it renders at.
+  const generated =
+    recipe !== undefined && engine === undefined
+      ? { w: cell.w, h: cell.h }
+      : measuredCells.find(
+          (m) =>
+            m.w === cell.w * generationScale &&
+            m.h === cell.h * generationScale,
+        );
   if (generated === undefined)
     return bad({
       kind: "unmeasured-size",
       native: { w: cell.w, h: cell.h },
       measured: measuredCells,
     });
-  const family = content.palette.families.find(
-    (f) => f.id === visual.paletteFamily,
-  );
+  const palette = content.palettes.get(recipe?.palette ?? MASTER_PALETTE_ID);
+  if (palette === undefined)
+    return bad({
+      kind: "unknown-palette",
+      palette: recipe?.palette ?? MASTER_PALETTE_ID,
+      valid: [...content.palettes.keys()],
+    });
+  const family = palette.families.find((f) => f.id === visual.paletteFamily);
   if (family === undefined)
     return bad({
       kind: "unknown-palette-family",
       family: visual.paletteFamily,
-      valid: content.palette.families.map((f) => f.id),
+      valid: palette.families.map((f) => f.id),
     });
 
   const slots: SlotSpec[] = [];
@@ -493,11 +497,11 @@ export function buildSpec(
       ? { pivot: recipe?.pivot ?? { x: Math.floor(cell.w / 2), y: cell.h } }
       : {}),
     palette: {
-      id: content.palette.id,
-      approval: content.palette.approval,
+      id: palette.id,
+      approval: palette.approval,
       family: family.id,
       ramps: family.ramps,
-      maxColours: MAX_COLOURS[kind],
+      maxColours: colourLimit(palette, kind),
     },
     slots,
   });
@@ -520,6 +524,12 @@ export function newRequestRecord(
   if (!id.ok)
     return bad({ kind: "invalid-request", path: id.path, message: id.message });
   const { id: _id, render, ...fields } = input;
+  if (render !== undefined && engine === undefined)
+    return bad({
+      kind: "invalid-request",
+      path: "engine",
+      message: "a recipe request needs the render engine's declared cells",
+    });
   let stored: Record<string, unknown>;
   if (render === undefined) {
     stored = { ...fields, batch: input.batch ?? DEFAULT_BATCH };

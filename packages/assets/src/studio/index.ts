@@ -17,7 +17,9 @@ export type {
 export {
   type ContentDiagnostic,
   type LoadedContent,
+  type LoadedPalettes,
   loadStudioContent,
+  loadStudioPalettes,
 } from "./content";
 export {
   type EditSources,

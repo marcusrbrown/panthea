@@ -27,7 +27,7 @@ import {
   type RgbaImage,
 } from "../conformance";
 import { sha256Hex } from "../hash";
-import type { Palette } from "../palette";
+import { colourLimit, type Palette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateParams } from "./candidates";
 import {
@@ -75,8 +75,8 @@ export interface PackSources {
   readonly requests: ReadonlyMap<string, RequestRecord>;
   readonly commands: readonly CommandRecord[];
   readonly readBlob: (hash: Sha256) => Uint8Array | undefined;
+  /** The content to pack against: the palette of the request is looked up in `content.palettes`, so the caller passes the palettes as they are on disk now. */
   readonly content: StudioContent;
-  readonly palette: Palette;
   readonly prior?: PriorRevision;
 }
 
@@ -354,7 +354,7 @@ export function logicalCells(
 }
 
 export function packAsset(input: PackInput, sources: PackSources): Packing {
-  const { set, content, palette, prior } = sources;
+  const { set, content, prior } = sources;
   const { vocabulary } = content;
   const assetId = parseAssetId(input.assetId, "assetId");
   if (!assetId.ok) return refuse(`${assetId.path}: ${assetId.message}`);
@@ -370,6 +370,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     );
   const { spec } = { spec: built.value };
   const { kind } = spec;
+  const palette = content.palettes.get(spec.palette.id);
+  if (palette === undefined)
+    return refuse(`the palette ${spec.palette.id} is not loaded`);
+  const colourBudget = colourLimit(palette, kind);
   const cell = { w: spec.cell.w, h: spec.cell.h };
   const visual = content.visuals.find((v) => v.godId === set.subject);
   if (
@@ -389,6 +393,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       return refuse("the published revision has a different cell size");
     if (prior.manifest.paletteFamily !== spec.palette.family)
       return refuse("the published revision is in a different palette family");
+    if (prior.manifest.paletteId !== palette.id)
+      return refuse(
+        `the published revision is in the palette "${prior.manifest.paletteId}", not "${palette.id}"`,
+      );
   }
 
   const order = slotOrder(vocabulary, kind);
@@ -636,6 +644,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       cell,
       ...(pivot === undefined ? {} : { pivot }),
       paletteRgb: colours,
+      colourLimit: colourBudget,
       background: entry.params.background,
       alphaCutoff: entry.params.alphaCutoff,
       grid: entry.params.grid,
@@ -705,6 +714,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
           cell,
           ...(pivot === undefined ? {} : { pivot }),
           paletteRgb: colours,
+          colourLimit: colourBudget,
           background: partner.params.background,
           alphaCutoff: partner.params.alphaCutoff,
           grid: partner.params.grid,
@@ -1045,6 +1055,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
           cell,
           ...(pivot === undefined ? {} : { pivot }),
           paletteRgb: targetColours,
+          colourLimit: colourBudget,
           background: DEFAULT_CONFORM.background,
           alphaCutoff: DEFAULT_CONFORM.alphaCutoff,
           grid: DEFAULT_CONFORM.grid,
@@ -1075,6 +1086,12 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       });
     }
   }
+  if (palette.approval.status !== "approved")
+    checks.push({
+      check: "palette-approval",
+      status: "fail",
+      message: `palette "${palette.id}" is a draft: this packs, but only an approved palette's assets approve and publish`,
+    });
   const report: ConformanceReport = {
     schemaVersion: 1,
     status: checks.some((c) => c.status === "fail") ? "fail" : "pass",

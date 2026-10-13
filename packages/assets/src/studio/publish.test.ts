@@ -19,7 +19,7 @@ import {
 } from "@panthea/contracts";
 import { paletteFixture, portraitFixture } from "../fixtures";
 import { sha256Hex } from "../hash";
-import { paletteDigest } from "../palette";
+import { MASTER_PALETTE_ID, paletteDigest } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import { loadRegistry, publishAsset as publishToRegistry } from "../registry";
 import {
@@ -27,6 +27,7 @@ import {
   assetRig,
   finishSheet,
   paintFigure,
+  paletteSetOf,
   pngOf,
   removeTempRoots,
   runSlots,
@@ -56,7 +57,12 @@ const packInput = (over: Partial<PackInput> = {}): PackInput => ({
 });
 
 const doPack = (rig: AssetRig, over: Partial<PackInput> = {}) =>
-  rig.session.pack(packInput(over), rig.content, rig.palette, rig.registryRoot);
+  rig.session.pack(
+    packInput(over),
+    rig.content,
+    rig.palettes,
+    rig.registryRoot,
+  );
 
 function packOk(rig: AssetRig, over: Partial<PackInput> = {}) {
   const result = doPack(rig, over);
@@ -101,7 +107,7 @@ function approve(
     id,
     { assessments: assessments(licences), ...extra },
     rig.content,
-    rig.palette,
+    rig.palettes,
   );
 }
 
@@ -112,7 +118,7 @@ function ready(rig: AssetRig, id = "zeus-pack") {
 }
 
 const publish = (rig: AssetRig, id = "zeus-pack") =>
-  rig.session.publishAsset(id, rig.content, rig.palette, rig.registryRoot);
+  rig.session.publishAsset(id, rig.content, rig.palettes, rig.registryRoot);
 
 function tree(root: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -249,18 +255,18 @@ describe("packing through the session", () => {
       stale.pack(
         packInput({ id: "late" }),
         rig.content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     ).toMatchObject({ ok: false, reason: "closed" });
     expect(
-      stale.approveAsset("zeus-pack", {}, rig.content, rig.palette),
+      stale.approveAsset("zeus-pack", {}, rig.content, rig.palettes),
     ).toMatchObject({ ok: false, reason: "closed" });
     expect(
       stale.publishAsset(
         "zeus-pack",
         rig.content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     ).toMatchObject({ ok: false, reason: "closed" });
@@ -313,7 +319,7 @@ describe("approving a packed asset", () => {
       "zeus-pack",
       {},
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
 
     expect(result).toMatchObject({ ok: false, reason: "wrong-state" });
@@ -333,7 +339,7 @@ describe("approving a packed asset", () => {
         "zeus-pack",
         { assessments: list },
         rig.content,
-        rig.palette,
+        rig.palettes,
       );
 
     expect(
@@ -377,7 +383,7 @@ describe("approving a packed asset", () => {
       "zeus-pack",
       { assessments: list },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
 
     expect(!result.ok && result.message).toMatch(
@@ -408,7 +414,7 @@ describe("approving a packed asset", () => {
         ],
       },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
 
     expect(plain.ok).toBe(false);
@@ -513,7 +519,7 @@ describe("approving a packed asset", () => {
       "zeus-pack",
       { exception: { reason: "owner accepts it" } },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
 
     expect(!result.ok && result.message).toMatch(/unclear/);
@@ -530,9 +536,9 @@ describe("approving a packed asset", () => {
         "zeus-pack",
         { assessments: assessments(manifestOf(rig).provenance.licences) },
         rig.content,
-        palette,
+        paletteSetOf(palette),
       );
-    const changed = paletteFixture().palette;
+    const changed = paletteFixture("approved", MASTER_PALETTE_ID).palette;
     const altered = {
       ...changed,
       families: changed.families.map((f, i) =>
@@ -548,7 +554,9 @@ describe("approving a packed asset", () => {
     const rebuilt = attempt(reapproved as typeof rig.palette);
     expect(rebuilt).toMatchObject({ ok: false });
     expect(!rebuilt.ok && rebuilt.message).toMatch(/palette changed/);
-    expect(attempt(paletteFixture("draft").palette)).toMatchObject({
+    expect(
+      attempt(paletteFixture("draft", MASTER_PALETTE_ID).palette),
+    ).toMatchObject({
       ok: false,
     });
     expect(
@@ -584,7 +592,7 @@ describe("approving a packed asset", () => {
         "zeus-pack",
         { assessments: assessments(asset.record.manifest.provenance.licences) },
         rig.content,
-        rig.palette,
+        rig.palettes,
       );
 
     mutate((r) => {
@@ -614,7 +622,7 @@ describe("approving a packed asset", () => {
         "zeus-pack",
         { assessments: assessments(manifestOf(rig).provenance.licences) },
         rig.content,
-        rig.palette,
+        rig.palettes,
       );
     const original = readFileSync(
       join(rig.root, "jobs", `${jobId}.json`),
@@ -677,7 +685,7 @@ describe("approving a packed asset", () => {
 
     expect(approve(rig)).toMatchObject({ ok: false, reason: "wrong-state" });
     expect(
-      rig.session.approveAsset("nobody", {}, rig.content, rig.palette),
+      rig.session.approveAsset("nobody", {}, rig.content, rig.palettes),
     ).toMatchObject({ ok: false, reason: "not-found" });
 
     expect(tree(rig.root)).toEqual(before);
@@ -797,12 +805,12 @@ describe("publishing an approved asset", () => {
     expect(publish(rig)).toMatchObject({ ok: false });
     writeFileSync(assetFile, assetBytes);
 
-    const palette = paletteFixture().palette;
+    const palette = paletteFixture("approved", MASTER_PALETTE_ID).palette;
     expect(
       rig.session.publishAsset(
         "zeus-pack",
         rig.content,
-        { ...palette, families: palette.families.slice(0, 2) },
+        paletteSetOf({ ...palette, families: palette.families.slice(0, 2) }),
         rig.registryRoot,
       ),
     ).toMatchObject({ ok: false });
@@ -810,7 +818,7 @@ describe("publishing an approved asset", () => {
       rig.session.publishAsset(
         "zeus-pack",
         rig.content,
-        paletteFixture("draft").palette,
+        paletteSetOf(paletteFixture("draft", MASTER_PALETTE_ID).palette),
         rig.registryRoot,
       ),
     ).toMatchObject({ ok: false });
@@ -1249,7 +1257,7 @@ describe("the selected production profile's terms", () => {
       "zeus-pack",
       {},
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
 
     expect(approved.ok).toBe(true);
@@ -1282,7 +1290,7 @@ describe("the selected production profile's terms", () => {
       "zeus-pack",
       { exception: { reason: "the owner wants it" } },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
 
     expect(!attempt.ok && attempt.message).toMatch(
@@ -1318,7 +1326,7 @@ describe("a portrait through to canon", () => {
         ...over,
       },
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
   const cellAt = (atlas: Uint8Array, index: number) => {
@@ -1378,13 +1386,13 @@ describe("a portrait through to canon", () => {
         ),
       },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
     expect(approved.ok).toBe(true);
     const published = rig.session.publishAsset(
       "face-pack",
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
 
@@ -1454,14 +1462,14 @@ describe("a portrait through to canon", () => {
         ),
       },
       first.content,
-      first.palette,
+      first.palettes,
     );
     if (!oldApproved.ok) throw new Error(oldApproved.message);
     expect(
       first.session.publishAsset(
         "face-pack",
         first.content,
-        first.palette,
+        first.palettes,
         first.registryRoot,
       ).ok,
     ).toBe(true);
@@ -1537,13 +1545,13 @@ describe("a portrait through to canon", () => {
       "face-pack-2",
       { assessments: assessments(provenance.licences) },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
     expect(approved.ok).toBe(true);
     const published = rig.session.publishAsset(
       "face-pack-2",
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
 
@@ -1579,7 +1587,7 @@ describe("a partial portrait set needs verified canon for the rest", () => {
         ...over,
       },
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
   function oneExpression(rig: AssetRig, expression: string) {
@@ -1610,7 +1618,12 @@ describe("a partial portrait set needs verified canon for the rest", () => {
 
   test("a published revision that lacks expressions cannot fill them in, and neither can an unreadable one", () => {
     const rig = assetRig();
-    const sparse = portraitFixture("zeus-portrait", "zeus");
+    const fixture = portraitFixture("zeus-portrait", "zeus");
+    // Published under the palette the rig's requests use, so only the missing expressions can refuse the pack.
+    const sparse = {
+      ...fixture,
+      manifest: { ...fixture.manifest, paletteId: rig.palette.id },
+    };
     const record = transitionAsset(
       newCandidate(sparse.manifest, {
         schemaVersion: 1,
@@ -1622,7 +1635,7 @@ describe("a partial portrait set needs verified canon for the rest", () => {
     if (!record.ok) throw new Error(record.message);
     const approvedRecord = transitionAsset(record.value, { type: "approve" });
     if (!approvedRecord.ok) throw new Error(approvedRecord.message);
-    const priorPalette = paletteFixture().palette;
+    const priorPalette = rig.palette;
     const published = publishToRegistry(
       rig.registryRoot,
       approvedRecord.value,
@@ -1669,14 +1682,14 @@ describe("a partial portrait set needs verified canon for the rest", () => {
         ),
       },
       first.content,
-      first.palette,
+      first.palettes,
     );
     if (!old.ok) throw new Error(old.message);
     expect(
       first.session.publishAsset(
         "face-pack",
         first.content,
-        first.palette,
+        first.palettes,
         first.registryRoot,
       ).ok,
     ).toBe(true);
@@ -1883,7 +1896,7 @@ describe("carrying cells from a published atlas laid out in two rows", () => {
         workingSetId: "w2",
       }),
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     return { prior, packed };
@@ -1897,7 +1910,7 @@ describe("carrying cells from a published atlas laid out in two rows", () => {
         assessments: assessments(manifestOf(rig, id).provenance.licences),
       },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
 
   test("all four carried cells are the prior atlas's own pixels at their rects, not copies of its top row", () => {
@@ -1936,7 +1949,7 @@ describe("carrying cells from a published atlas laid out in two rows", () => {
     const published = rig.session.publishAsset(
       "zeus-pack-2",
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
 

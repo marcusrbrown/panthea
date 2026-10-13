@@ -115,6 +115,10 @@ function setup() {
       },
       {
         loadContent: () => ({ ok: true as const, content: rig.content }),
+        loadPalettes: () => ({
+          ok: true as const,
+          palettes: rig.content.palettes,
+        }),
         openRuntime: (session) => fakeRuntime(session),
       },
     ).then((r) => r.outcome);
@@ -259,7 +263,13 @@ describe("deriving from Zeus on the command line", () => {
       t.config,
       "derive",
       { asset: "zeus-sprite", op: "mirror", from: "idle/east", params: {} },
-      { loadContent: () => ({ ok: true as const, content: t.rig.content }) },
+      {
+        loadContent: () => ({ ok: true as const, content: t.rig.content }),
+        loadPalettes: () => ({
+          ok: true as const,
+          palettes: t.rig.content.palettes,
+        }),
+      },
     );
 
     expect(code(outcome)).toBe("asymmetric");
@@ -307,6 +317,10 @@ describe("reference conditioning", () => {
     const t = setup();
     const deps = heldBy(process.pid, {
       loadContent: () => ({ ok: true as const, content: t.rig.content }),
+      loadPalettes: () => ({
+        ok: true as const,
+        palettes: t.rig.content.palettes,
+      }),
     });
 
     const { outcome } = await run(

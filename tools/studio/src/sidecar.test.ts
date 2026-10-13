@@ -289,7 +289,9 @@ suite("the compiled studio sidecar", () => {
         config,
         JSON.stringify({
           studioRoot: rig.root,
-          contentRoot: contentRootWithPalette(paletteFixture().files),
+          contentRoot: contentRootWithPalette(
+            paletteFixture("approved", "greek-master").files,
+          ),
           editor: {
             executable: editor.ok ? editor.path : undefined,
             timeoutMs: 30_000,

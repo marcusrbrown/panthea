@@ -1249,6 +1249,8 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
+      const palettes = studio.freshPalettes();
+      if (isOutcome(palettes)) return palettes;
       const registry = studio.registryRoot();
       if (isOutcome(registry)) return registry;
       const input: { -readonly [K in keyof PackInput]: PackInput[K] } = {
@@ -1296,7 +1298,7 @@ const OPS: Record<string, OpDef> = {
             : { attribution: w.attribution as string }),
         };
       }
-      const result = session.pack(input, content, content.palette, registry);
+      const result = session.pack(input, content, palettes, registry);
       return result.ok
         ? done(assetSummary(result.asset))
         : refuse(result.reason, safeMessage(result.message));
@@ -1321,12 +1323,14 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
+      const palettes = studio.freshPalettes();
+      if (isOutcome(palettes)) return palettes;
       const registry = studio.registryRoot();
       if (isOutcome(registry)) return registry;
       const result = session.publishAsset(
         a.id as string,
         content,
-        content.palette,
+        palettes,
         registry,
       );
       return result.ok
@@ -1376,11 +1380,13 @@ async function approve(
   if (isOutcome(session)) return session;
   const content = studio.loadedContent();
   if (isOutcome(content)) return content;
+  const palettes = studio.freshPalettes();
+  if (isOutcome(palettes)) return palettes;
   const result = session.approveAsset(
     a.id as string,
     options,
     content,
-    content.palette,
+    palettes,
   );
   if (!result.ok) return refuse(result.reason, safeMessage(result.message));
   const state = result.asset.record;

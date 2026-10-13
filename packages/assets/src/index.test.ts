@@ -16,15 +16,20 @@ test("the root exports lookup, placeholder and helpers", () => {
     [
       "DEFAULT_PLACEHOLDER",
       "EMPTY_SNAPSHOT",
+      "LEGACY_PALETTE_LIMITS",
+      "MASTER_PALETTE_ID",
+      "colourLimit",
       "conformImage",
       "encodeRgbaPng",
       "paletteDigest",
+      "paletteSubdirectory",
       "parsePalette",
       "readPngHeader",
       "recoverGrid",
       "renderPlaceholder",
       "resolveAsset",
       "sha256Hex",
+      "shadeBounds",
     ].sort(),
   );
 });

@@ -19,7 +19,13 @@ import {
   spriteFixture,
 } from "../fixtures";
 import { sha256Hex } from "../hash";
-import { type Palette, paletteDigest, parsePalette } from "../palette";
+import {
+  MASTER_PALETTE_ID,
+  type Palette,
+  type PaletteSet,
+  paletteDigest,
+  parsePalette,
+} from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import type { CandidateRecord, ConformParams } from "./candidates";
 import { loadStudioContent } from "./content";
@@ -375,10 +381,21 @@ export function keyframe(candidate: CandidateRecord): Keyframe {
   };
 }
 
+/** The content's `greek-master` palette: the one image requests and the legacy assets use. */
+export function masterOf(content: StudioContent): Palette {
+  const master = content.palettes.get(MASTER_PALETTE_ID);
+  if (master === undefined) throw new Error("the content has no greek-master");
+  return master;
+}
+
+/** A palette set of one palette, keyed by its own id. */
+export const paletteSetOf = (palette: Palette): PaletteSet =>
+  new Map([[palette.id, palette]]);
+
 /** A 64x80 figure on a transparent field, painted only with the olympus palette family. */
 export function nativeFigure(content: StudioContent): RgbaImage {
   const ramps =
-    content.palette.families.find((f) => f.id === "olympus")?.ramps ?? [];
+    masterOf(content).families.find((f) => f.id === "olympus")?.ramps ?? [];
   const shade = (ramp: number, index: number) =>
     ramps[ramp]?.shades[index] ?? [0, 0, 0];
   const width = 64;
@@ -581,7 +598,10 @@ export interface AssetRig {
   readonly session: StudioSession;
   /** The real Greek content with the approved fixture palette standing in for the master. */
   readonly content: StudioContent;
+  /** The fixture palette, which is `greek-master` here. */
   readonly palette: Palette;
+  /** The set pack, approve and publish take: the fixture palette alone, as the palettes on disk. */
+  readonly palettes: PaletteSet;
   readonly registryRoot: string;
   /** What the rig's jobs record as having run them. */
   readonly engine: EngineFacts;
@@ -594,7 +614,7 @@ export function paintFigure(
   marker = 0,
 ): RgbaImage {
   const ramps =
-    content.palette.families.find((f) => f.id === "olympus")?.ramps ?? [];
+    masterOf(content).families.find((f) => f.id === "olympus")?.ramps ?? [];
   const shade = (ramp: number, index: number) =>
     ramps[ramp]?.shades[index] ?? [0, 0, 0];
   const rgba = new Uint8Array(cell.w * cell.h * 4);
@@ -626,8 +646,9 @@ export function assetRig(
   options: { engine?: EngineFacts; registryRoot?: string } = {},
 ): AssetRig {
   const base = loadContent();
-  const palette = paletteFixture().palette;
-  const content: StudioContent = { ...base, palette };
+  const palette = paletteFixture("approved", MASTER_PALETTE_ID).palette;
+  const palettes = paletteSetOf(palette);
+  const content: StudioContent = { ...base, palettes };
   const root = tempRoot();
   const opened = openStudioSession(root);
   if (opened.kind === "busy") throw new Error("busy");
@@ -637,6 +658,7 @@ export function assetRig(
     session: opened.session,
     content,
     palette,
+    palettes,
     registryRoot,
     engine: options.engine ?? engineFacts(),
   };
@@ -795,7 +817,7 @@ export function selectedProfileFacts(): EngineFacts {
  * approved palette that no longer holds the colours `paintFigure` uses.
  */
 export function olympusMovedPaletteFiles(): FixturePalette["files"] {
-  const base = paletteFixture().files;
+  const base = paletteFixture("approved", MASTER_PALETTE_ID).files;
   const json = JSON.parse(base["palette.json"]) as {
     approval: unknown;
     families: { id: string; ramps: { id: string; shades: string[] }[] }[];
@@ -834,7 +856,7 @@ export const SPRITE_CELL = { w: 64, h: 80 } as const;
  * repair tests edit and derive from this revision.
  */
 export function publishIdleEast(rig: AssetRig): Sha256 {
-  const { session, content, palette, registryRoot } = rig;
+  const { session, content, palettes, registryRoot } = rig;
   const [jobId] = runSlots(rig, "zeus-east", "sprite", [
     { state: "idle", direction: "east" },
   ]);
@@ -855,7 +877,7 @@ export function publishIdleEast(rig: AssetRig): Sha256 {
       originalWork: { licence: "MIT", attribution: "the owner" },
     },
     content,
-    palette,
+    palettes,
     registryRoot,
   );
   if (!packed.ok) throw new Error(`pack east: ${packed.message}`);
@@ -885,13 +907,13 @@ export function publishIdleEast(rig: AssetRig): Sha256 {
     "east-pack",
     { assessments },
     content,
-    palette,
+    palettes,
   );
   if (!approved.ok) throw new Error(`approve east: ${approved.message}`);
   const published = session.publishAsset(
     "east-pack",
     content,
-    palette,
+    palettes,
     registryRoot,
   );
   if (!published.ok) throw new Error(`publish east: ${published.message}`);

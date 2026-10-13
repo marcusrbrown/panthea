@@ -9,7 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ContentDiagnostic, loadStudioContent } from "./content";
+import {
+  type ContentDiagnostic,
+  loadStudioContent,
+  loadStudioPalettes,
+} from "./content";
 
 const REAL = join(import.meta.dir, "..", "..", "..", "..", "content", "greek");
 const roots: string[] = [];
@@ -58,12 +62,21 @@ describe("the committed Greek content", () => {
     expect(content.vocabulary.expressions).toHaveLength(6);
     expect(content.gods.map((g) => g.id)).toContain("zeus");
     expect(content.visuals.map((v) => v.godId)).toContain("zeus");
-    expect(content.palette.approval.status).toBe(
+    expect([...content.palettes.keys()]).toEqual([
+      "greek-master",
+      "greek-retro",
+    ]);
+    const master = content.palettes.get("greek-master");
+    expect(master?.approval.status).toBe(
       JSON.parse(readFileSync(join(REAL, "palette", "palette.json"), "utf8"))
         .approval.status,
     );
-    expect(content.palette.families.map((f) => f.id)).toEqual(
+    expect(master?.families.map((f) => f.id)).toEqual(
       expect.arrayContaining([...content.vocabulary.paletteFamilies]),
+    );
+    expect(content.palettes.get("greek-retro")?.approval.status).toBe("draft");
+    expect(content.palettes.get("greek-retro")?.limits?.colours.sprite).toBe(
+      48,
     );
     expect(JSON.stringify(content)).toBe(
       JSON.stringify(
@@ -209,5 +222,68 @@ describe("content that cannot load is refused with diagnostics, never an excepti
       expect(d.file).not.toContain(root);
       expect(d.message.length).toBeLessThanOrEqual(240);
     }
+  });
+});
+
+describe("the palette set", () => {
+  test("greek-master is read from the palette root and greek-retro from its subdirectory", () => {
+    const copy = copyOfContent();
+    const loaded = loadStudioContent(copy);
+    expect(loaded.ok && [...loaded.content.palettes.keys()]).toEqual([
+      "greek-master",
+      "greek-retro",
+    ]);
+  });
+
+  test("a damaged or missing file of a subdirectory palette is reported against its own path", () => {
+    const missing = copyOfContent();
+    rmSync(join(missing, "palette", "greek-retro", "master.gpl"));
+    expect(files(missing)).toEqual(["palette/greek-retro/master.gpl"]);
+    expect(failures(missing)[0]?.message).toBe("is missing");
+
+    const damaged = copyOfContent();
+    edit(damaged, "palette/greek-retro/palette.json", (p) => {
+      p.families[0].ramps[0].shades[0] = "#000001";
+    });
+    expect(files(damaged)).toEqual(["palette/greek-retro/palette.json"]);
+
+    const root = copyOfContent();
+    edit(root, "palette/greek-retro/palette.json", (p) => {
+      p.id = "greek-other";
+    });
+    expect(files(root)).toEqual(["palette/greek-retro/palette.json"]);
+    expect(failures(root)[0]?.message).toContain('"greek-other"');
+  });
+
+  test("a damaged greek-master is still reported at the palette root, and does not hide a damaged greek-retro", () => {
+    const root = copyOfContent();
+    rmSync(join(root, "palette", "master.hex"));
+    rmSync(join(root, "palette", "greek-retro", "master.hex"));
+    expect(files(root)).toEqual([
+      "palette/master.hex",
+      "palette/greek-retro/master.hex",
+    ]);
+  });
+
+  test("the palettes alone re-read from disk, so an edit after the content loaded shows", () => {
+    const root = copyOfContent();
+    const families = ["town", "olympus", "underworld"];
+    const before = loadStudioPalettes(root, families);
+    expect(
+      before.ok && before.palettes.get("greek-retro")?.approval.status,
+    ).toBe("draft");
+    edit(root, "palette/greek-retro/palette.json", (p) => {
+      p.limits.colours.sprite = 40;
+    });
+    const after = loadStudioPalettes(root, families);
+    expect(after.ok && after.palettes.get("greek-retro")?.limits).toEqual({
+      shades: { min: 4, max: 6 },
+      colours: { sprite: 40 },
+    });
+    rmSync(join(root, "palette", "greek-retro", "palette.json"));
+    expect(loadStudioPalettes(root, families)).toMatchObject({
+      ok: false,
+      diagnostics: [{ file: "palette/greek-retro/palette.json" }],
+    });
   });
 });

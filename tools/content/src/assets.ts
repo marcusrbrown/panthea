@@ -9,7 +9,8 @@
 //                                          sprite is an asset on the matrix's cell class must hold
 //                                          every slot the matrix requires
 //   <root>/assets/registry/                index.json, manifests/, blobs/
-//   <root>/palette/                        palette.json, master.gpl, master.hex
+//   <root>/palette/                        greek-master: palette.json, master.gpl, master.hex
+//   <root>/palette/<id>/                   any other palette (greek-retro), the same three files
 //
 // With a repository root, it also runs the render checks: the curated kit library under
 // <repo>/tools/render (kits.json against the kit files and the profiles' references) and the
@@ -46,7 +47,7 @@ import {
   slotKeys,
   stateRuleFor,
 } from "@panthea/contracts";
-import { readPalette } from "./palette";
+import { readPalettes } from "./palette";
 
 export interface AssetDiagnostic {
   /** Path relative to the content root. */
@@ -258,10 +259,10 @@ export function validateAssets(
   }
   const vocabulary: AssetVocabulary = parsedVocabulary.value;
 
-  // Master palette: canon needs it approved and named by every manifest.
-  const paletteRead = readPalette(contentRoot, vocabulary.paletteFamilies);
+  // Palettes: canon needs the palette each manifest names, approved.
+  const paletteRead = readPalettes(contentRoot, vocabulary.paletteFamilies);
   if (!paletteRead.ok) diagnostics.push(...paletteRead.diagnostics);
-  const palette = paletteRead.ok ? paletteRead.palette : undefined;
+  const palettes = paletteRead.ok ? paletteRead.palettes : undefined;
 
   // Gods: parsed read-only, for stable sprite ids and ability ids.
   const gods: GodProfile[] = [];
@@ -382,8 +383,13 @@ export function validateAssets(
   for (const entry of registry.snapshot.entries.values()) {
     const { manifest } = entry;
     const file = `assets/registry/manifests/${entry.revision}.json`;
+    const palette = palettes?.get(manifest.paletteId);
     const refusal =
-      palette === undefined ? undefined : paletteRefusal(manifest, palette);
+      palettes === undefined
+        ? undefined
+        : palette === undefined
+          ? `the manifest names palette "${manifest.paletteId}", which is not among the palettes (${[...palettes.keys()].join(", ")})`
+          : paletteRefusal(manifest, palette);
     if (refusal !== undefined) report(file, refusal);
     for (const source of manifest.provenance.sourceAssets) {
       const read = readRevision(

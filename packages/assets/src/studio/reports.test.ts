@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 import { sha256Hex } from "../hash";
-import { parsePalette } from "../palette";
+import { MASTER_PALETTE_ID, parsePalette } from "../palette";
 import {
   assetRig,
   doneCandidate,
@@ -267,7 +267,10 @@ describe("slotConformance", () => {
       rig.content.vocabulary.paletteFamilies,
     );
     if (!palette.ok) throw new Error(palette.message);
-    return { ...rig.content, palette: palette.value };
+    return {
+      ...rig.content,
+      palettes: new Map([[MASTER_PALETTE_ID, palette.value]]),
+    };
   };
 
   test("a clean hand-finished slot reports every frame against the current palette with no diff", () => {

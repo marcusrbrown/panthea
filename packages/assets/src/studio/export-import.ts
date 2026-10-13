@@ -20,6 +20,7 @@ import {
   type RgbaImage,
 } from "../conformance";
 import { sha256Hex } from "../hash";
+import { colourLimit } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import {
   type CandidateParams,
@@ -686,7 +687,14 @@ export function buildPreview(args: {
     const evidence = edit.evidence[tag.name];
     if (evidence === undefined)
       return bad(`slot ${tag.name} has no report evidence`);
-    const bounds = timingBounds(content, kind, tag.name);
+    const cellClass = content.vocabulary.cells.find(
+      (c) => c.w === cell.w && c.h === cell.h && c.kinds.includes(kind),
+    );
+    const bounds = timingBounds(content, kind, tag.name, cellClass?.id);
+    // The limit of the palette the slot was measured against, as the content now has it.
+    const palette = content.palettes.get(evidence.palette.id);
+    const limit =
+      palette === undefined ? undefined : colourLimit(palette, kind);
     const pivot = meta.pivots[tag.name] ?? null;
     const frames: FrameRef[] = [];
     const reports: PreviewSlot["reports"][number][] = [];
@@ -704,6 +712,7 @@ export function buildPreview(args: {
         cell,
         ...(pivot === null ? {} : { pivot }),
         paletteRgb: evidence.palette.colours.map(hexRgb),
+        ...(limit === undefined ? {} : { colourLimit: limit }),
         background: evidence.params.background,
         alphaCutoff: evidence.params.alphaCutoff,
         grid: evidence.params.grid,

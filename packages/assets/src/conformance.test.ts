@@ -1399,3 +1399,78 @@ describe("counters and kind rules on fixed fixtures", () => {
     expect(check(reduced, "colour-count")).toMatchObject({ status: "pass" });
   });
 });
+
+describe("the colour limit a palette declares", () => {
+  // N distinct, non-black, non-white colours.
+  const many = (count: number): Rgb[] =>
+    Array.from({ length: count }, (_, i) => [
+      20 + i * 3,
+      30 + ((i * 7) % 100),
+      60 + ((i * 11) % 120),
+    ]);
+  const sprite = (
+    colours: number,
+    overrides: Partial<ConformanceInput> = {},
+  ) => {
+    const palette = many(Math.max(colours, 64));
+    const shaded = image(64, 80, (x, y) =>
+      x < 8 || x >= 56 || y < 8 || y >= 72
+        ? T
+        : [...(palette[(x + 3 * y) % colours] as Rgb), 255],
+    );
+    return done(
+      input({
+        ...shaded,
+        paletteRgb: palette,
+        mode: "report-only",
+        ...overrides,
+      }),
+    );
+  };
+
+  it("holds a greek-retro sprite to 48 colours: 49 fail and 48 pass", () => {
+    const over = sprite(49, { colourLimit: 48 });
+    expect(check(over, "colour-count")).toMatchObject({ status: "fail" });
+    expect(check(over, "colour-count")?.message).toContain("49 colours");
+    expect(check(over, "colour-count")?.message).toContain("limit 48");
+    const within = sprite(48, { colourLimit: 48 });
+    expect(check(within, "colour-count")).toMatchObject({ status: "pass" });
+    expect(check(within, "colour-count")?.message).toContain("limit 48");
+  });
+
+  it("keeps the greek-master limit of 16 when no limit is given: 17 still fail, 16 pass", () => {
+    const over = sprite(17);
+    expect(check(over, "colour-count")).toMatchObject({ status: "fail" });
+    expect(check(over, "colour-count")?.message).toContain("limit 16");
+    expect(check(sprite(16), "colour-count")).toMatchObject({ status: "pass" });
+    // The same 17 colours pass once a palette allows more: the limit is the palette's.
+    expect(
+      check(sprite(17, { colourLimit: 48 }), "colour-count"),
+    ).toMatchObject({
+      status: "pass",
+    });
+  });
+
+  it("reduces an auto-conformed sprite to the declared limit, not to 16", () => {
+    const reduced = sprite(60, { colourLimit: 48, mode: "auto" });
+    expect(reduced.metrics.coloursAfter).toBeLessThanOrEqual(48);
+    expect(reduced.metrics.coloursAfter).toBeGreaterThan(16);
+    expect(check(reduced, "colour-count")).toMatchObject({ status: "pass" });
+  });
+
+  it("refuses a limit that is not a positive integer", () => {
+    for (const bad of [0, -1, 1.5, Number.NaN]) {
+      const result = conformImage(input({ colourLimit: bad }));
+      expect(result, String(bad)).toMatchObject({
+        status: "invalid-input",
+        field: "colourLimit",
+      });
+    }
+  });
+
+  it("limits a portrait by its own limit too", () => {
+    const portrait = sprite(40, { kind: "portrait", colourLimit: 32 });
+    expect(check(portrait, "colour-count")).toMatchObject({ status: "fail" });
+    expect(check(portrait, "colour-count")?.message).toContain("limit 32");
+  });
+});

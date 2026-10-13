@@ -400,10 +400,16 @@ export function recomputeStep(
         return refuse("invalid-params", "the swap step's params are malformed");
       const pairs = [];
       for (const pair of ramps) {
-        const from = rampsOf(ctx.content.palette, sourceFamily).find(
+        const palette = ctx.content.palettes.get(manifest.paletteId);
+        if (palette === undefined)
+          return refuse(
+            "invalid-params",
+            `the palette ${manifest.paletteId} is not loaded`,
+          );
+        const from = rampsOf(palette, sourceFamily).find(
           (r) => r.id === pair.source,
         );
-        const to = rampsOf(ctx.content.palette, targetFamily).find(
+        const to = rampsOf(palette, targetFamily).find(
           (r) => r.id === pair.target,
         );
         if (from === undefined || to === undefined)
@@ -617,13 +623,16 @@ export function auditDerivation(audit: DerivationAudit): string | undefined {
       return `${named}: the loop start is not what the recipe makes`;
   }
 
-  const ramps = rampIndex(audit.content.palette);
+  const palette = audit.content.palettes.get(manifest.paletteId);
+  if (palette === undefined)
+    return `the palette ${manifest.paletteId} is not loaded`;
+  const ramps = rampIndex(palette);
   for (const variant of manifest.realmVariants) {
     const named = `the ${variant.paletteFamily} realm variant`;
     // The variant's map is the map of the palette-swap step that records it.
     const step = swapStepFor(recorded, variant.paletteFamily);
     if (step === undefined) return `${named}: no palette-swap step records it`;
-    const expected = swapMapOf(step, audit.content.palette);
+    const expected = swapMapOf(step, palette);
     if (!expected.ok) return `${named}: ${expected.message}`;
     if (canonicalJson(expected.map) !== canonicalJson(variant.map))
       return `${named}: its colour map is not the map its palette-swap step records`;
@@ -701,12 +710,12 @@ const hexOf = (rgb: readonly number[]) =>
   `#${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 
 function paletteFacts(
-  content: StudioContent,
+  palette: Palette,
   family: string,
 ): DerivedEntry["palette"] {
   const seen = new Set<string>();
   const colours: string[] = [];
-  for (const ramp of rampsOf(content.palette, family))
+  for (const ramp of rampsOf(palette, family))
     for (const shade of ramp.shades) {
       const colour = hexOf(shade);
       if (!seen.has(colour)) {
@@ -715,12 +724,10 @@ function paletteFacts(
       }
     }
   return {
-    id: content.palette.id,
+    id: palette.id,
     family,
     digest:
-      content.palette.approval.status === "approved"
-        ? paletteDigest(content.palette)
-        : null,
+      palette.approval.status === "approved" ? paletteDigest(palette) : null,
     colours,
   };
 }
@@ -781,6 +788,12 @@ export function createDeriveOps(
     const revision = current.value;
     const refer = { assetId: assetId.value, revision };
 
+    const palette = content.palettes.get(manifest.paletteId);
+    if (palette === undefined)
+      return failure(
+        "invalid-params",
+        `the palette ${manifest.paletteId} is not loaded`,
+      );
     const subject = content.visuals.find((v) => v.godId === god.id) ?? {};
     let slots: SlotInput[] = [];
     let derivation: Derivation | DeriveRefusal;
@@ -811,8 +824,8 @@ export function createDeriveOps(
           "invalid-params",
           `${input.asset} is already in the ${target} palette family`,
         );
-      const sourceRamps = rampsOf(content.palette, input.from);
-      const targetRamps = rampsOf(content.palette, target);
+      const sourceRamps = rampsOf(palette, input.from);
+      const targetRamps = rampsOf(palette, target);
       let pairs: { source: PaletteRamp; target: PaletteRamp }[];
       const given = isObject(input.params) ? input.params.ramps : undefined;
       if (given !== undefined) {
@@ -969,7 +982,7 @@ export function createDeriveOps(
     const request = made.value.record;
     const opened = newWorkingSet(setId, request, content);
     if (!opened.ok) return failure(opened.reason, opened.message);
-    const fallback = paletteFacts(content, manifest.paletteFamily);
+    const fallback = paletteFacts(palette, manifest.paletteFamily);
 
     let record: WorkingSetRecord;
     const blobs: Uint8Array[] = [];

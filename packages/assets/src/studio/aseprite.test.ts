@@ -21,6 +21,7 @@ import {
   doneCandidate,
   keyframe,
   loadContent,
+  masterOf,
   removeTempRoots,
   tempRoot,
   toneFrame,
@@ -939,7 +940,7 @@ describe("the installed editor", () => {
     async () => {
       const root = tempRoot();
       const session = openSession(root);
-      const family = content.palette.families.find((f) => f.id === "olympus");
+      const family = masterOf(content).families.find((f) => f.id === "olympus");
       const colours = [
         ...new Set(
           (family?.ramps ?? []).flatMap((r) =>

@@ -319,7 +319,7 @@ function packRepair(rig: AssetRig, over: Partial<PackInput> = {}) {
   return rig.session.pack(
     packInput(over),
     rig.content,
-    rig.palette,
+    rig.palettes,
     rig.registryRoot,
   );
 }
@@ -400,13 +400,13 @@ describe("a repair candidate through pack", () => {
       "repair-pack",
       { assessments },
       rig.content,
-      rig.palette,
+      rig.palettes,
     );
     expect(approved.ok).toBe(true);
     const out = rig.session.publishAsset(
       "repair-pack",
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     expect(out.ok).toBe(true);

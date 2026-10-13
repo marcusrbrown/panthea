@@ -31,6 +31,8 @@ const readJson = (path: string): unknown =>
 
 const content = loadContent();
 const zeus = content.gods.find((g) => g.id === "zeus") as GodProfile;
+const master = content.palettes.get("greek-master") as Palette;
+const retro = content.palettes.get("greek-retro") as Palette;
 
 function ok<T>(
   result: { ok: true; value: T } | { ok: false; error: unknown },
@@ -76,8 +78,8 @@ describe("spec derivation", () => {
       pivot: { x: 32, y: 80 },
       palette: { id: "greek-master", family: "olympus", maxColours: 16 },
     });
-    expect(spec.palette.approval).toEqual(content.palette.approval);
-    const olympus = content.palette.families.find((f) => f.id === "olympus");
+    expect(spec.palette.approval).toEqual(master.approval);
+    const olympus = master.families.find((f) => f.id === "olympus");
     expect(spec.palette.ramps.length).toBeGreaterThan(0);
     expect(spec.palette.ramps).toEqual(olympus?.ramps ?? []);
     expect(spec.slots.map((s) => [s.key, s.slot])).toEqual([
@@ -294,12 +296,18 @@ describe("spec derivation", () => {
   test("a palette without the subject's family is reported", () => {
     const bare: StudioContent = {
       ...content,
-      palette: {
-        ...content.palette,
-        families: content.palette.families.filter(
-          (f) => f.id !== "olympus",
-        ) as Palette["families"],
-      },
+      palettes: new Map([
+        ...content.palettes,
+        [
+          "greek-master",
+          {
+            ...master,
+            families: master.families.filter(
+              (f) => f.id !== "olympus",
+            ) as Palette["families"],
+          },
+        ],
+      ]),
     };
     expect(
       buildSpec(bare, { schemaVersion: 1, ...idleSouth, batch: 1 }),
@@ -745,7 +753,7 @@ describe("recipe requests for the render engine", () => {
     measuredCells: [{ w: 112, h: 96 }],
     generationScale: 1,
   };
-  const render = { palette: content.palette.id, pivot: { x: 56, y: 78 } };
+  const render = { palette: "greek-retro", pivot: { x: 56, y: 78 } };
   const walkSouth: RequestInput = {
     subject: "zeus",
     kind: "sprite",
@@ -773,7 +781,12 @@ describe("recipe requests for the render engine", () => {
       native: { w: 112, h: 96 },
       generated: { w: 112, h: 96 },
       pivot: { x: 56, y: 78 },
-      palette: { id: content.palette.id, family: "olympus" },
+      palette: {
+        id: "greek-retro",
+        family: "olympus",
+        maxColours: 48,
+        approval: { status: "draft" },
+      },
     });
     expect(spec.slots.map((s) => s.key)).toEqual(["walk/south"]);
     expect(record.request).toEqual({
@@ -785,7 +798,7 @@ describe("recipe requests for the render engine", () => {
       seed: 0,
       recipe: {
         profile: "zeus",
-        palette: content.palette.id,
+        palette: "greek-retro",
         pivot: { x: 56, y: 78 },
       },
     });
@@ -908,15 +921,69 @@ describe("recipe requests for the render engine", () => {
     ).toBe(true);
   });
 
-  test("the palette must be one the content has", () => {
+  test("the palette is looked up by id: an unknown id is refused with the ids the content has", () => {
     expect(
-      create({ ...walkSouth, render: { ...render, palette: "greek-retro" } }),
+      create({ ...walkSouth, render: { ...render, palette: "greek-ancient" } }),
     ).toMatchObject({
       ok: false,
       error: {
         kind: "unknown-palette",
-        palette: "greek-retro",
-        valid: [content.palette.id],
+        palette: "greek-ancient",
+        valid: ["greek-master", "greek-retro"],
+      },
+    });
+  });
+
+  test("a recipe request takes its ramps and colour limit from the palette it names", () => {
+    const named = (palette: string) =>
+      ok(create({ ...walkSouth, render: { ...render, palette } })).spec.palette;
+    const onRetro = named("greek-retro");
+    expect(onRetro).toMatchObject({
+      id: "greek-retro",
+      maxColours: 48,
+      approval: retro.approval,
+    });
+    expect(onRetro.ramps).toEqual(
+      retro.families.find((f) => f.id === "olympus")?.ramps ?? [],
+    );
+    expect(onRetro.ramps.every((r) => r.shades.length === 6)).toBe(true);
+    // Positive control: the same request on greek-master gets master's ramps and its 16.
+    const onMaster = named("greek-master");
+    expect(onMaster).toMatchObject({ id: "greek-master", maxColours: 16 });
+    expect(onMaster.ramps.every((r) => r.shades.length === 4)).toBe(true);
+  });
+
+  test("an image request keeps greek-master and its limits whatever else the content holds", () => {
+    const { spec } = ok(
+      newRequestRecord(content, { id: "r", ...idleSouth, seed: 3 }, neverDraw),
+    );
+    expect(spec.palette).toMatchObject({ id: "greek-master", maxColours: 16 });
+    const portrait = ok(
+      newRequestRecord(
+        content,
+        { id: "p", ...sixExpressions, seed: 3 },
+        neverDraw,
+      ),
+    );
+    expect(portrait.spec.palette).toMatchObject({
+      id: "greek-master",
+      maxColours: 32,
+    });
+  });
+
+  test("a content set without greek-master refuses an image request instead of reaching for another palette", () => {
+    const retroOnly: StudioContent = {
+      ...content,
+      palettes: new Map([["greek-retro", retro]]),
+    };
+    expect(
+      buildSpec(retroOnly, { schemaVersion: 1, ...idleSouth, batch: 1 }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "unknown-palette",
+        palette: "greek-master",
+        valid: ["greek-retro"],
       },
     });
   });

@@ -53,6 +53,7 @@ function pickedSet() {
   };
   const over = {
     loadContent: () => ({ ok: true as const, content: rig.content }),
+    loadPalettes: () => ({ ok: true as const, palettes: rig.content.palettes }),
   };
   return { rig, config, over };
 }

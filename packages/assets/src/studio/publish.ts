@@ -23,7 +23,7 @@ import {
   transitionAsset,
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
-import { type Palette, paletteDigest } from "../palette";
+import { type Palette, type PaletteSet, paletteDigest } from "../palette";
 import {
   paletteRefusal,
   publishAsset as publishToRegistry,
@@ -59,22 +59,27 @@ export interface ApproveOptions {
 }
 
 export interface AssetOps {
+  /**
+   * `palettes` is every palette as it is on disk now, read for this operation:
+   * the asset's palette is looked up in it by id, and `content.palettes` (the
+   * content as it was loaded) is not consulted for it.
+   */
   pack(
     input: PackInput,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
     registryRoot: string,
   ): AssetOpResult;
   approveAsset(
     id: string,
     options: ApproveOptions,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
   ): AssetOpResult;
   publishAsset(
     id: string,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
     registryRoot: string,
   ): AssetOpResult;
   rejectAsset(id: string, reason?: string): AssetOpResult;
@@ -192,9 +197,11 @@ export function createAssetOps(host: EditHost): AssetOps {
   function revalidate(
     asset: StudioAssetRecord,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
   ): Result<{
     manifest: AssetManifest;
+    /** The palette the manifest names, as it is on disk now. */
+    palette: Palette;
     atlas: Uint8Array;
     variantAtlases: ReadonlyMap<Sha256, Uint8Array>;
   }> {
@@ -208,6 +215,12 @@ export function createAssetOps(host: EditHost): AssetOps {
         message: `the manifest is not valid: ${parsed.path}: ${parsed.message}`,
       };
     const manifest = parsed.value;
+    const palette = palettes.get(manifest.paletteId);
+    if (palette === undefined)
+      return {
+        ok: false,
+        message: `the palette "${manifest.paletteId}" is not among the palettes on disk`,
+      };
     if (revisionOf(manifest) !== asset.manifestRevision)
       return {
         ok: false,
@@ -252,13 +265,13 @@ export function createAssetOps(host: EditHost): AssetOps {
         ok: false,
         message: `the job ledger disagrees with the provenance: ${audit.message}`,
       };
-    return { ok: true, value: { manifest, atlas, variantAtlases } };
+    return { ok: true, value: { manifest, palette, atlas, variantAtlases } };
   }
 
   function pack(
     input: PackInput,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
     registryRoot: string,
   ): AssetOpResult {
     if (host.isClosed()) return refused("closed", CLOSED);
@@ -311,12 +324,17 @@ export function createAssetOps(host: EditHost): AssetOps {
       requests: new Map(status.requests.map((r) => [r.id, r])),
       commands: status.commands,
       readBlob: (hash) => store.readBlob(hash),
-      content,
-      palette,
+      content: { ...content, palettes },
       ...(prior === undefined ? {} : { prior }),
     });
     if (!packed.ok) return refused("wrong-state", packed.message);
     const { manifest, atlas, report, variantAtlases } = packed.value;
+    const palette = palettes.get(manifest.paletteId);
+    if (palette === undefined)
+      return refused(
+        "wrong-state",
+        `the palette "${manifest.paletteId}" is not among the palettes on disk`,
+      );
     const picked = transitionAsset(newCandidate(manifest, report), {
       type: "pick",
     });
@@ -353,7 +371,7 @@ export function createAssetOps(host: EditHost): AssetOps {
     id: string,
     options: ApproveOptions,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
   ): AssetOpResult {
     if (host.isClosed()) return refused("closed", CLOSED);
     const asset = load(id);
@@ -363,7 +381,7 @@ export function createAssetOps(host: EditHost): AssetOps {
         "wrong-state",
         `asset ${id} is ${asset.record.state}, not a draft`,
       );
-    const checked = revalidate(asset, content, palette);
+    const checked = revalidate(asset, content, palettes);
     if (!checked.ok) return refused("wrong-state", checked.message);
     const { manifest } = checked.value;
     const assessments = options.assessments ?? [];
@@ -413,7 +431,7 @@ export function createAssetOps(host: EditHost): AssetOps {
   function publishAsset(
     id: string,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
     registryRoot: string,
   ): AssetOpResult {
     if (host.isClosed()) return refused("closed", CLOSED);
@@ -424,9 +442,9 @@ export function createAssetOps(host: EditHost): AssetOps {
         "wrong-state",
         `asset ${id} is ${asset.record.state}; only an approved asset publishes`,
       );
-    const checked = revalidate(asset, content, palette);
+    const checked = revalidate(asset, content, palettes);
     if (!checked.ok) return refused("wrong-state", checked.message);
-    const { manifest, atlas, variantAtlases } = checked.value;
+    const { manifest, palette, atlas, variantAtlases } = checked.value;
 
     const valid = checkAssessments(
       manifest.provenance.licences,
