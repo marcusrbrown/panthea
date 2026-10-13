@@ -322,6 +322,10 @@ env:
     comment that links the newest report. There must be exactly one open
     daily report when the run finishes.
 
+    The branch-pr delivery mode covers only autohealing code fixes
+    (categories 1-4). The daily report is always this issue: never commit
+    it to the repository and never open a PR for it.
+
     The issue body MUST use this structure (write "None" for empty
     sections, links only — no full content duplication; write "data
     unavailable" for inaccessible sources):
@@ -452,10 +456,10 @@ jobs:
           model: ${{ vars.FRO_BOT_MODEL }}
           opencode-config: ${{ secrets.OPENCODE_CONFIG }}
           prompt: ${{ env.TASK_PROMPT }}
-          # The omitted/auto mode resolves to working-dir, whose delivery contract
-          # lists only non-mutating shell commands and stops the daily report
-          # from creating its issue. branch-pr is the mode the schedule needs;
-          # it still never pushes to main.
+          # The schedule needs branch-pr so autohealing fixes can push PR
+          # branches; working-dir (what auto resolves to) forbids delivering code.
+          # It still never pushes to main. SCHEDULE_PROMPT keeps the daily report
+          # an issue under this mode.
           output-mode: >-
             ${{
               (github.event_name == 'schedule' ||
