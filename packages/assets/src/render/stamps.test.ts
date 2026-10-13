@@ -93,6 +93,43 @@ describe("the committed stamp set", () => {
     expect(south?.pixels).toHaveLength(3);
   });
 
+  it("gives the side views their own brows: the ridge one pixel above the eye, running back from it, not the front stamp", () => {
+    const loaded = loadStampSet(COMMITTED_RENDER_ROOT, "zeus");
+    if (!loaded.ok) throw new Error("the committed set does not load");
+    const face = loaded.set.face;
+    const pixelsOf = (key: string) =>
+      (face?.get(key)?.pixels ?? []).map((p) => `${p.x},${p.y}`).sort();
+    const BROW = [0x52, 0x64, 0x71] as const;
+    for (const [key, eyeX] of [
+      ["east/near", 1],
+      ["west/near", 0],
+    ] as const) {
+      const stamp = face?.get(key);
+      expect(stamp?.pixels).toHaveLength(3);
+      // One dark eye pixel at the anchor, two brow pixels above it with a gap row between.
+      expect(stamp?.anchor).toEqual([eyeX, 2]);
+      const eye = stamp?.pixels.find(
+        (p) => p.x === eyeX && p.y === (stamp?.anchor[1] as number),
+      );
+      expect(eye?.rgb).toEqual([0x24, 0x3f, 0x63]);
+      const brow = (stamp?.pixels ?? []).filter((p) => p.y === 0);
+      expect(brow).toHaveLength(2);
+      for (const pixel of brow) expect([...pixel.rgb]).toEqual([...BROW]);
+      // Their placement is not the front stamp's.
+      expect(pixelsOf(key)).not.toEqual(pixelsOf("south/l"));
+      expect(pixelsOf(key)).not.toEqual(pixelsOf("south/r"));
+    }
+    // The front stamps stay: the eye directly under a two-pixel brow.
+    for (const key of ["south/l", "south/r"]) {
+      const brow = (face?.get(key)?.pixels ?? []).filter((p) => p.y === 0);
+      expect(brow).toHaveLength(2);
+      // The eye sits on the row right under the brow: two rows in all.
+      expect(Math.max(...(face?.get(key)?.pixels ?? []).map((p) => p.y))).toBe(
+        1,
+      );
+    }
+  });
+
   it("refuses to load a set that is not in the manifest", () => {
     const loaded = loadStampSet(COMMITTED_RENDER_ROOT, "hera");
     expect(loaded.ok).toBe(false);

@@ -10,7 +10,7 @@
             "facing": "south",
             "slot": "l",
             "file": "zeus/face-south-l.png",
-            "sha256": "0e218cc14ec81e79dfd9ad2391d486e7c0c5cb1ecb15ccbbaba38a4f18068c7a",
+            "sha256": "056f8b684658d68c39e8a094dee7e288eb78f1df590890c40b0705f45bf1ea67",
             "size": [2, 2],
             "anchor": [0, 1]
           },
@@ -18,7 +18,7 @@
             "facing": "south",
             "slot": "r",
             "file": "zeus/face-south-r.png",
-            "sha256": "10a4cb4728ebc51ca014a0852954c1a95a621c7b6dcd1fea3c3e0b11e0ad1a8c",
+            "sha256": "fabb6318f61e2db73bbabecaa4e85c2d1c9a503e0942ac030f04d6f628ab5186",
             "size": [2, 2],
             "anchor": [1, 1]
           },
@@ -26,17 +26,17 @@
             "facing": "east",
             "slot": "near",
             "file": "zeus/face-east-near.png",
-            "sha256": "0e218cc14ec81e79dfd9ad2391d486e7c0c5cb1ecb15ccbbaba38a4f18068c7a",
-            "size": [2, 2],
-            "anchor": [0, 1]
+            "sha256": "3fa883f575e69cd60836c50c94f2d320017a5a590b48ed30badb62040efe88d4",
+            "size": [2, 3],
+            "anchor": [1, 2]
           },
           {
             "facing": "west",
             "slot": "near",
             "file": "zeus/face-west-near.png",
-            "sha256": "10a4cb4728ebc51ca014a0852954c1a95a621c7b6dcd1fea3c3e0b11e0ad1a8c",
-            "size": [2, 2],
-            "anchor": [1, 1]
+            "sha256": "5123911143adb2f01a7185292fec1b4e93ecb9397f5033bd645f79f982c08c30",
+            "size": [2, 3],
+            "anchor": [0, 2]
           }
         ]
       }

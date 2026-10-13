@@ -1168,7 +1168,9 @@ describe("render profiles and the camera", () => {
   it("refuses a referencedBy list that omits the profile, and one that lists a file it does not read", () => {
     const omitted = renderCopy();
     editJson(kitsPath(omitted), (k) => {
-      k.kits[0].files[0].referencedBy = [];
+      k.kits[0].files.find(
+        (f: { path: string }) => f.path === "Hair_Long.bin",
+      ).referencedBy = [];
     });
     expect(run(omitted).map((d) => d.message)).toEqual([
       expect.stringContaining("referencedBy omits"),
@@ -1178,7 +1180,7 @@ describe("render profiles and the camera", () => {
     editJson(profilePath(stray), (p) => {
       // Dropping a hair piece's model leaves its file listed in kitFiles but unused; dropping the
       // kit ref itself leaves kits.json listing a file the profile no longer references.
-      p.models.hair = p.models.hair.slice(0, 2);
+      p.models.hair = p.models.hair.slice(0, 1);
       p.kitFiles = p.kitFiles.filter(
         (r: { path: string }) =>
           r.path !== "Hair_Long.gltf" && r.path !== "Hair_Long.bin",

@@ -635,7 +635,7 @@ describe("failures are failed, never unavailable", () => {
         throw new Error(`expected failed, got ${job?.status}`);
       expect(job.error).toMatch(/kit closure violation/);
       expect(job.error).toContain("Planted_Unlisted.bin");
-      expect(planted).toContain("Hair_Beard.gltf");
+      expect(planted).toContain("Hair_Long.gltf");
       expect(result.results.map((r) => r.outcome)).toEqual(["failed"]);
       expect(events(rig, "start")).toHaveLength(0);
       expect(scratchLeft(rig)).toEqual([]);
@@ -655,7 +655,7 @@ describe("failures are failed, never unavailable", () => {
       const job = jobsById(rig)[id as string]?.job;
       if (job?.status !== "failed")
         throw new Error(`expected failed, got ${job?.status}`);
-      expect(job.error).toMatch(/staging violation: .*Hair_Beard\.bin/);
+      expect(job.error).toMatch(/staging violation: .*Hair_Long\.bin/);
       expect(events(rig, "start")).toHaveLength(0);
       expect(scratchLeft(rig)).toEqual([]);
     },

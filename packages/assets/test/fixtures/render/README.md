@@ -37,3 +37,5 @@ python3 tools/probes/retro-render/export_parity_fixture.py \
 # a deliberate change to the TypeScript step, in the commit that bumps POST_STEP_VERSION:
 bun run packages/assets/test/render/update-golden.ts
 ```
+
+- **2026-10-12 (r7, stamps).** `stamps-root/stamps/` is a frozen copy of the stamp set the probe's cells were made with (`stamps.json` and the four `face-*.png` as of retro Zeus r6). The product's stamps (`tools/render/stamps/`) re-authored the east and west brows in r7 (the brow ridge one pixel above the eye with skin between, running back toward the ear), so the parity and golden tests load the frozen set: parity with the probe is parity at the probe's own settings. `golden.json` is unchanged.

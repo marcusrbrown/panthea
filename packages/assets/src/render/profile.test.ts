@@ -112,17 +112,35 @@ describe("the Zeus profile", () => {
   it("carries no bolt, no carry-arm aims, no act pose and no global adduction: the idle policy plants the legs, the seated corrections stay", () => {
     const profile = parsed();
     expect(JSON.stringify(profile)).not.toMatch(/bolt|schedule|mirror|fist/i);
-    expect(Object.keys(profile.pose).sort()).toEqual(["idle", "seated"]);
+    expect(Object.keys(profile.pose).sort()).toEqual([
+      "idle",
+      "seated",
+      "walk",
+    ]);
+    // r7: the torso stays upright over the lap, so the seated forward curl is small.
     expect(profile.pose.seated?.rotations).toEqual({
-      spine_02: [14, 0, 0],
-      spine_03: [10, 0, 0],
-      neck_01: [-8, 0, 0],
+      spine_02: [4, 0, 0],
+      spine_03: [4, 0, 0],
+      neck_01: [-4, 0, 0],
     });
-    expect(profile.pose.seated?.aims).toBeUndefined();
-    // No arm is aimed in any state: the arms hang from the clip with a soft elbow bend.
-    for (const entry of Object.values(profile.pose))
+    // The hands rest on the lap: each forearm points forward and down toward the thigh, mirrored left to right.
+    const arms = profile.pose.seated?.aims;
+    for (const side of ["l", "r"] as const) {
+      const forearm = arms?.[`lowerarm_${side}`] ?? [0, 0, 0];
+      expect(forearm[1]).toBeLessThan(-0.5);
+      expect(forearm[2]).toBeLessThan(0);
+      expect(arms?.[`upperarm_${side}`]?.[2]).toBeLessThan(-0.5);
+    }
+    expect(arms?.upperarm_l?.[0]).toBe(-(arms?.upperarm_r?.[0] ?? 0));
+    expect(profile.pose.seated?.groundFeet).toBe(true);
+    // Arms are aimed in the seated state only (the hands rest on the lap); standing and walking arms hang from the clip.
+    for (const [key, entry] of Object.entries(profile.pose))
       for (const bone of Object.keys(entry.aims ?? {}))
-        expect(bone).toMatch(/^(thigh|calf|foot|ball)_[lr]$/);
+        expect(bone).toMatch(
+          key === "seated"
+            ? /^(upperarm|lowerarm|hand)_[lr]$/
+            : /^(thigh|calf|foot|ball)_[lr]$/,
+        );
     // The stance is the bearing only: a total spine extension of 4 to 8 degrees, no thigh adduction.
     const stance = profile.body.stance;
     expect(Object.keys(stance).every((bone) => bone.startsWith("spine_"))).toBe(
@@ -168,8 +186,8 @@ describe("the Zeus profile", () => {
     expect(new Set(materials.beard?.bandShades).size).toBeLessThanOrEqual(3);
     expect(new Set(materials.hair?.bandShades).size).toBeLessThanOrEqual(3);
     expect(new Set(materials.beard?.bandShades).size).toBeGreaterThanOrEqual(2);
-    for (const role of ["skin", "robe", "himation"])
-      expect(materials[role]?.bandShades).toBeUndefined();
+    expect(materials.robe?.bandShades).toBeDefined();
+    expect(materials.trim?.bandShades).toBeUndefined();
   });
 
   it("uses olympus ramps only, and the planted-stance proportions of the makeover", () => {
@@ -225,6 +243,17 @@ describe("the Zeus profile", () => {
     }
   });
 
+  it("no longer reads the kit beard, which stays vendored for the probes with no reference from the profile", () => {
+    const kits = manifest().kits.find(
+      (k) => k.id === "universal-base-characters",
+    );
+    for (const file of ["Hair_Beard.bin", "Hair_Beard.gltf"]) {
+      expect(kits?.files.find((f) => f.path === file)?.referencedBy).toEqual(
+        [],
+      );
+    }
+  });
+
   it("agrees with the kits.json referencedBy lists both ways", () => {
     const profile = parsed();
     const listed = manifest().kits.flatMap((kit) =>
@@ -269,6 +298,200 @@ describe("the Zeus profile", () => {
           }),
         ),
       ),
+    ).not.toBe(base);
+  });
+});
+
+describe("the r7 construction of Zeus", () => {
+  it("builds the beard for the purpose: a head-weighted mesh, no kit beard, no forward offset", () => {
+    const profile = parsed();
+    expect(profile.beard?.role).toBe("beard");
+    expect(profile.materials.beard?.ramp).toBe("marble");
+    // Every hair piece is a kit hair piece: none is the kit beard, and none is pushed forward.
+    for (const piece of profile.models.hair) {
+      expect(piece.model.path).not.toMatch(/Beard/);
+      expect(piece.offset).toBeUndefined();
+    }
+    expect(profile.kitFiles.some((f) => /Beard/.test(f.path))).toBe(false);
+    const strips = profile.beard?.strips ?? [];
+    expect(strips.length).toBeGreaterThanOrEqual(2);
+    // Skinned to the head only (the beard follows the head's scale and pitch).
+    for (const strip of strips)
+      for (const weight of strip.weights)
+        expect(Object.keys(weight.bones)).toEqual(["Head"]);
+    // Cheek roots, a chin mass and a rounded bottom: the strips span the jaw from the cheek to below the chin.
+    const rows = strips.flatMap((s) => s.rows);
+    expect(Math.max(...rows.map((r) => r.z))).toBeGreaterThan(1.64);
+    expect(Math.min(...rows.map((r) => r.z))).toBeLessThan(1.5);
+    // Open arcs about the face, never a closed ring around the neck.
+    for (const row of rows) expect(row.toDeg - row.fromDeg).toBeLessThan(200);
+    // It tapers to a rounded bottom: the last row of the chin mass is narrower than half the first.
+    const chin = strips.find((s) => s.name === "chin");
+    expect(chin).toBeDefined();
+    const chinRows = chin?.rows ?? [];
+    expect(
+      (chinRows.at(-1)?.halfWidth ?? 1) < (chinRows[0]?.halfWidth ?? 0) / 2,
+    ).toBe(true);
+  });
+
+  it("shortens the hair curtain at the nape and keeps the parted crown", () => {
+    const hair = parsed().models.hair;
+    const curtain = hair.find((h) => h.model.path === "Hair_Long.gltf");
+    // The kit curtain reaches z 1.50; cutting it at 1.63 (the cheek, above the mouth) ends the side locks at the ear and
+    // the back hair at the nape, about 7 projected px shorter, so the hair is no longer one hood around the beard.
+    expect(curtain?.cutBelow).toBeGreaterThanOrEqual(1.58);
+    expect(curtain?.cutBelow).toBeLessThanOrEqual(1.66);
+    expect(hair.some((h) => h.model.path === "Hair_SimpleParted.gltf")).toBe(
+      true,
+    );
+  });
+
+  it("separates hair, cloth and cloak by value: the shade tables of the r7 brief", () => {
+    const { materials } = parsed();
+    expect(materials.hair).toEqual({
+      ramp: "marble",
+      bias: 0,
+      bandShades: [2, 3, 3, 4, 4],
+    });
+    expect(materials.beard).toEqual({
+      ramp: "marble",
+      bias: 0,
+      bandShades: [2, 3, 3, 4, 4],
+    });
+    expect(materials.robe).toEqual({
+      ramp: "cloud",
+      bias: 0.1,
+      bandShades: [2, 3, 4, 5, 5],
+    });
+    expect(materials.himation).toEqual({
+      ramp: "lapis",
+      bias: 0,
+      bandShades: [1, 1, 2, 2, 3],
+    });
+    // The cloak tops out at lapis 3; the chiton is the lightest large mass.
+    expect(Math.max(...(materials.himation?.bandShades ?? []))).toBe(3);
+    expect(Math.max(...(materials.robe?.bandShades ?? []))).toBeGreaterThan(
+      Math.max(...(materials.himation?.bandShades ?? [])),
+    );
+  });
+
+  it("gives the face deliberate planes: a calmer skin table and a smaller head pitch", () => {
+    const profile = parsed();
+    expect(profile.materials.skin).toEqual({
+      ramp: "pale-gold",
+      bias: 0,
+      bandShades: [2, 3, 3, 4, 4],
+    });
+    expect(profile.body.headPitchDeg).toBe(-12);
+    expect(profile.body.headScale).toBe(1.75);
+  });
+
+  it("seats the figure in a garment of its own: a lap panel over the thighs, knee transitions and shin drapes", () => {
+    const seated = parsed().garment.seated;
+    expect(seated).toBeDefined();
+    if (seated === undefined) return;
+    // The torso is the standing garment's own upper rings, so it is one chiton.
+    expect(seated.keepRings).toBeGreaterThanOrEqual(5);
+    expect(seated.keepRings).toBeLessThanOrEqual(7);
+    const rows = seated.legs;
+    const thigh = rows.filter((r) => (r.weights.thigh ?? 0) >= 1);
+    const shin = rows.filter((r) => (r.weights.calf ?? 0) >= 1);
+    const knee = rows.filter(
+      (r) => (r.weights.thigh ?? 0) > 0 && (r.weights.calf ?? 0) > 0,
+    );
+    expect(thigh.length).toBeGreaterThanOrEqual(2);
+    expect(shin.length).toBeGreaterThanOrEqual(2);
+    expect(knee.length).toBeGreaterThanOrEqual(1);
+    // Rows run top to bottom and the hem stays above the foot: toes show.
+    for (let i = 1; i < rows.length; i += 1)
+      expect((rows[i]?.z ?? 0) < (rows[i - 1]?.z ?? 0)).toBe(true);
+    expect(rows.at(-1)?.z).toBeGreaterThanOrEqual(0.15);
+    // The shin drapes stand apart: a shadow cleft of at least 0.04 between them in front view.
+    const hem = rows.at(-1);
+    expect((hem?.centreX ?? 0) - (hem?.halfWidth ?? 0)).toBeGreaterThanOrEqual(
+      0.02,
+    );
+    // The lap panel is broad: the thigh rows reach the centre line.
+    const top = rows[0];
+    expect((top?.centreX ?? 1) - (top?.halfWidth ?? 0)).toBeLessThanOrEqual(0);
+  });
+
+  it("gives the mantle two readable creases and a lower panel that follows the pelvis, not the thighs", () => {
+    const mantle = parsed().himation?.strips.find((s) => s.name === "mantle");
+    expect(mantle?.creases).toHaveLength(2);
+    for (const crease of mantle?.creases ?? []) {
+      expect(crease.depth).toBeGreaterThanOrEqual(0.03);
+      expect(crease.depth).toBeLessThanOrEqual(0.05);
+      expect(crease.at).toBeGreaterThan(0);
+      expect(crease.at).toBeLessThan(1);
+    }
+    const at = (z: number) => mantle?.weights.find((w) => w.z === z)?.bones;
+    expect(at(0.95)).toEqual({ spine_01: 0.3, pelvis: 0.7 });
+    expect(at(0.55)).toEqual({ pelvis: 1 });
+    // The exposed right shoulder and the cloak's width are kept.
+    const widest = Math.max(...(mantle?.rows ?? []).map((r) => r.halfWidth));
+    expect(widest).toBeGreaterThanOrEqual(0.33);
+  });
+
+  it("tempers the walk around its neutral pose: legs 75%, arm swing 60%, root bob 50%", () => {
+    const walk = parsed().pose.walk;
+    expect(walk?.damp?.thigh_l).toBe(0.75);
+    expect(walk?.damp?.thigh_r).toBe(0.75);
+    expect(walk?.damp?.calf_l).toBe(0.75);
+    expect(walk?.damp?.calf_r).toBe(0.75);
+    for (const bone of ["upperarm_l", "upperarm_r"])
+      expect(walk?.damp?.[bone]).toBe(0.6);
+    expect(walk?.dampLocation?.pelvis).toBe(0.5);
+    // Walk keeps the clip's feet: it is tempered, not re-aimed, and each frame's lowest sole is set on the ground.
+    expect(walk?.aims).toBeUndefined();
+    expect(walk?.groundFeet).toBe(true);
+    expect(parsed().pose.idle?.groundFeet).toBeUndefined();
+    expect(
+      posePolicy(parsed(), { state: "walk", facing: "east" }).groundFeet,
+    ).toBe(true);
+  });
+
+  it("refuses a malformed crease, damp factor, curtain cut or seated garment", () => {
+    const bad = (change: (p: Json) => void) => parseProfile(edited(change)).ok;
+    expect(bad(() => {})).toBe(true);
+    expect(bad((p) => (p.himation.strips[0].creases[0].depth = -0.01))).toBe(
+      false,
+    );
+    expect(bad((p) => (p.himation.strips[0].creases[0].at = 1.5))).toBe(false);
+    expect(bad((p) => (p.himation.strips[0].creases[0].width = 0))).toBe(false);
+    expect(bad((p) => (p.himation.strips[0].creases[0].extra = 1))).toBe(false);
+    expect(bad((p) => (p.pose.walk.damp.thigh_l = 1.5))).toBe(false);
+    expect(bad((p) => (p.pose.walk.damp.thigh_l = -0.1))).toBe(false);
+    expect(bad((p) => (p.pose.walk.dampLocation.pelvis = 2))).toBe(false);
+    expect(bad((p) => (p.pose.walk.groundFeet = "yes"))).toBe(false);
+    expect(bad((p) => (p.models.hair[1].cutBelow = "low"))).toBe(false);
+    expect(bad((p) => (p.garment.seated.keepRings = 1))).toBe(false);
+    expect(bad((p) => (p.garment.seated.keepRings = 99))).toBe(false);
+    expect(bad((p) => (p.garment.seated.legs = []))).toBe(false);
+    expect(bad((p) => delete p.garment.seated.legs[0].weights)).toBe(false);
+    expect(bad((p) => (p.garment.seated.legs[0].material = 2))).toBe(false);
+    expect(
+      bad((p) => {
+        const legs = p.garment.seated.legs;
+        [legs[0], legs[1]] = [legs[1], legs[0]];
+      }),
+    ).toBe(false);
+    expect(bad((p) => (p.beard.role = "no-such-role"))).toBe(false);
+    expect(bad((p) => delete p.beard)).toBe(true);
+  });
+
+  it("hashes the new fields: a beard row, a crease and the seated garment each change the profile", () => {
+    const base = profileHash(parsed());
+    const changed = (change: (p: Json) => void) =>
+      profileHash(parsed(edited(change)));
+    expect(
+      changed((p) => (p.beard.strips[0].rows[0].halfWidth += 0.01)),
+    ).not.toBe(base);
+    expect(
+      changed((p) => (p.himation.strips[0].creases[0].depth = 0.031)),
+    ).not.toBe(base);
+    expect(
+      changed((p) => (p.garment.seated.legs[0].halfWidth += 0.01)),
     ).not.toBe(base);
   });
 });
@@ -333,7 +556,10 @@ describe("kit refs", () => {
     const raw = JSON.parse(readFileSync(join(root, "kits.json"), "utf8"));
 
     const omitted = structuredClone(raw);
-    omitted.kits[0].files[0].referencedBy = [];
+    const long = omitted.kits[0].files.find(
+      (f: Json) => f.path === "Hair_Long.bin",
+    );
+    long.referencedBy = [];
     writeFileSync(join(root, "kits.json"), JSON.stringify(omitted));
     const omittedProblems = checkKits(root, [
       profileKitRefs(parsed()),

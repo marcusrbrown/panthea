@@ -67,6 +67,8 @@ export interface HairPiece {
   readonly scale?: Vec3;
   /** Rest-space metres the piece is moved by after scaling (x left, y back, z up): clear of the chest. */
   readonly offset?: Vec3;
+  /** Drop faces whose centre is below this height (a shorter curtain with a visible end), rest space metres. */
+  readonly cutBelow?: number;
 }
 
 export interface Legs {
@@ -121,6 +123,33 @@ export interface Garment {
   readonly pelvisShare: number;
   /** Material role for the main and trim materials. */
   readonly roles: readonly [string, string];
+  /** A garment of its own for the seated state: the standing garment's torso, then a lap and shin drapes. */
+  readonly seated?: SeatedGarment;
+}
+
+/**
+ * One cross-section of a seated leg drape, mirrored for the other leg: an ellipse about the leg's
+ * own axis in rest space, skinned to the thigh and shin bones (`thigh`, `calf`, `pelvis`; a side
+ * suffix is added for the leg's side).
+ */
+export interface SeatedLegRow {
+  readonly z: number;
+  readonly halfWidth: number;
+  readonly halfDepth: number;
+  /** Offset of the leg's axis from the centre line (the left leg's; the right leg mirrors it). */
+  readonly centreX: number;
+  readonly centreY: number;
+  readonly fold: number;
+  /** 0 main material, 1 trim. */
+  readonly material: 0 | 1;
+  readonly weights: Readonly<Record<string, number>>;
+}
+
+export interface SeatedGarment {
+  /** How many of the standing garment's rings, from the neck, the seated garment keeps as its torso. */
+  readonly keepRings: number;
+  /** Top to bottom: a lap panel over the thigh, a knee transition, a shin drape and the hem. */
+  readonly legs: readonly SeatedLegRow[];
 }
 
 /** One cross-section of a draped strip: an arc of an ellipse about the torso axis, at a height. */
@@ -134,6 +163,16 @@ export interface HimationRow {
   readonly toDeg: number;
   /** Radial fold depth as a share of the radius. */
   readonly fold: number;
+}
+
+/** A broad crease across a strip: a groove along the strip's height, kept as a crisp facet. */
+export interface HimationCrease {
+  /** Where across the arc, 0 to 1. */
+  readonly at: number;
+  /** Share of the arc the groove covers, 0 to 1. */
+  readonly width: number;
+  /** Depth of the groove in rest space metres. */
+  readonly depth: number;
 }
 
 /** Bone weights at a height; rows between two heights take the blend of the two. */
@@ -150,6 +189,8 @@ export interface HimationStrip {
   readonly rows: readonly HimationRow[];
   /** Top to bottom; the strip is skinned to these bones only, never to the nearest arm. */
   readonly weights: readonly HimationWeight[];
+  /** Broad creases kept as crisp facets; the rest of the strip shades smooth. */
+  readonly creases?: readonly HimationCrease[];
 }
 
 /**
@@ -190,6 +231,18 @@ export interface PoseEntry {
   readonly aims?: Readonly<Record<string, Vec3>>;
   /** Bone name to additive local euler degrees, applied after the clip pose. */
   readonly rotations?: Readonly<Record<string, Vec3>>;
+  /**
+   * Bone name to a factor between 0 and 1: the bone's rotation is scaled about its mean pose over
+   * the clip (a tempered gait), after the clip pose.
+   */
+  readonly damp?: Readonly<Record<string, number>>;
+  /** Bone name to a factor between 0 and 1: the bone's location is scaled about its mean over the clip. */
+  readonly dampLocation?: Readonly<Record<string, number>>;
+  /**
+   * Each frame, move the figure vertically so its lowest sole stands on the ground plane: a tempered
+   * gait keeps one foot planted, whatever the clip's own pelvis height does.
+   */
+  readonly groundFeet?: boolean;
 }
 
 export interface ModelProfile {
@@ -207,6 +260,8 @@ export interface ModelProfile {
   readonly body: Body;
   readonly garment: Garment;
   readonly himation?: Himation;
+  /** A beard built for the purpose, skinned to the head: strips of arcs about the face. */
+  readonly beard?: Himation;
   readonly materials: Readonly<Record<string, MaterialRole>>;
   /** Id of the stamp set (face stamps) the post step composites. */
   readonly stampSet: string;
@@ -296,6 +351,7 @@ function parseHairPiece(value: unknown, path: string): ParseResult<HairPiece> {
     "taper",
     "scale",
     "offset",
+    "cutBelow",
   ]);
   if (!record.ok) return record;
   const model = parseKitPath(record.value.model, `${path}.model`);
@@ -353,10 +409,17 @@ function parseHairPiece(value: unknown, path: string): ParseResult<HairPiece> {
     if (!parsed.ok) return parsed;
     offset = parsed.value;
   }
+  let cutBelow: number | undefined;
+  if (record.value.cutBelow !== undefined) {
+    const parsed = parseFiniteNumber(record.value.cutBelow, `${path}.cutBelow`);
+    if (!parsed.ok) return parsed;
+    cutBelow = parsed.value;
+  }
   return ok({
     model: model.value,
     role: role.value,
     part: part.value,
+    ...(cutBelow === undefined ? {} : { cutBelow }),
     ...(dropFrontBelow === undefined ? {} : { dropFrontBelow }),
     ...(keepSidesBack === undefined ? {} : { keepSidesBack }),
     ...(smooth === undefined ? {} : { smooth }),
@@ -483,8 +546,102 @@ function parseRing(value: unknown, path: string): ParseResult<GarmentRing> {
   });
 }
 
+const descending = (values: readonly number[]): boolean =>
+  values.every((v, i) => i === 0 || v < (values[i - 1] as number));
+
+/** Bones a seated leg row is skinned to: `thigh` and `calf` take the leg's side suffix. */
+const SEATED_BONES: readonly string[] = ["thigh", "calf", "pelvis"];
+
+function parseSeatedLegRow(
+  value: unknown,
+  path: string,
+): ParseResult<SeatedLegRow> {
+  const record = strict(value, path, [
+    "z",
+    "halfWidth",
+    "halfDepth",
+    "centreX",
+    "centreY",
+    "fold",
+    "material",
+    "weights",
+  ]);
+  if (!record.ok) return record;
+  const z = parseFiniteNumber(record.value.z, `${path}.z`);
+  if (!z.ok) return z;
+  const halfWidth = parsePositive(record.value.halfWidth, `${path}.halfWidth`);
+  if (!halfWidth.ok) return halfWidth;
+  const halfDepth = parsePositive(record.value.halfDepth, `${path}.halfDepth`);
+  if (!halfDepth.ok) return halfDepth;
+  const centreX = parseFiniteNumber(record.value.centreX, `${path}.centreX`);
+  if (!centreX.ok) return centreX;
+  const centreY = parseFiniteNumber(record.value.centreY, `${path}.centreY`);
+  if (!centreY.ok) return centreY;
+  const fold = parseFiniteNumber(record.value.fold, `${path}.fold`);
+  if (!fold.ok) return fold;
+  if (record.value.material !== 0 && record.value.material !== 1) {
+    return fail(`${path}.material`, "expected 0 (main) or 1 (trim)");
+  }
+  if (
+    !isRecord(record.value.weights) ||
+    Object.keys(record.value.weights).length === 0
+  ) {
+    return fail(`${path}.weights`, "expected an object of bone weights");
+  }
+  const weights: Record<string, number> = {};
+  for (const [bone, weight] of Object.entries(record.value.weights)) {
+    if (!SEATED_BONES.includes(bone)) {
+      return fail(
+        `${path}.weights.${bone}`,
+        `expected one of ${SEATED_BONES.join(", ")}`,
+      );
+    }
+    const parsed = parsePositive(weight, `${path}.weights.${bone}`);
+    if (!parsed.ok) return parsed;
+    weights[bone] = parsed.value;
+  }
+  return ok({
+    z: z.value,
+    halfWidth: halfWidth.value,
+    halfDepth: halfDepth.value,
+    centreX: centreX.value,
+    centreY: centreY.value,
+    fold: fold.value,
+    material: record.value.material,
+    weights,
+  });
+}
+
+function parseSeatedGarment(
+  value: unknown,
+  path: string,
+  ringCount: number,
+): ParseResult<SeatedGarment> {
+  const record = strict(value, path, ["keepRings", "legs"]);
+  if (!record.ok) return record;
+  const keepRings = parseNonNegativeInteger(
+    record.value.keepRings,
+    `${path}.keepRings`,
+  );
+  if (!keepRings.ok) return keepRings;
+  if (keepRings.value < 2 || keepRings.value > ringCount) {
+    return fail(
+      `${path}.keepRings`,
+      `expected between 2 and the standing garment's ${ringCount} rings`,
+    );
+  }
+  const legs = parseArray(record.value.legs, `${path}.legs`, parseSeatedLegRow);
+  if (!legs.ok) return legs;
+  if (legs.value.length < 2)
+    return fail(`${path}.legs`, "expected at least two rows");
+  if (!descending(legs.value.map((r) => r.z)))
+    return fail(`${path}.legs`, "expected rows listed top to bottom");
+  return ok({ keepRings: keepRings.value, legs: legs.value });
+}
+
 function parseGarment(value: unknown, path: string): ParseResult<Garment> {
   const record = strict(value, path, [
+    "seated",
     "name",
     "segments",
     "folds",
@@ -535,6 +692,16 @@ function parseGarment(value: unknown, path: string): ParseResult<Garment> {
   if (!roles.ok) return roles;
   if (roles.value.length !== 2)
     return fail(`${path}.roles`, "expected a main and a trim role");
+  let seated: SeatedGarment | undefined;
+  if (record.value.seated !== undefined) {
+    const parsed = parseSeatedGarment(
+      record.value.seated,
+      `${path}.seated`,
+      rings.value.length,
+    );
+    if (!parsed.ok) return parsed;
+    seated = parsed.value;
+  }
   return ok({
     name: name.value,
     segments: segments.value,
@@ -544,6 +711,7 @@ function parseGarment(value: unknown, path: string): ParseResult<Garment> {
     skirtBelow: skirtBelow.value,
     pelvisShare: pelvisShare.value,
     roles: [roles.value[0] as string, roles.value[1] as string],
+    ...(seated === undefined ? {} : { seated }),
   });
 }
 
@@ -615,14 +783,38 @@ function parseHimationWeight(
   return ok({ z: z.value, bones });
 }
 
-const descending = (values: readonly number[]): boolean =>
-  values.every((v, i) => i === 0 || v < (values[i - 1] as number));
+function parseCrease(
+  value: unknown,
+  path: string,
+): ParseResult<HimationCrease> {
+  const record = strict(value, path, ["at", "width", "depth"]);
+  if (!record.ok) return record;
+  const at = parseFiniteNumber(record.value.at, `${path}.at`);
+  if (!at.ok) return at;
+  if (at.value <= 0 || at.value >= 1)
+    return fail(`${path}.at`, "expected a position between 0 and 1");
+  const width = parsePositive(record.value.width, `${path}.width`);
+  if (!width.ok) return width;
+  if (width.value > 1)
+    return fail(`${path}.width`, "expected a share of the arc up to 1");
+  const depth = parseFiniteNumber(record.value.depth, `${path}.depth`);
+  if (!depth.ok) return depth;
+  if (depth.value < 0)
+    return fail(`${path}.depth`, "expected a depth of at least 0");
+  return ok({ at: at.value, width: width.value, depth: depth.value });
+}
 
 function parseHimationStrip(
   value: unknown,
   path: string,
 ): ParseResult<HimationStrip> {
-  const record = strict(value, path, ["name", "folds", "rows", "weights"]);
+  const record = strict(value, path, [
+    "name",
+    "folds",
+    "rows",
+    "weights",
+    "creases",
+  ]);
   if (!record.ok) return record;
   const name = parseString(record.value.name, `${path}.name`);
   if (!name.ok) return name;
@@ -644,11 +836,22 @@ function parseHimationStrip(
     return fail(`${path}.weights`, "expected at least one weight entry");
   if (!descending(weights.value.map((w) => w.z)))
     return fail(`${path}.weights`, "expected weights listed top to bottom");
+  let creases: readonly HimationCrease[] | undefined;
+  if (record.value.creases !== undefined) {
+    const parsed = parseArray(
+      record.value.creases,
+      `${path}.creases`,
+      parseCrease,
+    );
+    if (!parsed.ok) return parsed;
+    creases = parsed.value;
+  }
   return ok({
     name: name.value,
     folds: folds.value,
     rows: rows.value,
     weights: weights.value,
+    ...(creases === undefined ? {} : { creases }),
   });
 }
 
@@ -790,8 +993,20 @@ function parseClips(
 }
 
 function parsePoseEntry(value: unknown, path: string): ParseResult<PoseEntry> {
-  const record = strict(value, path, ["aims", "rotations"]);
+  const record = strict(value, path, [
+    "aims",
+    "rotations",
+    "damp",
+    "dampLocation",
+    "groundFeet",
+  ]);
   if (!record.ok) return record;
+  let groundFeet: boolean | undefined;
+  if (record.value.groundFeet !== undefined) {
+    const parsed = parseBoolean(record.value.groundFeet, `${path}.groundFeet`);
+    if (!parsed.ok) return parsed;
+    groundFeet = parsed.value;
+  }
   let aims: PoseEntry["aims"];
   if (record.value.aims !== undefined) {
     const parsed = parseVec3Record(record.value.aims, `${path}.aims`);
@@ -809,9 +1024,40 @@ function parsePoseEntry(value: unknown, path: string): ParseResult<PoseEntry> {
     if (!parsed.ok) return parsed;
     rotations = parsed.value;
   }
+  const factors = (
+    field: "damp" | "dampLocation",
+  ): ParseResult<Readonly<Record<string, number>> | undefined> => {
+    const raw = record.value[field];
+    if (raw === undefined) return ok(undefined);
+    if (!isRecord(raw) || Object.keys(raw).length === 0) {
+      return fail(`${path}.${field}`, "expected an object of bone factors");
+    }
+    const out: Record<string, number> = {};
+    for (const [bone, factor] of Object.entries(raw)) {
+      const parsed = parseFiniteNumber(factor, `${path}.${field}.${bone}`);
+      if (!parsed.ok) return parsed;
+      if (parsed.value < 0 || parsed.value > 1) {
+        return fail(
+          `${path}.${field}.${bone}`,
+          "expected a factor between 0 and 1",
+        );
+      }
+      out[bone] = parsed.value;
+    }
+    return ok(out);
+  };
+  const damp = factors("damp");
+  if (!damp.ok) return damp;
+  const dampLocation = factors("dampLocation");
+  if (!dampLocation.ok) return dampLocation;
   return ok({
     ...(aims === undefined ? {} : { aims }),
     ...(rotations === undefined ? {} : { rotations }),
+    ...(damp.value === undefined ? {} : { damp: damp.value }),
+    ...(dampLocation.value === undefined
+      ? {}
+      : { dampLocation: dampLocation.value }),
+    ...(groundFeet === undefined ? {} : { groundFeet }),
   });
 }
 
@@ -859,6 +1105,7 @@ export function parseProfile(
     "body",
     "garment",
     "himation",
+    "beard",
     "materials",
     "stampSet",
     "shadow",
@@ -942,6 +1189,12 @@ export function parseProfile(
     if (!parsed.ok) return parsed;
     himation = parsed.value;
   }
+  let beard: Himation | undefined;
+  if (record.value.beard !== undefined) {
+    const parsed = parseHimation(record.value.beard, `${path}.beard`);
+    if (!parsed.ok) return parsed;
+    beard = parsed.value;
+  }
   const materials = parseMaterials(record.value.materials, `${path}.materials`);
   if (!materials.ok) return materials;
   const roleNames = [
@@ -949,6 +1202,7 @@ export function parseProfile(
     ...garment.value.roles,
     ...hair.value.map((h) => h.role),
     ...(himation === undefined ? [] : [himation.role]),
+    ...(beard === undefined ? [] : [beard.role]),
   ];
   for (const role of roleNames) {
     if (materials.value[role] === undefined) {
@@ -991,6 +1245,7 @@ export function parseProfile(
     body: bodyShape.value,
     garment: garment.value,
     ...(himation === undefined ? {} : { himation }),
+    ...(beard === undefined ? {} : { beard }),
     materials: materials.value,
     stampSet: stampSet.value,
     shadow: { ramp: shadowRamp.value },
@@ -1069,16 +1324,26 @@ export function posePolicy(
   const keys = [request.state, `${request.state}:${request.facing}`];
   let aims: Record<string, Vec3> | undefined;
   let rotations: Record<string, Vec3> | undefined;
+  let damp: Record<string, number> | undefined;
+  let dampLocation: Record<string, number> | undefined;
+  let groundFeet: boolean | undefined;
   for (const key of keys) {
     const entry = profile.pose[key];
     if (entry === undefined) continue;
     if (entry.aims !== undefined) aims = { ...aims, ...entry.aims };
     if (entry.rotations !== undefined)
       rotations = { ...rotations, ...entry.rotations };
+    if (entry.damp !== undefined) damp = { ...damp, ...entry.damp };
+    if (entry.dampLocation !== undefined)
+      dampLocation = { ...dampLocation, ...entry.dampLocation };
+    if (entry.groundFeet !== undefined) groundFeet = entry.groundFeet;
   }
   return {
     ...(aims === undefined ? {} : { aims }),
     ...(rotations === undefined ? {} : { rotations }),
+    ...(damp === undefined ? {} : { damp }),
+    ...(dampLocation === undefined ? {} : { dampLocation }),
+    ...(groundFeet === undefined ? {} : { groundFeet }),
   };
 }
 
