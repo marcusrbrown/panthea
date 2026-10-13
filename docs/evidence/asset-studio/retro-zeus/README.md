@@ -1,6 +1,6 @@
 # Retro Zeus (`zeus-retro`): final draft, publication and promotion evidence (plan U10)
 
-**Scope: `zeus-retro`, rendered through the studio CLI with pinned Blender 5.2.2 (build d13f752e3b9c) on one host, then approved at the owner's visual gate, published in the studio app and promoted to Zeus's sprite.** The sections below the measured checks record each step. The packaged game and inspection run is still pending.
+**Scope: `zeus-retro`, rendered through the studio CLI with pinned Blender 5.2.2 (build d13f752e3b9c) on one host, then approved at the owner's visual gate, published in the studio app and promoted to Zeus's sprite.** The sections below the measured checks record each step. The packaged game, its inspection fixture and the packaged studio preview were then checked (see Packaged).
 
 ## Criteria
 
@@ -63,7 +63,13 @@ The owner approved the full `zeus-retro` revision at the visual gate and publish
 
 `content/greek/gods/zeus.json` now names `zeus-retro` as Zeus's `sprite`. `zeus-sprite` stays published and unchanged, and Zeus's subject lists it under `legacySprites`, so it remains resolvable and its thunderbolt animation stays valid for actors created before promotion. The promotion commit edits Zeus's god profile and simulation goldens, so the owner's approval of that commit is the core-lane agreement (origin R24). Inspection digests (`tools/scenarios/studio-zeus-scene/reference-digests.json`) were regenerated: 3 assets, 153 frames × 4 zooms, of which `zeus-retro` is 12 selections and 136 frames, walk and all four facings included. A 16-frame 112×96 clip fits the 576×432 inspection target.
 
-**Pending, owner-gated:** the packaged game and its inspection fixture have not been run on this promotion. That check must show retro Zeus idle in the live Olympus view at the 624×592 target and every one of the 136 `zeus-retro` frames passing readback at zoom 1–4.
+## Packaged
+
+Release bundles built from this tree (`bun run --cwd apps/desktop tauri build --bundles app`; the studio app after `apps/studio/scripts/build-sidecar.sh`), one sitting on one host, WebGL2. Window-only captures are in [packaged/](packaged/).
+
+- Game, fresh app data directory: retro Zeus draws idle-south on Olympus ([game-live-olympus-zeus.png](packaged/game-live-olympus-zeus.png)).
+- Game inspection fixture, "Run all checks": registry root `bundled`, backend `webgl2`, **842 passed, 0 failed**. That covers 828 canon readback checks (every `zeus-retro`, `zeus-sprite` and portrait frame at zoom 1–4) plus 14 non-canon checks ([game-inspect-run-all.png](packaged/game-inspect-run-all.png), [game-inspect-zeus-retro-walk-2x.png](packaged/game-inspect-zeus-retro-walk-2x.png)).
+- Studio preview of the published record: idle south at 1×, 2× and 3×, walk south playing and seated east, with the controls below the canvas (`packaged/studio-*.png`).
 
 ## The makeover rounds, in brief
 
@@ -77,5 +83,5 @@ r6–r10 are calibration evidence, not acceptance evidence. r6: the first retro 
 ## Not verified
 - Skin-through-cloth is measured by a probe that cannot tell a hand resting on the cloth from one poking through. Front and side frames with an arm over the cloak (0.75–3.1 px by the probe) were checked by eye on a few frames only.
 - The 8-frame resample compares raw passes, not post-processed cells.
-- Nothing was run in the packaged game or the studio app by this evidence; the inspection-route check at zoom 1–4 and the packaged-game sitting are pending (see Promoted).
+- The live game drives idle only; walk, seated and the other facings are proven through the inspection fixture.
 - One host, one Blender build. The animated preview page was syntax-checked but not opened in a browser.
