@@ -66,7 +66,6 @@ function sources(
     commands: status.commands,
     readBlob: (hash) => rig.session.store.readBlob(hash),
     content: rig.content,
-    palette: rig.palette,
     ...(prior === undefined ? {} : { prior }),
   };
 }

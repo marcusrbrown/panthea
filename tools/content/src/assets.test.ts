@@ -12,8 +12,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { resolveAsset, sha256Hex } from "@panthea/assets";
+import { dirname, join } from "node:path";
+import {
+  encodeRgbaPng,
+  paletteDigest,
+  parsePalette,
+  resolveAsset,
+  sha256Hex,
+} from "@panthea/assets";
 import {
   committedVocabulary,
   type FixtureAsset,
@@ -29,6 +35,8 @@ import {
   canonicalJson,
   canonicalManifestText,
   newCandidate,
+  parseAssetManifest,
+  type Sha256,
   transitionAsset,
 } from "@panthea/contracts";
 import { validateAssets } from "./assets";
@@ -452,6 +460,131 @@ describe("the master palette", () => {
   });
 });
 
+describe("the palette set", () => {
+  const RETRO_DIR = (root: string) => join(root, "palette", "greek-retro");
+  const manifestOf = (revision: string) =>
+    `assets/registry/manifests/${revision}.json`;
+  const retroFile = (root: string) => join(RETRO_DIR(root), "palette.json");
+
+  /** The committed greek-retro, approved against its own current digest, on disk under `root` and as a palette. */
+  function approveRetro(root: string) {
+    const json = JSON.parse(readFileSync(retroFile(root), "utf8"));
+    const draft = parsePalette(
+      {
+        json,
+        gpl: readFileSync(join(RETRO_DIR(root), "master.gpl"), "utf8"),
+        hex: readFileSync(join(RETRO_DIR(root), "master.hex"), "utf8"),
+      },
+      vocabulary.paletteFamilies,
+    );
+    if (!draft.ok) throw new Error(draft.message);
+    const approval = { status: "approved", digest: paletteDigest(draft.value) };
+    writeFileSync(retroFile(root), JSON.stringify({ ...json, approval }));
+    const approved = parsePalette(
+      {
+        json: JSON.parse(readFileSync(retroFile(root), "utf8")),
+        gpl: readFileSync(join(RETRO_DIR(root), "master.gpl"), "utf8"),
+        hex: readFileSync(join(RETRO_DIR(root), "master.hex"), "utf8"),
+      },
+      vocabulary.paletteFamilies,
+    );
+    if (!approved.ok) throw new Error(approved.message);
+    return approved.value;
+  }
+
+  /** A fixture sprite published under the retro palette. */
+  function publishOnRetro(root: string): string {
+    const palette = approveRetro(root);
+    const asset = spriteFixture("zeus-retro");
+    const manifest = { ...asset.manifest, paletteId: "greek-retro" };
+    let record = newCandidate(manifest, pass);
+    for (const action of [{ type: "pick" }, { type: "approve" }] as const) {
+      const next = transitionAsset(record, action);
+      if (!next.ok) throw new Error(next.message);
+      record = next.value;
+    }
+    const result = publishAsset(
+      registryOf(root),
+      record,
+      asset.blobs,
+      vocabulary,
+      palette,
+    );
+    if (!result.ok) throw new Error(result.message);
+    return result.value.revision;
+  }
+
+  it("accepts the committed set: greek-master approved, greek-retro a draft that backs no canon", () => {
+    expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("checks each canon entry against the palette its manifest names: an approved greek-retro backs a retro asset", () => {
+    const root = contentRoot();
+    publishOnRetro(root);
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("blocks a retro canon entry once greek-retro is a draft again, and the same entry passes while it is approved", () => {
+    const root = contentRoot();
+    const revision = publishOnRetro(root);
+    expect(validateAssets(root).ok).toBe(true);
+    const json = JSON.parse(readFileSync(retroFile(root), "utf8"));
+    writeFileSync(
+      retroFile(root),
+      JSON.stringify({ ...json, approval: { status: "draft" } }),
+    );
+    const found = diagnosticsOf(root);
+    expect(found).toEqual([
+      { file: manifestOf(revision), message: expect.stringContaining("draft") },
+    ]);
+    expect(found[0]?.message).toContain("greek-retro");
+  });
+
+  it("blocks a retro canon entry whose palette limits were edited after approval", () => {
+    const root = contentRoot();
+    publishOnRetro(root);
+    const json = JSON.parse(readFileSync(retroFile(root), "utf8"));
+    json.limits.colours.sprite = 64;
+    writeFileSync(retroFile(root), JSON.stringify(json));
+    expect(diagnosticsOf(root)).toEqual([
+      {
+        file: "palette/greek-retro/palette.json",
+        message: expect.stringContaining("approval.digest"),
+      },
+    ]);
+  });
+
+  it("reports a manifest whose palette is among none of the palettes, naming those there are", () => {
+    const root = contentRoot();
+    const asset = spriteFixture("zeus-retro");
+    const palette = paletteFixture("approved", "greek-ancient");
+    let record = newCandidate(
+      { ...asset.manifest, paletteId: "greek-ancient" },
+      pass,
+    );
+    for (const action of [{ type: "pick" }, { type: "approve" }] as const) {
+      const next = transitionAsset(record, action);
+      if (!next.ok) throw new Error(next.message);
+      record = next.value;
+    }
+    const published = publishAsset(
+      registryOf(root),
+      record,
+      asset.blobs,
+      vocabulary,
+      palette.palette,
+    );
+    if (!published.ok) throw new Error(published.message);
+    // The palettes on disk are greek-master (the root) and greek-retro; greek-ancient was only ever used to publish.
+    const found = diagnosticsOf(root);
+    expect(found.map((d) => d.file)).toEqual([
+      manifestOf(published.value.revision),
+    ]);
+    expect(found[0]?.message).toContain('"greek-ancient"');
+    expect(found[0]?.message).toContain("greek-retro");
+  });
+});
+
 describe("broken vocabulary, gods and subjects", () => {
   it("reports a missing or invalid vocabulary", () => {
     const missing = contentRoot();
@@ -744,5 +877,372 @@ describe("cross references", () => {
     );
     publish(root, portraitFixture("zeus-portrait", "hera"));
     expect(diagnosticsOf(root)).toHaveLength(1);
+  });
+});
+
+const REPO_ROOT = join(COMMITTED, "..", "..");
+
+/**
+ * A repository root holding only tools/render with one kit (a single `.bin` that the profile
+ * "fixture" references) plus the given Python files, so the render checks start from known state.
+ */
+function renderRepo(
+  options: {
+    readonly spdx?: string;
+    readonly ownerAssessment?: object;
+    readonly python?: Readonly<Record<string, string>>;
+  } = {},
+): string {
+  const root = mkdtempSync(join(tmpdir(), "assets-render-"));
+  dirs.push(root);
+  const kitDir = join(root, "tools", "render", "kits", "pack-a");
+  mkdirSync(kitDir, { recursive: true });
+  const licence = new TextEncoder().encode("CC0 text");
+  const body = new TextEncoder().encode("BIN!");
+  writeFileSync(join(kitDir, "LICENCE.txt"), licence);
+  writeFileSync(join(kitDir, "Body.bin"), body);
+  writeFileSync(
+    join(root, "tools", "render", "kits.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      sizeCapBytes: 1000,
+      kits: [
+        {
+          id: "pack-a",
+          sourceUrl: "https://example.invalid/pack-a",
+          licence: {
+            spdx: options.spdx ?? "CC0-1.0",
+            ...(options.ownerAssessment === undefined
+              ? {}
+              : { ownerAssessment: options.ownerAssessment }),
+          },
+          licenceFile: { path: "LICENCE.txt", sha256: sha256Hex(licence) },
+          status: "inspected-not-used",
+          textureSkip: [],
+          files: [
+            {
+              path: "Body.bin",
+              sha256: sha256Hex(body),
+              size: body.length,
+              referencedBy: ["fixture"],
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  for (const [name, text] of Object.entries(options.python ?? {})) {
+    mkdirSync(dirname(join(root, name)), { recursive: true });
+    writeFileSync(join(root, name), text);
+  }
+  return root;
+}
+
+const FIXTURE_PROFILE = {
+  profile: "fixture",
+  files: [{ kit: "pack-a", path: "Body.bin" }],
+};
+
+describe("render kits and the licence boundary", () => {
+  it("passes the committed repository", () => {
+    expect(
+      validateAssets(COMMITTED, { repoRoot: REPO_ROOT, kitProfiles: [] }),
+    ).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("runs the render checks only when asked, so a content-only root is untouched", () => {
+    expect(validateAssets(contentRoot()).diagnostics).toEqual([]);
+  });
+
+  it("passes a fixture profile that references an assessed kit file", () => {
+    const repoRoot = renderRepo();
+    expect(
+      validateAssets(contentRoot(), {
+        repoRoot,
+        kitProfiles: [FIXTURE_PROFILE],
+      }).diagnostics,
+    ).toEqual([]);
+  });
+
+  it("refuses a fixture profile that references an unassessed kit file, with the same file passing once assessed", () => {
+    const refused = validateAssets(contentRoot(), {
+      repoRoot: renderRepo({ spdx: "CC-BY-4.0" }),
+      kitProfiles: [FIXTURE_PROFILE],
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.diagnostics).toHaveLength(1);
+    expect(refused.diagnostics[0]?.file).toBe(
+      "tools/render/kits/pack-a/Body.bin",
+    );
+    expect(refused.diagnostics[0]?.message).toContain("ownerAssessment");
+
+    const assessed = validateAssets(contentRoot(), {
+      repoRoot: renderRepo({
+        spdx: "CC-BY-4.0",
+        ownerAssessment: {
+          by: "owner",
+          date: "2026-10-12",
+          summary: "Reviewed.",
+        },
+      }),
+      kitProfiles: [FIXTURE_PROFILE],
+    });
+    expect(assessed.diagnostics).toEqual([]);
+  });
+
+  it("refuses a Python file that imports a Blender module without the GPL header", () => {
+    const repoRoot = renderRepo({
+      python: { "tools/x/tool.py": "import bpy_extras\n" },
+    });
+    const result = validateAssets(contentRoot(), {
+      repoRoot,
+      kitProfiles: [],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual([
+      {
+        file: "tools/x/tool.py",
+        message: expect.stringContaining("bpy_extras"),
+      },
+    ]);
+  });
+
+  it("passes the same Python file under the GPL header", () => {
+    const repoRoot = renderRepo({
+      python: {
+        "tools/x/tool.py":
+          "# SPDX-License-Identifier: GPL-3.0-or-later\nimport bpy_extras\n",
+      },
+    });
+    expect(
+      validateAssets(contentRoot(), { repoRoot, kitProfiles: [] }).diagnostics,
+    ).toEqual([]);
+  });
+});
+
+describe("the retro matrix completeness rule", () => {
+  const FACINGS = ["south", "north", "east", "west"] as const;
+  const COUNTS = { idle: 4, walk: 16, seated: 2, act: 4 } as const;
+  const MS = { idle: 167, walk: 50, seated: 200, act: 60 } as const;
+  const godFile = (root: string) => join(root, "gods", "zeus.json");
+  const pointGodAt = (root: string, sprite: string) => {
+    const god = JSON.parse(readFileSync(godFile(root), "utf8"));
+    writeFileSync(godFile(root), JSON.stringify({ ...god, sprite }));
+  };
+
+  /** Every required slot of the Zeus matrix, as the slot keys a god-tall asset holds. */
+  const allSlots = (): string[] =>
+    FACINGS.flatMap((facing) => [
+      `idle/${facing}`,
+      `walk/${facing}`,
+      `seated/${facing}`,
+      `act/${facing}/thunderbolt`,
+    ]);
+
+  /** A 112x96 sprite holding exactly `slots`, built explicitly through the real manifest parser. */
+  function godTallAsset(id: string, slots: readonly string[]): FixtureAsset {
+    const width = 112 * 16;
+    const rgba = new Uint8Array(width * 96 * 4);
+    for (let i = 0; i < rgba.length; i += 4) {
+      rgba[i] = 90;
+      rgba[i + 1] = 80;
+      rgba[i + 2] = 160;
+      rgba[i + 3] = 255;
+    }
+    const bytes = encodeRgbaPng(rgba, width, 96);
+    const blob = sha256Hex(bytes);
+    const animations = slots.map((key) => {
+      const [state, direction, ability] = key.split("/") as [
+        keyof typeof COUNTS,
+        string,
+        string | undefined,
+      ];
+      return {
+        state,
+        direction,
+        ...(ability === undefined ? {} : { ability }),
+        frames: Array.from({ length: COUNTS[state] }, (_, i) => ({
+          rect: { x: i * 112, y: 0, w: 112, h: 96 },
+          durationMs: MS[state],
+        })),
+      };
+    });
+    const parsed = parseAssetManifest(
+      {
+        schemaVersion: 1,
+        kind: "sprite",
+        id,
+        cell: { w: 112, h: 96 },
+        pixelScale: 1,
+        paletteFamily: "olympus",
+        paletteId: "fixture-master",
+        styleTag: "fixture",
+        atlas: { blob, width, height: 96 },
+        pivot: { x: 56, y: 78 },
+        footprint: { w: 1, h: 1 },
+        directions: [...FACINGS],
+        realmVariants: [],
+        animations,
+        provenance: {
+          method: "hand",
+          handEdits: [{ description: "drawn by hand for a test fixture" }],
+          licences: [
+            { subject: "test-fixture", role: "original-work", licence: "MIT" },
+          ],
+          relatedJobs: [],
+          sourceAssets: [],
+        },
+      },
+      vocabulary,
+    );
+    if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
+    return {
+      manifest: parsed.value,
+      blobs: new Map([[blob as Sha256, bytes]]),
+    };
+  }
+
+  it("passes a god profile pointing at an asset that holds every required slot", () => {
+    const root = contentRoot();
+    publish(root, godTallAsset("zeus-retro", allSlots()));
+    pointGodAt(root, "zeus-retro");
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("fails a god profile pointing at an asset missing one walk facing, naming the slot (positive control above)", () => {
+    const root = contentRoot();
+    publish(
+      root,
+      godTallAsset(
+        "zeus-retro",
+        allSlots().filter((key) => key !== "walk/west"),
+      ),
+    );
+    pointGodAt(root, "zeus-retro");
+    expect(diagnosticsOf(root)).toEqual([
+      { file: "gods/zeus.json", message: expect.stringContaining("walk/west") },
+    ]);
+    expect(diagnosticsOf(root)[0]?.message).toContain("zeus-retro");
+    expect(validateAssets(root).ok).toBe(false);
+  });
+
+  it("fails for a missing idle, seated and act slot too, and lists every missing slot", () => {
+    for (const missing of [
+      "idle/south",
+      "seated/east",
+      "act/north/thunderbolt",
+    ]) {
+      const root = contentRoot();
+      publish(
+        root,
+        godTallAsset(
+          "zeus-retro",
+          allSlots().filter((key) => key !== missing),
+        ),
+      );
+      pointGodAt(root, "zeus-retro");
+      const found = diagnosticsOf(root);
+      expect(found, missing).toHaveLength(1);
+      expect(found[0]?.message, missing).toContain(missing);
+    }
+    const root = contentRoot();
+    publish(
+      root,
+      godTallAsset(
+        "zeus-retro",
+        allSlots().filter((key) => !key.startsWith("act/")),
+      ),
+    );
+    pointGodAt(root, "zeus-retro");
+    const message = diagnosticsOf(root)[0]?.message ?? "";
+    for (const facing of FACINGS)
+      expect(message).toContain(`act/${facing}/thunderbolt`);
+  });
+
+  it("does not require the deferred pronouncement slot", () => {
+    const root = contentRoot();
+    publish(root, godTallAsset("zeus-retro", allSlots()));
+    pointGodAt(root, "zeus-retro");
+    expect(allSlots().some((key) => key.includes("pronouncement"))).toBe(false);
+    expect(validateAssets(root).ok).toBe(true);
+  });
+
+  it("leaves the legacy 64x80 zeus-sprite out of the rule: a god cell is not the matrix's god-tall cell", () => {
+    const root = contentRoot();
+    // The Zeus subject declares the matrix; the legacy sprite holds only idle/south.
+    expect(
+      JSON.parse(
+        readFileSync(join(root, "assets", "subjects", "zeus.json"), "utf8"),
+      ).render.matrix.cellClass,
+    ).toBe("god-tall");
+    publish(root, spriteFixture("zeus-sprite"));
+    pointGodAt(root, "zeus-sprite");
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("validates the committed legacy zeus-sprite against the committed subject", () => {
+    const god = JSON.parse(
+      readFileSync(join(COMMITTED, "gods", "zeus.json"), "utf8"),
+    );
+    expect(god.sprite).toBe("zeus-sprite");
+    expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("applies to no god whose subject declares no matrix", () => {
+    const root = contentRoot();
+    const subject = join(root, "assets", "subjects", "zeus.json");
+    const { render: _render, ...rest } = JSON.parse(
+      readFileSync(subject, "utf8"),
+    );
+    writeFileSync(subject, JSON.stringify(rest));
+    publish(root, godTallAsset("zeus-retro", ["walk/south"]));
+    pointGodAt(root, "zeus-retro");
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  describe("a matrix the vocabulary cannot honour", () => {
+    const subjectFile = (root: string) =>
+      join(root, "assets", "subjects", "zeus.json");
+    const changeMatrix = (root: string, change: Record<string, unknown>) => {
+      const subject = JSON.parse(readFileSync(subjectFile(root), "utf8"));
+      subject.render.matrix = { ...subject.render.matrix, ...change };
+      writeFileSync(subjectFile(root), JSON.stringify(subject));
+    };
+
+    it("accepts the committed matrix (positive control)", () => {
+      expect(validateAssets(contentRoot())).toEqual({
+        ok: true,
+        diagnostics: [],
+      });
+    });
+
+    for (const [label, change, text] of [
+      ["an unknown cell class", { cellClass: "giant" }, "giant"],
+      ["a portrait cell class", { cellClass: "portrait" }, "portrait"],
+      [
+        "a state the class has no rule for",
+        { required: [{ state: "hurt" }] },
+        "hurt",
+      ],
+      [
+        "a per-ability state with no ability",
+        { required: [{ state: "act" }] },
+        "act",
+      ],
+      [
+        "an ability on a state that takes none",
+        { required: [{ state: "idle", ability: "thunderbolt" }] },
+        "idle",
+      ],
+      ["an unknown direction", { directions: ["up"] }, "up"],
+    ] as const) {
+      it(`reports ${label} against the subject file`, () => {
+        const root = contentRoot();
+        changeMatrix(root, change);
+        const found = diagnosticsOf(root);
+        expect(found.map((d) => d.file)).toEqual(["assets/subjects/zeus.json"]);
+        expect(found[0]?.message).toContain(text);
+      });
+    }
   });
 });

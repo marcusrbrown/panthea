@@ -614,6 +614,7 @@ describe("public surface", () => {
       "isPreviewSlug",
       "isPreviewSourceKind",
       "loadStudioContent",
+      "loadStudioPalettes",
       "newRequestRecord",
       "openRuntime",
       "openStudioSession",

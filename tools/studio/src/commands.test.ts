@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { paletteDigest, parsePalette } from "@panthea/assets";
 import {
   newRequestRecord,
   openStudioSession,
@@ -357,7 +358,13 @@ describe("hand edits are reported, never replaced", () => {
       { studioRoot: rig.root, contentRoot: "/content" },
       "report",
       { workingSetId: "w", slot: "idle/south" },
-      { loadContent: () => ({ ok: true as const, content: rig.content }) },
+      {
+        loadContent: () => ({ ok: true as const, content: rig.content }),
+        loadPalettes: () => ({
+          ok: true as const,
+          palettes: rig.content.palettes,
+        }),
+      },
     );
 
     expect(outcome).toMatchObject({
@@ -393,6 +400,10 @@ describe("hand edits are reported, never replaced", () => {
     };
     const over = {
       loadContent: () => ({ ok: true as const, content: rig.content }),
+      loadPalettes: () => ({
+        ok: true as const,
+        palettes: rig.content.palettes,
+      }),
     };
 
     const clean = await run(
@@ -450,7 +461,9 @@ describe("hand edits are reported, never replaced", () => {
     const rig = assetRig();
     spriteSet(rig);
     rig.session.close();
-    const same = contentRootWithPalette(paletteFixture().files);
+    const same = contentRootWithPalette(
+      paletteFixture("approved", "greek-master").files,
+    );
     const moved = contentRootWithPalette(olympusMovedPaletteFiles());
     const before = rootBytes(rig.root);
 
@@ -506,7 +519,9 @@ describe("hand edits are reported, never replaced", () => {
     const clean = await run(
       {
         studioRoot: rig.root,
-        contentRoot: contentRootWithPalette(paletteFixture().files),
+        contentRoot: contentRootWithPalette(
+          paletteFixture("approved", "greek-master").files,
+        ),
       },
       "report",
       { workingSetId: "w", slot: "idle/south" },
@@ -558,7 +573,13 @@ describe("hand edits are reported, never replaced", () => {
       { studioRoot: rig.root, contentRoot: "/content" },
       "report",
       { workingSetId: "w", slot: "idle/south" },
-      { loadContent: () => ({ ok: true as const, content: rig.content }) },
+      {
+        loadContent: () => ({ ok: true as const, content: rig.content }),
+        loadPalettes: () => ({
+          ok: true as const,
+          palettes: rig.content.palettes,
+        }),
+      },
     );
 
     expect(outcome).toMatchObject({
@@ -609,6 +630,10 @@ describe("conform, sets, picks and rejection through the session", () => {
     };
     const over = {
       loadContent: () => ({ ok: true as const, content: rig.content }),
+      loadPalettes: () => ({
+        ok: true as const,
+        palettes: rig.content.palettes,
+      }),
     };
 
     const conformed = await run(
@@ -740,6 +765,10 @@ describe("conform, sets, picks and rejection through the session", () => {
     };
     const over = {
       loadContent: () => ({ ok: true as const, content: rig.content }),
+      loadPalettes: () => ({
+        ok: true as const,
+        palettes: rig.content.palettes,
+      }),
     };
 
     const created = await run(
@@ -816,7 +845,7 @@ describe("conform, sets, picks and rejection through the session", () => {
         originalWork: { licence: "MIT" },
       },
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     rig.session.close();
@@ -827,6 +856,10 @@ describe("conform, sets, picks and rejection through the session", () => {
     };
     const over = {
       loadContent: () => ({ ok: true as const, content: rig.content }),
+      loadPalettes: () => ({
+        ok: true as const,
+        palettes: rig.content.palettes,
+      }),
     };
 
     const rejected = await run(
@@ -1241,6 +1274,7 @@ describe("candidate-frames and candidate-bytes", () => {
 describe("what the app needs to conform a job", () => {
   const over = (rig: AssetRig) => ({
     loadContent: () => ({ ok: true as const, content: rig.content }),
+    loadPalettes: () => ({ ok: true as const, palettes: rig.content.palettes }),
   });
 
   test("status lists the names of the configured conform sets and nothing of their settings", async () => {
@@ -1375,5 +1409,217 @@ describe("what the app needs to conform a job", () => {
     expect(
       (await run(config, "conform", { jobId: "j", set: "missing" })).outcome,
     ).toMatchObject({ ok: false, error: { code: "invalid-config" } });
+  });
+});
+
+describe("the palettes are re-read from disk for pack, approve and publish", () => {
+  const FAMILIES = ["town", "olympus", "underworld"];
+  // biome-ignore lint/suspicious/noExplicitAny: the tests edit palette JSON by path
+  type Json = Record<string, any>;
+  const palettePath = (root: string) => join(root, "palette", "palette.json");
+
+  /** The fixture palette's files as greek-master, with `limits` written in and the approval re-derived. */
+  function approvedFiles(limits?: unknown) {
+    const files = paletteFixture("draft", "greek-master").files;
+    const json = JSON.parse(files["palette.json"]) as Json;
+    if (limits !== undefined) json.limits = limits;
+    const parsed = parsePalette(
+      {
+        json: { ...json, approval: { status: "draft" } },
+        gpl: files["master.gpl"],
+        hex: files["master.hex"],
+      },
+      FAMILIES,
+    );
+    if (!parsed.ok) throw new Error(parsed.message);
+    return {
+      ...files,
+      "palette.json": JSON.stringify({
+        ...json,
+        approval: { status: "approved", digest: paletteDigest(parsed.value) },
+      }),
+    };
+  }
+
+  /** A studio root holding a packed-able working set, a content root whose palette is on disk, and one Studio over them. */
+  function hosted() {
+    const rig = assetRig();
+    spriteSet(rig);
+    rig.session.close();
+    const contentRoot = contentRootWithPalette(approvedFiles());
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot,
+      registryRoot: rig.registryRoot,
+    };
+    const studio = new Studio(config, depsFor(capture()), "session");
+    return { rig, contentRoot, studio };
+  }
+
+  const packArgs = {
+    id: "zeus-pack",
+    workingSetId: "w",
+    assetId: "placeholder-zeus",
+    styleTag: "draft",
+    footprint: { w: 1, h: 1 },
+    originalWork: { licence: "MIT", attribution: "the owner" },
+  };
+  /** The owner's reading of every licence the studio cannot decide, once each, as approve takes it. */
+  const approveArgs = (studio: Studio, id = "zeus-pack") => {
+    const status = studio.readOnly();
+    if ("ok" in status) throw new Error("no status");
+    const asset = status.assets.find((a) => a.id === id);
+    if (asset === undefined) throw new Error(`no asset ${id}`);
+    const seen = new Set<string>();
+    const assessments = asset.record.manifest.provenance.licences.flatMap(
+      (record) => {
+        const key = JSON.stringify(record);
+        if (
+          seen.has(key) ||
+          ["MIT", "Apache-2.0", "CC0-1.0"].includes(record.licence)
+        )
+          return [];
+        seen.add(key);
+        return [
+          {
+            record,
+            disposition: "mit-compatible",
+            reason: "the owner read these terms",
+          },
+        ];
+      },
+    );
+    return { id, confirm: asset.manifestRevision, assessments };
+  };
+  const confirmed = (studio: Studio, id = "zeus-pack") => {
+    const status = studio.readOnly();
+    if ("ok" in status) throw new Error("no status");
+    const asset = status.assets.find((a) => a.id === id);
+    if (asset === undefined) throw new Error(`no asset ${id}`);
+    return asset.manifestRevision;
+  };
+
+  test("publish judges the palette on disk now: an edit after the content loaded is refused, and the unedited palette publishes", async () => {
+    const { contentRoot, studio } = hosted();
+    try {
+      // The content, and with it the cached palette, is loaded here.
+      expect("ok" in studio.loadedContent()).toBe(false);
+      expect((await execute(studio, "pack", packArgs)).ok).toBe(true);
+      const approved = await execute(studio, "approve", approveArgs(studio));
+      expect(approved.ok).toBe(true);
+
+      // The owner edits a limit on disk and re-approves the palette's new digest.
+      writeFileSync(
+        palettePath(contentRoot),
+        approvedFiles({ shades: { min: 4, max: 6 }, colours: { sprite: 40 } })[
+          "palette.json"
+        ],
+      );
+      const refused = await execute(studio, "publish", {
+        id: "zeus-pack",
+        confirm: confirmed(studio),
+      });
+      expect(refused.ok).toBe(false);
+      expect(!refused.ok && refused.error.message).toMatch(/palette changed/);
+
+      // Positive control: the palette as it was when the asset was packed publishes.
+      writeFileSync(palettePath(contentRoot), approvedFiles()["palette.json"]);
+      const published = await execute(studio, "publish", {
+        id: "zeus-pack",
+        confirm: confirmed(studio),
+      });
+      expect(published.ok).toBe(true);
+    } finally {
+      await studio.teardown();
+    }
+  });
+
+  test("publish refuses a palette whose approval no longer matches its data, as the loader's own diagnostic", async () => {
+    const { contentRoot, studio } = hosted();
+    try {
+      expect("ok" in studio.loadedContent()).toBe(false);
+      expect((await execute(studio, "pack", packArgs)).ok).toBe(true);
+      expect((await execute(studio, "approve", approveArgs(studio))).ok).toBe(
+        true,
+      );
+
+      // A limit edited without a new digest: the approval is stale.
+      const json = JSON.parse(approvedFiles()["palette.json"]) as Json;
+      json.limits = { shades: { min: 4, max: 6 }, colours: { sprite: 40 } };
+      writeFileSync(palettePath(contentRoot), JSON.stringify(json));
+      const refused = await execute(studio, "publish", {
+        id: "zeus-pack",
+        confirm: confirmed(studio),
+      });
+      expect(refused).toMatchObject({
+        ok: false,
+        error: { code: "invalid-content" },
+      });
+      expect(JSON.stringify(refused)).toContain("palette/palette.json");
+      expect(JSON.stringify(refused)).toContain("approval.digest");
+    } finally {
+      await studio.teardown();
+    }
+  });
+
+  test("approve judges the palette on disk now: a palette that lost its approval refuses, and the restored one approves", async () => {
+    const { contentRoot, studio } = hosted();
+    try {
+      expect("ok" in studio.loadedContent()).toBe(false);
+      expect((await execute(studio, "pack", packArgs)).ok).toBe(true);
+      const draft = JSON.parse(approvedFiles()["palette.json"]) as Json;
+      draft.approval = { status: "draft" };
+      writeFileSync(palettePath(contentRoot), JSON.stringify(draft));
+      const refused = await execute(studio, "approve", approveArgs(studio));
+      expect(refused.ok).toBe(false);
+      expect(!refused.ok && refused.error.message).toMatch(/draft/);
+
+      writeFileSync(palettePath(contentRoot), approvedFiles()["palette.json"]);
+      expect((await execute(studio, "approve", approveArgs(studio))).ok).toBe(
+        true,
+      );
+    } finally {
+      await studio.teardown();
+    }
+  });
+
+  test("pack measures against the palette on disk now: one that is a draft is flagged in the report though the loaded content had it approved", async () => {
+    const { contentRoot, studio } = hosted();
+    try {
+      expect("ok" in studio.loadedContent()).toBe(false);
+      const draft = JSON.parse(approvedFiles()["palette.json"]) as Json;
+      draft.approval = { status: "draft" };
+      writeFileSync(palettePath(contentRoot), JSON.stringify(draft));
+      expect((await execute(studio, "pack", packArgs)).ok).toBe(true);
+      const status = studio.readOnly();
+      if ("ok" in status) throw new Error("no status");
+      const record = status.assets.find((a) => a.id === "zeus-pack")?.record;
+      expect(
+        record?.state === "draft" &&
+          record.report?.checks.some((c) => c.check === "palette-approval"),
+      ).toBe(true);
+    } finally {
+      await studio.teardown();
+    }
+  });
+
+  test("a palette that does not load refuses pack, approve and publish with the loader's diagnostics, and writes nothing", async () => {
+    const { rig, contentRoot, studio } = hosted();
+    try {
+      expect("ok" in studio.loadedContent()).toBe(false);
+      writeFileSync(palettePath(contentRoot), "{ not json");
+      const before = readdirSync(rig.root).sort();
+      const packed = await execute(studio, "pack", packArgs);
+      expect(packed).toMatchObject({
+        ok: false,
+        error: { code: "invalid-content" },
+      });
+      expect(JSON.stringify(packed)).toContain("palette/palette.json");
+      expect(readdirSync(rig.root).sort()).toEqual(before);
+      const status = studio.readOnly();
+      expect("ok" in status ? [] : status.assets).toEqual([]);
+    } finally {
+      await studio.teardown();
+    }
   });
 });

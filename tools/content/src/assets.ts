@@ -4,9 +4,17 @@
 //   <root>/gods/*.json                     core god profiles (read only)
 //   <root>/world/inhabitants.json          inhabitants' sprite ids (read only)
 //   <root>/assets/vocabulary.json          versioned vocabulary
-//   <root>/assets/subjects/*.json          visual profiles, joined by god id
+//   <root>/assets/subjects/*.json          visual profiles, joined by god id; a subject's render
+//                                          matrix is checked against the vocabulary, and a god whose
+//                                          sprite is an asset on the matrix's cell class must hold
+//                                          every slot the matrix requires
 //   <root>/assets/registry/                index.json, manifests/, blobs/
-//   <root>/palette/                        palette.json, master.gpl, master.hex
+//   <root>/palette/                        greek-master: palette.json, master.gpl, master.hex
+//   <root>/palette/<id>/                   any other palette (greek-retro), the same three files
+//
+// With a repository root, it also runs the render checks: the curated kit library under
+// <repo>/tools/render (kits.json against the kit files and the profiles' references) and the
+// GPL/MIT licence boundary over every Python file in the repository.
 //
 // A published manifest is validated from plain files alone: its provenance
 // carries the job refs and licences it needs, so no authoring ledger is read.
@@ -19,18 +27,27 @@ import {
   readRevision,
 } from "@panthea/assets/registry";
 import {
+  checkKits,
+  checkLicenceBoundary,
+  type ProfileKitRefs,
+} from "@panthea/assets/render";
+import {
   type GodProfile,
   type GodVisualProfile,
   parseGodProfile,
   parseGodVisualProfiles,
+  type RenderMatrix,
+  requiredRenderSlotKeys,
 } from "@panthea/content";
 import {
   type AssetVocabulary,
   type ParseFailure,
   parseAssetId,
   parseAssetVocabulary,
+  slotKeys,
+  stateRuleFor,
 } from "@panthea/contracts";
-import { readPalette } from "./palette";
+import { readPalettes } from "./palette";
 
 export interface AssetDiagnostic {
   /** Path relative to the content root. */
@@ -145,10 +162,79 @@ function isRecordWithArray(
   return Array.isArray(found) ? found : undefined;
 }
 
-export function validateAssets(contentRoot: string): AssetValidation {
+/** The matrix's cell class, states, abilities and facings are ones the vocabulary honours. */
+function validateRenderMatrix(
+  matrix: RenderMatrix,
+  vocabulary: AssetVocabulary,
+  report: (message: string) => void,
+): void {
+  const cell = vocabulary.cells.find((c) => c.id === matrix.cellClass);
+  if (cell === undefined) {
+    report(`render.matrix.cellClass: unknown cell class "${matrix.cellClass}"`);
+    return;
+  }
+  if (!cell.kinds.includes("sprite")) {
+    report(
+      `render.matrix.cellClass: cell class "${cell.id}" does not hold sprites`,
+    );
+    return;
+  }
+  for (const direction of matrix.directions) {
+    if (!vocabulary.directions.includes(direction))
+      report(`render.matrix.directions: unknown direction "${direction}"`);
+  }
+  for (const group of ["required", "deferred"] as const) {
+    for (const slot of matrix[group]) {
+      const rule = stateRuleFor(vocabulary, slot.state, cell.id);
+      if (rule === undefined) {
+        report(
+          `render.matrix.${group}: state "${slot.state}" has no rule on cell class "${cell.id}"`,
+        );
+      } else if (rule.perAbility && slot.ability === undefined) {
+        report(
+          `render.matrix.${group}: state "${slot.state}" is bound to an ability, and the slot names none`,
+        );
+      } else if (!rule.perAbility && slot.ability !== undefined) {
+        report(
+          `render.matrix.${group}: state "${slot.state}" takes no ability, and the slot names "${slot.ability}"`,
+        );
+      }
+    }
+  }
+}
+
+export interface AssetValidationOptions {
+  /** The repository root. When given, the render kit and licence-boundary checks run against it. */
+  readonly repoRoot?: string;
+  /** The kit files each render profile references; empty until the profiles exist (U6). */
+  readonly kitProfiles?: readonly ProfileKitRefs[];
+}
+
+/** Kit library and licence boundary. Diagnostics name paths relative to the repository root. */
+function validateRender(
+  repoRoot: string,
+  profiles: readonly ProfileKitRefs[],
+  report: (file: string, message: string) => void,
+): void {
+  for (const problem of checkKits(join(repoRoot, "tools", "render"), profiles)
+    .problems) {
+    report(`tools/render/${problem.file}`, problem.message);
+  }
+  for (const violation of checkLicenceBoundary(repoRoot)) {
+    report(violation.file, `line ${violation.line}: ${violation.message}`);
+  }
+}
+
+export function validateAssets(
+  contentRoot: string,
+  options: AssetValidationOptions = {},
+): AssetValidation {
   const diagnostics: AssetDiagnostic[] = [];
   const report = (file: string, message: string) =>
     diagnostics.push({ file, message });
+  if (options.repoRoot !== undefined) {
+    validateRender(options.repoRoot, options.kitProfiles ?? [], report);
+  }
   const done = (): AssetValidation => ({
     ok: diagnostics.length === 0,
     diagnostics,
@@ -173,10 +259,10 @@ export function validateAssets(contentRoot: string): AssetValidation {
   }
   const vocabulary: AssetVocabulary = parsedVocabulary.value;
 
-  // Master palette: canon needs it approved and named by every manifest.
-  const paletteRead = readPalette(contentRoot, vocabulary.paletteFamilies);
+  // Palettes: canon needs the palette each manifest names, approved.
+  const paletteRead = readPalettes(contentRoot, vocabulary.paletteFamilies);
   if (!paletteRead.ok) diagnostics.push(...paletteRead.diagnostics);
-  const palette = paletteRead.ok ? paletteRead.palette : undefined;
+  const palettes = paletteRead.ok ? paletteRead.palettes : undefined;
 
   // Gods: parsed read-only, for stable sprite ids and ability ids.
   const gods: GodProfile[] = [];
@@ -245,6 +331,49 @@ export function validateAssets(contentRoot: string): AssetValidation {
 
   validateInhabitantSprites(contentRoot, registry.snapshot.entries, report);
 
+  // Render matrices: honoured by the vocabulary, and filled by the asset a god's profile points at.
+  const subjectFiles = new Map(
+    subjectInputs.flatMap((input) =>
+      typeof input.value === "object" &&
+      input.value !== null &&
+      typeof (input.value as { godId?: unknown }).godId === "string"
+        ? [[(input.value as { godId: string }).godId, input.label] as const]
+        : [],
+    ),
+  );
+  for (const visual of visuals) {
+    if (visual.render === undefined) continue;
+    const { matrix } = visual.render;
+    const subjectFile = subjectFiles.get(visual.godId) ?? "assets/subjects";
+    let honoured = true;
+    validateRenderMatrix(matrix, vocabulary, (message) => {
+      honoured = false;
+      report(subjectFile, message);
+    });
+    const god = gods.find((g) => g.id === visual.godId);
+    const cell = vocabulary.cells.find((c) => c.id === matrix.cellClass);
+    const entry = god && registry.snapshot.entries.get(god.sprite);
+    if (!honoured || god === undefined || cell === undefined) continue;
+    // The matrix binds the assets on its own cell class; a god's legacy sprite on another class is not under it.
+    if (
+      entry === undefined ||
+      entry.manifest.kind !== "sprite" ||
+      entry.manifest.cell.w !== cell.w ||
+      entry.manifest.cell.h !== cell.h
+    )
+      continue;
+    const held = new Set(slotKeys(entry.manifest));
+    const missing = requiredRenderSlotKeys(matrix).filter(
+      (key) => !held.has(key),
+    );
+    if (missing.length > 0) {
+      report(
+        spriteOwners.get(god.sprite)?.file ?? `gods/${god.id}.json`,
+        `sprite "${god.sprite}" is on the ${cell.id} cell, so it must hold every slot ${visual.godId}'s render matrix requires; missing ${missing.join(", ")}`,
+      );
+    }
+  }
+
   const godById = new Map(gods.map((god) => [god.id, god]));
   const portraitOwners = new Map(
     visuals.flatMap((v) =>
@@ -254,8 +383,13 @@ export function validateAssets(contentRoot: string): AssetValidation {
   for (const entry of registry.snapshot.entries.values()) {
     const { manifest } = entry;
     const file = `assets/registry/manifests/${entry.revision}.json`;
+    const palette = palettes?.get(manifest.paletteId);
     const refusal =
-      palette === undefined ? undefined : paletteRefusal(manifest, palette);
+      palettes === undefined
+        ? undefined
+        : palette === undefined
+          ? `the manifest names palette "${manifest.paletteId}", which is not among the palettes (${[...palettes.keys()].join(", ")})`
+          : paletteRefusal(manifest, palette);
     if (refusal !== undefined) report(file, refusal);
     for (const source of manifest.provenance.sourceAssets) {
       const read = readRevision(

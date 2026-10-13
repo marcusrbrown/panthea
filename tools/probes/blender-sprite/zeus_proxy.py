@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Zeus-shaped proxy on the UAL rig, built entirely by script from a factory start (bpy). No .blend is saved.
 
 Body broadening, a bone-weighted low-poly robe, beard, hair, a bolt in the right hand, a stone seat, toon materials

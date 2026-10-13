@@ -4,12 +4,19 @@
 //
 //   master.gpl    GIMP palette, the swatch file an artist loads
 //   master.hex    one lowercase rrggbb per line, the plain list
-//   palette.json  id, approval and the families of 4-5 shade ramps
+//   palette.json  id, approval, optional limits and the families of ramps
 //
 // The GPL and HEX lists name the same colours in the same order. Every ramp
 // shade is one of them. GPL colour names are cosmetic and not part of the
-// digest. Size limits per kind (16 sprite, 32 portrait) belong to conformance,
-// not to the master.
+// digest.
+//
+// A palette is one version of the art direction and may declare its own limits
+// (`limits`: the shade bounds of a ramp and the most colours a sprite or
+// portrait keeps). Declared limits are part of the digest an approval binds
+// to. A palette that declares none keeps the legacy rules, 4-5 shades, 16
+// colours per sprite and 32 per portrait, and its digest is computed as it
+// always was. A palette lives in a directory named by its id; `greek-master`
+// is the palette root and any other id a subdirectory of it.
 
 import {
   ASSET_SCHEMA_VERSIONS,
@@ -18,10 +25,12 @@ import {
   ok,
   type ParseResult,
   parseArray,
+  parseIntegerAtLeast,
   parseSchemaVersion,
   parseSha256,
   parseSlug,
   parseStrictRecord,
+  type Range,
   type Sha256,
 } from "@panthea/contracts";
 import type { Rgb } from "./conformance";
@@ -41,9 +50,21 @@ export interface PaletteFamily {
   readonly ramps: readonly PaletteRamp[];
 }
 
+/** What a palette version allows: ramp length, and the most colours one sprite or portrait keeps. */
+export interface PaletteLimits {
+  readonly shades: Range;
+  readonly colours: {
+    readonly sprite: number;
+    /** Absent means the legacy portrait limit. */
+    readonly portrait?: number;
+  };
+}
+
 export interface Palette {
   readonly id: string;
   readonly approval: PaletteApproval;
+  /** Declared limits; absent means the legacy rules (`LEGACY_PALETTE_LIMITS`). */
+  readonly limits?: PaletteLimits;
   /** The master list, in file order. */
   readonly colours: readonly Rgb[];
   readonly families: readonly PaletteFamily[];
@@ -56,9 +77,40 @@ export interface PaletteSource {
   readonly hex: string;
 }
 
+/** The id of the first palette; its files are the palette root. */
+export const MASTER_PALETTE_ID = "greek-master";
+
+/** The directory under the palette root that holds a palette's files: none for `greek-master`, the id for any other. */
+export const paletteSubdirectory = (id: string): string =>
+  id === MASTER_PALETTE_ID ? "" : id;
+
+/** The palettes of a content root by id. */
+export type PaletteSet = ReadonlyMap<string, Palette>;
+
 const MAX_COLOURS = 64;
-const MIN_SHADES = 4;
-const MAX_SHADES = 5;
+/** Bounds on what a palette may declare for ramp length. */
+const DECLARABLE_MIN_SHADES = 2;
+const DECLARABLE_MAX_SHADES = 8;
+
+/** The rules a palette that declares no limits has always had. */
+export const LEGACY_PALETTE_LIMITS = {
+  shades: { min: 4, max: 5 },
+  colours: { sprite: 16, portrait: 32 },
+} as const;
+
+/** Fewest and most shades a ramp of this palette takes. */
+export const shadeBounds = (palette: Pick<Palette, "limits">): Range =>
+  palette.limits?.shades ?? LEGACY_PALETTE_LIMITS.shades;
+
+/** Most colours one sprite or portrait may keep under this palette. */
+export const colourLimit = (
+  palette: Pick<Palette, "limits">,
+  kind: "sprite" | "portrait",
+): number =>
+  kind === "sprite"
+    ? (palette.limits?.colours.sprite ?? LEGACY_PALETTE_LIMITS.colours.sprite)
+    : (palette.limits?.colours.portrait ??
+      LEGACY_PALETTE_LIMITS.colours.portrait);
 
 const JSON_FILE = "palette.json";
 const GPL_FILE = "master.gpl";
@@ -154,15 +206,27 @@ function parseMaster(source: PaletteSource): ParseResult<readonly Rgb[]> {
   return ok(hex.value);
 }
 
-/** Digest of what an approval covers: id, master list and ramps. GPL names are not part of it. */
+/**
+ * Digest of what an approval covers: id, master list, ramps and, when the
+ * palette declares them, its limits. GPL names are not part of it. A palette
+ * without declared limits digests exactly as it did before limits existed.
+ */
 export function paletteDigest(
-  palette: Pick<Palette, "id" | "colours" | "families">,
+  palette: Pick<Palette, "id" | "colours" | "families" | "limits">,
 ): Sha256 {
   return sha256Hex(
     new TextEncoder().encode(
       canonicalJson({
         id: palette.id,
         colours: palette.colours.map(hashed),
+        ...(palette.limits === undefined
+          ? {}
+          : {
+              limits: {
+                shades: palette.limits.shades,
+                colours: palette.limits.colours,
+              },
+            }),
         families: palette.families.map((family) => ({
           id: family.id,
           ramps: family.ramps.map((ramp) => ({
@@ -204,6 +268,7 @@ function parseRamp(
   value: unknown,
   path: string,
   master: ReadonlySet<string>,
+  bounds: Range,
 ): ParseResult<PaletteRamp> {
   return parseStrictRecord(value, path, ["id", "shades"], (record) => {
     const id = parseSlug(record.id, `${path}.id`);
@@ -226,10 +291,12 @@ function parseRamp(
       },
     );
     if (!shades.ok) return shades;
-    if (shades.value.length < MIN_SHADES || shades.value.length > MAX_SHADES) {
+    if (shades.value.length < bounds.min || shades.value.length > bounds.max) {
       return fail(
         `${path}.shades`,
-        `expected ${MIN_SHADES} or ${MAX_SHADES} shades, got ${shades.value.length}`,
+        bounds.max === bounds.min
+          ? `expected ${bounds.min} shades, got ${shades.value.length}`
+          : `expected ${bounds.min} to ${bounds.max} shades, got ${shades.value.length}`,
       );
     }
     return ok({ id: id.value, shades: shades.value });
@@ -240,12 +307,13 @@ function parseFamily(
   value: unknown,
   path: string,
   master: ReadonlySet<string>,
+  bounds: Range,
 ): ParseResult<PaletteFamily> {
   return parseStrictRecord(value, path, ["id", "ramps"], (record) => {
     const id = parseSlug(record.id, `${path}.id`);
     if (!id.ok) return id;
     const ramps = parseArray(record.ramps, `${path}.ramps`, (ramp, rampPath) =>
-      parseRamp(ramp, rampPath, master),
+      parseRamp(ramp, rampPath, master, bounds),
     );
     if (!ramps.ok) return ramps;
     if (ramps.value.length === 0) {
@@ -274,6 +342,59 @@ function parseFamily(
   });
 }
 
+function parseShadeBounds(value: unknown, path: string): ParseResult<Range> {
+  return parseStrictRecord(value, path, ["min", "max"], (record) => {
+    const min = parseIntegerAtLeast(
+      record.min,
+      `${path}.min`,
+      DECLARABLE_MIN_SHADES,
+    );
+    if (!min.ok) return min;
+    const max = parseIntegerAtLeast(record.max, `${path}.max`, min.value);
+    if (!max.ok) return max;
+    if (max.value > DECLARABLE_MAX_SHADES)
+      return fail(
+        `${path}.max`,
+        `expected at most ${DECLARABLE_MAX_SHADES} shades`,
+      );
+    return ok({ min: min.value, max: max.value });
+  });
+}
+
+function parseColourBudget(value: unknown, path: string): ParseResult<number> {
+  const budget = parseIntegerAtLeast(value, path, 1);
+  if (!budget.ok) return budget;
+  if (budget.value > MAX_COLOURS)
+    return fail(path, `expected at most the ${MAX_COLOURS}-colour master cap`);
+  return budget;
+}
+
+function parseLimits(value: unknown, path: string): ParseResult<PaletteLimits> {
+  return parseStrictRecord(value, path, ["shades", "colours"], (record) => {
+    const shades = parseShadeBounds(record.shades, `${path}.shades`);
+    if (!shades.ok) return shades;
+    const colours = parseStrictRecord(
+      record.colours,
+      `${path}.colours`,
+      ["sprite", "portrait"],
+      (c): ParseResult<PaletteLimits["colours"]> => {
+        const sprite = parseColourBudget(c.sprite, `${path}.colours.sprite`);
+        if (!sprite.ok) return sprite;
+        if (c.portrait === undefined) return ok({ sprite: sprite.value });
+        const portrait = parseColourBudget(
+          c.portrait,
+          `${path}.colours.portrait`,
+        );
+        return portrait.ok
+          ? ok({ sprite: sprite.value, portrait: portrait.value })
+          : portrait;
+      },
+    );
+    if (!colours.ok) return colours;
+    return ok({ shades: shades.value, colours: colours.value });
+  });
+}
+
 /**
  * Parses the three palette files into a palette whose families are exactly
  * `familyIds`. An approved palette must carry the digest of its own current
@@ -289,7 +410,7 @@ export function parsePalette(
   return parseStrictRecord(
     source.json,
     JSON_FILE,
-    ["schemaVersion", "id", "approval", "families"],
+    ["schemaVersion", "id", "approval", "limits", "families"],
     (record) => {
       const version = parseSchemaVersion(
         record.schemaVersion,
@@ -301,10 +422,17 @@ export function parsePalette(
       if (!id.ok) return id;
       const approval = parseApproval(record.approval, `${JSON_FILE}.approval`);
       if (!approval.ok) return approval;
+      let limits: PaletteLimits | undefined;
+      if (record.limits !== undefined) {
+        const parsed = parseLimits(record.limits, `${JSON_FILE}.limits`);
+        if (!parsed.ok) return parsed;
+        limits = parsed.value;
+      }
       const families = parseArray(
         record.families,
         `${JSON_FILE}.families`,
-        (family, path) => parseFamily(family, path, keys),
+        (family, path) =>
+          parseFamily(family, path, keys, shadeBounds({ limits })),
       );
       if (!families.ok) return families;
       const seen = new Set<string>();
@@ -326,6 +454,7 @@ export function parsePalette(
       const palette: Palette = {
         id: id.value,
         approval: approval.value,
+        ...(limits === undefined ? {} : { limits }),
         colours: master.value,
         families: families.value,
       };
@@ -335,7 +464,7 @@ export function parsePalette(
       ) {
         return fail(
           `${JSON_FILE}.approval.digest`,
-          "does not match this palette's id, colours and ramps",
+          "does not match this palette's id, colours, ramps and limits",
         );
       }
       return ok(palette);

@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import type { GenerationJob, JobOutput, Sha256 } from "@panthea/contracts";
 import { parseSlug } from "@panthea/contracts";
-import type { Palette } from "../palette";
+import type { PaletteSet } from "../palette";
 import {
   type CandidateRecord,
   type ConformParams,
@@ -126,11 +126,14 @@ export interface StudioSession {
     content: StudioContent,
     registryRoot: string,
   ): DeriveResult;
-  /** Packs a complete working set into a draft asset record; never approves. */
+  /**
+   * Packs a complete working set into a draft asset record; never approves.
+   * Like approve and publish, it takes the palettes as they are on disk now.
+   */
   pack(
     input: PackInput,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
     registryRoot: string,
   ): AssetOpResult;
   /** The separate, explicit approval of a draft's exact manifest and atlas. */
@@ -138,13 +141,13 @@ export interface StudioSession {
     id: string,
     options: ApproveOptions,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
   ): AssetOpResult;
   /** Publishes an approved asset through the registry; every gate runs before canon is written. */
   publishAsset(
     id: string,
     content: StudioContent,
-    palette: Palette,
+    palettes: PaletteSet,
     registryRoot: string,
   ): AssetOpResult;
   /** Rejects an idle draft; the record keeps its manifest, and a rejected asset is never approved or published. */

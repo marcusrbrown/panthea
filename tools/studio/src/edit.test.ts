@@ -117,6 +117,10 @@ function setup() {
       },
       {
         loadContent: () => ({ ok: true as const, content: rig.content }),
+        loadPalettes: () => ({
+          ok: true as const,
+          palettes: rig.content.palettes,
+        }),
         openRuntime: (session) => fakeRuntime(session),
       },
     ).then((r) => r.outcome);

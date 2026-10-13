@@ -21,6 +21,7 @@ import {
   assetRig,
   finishSheet,
   loadContent,
+  masterOf,
   paintFigure,
   removeTempRoots,
   runSlots,
@@ -103,7 +104,7 @@ function approveDraft(
       ...extra,
     },
     content,
-    rig.palette,
+    rig.palettes,
   );
 }
 
@@ -115,18 +116,18 @@ function release(
   id: string,
   over: Partial<PackInput> = {},
 ): Sha256 {
-  const { session, registryRoot, palette } = rig;
+  const { session, registryRoot, palettes } = rig;
   const packed = must(
     session.pack(
       packInput({ id, workingSetId: setId, ...over }),
       content,
-      palette,
+      palettes,
       registryRoot,
     ),
   );
   must(approveDraft(rig, content, id));
   const published = must(
-    session.publishAsset(id, content, palette, registryRoot),
+    session.publishAsset(id, content, palettes, registryRoot),
   );
   expect(published.asset.published?.revision).toBe(
     packed.asset.manifestRevision,
@@ -139,7 +140,12 @@ function release(
 function realPaletteRig(): AssetRig {
   const rig = assetRig();
   const content = loadContent();
-  return { ...rig, content, palette: content.palette };
+  return {
+    ...rig,
+    content,
+    palette: masterOf(content),
+    palettes: content.palettes,
+  };
 }
 
 function publishEast(rig: AssetRig, content: StudioContent): Sha256 {
@@ -239,7 +245,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "west-pack", workingSetId: made.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -435,7 +441,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "act-pack", workingSetId: "act" }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -482,7 +488,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "bob-pack", workingSetId: bob.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -504,7 +510,7 @@ describe("derive through pack and publish", () => {
       rig.session.publishAsset(
         "bob-pack",
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -544,7 +550,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "west-pack", workingSetId: made.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -553,7 +559,7 @@ describe("derive through pack and publish", () => {
     const refused = rig.session.publishAsset(
       "west-pack",
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     expect(refused.ok).toBe(false);
@@ -590,7 +596,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "bob-pack", workingSetId: made.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -736,7 +742,7 @@ describe("derive through pack and publish", () => {
     const refused = rig.session.pack(
       packInput({ id: "mixed-pack", workingSetId: "mixed" }),
       content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     expect(refused.ok).toBe(false);
@@ -820,7 +826,7 @@ describe("derive through pack and publish", () => {
         rig.session.pack(
           packInput({ id: "north-pack", workingSetId: "north" }),
           content,
-          rig.palette,
+          rig.palettes,
           rig.registryRoot,
         ),
       );
@@ -829,7 +835,7 @@ describe("derive through pack and publish", () => {
       const refused = rig.session.publishAsset(
         "north-pack",
         rig.content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       );
 
@@ -904,7 +910,7 @@ describe("derive through pack and publish", () => {
         rig.session.pack(
           packInput({ id: "again-pack", workingSetId: "again" }),
           content,
-          rig.palette,
+          rig.palettes,
           rig.registryRoot,
         ),
       );
@@ -945,7 +951,7 @@ describe("derive through pack and publish", () => {
     const refused = rig.session.pack(
       packInput({ id: "west-pack", workingSetId: made.workingSetId }),
       content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     expect(refused.ok).toBe(false);
@@ -1088,7 +1094,7 @@ describe("derive through pack and publish", () => {
     const recoloured = swapImage(
       sourcePixels.image,
       variant?.map ?? [],
-      rampIndex(rig.content.palette),
+      rampIndex(masterOf(rig.content)),
     );
     if (!recoloured.ok) throw new Error(recoloured.message);
     expect(variantPixels.image.width).toBe(recoloured.image.width);
@@ -1140,7 +1146,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "swap-pack", workingSetId: swap.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -1185,7 +1191,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "swap-pack", workingSetId: swap.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -1216,7 +1222,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "swap-pack", workingSetId: swap.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -1251,7 +1257,7 @@ describe("derive through pack and publish", () => {
     const refused = rig.session.publishAsset(
       "swap-pack",
       content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
 
@@ -1300,7 +1306,6 @@ describe("derive through pack and publish", () => {
         commands: status.commands,
         readBlob: (hash) => rig.session.store.readBlob(hash),
         content,
-        palette: rig.palette,
         prior: { revision: first, manifest: prior, atlas: read.value.atlas },
       });
 
@@ -1351,7 +1356,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "swap-pack", workingSetId: swap.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -1360,8 +1365,8 @@ describe("derive through pack and publish", () => {
     // The declaration arrives: the real content, with Zeus's bolt hand.
     const refused = rig.session.publishAsset(
       "swap-pack",
-      { ...rig.content, palette: content.palette },
-      rig.palette,
+      { ...rig.content, palettes: content.palettes },
+      rig.palettes,
       rig.registryRoot,
     );
 
@@ -1394,7 +1399,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "bob-pack", workingSetId: bob.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -1407,7 +1412,7 @@ describe("derive through pack and publish", () => {
     const refused = rig.session.publishAsset(
       "bob-pack",
       rig.content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
 
@@ -1441,7 +1446,7 @@ describe("derive through pack and publish", () => {
       rig.session.pack(
         packInput({ id: "bob-pack", workingSetId: bob.workingSetId }),
         content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       ),
     );
@@ -1476,7 +1481,7 @@ describe("derive through pack and publish", () => {
     const refused = rig.session.publishAsset(
       "bob-pack",
       content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     expect(refused.ok).toBe(false);
@@ -1493,7 +1498,7 @@ describe("derive through pack and publish", () => {
     const overwritten = rig.session.publishAsset(
       "bob-pack",
       content,
-      rig.palette,
+      rig.palettes,
       rig.registryRoot,
     );
     expect(overwritten.ok).toBe(false);

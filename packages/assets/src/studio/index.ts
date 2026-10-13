@@ -17,7 +17,9 @@ export type {
 export {
   type ContentDiagnostic,
   type LoadedContent,
+  type LoadedPalettes,
   loadStudioContent,
+  loadStudioPalettes,
 } from "./content";
 export {
   type EditSources,
@@ -104,6 +106,7 @@ export {
   adapterInput,
   buildSpec,
   DEFAULT_BATCH,
+  type EngineCells,
   type GenerationSpec,
   newRequestRecord,
   type PlannedJob,

@@ -16,15 +16,20 @@ test("the root exports lookup, placeholder and helpers", () => {
     [
       "DEFAULT_PLACEHOLDER",
       "EMPTY_SNAPSHOT",
+      "LEGACY_PALETTE_LIMITS",
+      "MASTER_PALETTE_ID",
+      "colourLimit",
       "conformImage",
       "encodeRgbaPng",
       "paletteDigest",
+      "paletteSubdirectory",
       "parsePalette",
       "readPngHeader",
       "recoverGrid",
       "renderPlaceholder",
       "resolveAsset",
       "sha256Hex",
+      "shadeBounds",
     ].sort(),
   );
 });
@@ -126,11 +131,13 @@ test("the studio subpath is a package export", () => {
   ) as { exports: Record<string, string> };
   expect(manifest.exports["./studio"]).toBe("./src/studio/index.ts");
   expect(manifest.exports["./browser"]).toBe("./src/browser.ts");
+  expect(manifest.exports["./render"]).toBe("./src/render/index.ts");
   expect(Object.keys(manifest.exports).sort()).toEqual([
     ".",
     "./browser",
     "./fixtures",
     "./registry",
+    "./render",
     "./studio",
   ]);
 });

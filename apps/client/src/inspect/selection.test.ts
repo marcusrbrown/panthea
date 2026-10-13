@@ -30,6 +30,15 @@ test("every vocabulary state, direction and expression can be picked, published 
 
   expect(options.states.map((state) => state.id)).toContain("seated");
   expect(options.states.map((state) => state.id)).toContain("act");
+  // One entry per state id, though a state carries a rule per cell class.
+  expect(options.states.map((state) => state.id)).toEqual([
+    "idle",
+    "seated",
+    "act",
+    "walk",
+    "hurt",
+    "down",
+  ]);
   expect(options.states.find((state) => state.id === "act")?.perAbility).toBe(
     true,
   );

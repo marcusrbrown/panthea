@@ -21,6 +21,7 @@ import {
   parseStrictRecord,
   parseString,
   type Sha256,
+  stateRuleFor,
 } from "@panthea/contracts";
 import {
   type CandidateParams,
@@ -29,7 +30,7 @@ import {
   parseCandidateParams,
   parseTargetPalette,
 } from "./candidates";
-import { type StudioContent, slotKey } from "./request";
+import { type StudioContent, slotKey, spriteCellClassOf } from "./request";
 import type { RequestRecord } from "./store";
 import {
   type JobSource,
@@ -783,8 +784,10 @@ export function newWorkingSet(
       limits[slot] = { min: 1, max: 1 };
       continue;
     }
-    const rule = content.vocabulary.states.find(
-      (state) => state.id === slot.split("/")[0],
+    const rule = stateRuleFor(
+      content.vocabulary,
+      slot.split("/")[0] ?? "",
+      spriteCellClassOf(content, request.request),
     );
     if (rule === undefined) return refuse(`slot ${slot} names no known state`);
     limits[slot] = { min: rule.frames.min, max: rule.frames.max };

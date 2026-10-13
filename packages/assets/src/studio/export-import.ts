@@ -11,6 +11,7 @@ import {
   parseSlug,
   parseStrictRecord,
   type Sha256,
+  stateRuleFor,
 } from "@panthea/contracts";
 import {
   conformImage,
@@ -19,6 +20,7 @@ import {
   type RgbaImage,
 } from "../conformance";
 import { sha256Hex } from "../hash";
+import { colourLimit } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import {
   type CandidateParams,
@@ -27,7 +29,7 @@ import {
   parseTargetPalette,
 } from "./candidates";
 import { decodePng } from "./png/decode";
-import type { StudioContent } from "./request";
+import { SD_ENGINE, type StudioContent } from "./request";
 import {
   type AuthoredFrames,
   type DerivedEntry,
@@ -479,8 +481,9 @@ export function placeholderMs(
   content: StudioContent,
   kind: "sprite" | "portrait",
   slot: string,
+  cellClassId = SD_ENGINE.spriteCellClass,
 ): number {
-  return timingBounds(content, kind, slot)?.max ?? 100;
+  return timingBounds(content, kind, slot, cellClassId)?.max ?? 100;
 }
 
 /** Per-frame milliseconds the vocabulary's rate range allows; null where it names none. */
@@ -488,10 +491,14 @@ export function timingBounds(
   content: StudioContent,
   kind: "sprite" | "portrait",
   slot: string,
+  /** The cell class the slot is drawn on; the image engine's by default. */
+  cellClassId = SD_ENGINE.spriteCellClass,
 ): { min: number; max: number } | null {
   if (kind === "portrait") return null;
-  const rule = content.vocabulary.states.find(
-    (state) => state.id === slot.split("/")[0],
+  const rule = stateRuleFor(
+    content.vocabulary,
+    slot.split("/")[0] ?? "",
+    cellClassId,
   );
   if (rule?.fps === undefined) return null;
   return {
@@ -680,7 +687,14 @@ export function buildPreview(args: {
     const evidence = edit.evidence[tag.name];
     if (evidence === undefined)
       return bad(`slot ${tag.name} has no report evidence`);
-    const bounds = timingBounds(content, kind, tag.name);
+    const cellClass = content.vocabulary.cells.find(
+      (c) => c.w === cell.w && c.h === cell.h && c.kinds.includes(kind),
+    );
+    const bounds = timingBounds(content, kind, tag.name, cellClass?.id);
+    // The limit of the palette the slot was measured against, as the content now has it.
+    const palette = content.palettes.get(evidence.palette.id);
+    const limit =
+      palette === undefined ? undefined : colourLimit(palette, kind);
     const pivot = meta.pivots[tag.name] ?? null;
     const frames: FrameRef[] = [];
     const reports: PreviewSlot["reports"][number][] = [];
@@ -698,6 +712,7 @@ export function buildPreview(args: {
         cell,
         ...(pivot === null ? {} : { pivot }),
         paletteRgb: evidence.palette.colours.map(hexRgb),
+        ...(limit === undefined ? {} : { colourLimit: limit }),
         background: evidence.params.background,
         alphaCutoff: evidence.params.alphaCutoff,
         grid: evidence.params.grid,

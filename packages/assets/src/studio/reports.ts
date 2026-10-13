@@ -125,6 +125,7 @@ export function reportOnly(
     cell: { w: spec.cell.w, h: spec.cell.h },
     ...(spec.pivot === undefined ? {} : { pivot: spec.pivot }),
     paletteRgb: paletteColours(spec),
+    colourLimit: spec.palette.maxColours,
     background: params.background,
     alphaCutoff: params.alphaCutoff,
     grid: params.grid,

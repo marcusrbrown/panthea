@@ -175,6 +175,11 @@ export interface CellClass {
   readonly kinds: readonly VocabularyKind[];
 }
 
+/**
+ * One rule for a state. A state id may carry several rules, each naming the
+ * cell classes it applies to; a rule that names none applies to every class
+ * and so is the only rule its state may have. Look rules up with `stateRuleFor`.
+ */
 export interface StateRule {
   readonly id: string;
   readonly frames: Range;
@@ -297,6 +302,59 @@ function uniqueBy<T>(
   return undefined;
 }
 
+const ANY_CELL_CLASS = "*";
+
+/**
+ * State rules are unique by (state id, cell class): two rules of one id may not
+ * claim the same class, and a rule naming no class claims all of them.
+ */
+function uniqueStateRules(
+  rules: readonly StateRule[],
+  path: string,
+): ParseFailure | undefined {
+  const claimed = new Map<string, Set<string>>();
+  for (const [index, rule] of rules.entries()) {
+    const taken = claimed.get(rule.id) ?? new Set<string>();
+    const wanted = rule.cellClasses ?? [ANY_CELL_CLASS];
+    const clash = wanted.find(
+      (cell) =>
+        taken.has(cell) ||
+        taken.has(ANY_CELL_CLASS) ||
+        (cell === ANY_CELL_CLASS && taken.size > 0),
+    );
+    if (clash !== undefined) {
+      return fail(
+        `${path}[${index}]`,
+        clash === ANY_CELL_CLASS
+          ? `duplicate "${rule.id}": another rule already covers some cell class`
+          : `duplicate "${rule.id}" for cell class "${clash}"`,
+      );
+    }
+    for (const cell of wanted) taken.add(cell);
+    claimed.set(rule.id, taken);
+  }
+  return undefined;
+}
+
+/** The rule for `stateId` on cell class `cellClassId`, or undefined when the class does not draw the state. */
+export function stateRuleFor(
+  vocabulary: AssetVocabulary,
+  stateId: string,
+  cellClassId: string | undefined,
+): StateRule | undefined {
+  return vocabulary.states.find(
+    (rule) =>
+      rule.id === stateId &&
+      (rule.cellClasses === undefined ||
+        (cellClassId !== undefined && rule.cellClasses.includes(cellClassId))),
+  );
+}
+
+/** The distinct state ids, in the order the vocabulary first names them. */
+export function stateIds(vocabulary: AssetVocabulary): readonly string[] {
+  return [...new Set(vocabulary.states.map((rule) => rule.id))];
+}
+
 export function parseAssetVocabulary(
   input: unknown,
   path = "vocabulary",
@@ -356,7 +414,7 @@ export function parseAssetVocabulary(
       if (!states.ok) return states;
       if (states.value.length === 0)
         return fail(`${path}.states`, "expected at least one state");
-      const dupState = uniqueBy(states.value, (s) => s.id, `${path}.states`);
+      const dupState = uniqueStateRules(states.value, `${path}.states`);
       if (dupState) return dupState;
       const effect = parseStrictRecord(
         record.effect,
@@ -448,6 +506,19 @@ export interface GenerationEdit {
   readonly cue: string;
 }
 
+/**
+ * What a render recipe request adds to a sprite request: the render profile, the
+ * palette and the declared pivot. There is no camera id (the one camera is a
+ * committed file whose hash is in the revision recipe) and no seed or batch to
+ * choose: a recipe request is stored with batch 1 and seed 0.
+ */
+export interface RecipeRequest {
+  /** Render profile id, from the subject. */
+  readonly profile: string;
+  readonly palette: string;
+  readonly pivot: Point;
+}
+
 export interface GenerationRequest {
   readonly schemaVersion: number;
   /** Subject id from the content pack, e.g. a god id. */
@@ -459,7 +530,28 @@ export interface GenerationRequest {
   readonly seed?: number;
   /** Present when the generation edits an earlier job's output instead of drawing from noise. */
   readonly edit?: GenerationEdit;
+  /**
+   * Present on a recipe request, the variant a render engine runs. Then `batch`
+   * is 1, `seed` is 0, and there is no style note or edit.
+   */
+  readonly recipe?: RecipeRequest;
 }
+
+/** A request that carries a recipe, with the fixed batch and seed its parse stores. */
+export type RecipeGenerationRequest = GenerationRequest & {
+  readonly recipe: RecipeRequest;
+  readonly batch: 1;
+  readonly seed: 0;
+};
+
+export function isRecipeRequest(
+  request: GenerationRequest,
+): request is RecipeGenerationRequest {
+  return request.recipe !== undefined;
+}
+
+/** The seed a recipe request stores and every render job runs with. */
+export const RECIPE_SEED = 0;
 
 export const LICENCE_ROLES = [
   "model",
@@ -602,10 +694,68 @@ export interface DerivedProvenance extends ProvenanceCommon {
   readonly resultHashes: readonly Sha256[];
 }
 
+export const RAW_FRAME_ROLES = ["colour", "id", "depth"] as const;
+export type RawFrameRole = (typeof RAW_FRAME_ROLES)[number];
+
+/** The Blender that rendered: a recorded tool fact, not an output licence record. */
+export interface BlenderPin {
+  readonly version: string;
+  /** The build hash the binary reports. */
+  readonly build: string;
+  /** SHA-256 of the binary. */
+  readonly sha256: Sha256;
+}
+
+/**
+ * Everything shared by the slots of one rendered revision. `hash` is the
+ * revision recipe hash over the other fields; a contract holds no hashing, so
+ * the render audit recomputes it.
+ */
+export interface RenderedRevisionRecipe {
+  readonly hash: Sha256;
+  readonly profile: { readonly id: string; readonly hash: Sha256 };
+  readonly camera: Sha256;
+  readonly palette: { readonly id: string; readonly digest: Sha256 };
+  readonly pivot: Point;
+  readonly script: Sha256;
+  /** POST_STEP_VERSION when the cells were made. */
+  readonly postStep: number;
+  readonly blender: BlenderPin;
+  readonly kit: Sha256;
+  readonly stamps: Sha256;
+}
+
+/** One slot of a rendered revision, from one job: its recipe, the raw frames it came from and its seed. */
+export interface RenderedSlot {
+  /** `state/facing[/ability]`, the manifest's slot key. */
+  readonly slotKey: string;
+  /** The slot recipe hash: the revision hash plus this slot's state, clip, facing and seed. */
+  readonly recipeHash: Sha256;
+  /** The revision recipe hash this slot was rendered under; equal across the revision's slots. */
+  readonly revisionRecipeHash: Sha256;
+  readonly state: string;
+  /** The animation clip the profile's clip map chose for the state. */
+  readonly clip: string;
+  readonly facing: string;
+  readonly ability?: string;
+  /** Always 0: a recipe request has a fixed base seed. */
+  readonly seed: 0;
+  readonly frameCount: number;
+  /** Blob hashes of the raw frames per role, one per frame, in frame order. */
+  readonly raw: { readonly [role in RawFrameRole]: readonly Sha256[] };
+}
+
+export interface RenderedProvenance extends ProvenanceCommon {
+  readonly method: "rendered";
+  readonly revisionRecipe: RenderedRevisionRecipe;
+  readonly slots: readonly RenderedSlot[];
+}
+
 export type Provenance =
   | GeneratedProvenance
   | HandProvenance
-  | DerivedProvenance;
+  | DerivedProvenance
+  | RenderedProvenance;
 
 export interface Rect {
   readonly x: number;
@@ -862,6 +1012,76 @@ function parseGenerationEdit(
   );
 }
 
+function parseNonNegativePoint(
+  value: unknown,
+  path: string,
+): ParseResult<Point> {
+  return parseStrictRecord(value, path, ["x", "y"], (record) => {
+    const x = parseIntegerAtLeast(record.x, `${path}.x`, 0);
+    if (!x.ok) return x;
+    const y = parseIntegerAtLeast(record.y, `${path}.y`, 0);
+    if (!y.ok) return y;
+    return ok({ x: x.value, y: y.value });
+  });
+}
+
+/**
+ * A recipe request: the sprite request a render engine runs. It takes no style
+ * note or edit, a batch of 1 and a seed of 0 (absent means those values), and
+ * is stored with the fixed batch and seed. Whether the pivot lies inside the
+ * cell is the request builder's check; a request does not know its cell.
+ */
+function parseRecipeRequest(
+  record: Record<string, unknown>,
+  path: string,
+  schemaVersion: number,
+  subject: string,
+  kind: AssetKind,
+  slots: readonly GenerationSlot[],
+): ParseResult<GenerationRequest> {
+  if (kind !== "sprite")
+    return fail(`${path}.kind`, "a recipe request draws a sprite");
+  for (const key of ["styleNote", "edit"] as const) {
+    if (record[key] !== undefined)
+      return fail(`${path}.${key}`, `a recipe request takes no ${key}`);
+  }
+  if (record.batch !== undefined && record.batch !== 1)
+    return fail(`${path}.batch`, "a recipe request has batch 1");
+  if (record.seed !== undefined && record.seed !== RECIPE_SEED)
+    return fail(
+      `${path}.seed`,
+      `a recipe request has a fixed seed of ${RECIPE_SEED}`,
+    );
+  const recipe = parseStrictRecord(
+    record.recipe,
+    `${path}.recipe`,
+    ["profile", "palette", "pivot"],
+    (r): ParseResult<RecipeRequest> => {
+      const profile = parseSlug(r.profile, `${path}.recipe.profile`);
+      if (!profile.ok) return profile;
+      const palette = parseSlug(r.palette, `${path}.recipe.palette`);
+      if (!palette.ok) return palette;
+      const pivot = parseNonNegativePoint(r.pivot, `${path}.recipe.pivot`);
+      if (!pivot.ok) return pivot;
+      return ok({
+        profile: profile.value,
+        palette: palette.value,
+        pivot: pivot.value,
+      });
+    },
+  );
+  if (!recipe.ok) return recipe;
+  return ok({
+    schemaVersion,
+    subject,
+    kind,
+    slots,
+    batch: 1,
+    seed: RECIPE_SEED,
+    recipe: recipe.value,
+  });
+}
+
 export function parseGenerationRequest(
   input: unknown,
   path = "request",
@@ -878,6 +1098,7 @@ export function parseGenerationRequest(
       "styleNote",
       "seed",
       "edit",
+      "recipe",
     ],
     (record) => {
       const schemaVersion = parseSchemaVersion(
@@ -900,6 +1121,16 @@ export function parseGenerationRequest(
         `${path}.slots`,
       );
       if (duplicate) return duplicate;
+      if (record.recipe !== undefined) {
+        return parseRecipeRequest(
+          record,
+          path,
+          schemaVersion.value,
+          subject.value,
+          kind.value,
+          slots.value,
+        );
+      }
       const batch = parsePositiveInteger(record.batch, `${path}.batch`);
       if (!batch.ok) return batch;
       let styleNote: string | undefined;
@@ -1232,7 +1463,12 @@ const COMMON_PROVENANCE_KEYS = [
   "ownerException",
 ] as const;
 
-const PROVENANCE_METHODS = ["generated", "hand", "derived"] as const;
+const PROVENANCE_METHODS = [
+  "generated",
+  "hand",
+  "derived",
+  "rendered",
+] as const;
 
 /**
  * The steps of a provenance record: each a valid step, one per slot (a palette
@@ -1270,6 +1506,228 @@ function parseStepList(
   return ok(steps.value);
 }
 
+const BLENDER_BUILD = /^[0-9a-f]{7,40}$/;
+
+function parseBlenderPin(
+  value: unknown,
+  path: string,
+): ParseResult<BlenderPin> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["version", "build", "sha256"],
+    (record) => {
+      const version = parseString(record.version, `${path}.version`);
+      if (!version.ok) return version;
+      if (typeof record.build !== "string" || !BLENDER_BUILD.test(record.build))
+        return fail(`${path}.build`, "expected a lowercase hex build hash");
+      const sha256 = parseSha256(record.sha256, `${path}.sha256`);
+      if (!sha256.ok) return sha256;
+      return ok({
+        version: version.value,
+        build: record.build,
+        sha256: sha256.value,
+      });
+    },
+  );
+}
+
+function parseRenderedRevisionRecipe(
+  value: unknown,
+  path: string,
+): ParseResult<RenderedRevisionRecipe> {
+  return parseStrictRecord(
+    value,
+    path,
+    [
+      "hash",
+      "profile",
+      "camera",
+      "palette",
+      "pivot",
+      "script",
+      "postStep",
+      "blender",
+      "kit",
+      "stamps",
+    ],
+    (record) => {
+      const hash = parseSha256(record.hash, `${path}.hash`);
+      if (!hash.ok) return hash;
+      const profile = parseStrictRecord(
+        record.profile,
+        `${path}.profile`,
+        ["id", "hash"],
+        (p) => {
+          const id = parseSlug(p.id, `${path}.profile.id`);
+          if (!id.ok) return id;
+          const profileHash = parseSha256(p.hash, `${path}.profile.hash`);
+          if (!profileHash.ok) return profileHash;
+          return ok({ id: id.value, hash: profileHash.value });
+        },
+      );
+      if (!profile.ok) return profile;
+      const camera = parseSha256(record.camera, `${path}.camera`);
+      if (!camera.ok) return camera;
+      const palette = parseStrictRecord(
+        record.palette,
+        `${path}.palette`,
+        ["id", "digest"],
+        (p) => {
+          const id = parseSlug(p.id, `${path}.palette.id`);
+          if (!id.ok) return id;
+          const digest = parseSha256(p.digest, `${path}.palette.digest`);
+          if (!digest.ok) return digest;
+          return ok({ id: id.value, digest: digest.value });
+        },
+      );
+      if (!palette.ok) return palette;
+      const pivot = parseNonNegativePoint(record.pivot, `${path}.pivot`);
+      if (!pivot.ok) return pivot;
+      const script = parseSha256(record.script, `${path}.script`);
+      if (!script.ok) return script;
+      const postStep = parsePositiveInteger(
+        record.postStep,
+        `${path}.postStep`,
+      );
+      if (!postStep.ok) return postStep;
+      const blender = parseBlenderPin(record.blender, `${path}.blender`);
+      if (!blender.ok) return blender;
+      const kit = parseSha256(record.kit, `${path}.kit`);
+      if (!kit.ok) return kit;
+      const stamps = parseSha256(record.stamps, `${path}.stamps`);
+      if (!stamps.ok) return stamps;
+      return ok({
+        hash: hash.value,
+        profile: profile.value,
+        camera: camera.value,
+        palette: palette.value,
+        pivot: pivot.value,
+        script: script.value,
+        postStep: postStep.value,
+        blender: blender.value,
+        kit: kit.value,
+        stamps: stamps.value,
+      });
+    },
+  );
+}
+
+function parseRenderedSlot(
+  revisionHash: Sha256,
+): (value: unknown, path: string) => ParseResult<RenderedSlot> {
+  return (value, path) =>
+    parseStrictRecord(
+      value,
+      path,
+      [
+        "slotKey",
+        "recipeHash",
+        "revisionRecipeHash",
+        "state",
+        "clip",
+        "facing",
+        "ability",
+        "seed",
+        "frameCount",
+        "raw",
+      ],
+      (record) => {
+        const state = parseSlug(record.state, `${path}.state`);
+        if (!state.ok) return state;
+        const facing = parseSlug(record.facing, `${path}.facing`);
+        if (!facing.ok) return facing;
+        const ability = parseOptionalSlug(record.ability, `${path}.ability`);
+        if (!ability.ok) return ability;
+        const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+        if (!slotKey.ok) return slotKey;
+        const expected = [state.value, facing.value, ability.value]
+          .filter((part) => part !== undefined)
+          .join("/");
+        if (slotKey.value !== expected)
+          return fail(
+            `${path}.slotKey`,
+            `expected "${expected}", the slot's state, facing and ability`,
+          );
+        const recipeHash = parseSha256(record.recipeHash, `${path}.recipeHash`);
+        if (!recipeHash.ok) return recipeHash;
+        const slotRevision = parseSha256(
+          record.revisionRecipeHash,
+          `${path}.revisionRecipeHash`,
+        );
+        if (!slotRevision.ok) return slotRevision;
+        if (slotRevision.value !== revisionHash)
+          return fail(
+            `${path}.revisionRecipeHash`,
+            "a revision's slots are rendered under one revision recipe hash",
+          );
+        const clip = parseString(record.clip, `${path}.clip`);
+        if (!clip.ok) return clip;
+        if (record.seed !== RECIPE_SEED)
+          return fail(
+            `${path}.seed`,
+            `a rendered slot ran at the fixed seed ${RECIPE_SEED}`,
+          );
+        const frameCount = parsePositiveInteger(
+          record.frameCount,
+          `${path}.frameCount`,
+        );
+        if (!frameCount.ok) return frameCount;
+        const raw = parseStrictRecord(
+          record.raw,
+          `${path}.raw`,
+          RAW_FRAME_ROLES,
+          (r) => {
+            const roles: { -readonly [R in RawFrameRole]?: readonly Sha256[] } =
+              {};
+            for (const role of RAW_FRAME_ROLES) {
+              const hashes = parseArray(
+                r[role],
+                `${path}.raw.${role}`,
+                parseSha256,
+              );
+              if (!hashes.ok) return hashes;
+              if (hashes.value.length !== frameCount.value)
+                return fail(
+                  `${path}.raw.${role}`,
+                  `expected ${frameCount.value} hashes, one per frame`,
+                );
+              roles[role] = hashes.value;
+            }
+            return ok(roles as { [role in RawFrameRole]: readonly Sha256[] });
+          },
+        );
+        if (!raw.ok) return raw;
+        return ok({
+          slotKey: slotKey.value,
+          recipeHash: recipeHash.value,
+          revisionRecipeHash: slotRevision.value,
+          state: state.value,
+          clip: clip.value,
+          facing: facing.value,
+          ...(ability.value === undefined ? {} : { ability: ability.value }),
+          seed: RECIPE_SEED,
+          frameCount: frameCount.value,
+          raw: raw.value,
+        });
+      },
+    );
+}
+
+function parseRenderedSlots(
+  value: unknown,
+  path: string,
+  revisionHash: Sha256,
+): ParseResult<readonly RenderedSlot[]> {
+  const slots = parseArray(value, path, parseRenderedSlot(revisionHash));
+  if (!slots.ok) return slots;
+  if (slots.value.length === 0)
+    return fail(path, "a rendered revision records at least one slot");
+  const duplicate = uniqueBy(slots.value, (slot) => slot.slotKey, path);
+  if (duplicate) return duplicate;
+  return slots;
+}
+
 export function parseProvenance(
   input: unknown,
   path = "provenance",
@@ -1281,6 +1739,7 @@ export function parseProvenance(
     generated: ["generations", "steps"],
     hand: ["editor"],
     derived: ["operation", "runtime", "steps", "resultHashes"],
+    rendered: ["revisionRecipe", "slots"],
   }[method.value];
   const unknown = rejectUnknownKeys(
     input,
@@ -1350,6 +1809,26 @@ export function parseProvenance(
     return ok({
       method: "hand",
       ...(editor === undefined ? {} : { editor }),
+      ...common,
+    });
+  }
+
+  if (method.value === "rendered") {
+    const revisionRecipe = parseRenderedRevisionRecipe(
+      input.revisionRecipe,
+      `${path}.revisionRecipe`,
+    );
+    if (!revisionRecipe.ok) return revisionRecipe;
+    const slots = parseRenderedSlots(
+      input.slots,
+      `${path}.slots`,
+      revisionRecipe.value.hash,
+    );
+    if (!slots.ok) return slots;
+    return ok({
+      method: "rendered",
+      revisionRecipe: revisionRecipe.value,
+      slots: slots.value,
       ...common,
     });
   }
@@ -1525,6 +2004,11 @@ function parseGenerationRef(
         return fail(
           `${path}.request`,
           "a generation records the narrowed request: one slot, batch 1",
+        );
+      if (request.value.recipe !== undefined)
+        return fail(
+          `${path}.request`,
+          "a render is recorded as rendered provenance, never as a generation",
         );
       if (request.value.seed === undefined)
         return fail(`${path}.request`, "a generation records the seed it ran");
@@ -1819,14 +2303,11 @@ function parseSpriteAnimation(
       (record) => {
         const state = parseSlug(record.state, `${path}.state`);
         if (!state.ok) return state;
-        const rule = vocabulary.states.find((s) => s.id === state.value);
-        if (rule === undefined) {
+        if (!vocabulary.states.some((s) => s.id === state.value)) {
           return fail(`${path}.state`, `unknown state "${state.value}"`);
         }
-        if (
-          rule.cellClasses !== undefined &&
-          (cellClass === undefined || !rule.cellClasses.includes(cellClass.id))
-        ) {
+        const rule = stateRuleFor(vocabulary, state.value, cellClass?.id);
+        if (rule === undefined) {
           return fail(
             `${path}.state`,
             `state "${state.value}" is not allowed on this cell class`,
@@ -2248,9 +2729,45 @@ export function parseAssetManifest(
         );
     }
   };
+  if (provenance.value.method === "rendered" && manifestKind !== "sprite") {
+    return fail(
+      `${path}.provenance.method`,
+      `a ${manifestKind} is not rendered; only sprites are`,
+    );
+  }
   const manifest = body();
   if (!manifest.ok) return manifest;
   const recorded = manifest.value.provenance;
+  if (recorded.method === "rendered" && manifest.value.kind === "sprite") {
+    const { pivot, animations } = manifest.value;
+    const recipePivot = recorded.revisionRecipe.pivot;
+    if (recipePivot.x !== pivot.x || recipePivot.y !== pivot.y) {
+      return fail(
+        `${path}.provenance.revisionRecipe.pivot`,
+        `the recipe's pivot (${recipePivot.x},${recipePivot.y}) is not the manifest's (${pivot.x},${pivot.y})`,
+      );
+    }
+    for (const [index, slot] of recorded.slots.entries()) {
+      const animation = animations.find(
+        (a) =>
+          a.state === slot.state &&
+          a.direction === slot.facing &&
+          a.ability === slot.ability,
+      );
+      if (animation === undefined) {
+        return fail(
+          `${path}.provenance.slots[${index}]`,
+          `slot "${slot.slotKey}" is not in the manifest's animations`,
+        );
+      }
+      if (animation.frames.length !== slot.frameCount) {
+        return fail(
+          `${path}.provenance.slots[${index}].frameCount`,
+          `the manifest's "${slot.slotKey}" has ${animation.frames.length} frames, the render ${slot.frameCount}`,
+        );
+      }
+    }
+  }
   const carried =
     recorded.method === "derived" || recorded.method === "generated"
       ? recorded.steps

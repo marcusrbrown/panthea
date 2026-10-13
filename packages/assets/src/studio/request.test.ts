@@ -9,11 +9,12 @@ import {
 } from "@panthea/contracts";
 import type { Palette } from "../palette";
 import { loadContent } from "./_test-fixtures";
-import { PROVIDER, SELECTED_PROFILE } from "./provider";
+import { PROVIDER, RENDER_PROVIDER, SELECTED_PROFILE } from "./provider";
 import {
   adapterInput,
   buildSpec,
   DEFAULT_BATCH,
+  type EngineCells,
   newRequestRecord,
   planJobs,
   type RequestInput,
@@ -21,6 +22,7 @@ import {
   slotKey,
 } from "./request";
 import { MAX_SEED } from "./seed";
+import { newWorkingSet } from "./working-set";
 
 const repo = join(import.meta.dir, "..", "..", "..", "..");
 const probeRoot = join(repo, "tools", "probes", "art-local-2");
@@ -29,6 +31,8 @@ const readJson = (path: string): unknown =>
 
 const content = loadContent();
 const zeus = content.gods.find((g) => g.id === "zeus") as GodProfile;
+const master = content.palettes.get("greek-master") as Palette;
+const retro = content.palettes.get("greek-retro") as Palette;
 
 function ok<T>(
   result: { ok: true; value: T } | { ok: false; error: unknown },
@@ -74,8 +78,8 @@ describe("spec derivation", () => {
       pivot: { x: 32, y: 80 },
       palette: { id: "greek-master", family: "olympus", maxColours: 16 },
     });
-    expect(spec.palette.approval).toEqual(content.palette.approval);
-    const olympus = content.palette.families.find((f) => f.id === "olympus");
+    expect(spec.palette.approval).toEqual(master.approval);
+    const olympus = master.families.find((f) => f.id === "olympus");
     expect(spec.palette.ramps.length).toBeGreaterThan(0);
     expect(spec.palette.ramps).toEqual(olympus?.ramps ?? []);
     expect(spec.slots.map((s) => [s.key, s.slot])).toEqual([
@@ -198,7 +202,7 @@ describe("spec derivation", () => {
       error: {
         kind: "unknown-state",
         state: "fly",
-        valid: vocabulary.states.map((s) => s.id),
+        valid: [...new Set(vocabulary.states.map((s) => s.id))],
       },
     });
     expect(sprite({ state: "idle", direction: "up" })).toEqual({
@@ -292,12 +296,18 @@ describe("spec derivation", () => {
   test("a palette without the subject's family is reported", () => {
     const bare: StudioContent = {
       ...content,
-      palette: {
-        ...content.palette,
-        families: content.palette.families.filter(
-          (f) => f.id !== "olympus",
-        ) as Palette["families"],
-      },
+      palettes: new Map([
+        ...content.palettes,
+        [
+          "greek-master",
+          {
+            ...master,
+            families: master.families.filter(
+              (f) => f.id !== "olympus",
+            ) as Palette["families"],
+          },
+        ],
+      ]),
     };
     expect(
       buildSpec(bare, { schemaVersion: 1, ...idleSouth, batch: 1 }),
@@ -733,5 +743,466 @@ describe("selected profile", () => {
       medium: "image",
       hosting: "local",
     });
+  });
+});
+
+describe("recipe requests for the render engine", () => {
+  // The render engine declares its own cell sizes; its runtime arrives later, so the test passes them in.
+  const renderEngine: EngineCells = {
+    provider: RENDER_PROVIDER,
+    measuredCells: [{ w: 112, h: 96 }],
+    generationScale: 1,
+  };
+  const render = { palette: "greek-retro", pivot: { x: 56, y: 78 } };
+  const walkSouth: RequestInput = {
+    subject: "zeus",
+    kind: "sprite",
+    slots: [{ state: "walk", direction: "south" }],
+    render,
+  };
+  const create = (
+    input: RequestInput,
+    engine: EngineCells | undefined = renderEngine,
+  ) =>
+    newRequestRecord(
+      content,
+      { id: "zeus-retro-walk", ...input },
+      neverDraw,
+      engine,
+    );
+
+  test("the cell class comes from the subject, the pivot from the request, and the size gate from the engine", () => {
+    const { record, spec } = ok(create(walkSouth));
+
+    expect(spec).toMatchObject({
+      subject: "zeus",
+      kind: "sprite",
+      cell: { id: "god-tall", w: 112, h: 96 },
+      native: { w: 112, h: 96 },
+      generated: { w: 112, h: 96 },
+      pivot: { x: 56, y: 78 },
+      palette: {
+        id: "greek-retro",
+        family: "olympus",
+        maxColours: 48,
+        approval: { status: "draft" },
+      },
+    });
+    expect(spec.slots.map((s) => s.key)).toEqual(["walk/south"]);
+    expect(record.request).toEqual({
+      schemaVersion: 1,
+      subject: "zeus",
+      kind: "sprite",
+      slots: [{ state: "walk", direction: "south" }],
+      batch: 1,
+      seed: 0,
+      recipe: {
+        profile: "zeus",
+        palette: "greek-retro",
+        pivot: { x: 56, y: 78 },
+      },
+    });
+    expect(record.request).not.toHaveProperty("camera");
+  });
+
+  test("the profile comes from the subject, never from the caller", () => {
+    const zeusSubject = content.visuals.find((v) => v.godId === "zeus");
+    expect(zeusSubject?.render?.profile).toBe("zeus");
+    const renamed: StudioContent = {
+      ...content,
+      visuals: content.visuals.map((v) =>
+        v.render === undefined
+          ? v
+          : { ...v, render: { ...v.render, profile: "zeus-alt" } },
+      ),
+    };
+    const built = ok(
+      newRequestRecord(
+        renamed,
+        { id: "r", ...walkSouth },
+        neverDraw,
+        renderEngine,
+      ),
+    );
+    expect(built.record.request.recipe?.profile).toBe("zeus-alt");
+  });
+
+  test("the draw: a recipe request never draws a seed, and a supplied batch above 1 or seed above 0 is refused", () => {
+    // neverDraw would throw if the seed supplier were called.
+    expect(create(walkSouth).ok).toBe(true);
+    for (const extra of [{ seed: 7 }, { batch: 2 }, { batch: 4 }]) {
+      expect(create({ ...walkSouth, ...extra })).toMatchObject({
+        ok: false,
+        error: { kind: "invalid-request" },
+      });
+    }
+    // Positive controls: the fixed values are accepted.
+    expect(create({ ...walkSouth, seed: 0, batch: 1 }).ok).toBe(true);
+  });
+
+  test("a style note and an edit are refused", () => {
+    expect(create({ ...walkSouth, styleNote: "dusk" })).toMatchObject({
+      ok: false,
+      error: {
+        kind: "invalid-request",
+        path: expect.stringContaining("styleNote"),
+      },
+    });
+    expect(
+      create({
+        ...walkSouth,
+        edit: {
+          base: {
+            kind: "hand",
+            image: "a".repeat(64) as never,
+            description: "x",
+          },
+          mask: "b".repeat(64) as never,
+          strength: 0.5,
+          cue: "turn",
+        },
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-request" } });
+  });
+
+  test("the size gate applies per engine: the render engine's cells are not the sd profile's", () => {
+    // 112x96 is unmeasured for sd-server, and is reported rather than guessed.
+    expect(
+      create(walkSouth, { ...renderEngine, measuredCells: [{ w: 64, h: 80 }] }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "unmeasured-size",
+        native: { w: 112, h: 96 },
+        measured: [{ w: 64, h: 80 }],
+      },
+    });
+    expect(
+      create(walkSouth, {
+        provider: PROVIDER,
+        measuredCells: SELECTED_PROFILE.measuredCells,
+        generationScale: SELECTED_PROFILE.generationScale,
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "unmeasured-size" } });
+    // Positive control: the legacy image request still gets its sd cell and generation size.
+    const legacy = ok(
+      newRequestRecord(content, { id: "r", ...idleSouth, seed: 3 }, neverDraw),
+    );
+    expect(legacy.spec).toMatchObject({
+      cell: { id: "god", w: 64, h: 80 },
+      generated: { w: 512, h: 640 },
+    });
+  });
+
+  test("a recipe request without the engine's declared cells is refused, not defaulted to sd", () => {
+    expect(
+      newRequestRecord(content, { id: "r", ...walkSouth }, neverDraw),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-request", path: "engine" },
+    });
+  });
+
+  test("the pivot must lie inside the cell", () => {
+    for (const pivot of [
+      { x: 113, y: 78 },
+      { x: 56, y: 97 },
+    ]) {
+      expect(
+        create({ ...walkSouth, render: { ...render, pivot } }),
+      ).toMatchObject({
+        ok: false,
+        error: { kind: "invalid-request", path: "request.recipe.pivot" },
+      });
+    }
+    expect(
+      create({ ...walkSouth, render: { ...render, pivot: { x: 112, y: 96 } } })
+        .ok,
+    ).toBe(true);
+  });
+
+  test("the palette is looked up by id: an unknown id is refused with the ids the content has", () => {
+    expect(
+      create({ ...walkSouth, render: { ...render, palette: "greek-ancient" } }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "unknown-palette",
+        palette: "greek-ancient",
+        valid: ["greek-master", "greek-retro"],
+      },
+    });
+  });
+
+  test("a recipe request takes its ramps and colour limit from the palette it names", () => {
+    const named = (palette: string) =>
+      ok(create({ ...walkSouth, render: { ...render, palette } })).spec.palette;
+    const onRetro = named("greek-retro");
+    expect(onRetro).toMatchObject({
+      id: "greek-retro",
+      maxColours: 48,
+      approval: retro.approval,
+    });
+    expect(onRetro.ramps).toEqual(
+      retro.families.find((f) => f.id === "olympus")?.ramps ?? [],
+    );
+    expect(onRetro.ramps.every((r) => r.shades.length === 6)).toBe(true);
+    // Positive control: the same request on greek-master gets master's ramps and its 16.
+    const onMaster = named("greek-master");
+    expect(onMaster).toMatchObject({ id: "greek-master", maxColours: 16 });
+    expect(onMaster.ramps.every((r) => r.shades.length === 4)).toBe(true);
+  });
+
+  test("an image request keeps greek-master and its limits whatever else the content holds", () => {
+    const { spec } = ok(
+      newRequestRecord(content, { id: "r", ...idleSouth, seed: 3 }, neverDraw),
+    );
+    expect(spec.palette).toMatchObject({ id: "greek-master", maxColours: 16 });
+    const portrait = ok(
+      newRequestRecord(
+        content,
+        { id: "p", ...sixExpressions, seed: 3 },
+        neverDraw,
+      ),
+    );
+    expect(portrait.spec.palette).toMatchObject({
+      id: "greek-master",
+      maxColours: 32,
+    });
+  });
+
+  test("a content set without greek-master refuses an image request instead of reaching for another palette", () => {
+    const retroOnly: StudioContent = {
+      ...content,
+      palettes: new Map([["greek-retro", retro]]),
+    };
+    expect(
+      buildSpec(retroOnly, { schemaVersion: 1, ...idleSouth, batch: 1 }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "unknown-palette",
+        palette: "greek-master",
+        valid: ["greek-retro"],
+      },
+    });
+  });
+
+  test("a subject with no render profile has no recipe request", () => {
+    const bare: StudioContent = {
+      ...content,
+      visuals: content.visuals.map(({ render: _render, ...v }) => v),
+    };
+    expect(
+      newRequestRecord(
+        bare,
+        { id: "r", ...walkSouth },
+        neverDraw,
+        renderEngine,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-request", path: "recipe" },
+    });
+  });
+
+  test("slots follow the god-tall rules: seated and act/thunderbolt are drawn, hurt is not, pronouncement is deferred", () => {
+    const slots = (...list: RequestInput["slots"][number][]) =>
+      create({ ...walkSouth, slots: list });
+    expect(
+      slots(
+        { state: "idle", direction: "south" },
+        { state: "walk", direction: "north" },
+        { state: "seated", direction: "east" },
+        { state: "act", direction: "west", ability: "thunderbolt" },
+      ).ok,
+    ).toBe(true);
+    expect(slots({ state: "hurt", direction: "south" })).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-slot" },
+    });
+    expect(
+      slots({ state: "act", direction: "south", ability: "pronouncement" }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        kind: "invalid-slot",
+        message: expect.stringContaining("deferred"),
+      },
+    });
+    expect(slots({ state: "act", direction: "south" })).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-slot" },
+    });
+  });
+
+  test("legacy slot rules are unchanged: seated stays a god-cell state, and the unknown-state list holds each id once", () => {
+    const sprite = (slot: RequestInput["slots"][number]) =>
+      buildSpec(content, {
+        schemaVersion: 1,
+        subject: "zeus",
+        kind: "sprite",
+        slots: [slot],
+        batch: 1,
+        seed: 1,
+      });
+    expect(ok(sprite({ state: "seated", direction: "south" })).cell.id).toBe(
+      "god",
+    );
+    expect(sprite({ state: "fly", direction: "south" })).toMatchObject({
+      ok: false,
+      error: {
+        kind: "unknown-state",
+        valid: ["idle", "seated", "act", "walk", "hurt", "down"],
+      },
+    });
+  });
+
+  test("a working set takes its frame limits from the request's cell class", () => {
+    const retro = ok(
+      create({
+        ...walkSouth,
+        slots: [
+          { state: "walk", direction: "south" },
+          { state: "seated", direction: "south" },
+        ],
+      }),
+    );
+    const retroSet = newWorkingSet("set-retro", retro.record, content);
+    expect(retroSet.ok && retroSet.record.limits).toEqual({
+      "walk/south": { min: 16, max: 16 },
+      "seated/south": { min: 2, max: 16 },
+    });
+    const legacy = ok(
+      newRequestRecord(
+        content,
+        {
+          id: "r",
+          subject: "zeus",
+          kind: "sprite",
+          slots: [
+            { state: "walk", direction: "south" },
+            { state: "seated", direction: "south" },
+          ],
+          seed: 1,
+        },
+        neverDraw,
+      ),
+    );
+    const legacySet = newWorkingSet("set-legacy", legacy.record, content);
+    expect(legacySet.ok && legacySet.record.limits).toEqual({
+      "walk/south": { min: 6, max: 6 },
+      "seated/south": { min: 2, max: 2 },
+    });
+  });
+
+  describe("job expansion", () => {
+    const { record } = ok(
+      newRequestRecord(
+        content,
+        {
+          id: "zeus-retro",
+          subject: "zeus",
+          kind: "sprite",
+          slots: [
+            { state: "walk", direction: "south" },
+            { state: "walk", direction: "north" },
+            { state: "act", direction: "south", ability: "thunderbolt" },
+          ],
+          render,
+        },
+        neverDraw,
+        renderEngine,
+      ),
+    );
+
+    test("takes the provider from the request kind: recipe gives the render provider, an image request gives sd-server", () => {
+      const plan = ok(planJobs(record, 1));
+      expect(plan.jobs).toHaveLength(3);
+      for (const { job } of plan.jobs) {
+        expect(job.provider).toEqual(RENDER_PROVIDER);
+        expect(job.provider).not.toEqual(PROVIDER);
+        expect(parseGenerationJob(job).ok).toBe(true);
+      }
+      const image = ok(
+        newRequestRecord(
+          content,
+          { id: "r", ...idleSouth, seed: 3 },
+          neverDraw,
+        ),
+      );
+      for (const { job } of ok(planJobs(image.record, 1)).jobs)
+        expect(job.provider).toEqual(PROVIDER);
+    });
+
+    test("one job per slot at batch 1 and seed 0, the recipe carried and no style note or edit", () => {
+      const plan = ok(planJobs(record, 1));
+      expect(plan.nextOrdinal).toBe(3);
+      expect(plan.jobs.map((j) => j.source)).toEqual([
+        { requestId: "zeus-retro", slotKey: "walk/south", ordinal: 0 },
+        { requestId: "zeus-retro", slotKey: "walk/north", ordinal: 1 },
+        {
+          requestId: "zeus-retro",
+          slotKey: "act/south/thunderbolt",
+          ordinal: 2,
+        },
+      ]);
+      for (const [index, { job }] of plan.jobs.entries()) {
+        expect(job.request.batch).toBe(1);
+        expect(job.request.seed).toBe(0);
+        expect(job.request.slots).toHaveLength(1);
+        expect(job.request.recipe).toEqual(record.request.recipe);
+        expect(job.request).not.toHaveProperty("styleNote");
+        expect(job.request).not.toHaveProperty("edit");
+        expect(job.id).toBe(`zeus-retro-${String(index).padStart(4, "0")}`);
+      }
+    });
+
+    test("plans one slot alone on the first plan", () => {
+      const plan = ok(planJobs(record, 1, "walk/north"));
+      expect(plan.jobs).toHaveLength(1);
+      expect(plan.jobs[0]?.job.request.seed).toBe(0);
+    });
+
+    test("refuses a reroll: more than one per slot, or a plan after the first", () => {
+      expect(planJobs(record, 2)).toMatchObject({
+        ok: false,
+        error: { kind: "reroll-refused" },
+      });
+      const first = ok(planJobs(record, 1));
+      expect(
+        planJobs(
+          { ...record, nextOrdinal: first.nextOrdinal },
+          1,
+          "walk/south",
+        ),
+      ).toMatchObject({ ok: false, error: { kind: "reroll-refused" } });
+      // Positive control: the same request plans on its first plan.
+      expect(planJobs(record, 1).ok).toBe(true);
+      // An image request still rerolls.
+      const image = ok(
+        newRequestRecord(
+          content,
+          { id: "r", ...idleSouth, seed: 3 },
+          neverDraw,
+        ),
+      );
+      const firstImage = ok(planJobs(image.record, 2));
+      expect(
+        planJobs({ ...image.record, nextOrdinal: firstImage.nextOrdinal }, 2)
+          .ok,
+      ).toBe(true);
+    });
+  });
+});
+
+describe("the render provider descriptor", () => {
+  test("names a local image provider distinct from sd-server", () => {
+    expect(RENDER_PROVIDER).toEqual({
+      id: "blender-eevee",
+      medium: "image",
+      hosting: "local",
+    });
+    expect(RENDER_PROVIDER.id).not.toBe(PROVIDER.id);
   });
 });

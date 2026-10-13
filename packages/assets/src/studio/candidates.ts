@@ -820,6 +820,7 @@ export function conformCandidate(args: {
     cell: { w: spec.value.cell.w, h: spec.value.cell.h },
     ...(spec.value.pivot === undefined ? {} : { pivot: spec.value.pivot }),
     paletteRgb: paletteColours(spec.value),
+    colourLimit: spec.value.palette.maxColours,
     background: params.background,
     alphaCutoff: params.alphaCutoff,
     grid: params.grid,

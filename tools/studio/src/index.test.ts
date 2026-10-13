@@ -925,6 +925,10 @@ describe("open", () => {
     const calls: string[] = [];
     const deps = {
       loadContent: () => ({ ok: true as const, content: rig.content }),
+      loadPalettes: () => ({
+        ok: true as const,
+        palettes: rig.content.palettes,
+      }),
       createEditor: (session: StudioSession) => ({
         openWorkspace: async (editId: string) => {
           session.store.putEditFile(

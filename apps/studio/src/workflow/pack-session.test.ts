@@ -144,7 +144,7 @@ function packThroughSession(
   const result = rig.session.pack(
     input,
     rig.content,
-    rig.palette,
+    rig.palettes,
     rig.registryRoot,
   );
   if (!result.ok) throw new Error(`The SDK refused pack: ${result.message}`);
@@ -334,7 +334,7 @@ describe("pack form arguments against an in-process StudioSession", () => {
         const result = rig.session.pack(
           args as unknown as PackInput,
           rig.content,
-          rig.palette,
+          rig.palettes,
           rig.registryRoot,
         );
         if (!result.ok) throw hostError(result.reason, result.message);
@@ -632,7 +632,7 @@ describe("adding a state to a published asset through the window's pack args", (
       const result = rig.session.pack(
         (callArgs?.args ?? {}) as unknown as PackInput,
         rig.content,
-        rig.palette,
+        rig.palettes,
         rig.registryRoot,
       );
       if (!result.ok) throw hostError(result.reason, result.message);

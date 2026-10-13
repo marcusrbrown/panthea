@@ -45,6 +45,7 @@ function pickedSet() {
   rig.session.close();
   const over = {
     loadContent: () => ({ ok: true as const, content: rig.content }),
+    loadPalettes: () => ({ ok: true as const, palettes: rig.content.palettes }),
   };
   const base: StudioConfig = { studioRoot: rig.root, contentRoot: "/content" };
   return {

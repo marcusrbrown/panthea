@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Blender-side helpers for the retro-render probe (bpy). Reuses blender-sprite's `render.py` for the scene, camera maths and
 pose helpers, and its `zeus_proxy.py` for lofting, skinning and the bolt locator. Nothing is saved as a .blend.
 """

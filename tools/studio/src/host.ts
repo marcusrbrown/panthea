@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { PaletteSet } from "@panthea/assets";
 import {
   type AsepriteConfig,
   createEditorAdapter,
@@ -16,7 +17,9 @@ import {
   type EditorAdapter,
   fsWatcher,
   type LoadedContent,
+  type LoadedPalettes,
   loadStudioContent,
+  loadStudioPalettes,
   openRuntime,
   openStudioSession,
   type PreviewScheduler,
@@ -45,6 +48,11 @@ import {
 
 export interface Deps {
   readonly loadContent: (root: string) => LoadedContent;
+  /** Reads every palette under the content root afresh; pack, approve and publish judge these, never the palettes of the cached content. */
+  readonly loadPalettes: (
+    root: string,
+    families: readonly string[],
+  ) => LoadedPalettes;
   readonly openSession: (root: string) => StudioOpen;
   readonly readStatus: (root: string) => StudioStatus;
   readonly openRuntime: (
@@ -81,6 +89,7 @@ export const processAlive = (pid: number): boolean => {
 
 export const defaultDeps = (log: (line: string) => void): Deps => ({
   loadContent: loadStudioContent,
+  loadPalettes: loadStudioPalettes,
   openSession: openStudioSession,
   readStatus: readStudioStatus,
   openRuntime,
@@ -314,6 +323,31 @@ export class Studio {
       });
     this.content = loaded.content;
     return this.content;
+  }
+
+  /**
+   * The palettes under the content root as they are on disk now, read and
+   * validated for this call. Pack, approve and publish take them in place of
+   * the cached content's palettes, so a palette edited after the content loaded
+   * is what they judge. A palette that no longer loads refuses the operation.
+   */
+  freshPalettes(): PaletteSet | Outcome {
+    const content = this.loadedContent();
+    if (isOutcome(content)) return content;
+    if (this.config.contentRoot === undefined)
+      return this.missing("contentRoot");
+    const loaded = this.deps.loadPalettes(
+      this.config.contentRoot,
+      content.vocabulary.paletteFamilies,
+    );
+    if (!loaded.ok)
+      return refuse("invalid-content", "the palettes on disk do not load", {
+        diagnostics: loaded.diagnostics.map((d) => ({
+          file: d.file,
+          message: d.message,
+        })),
+      });
+    return loaded.palettes;
   }
 
   /**

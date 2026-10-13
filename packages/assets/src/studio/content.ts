@@ -8,7 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseGodProfile, parseGodVisualProfiles } from "@panthea/content";
 import { parseAssetVocabulary } from "@panthea/contracts";
-import { parsePalette } from "../palette";
+import { type Palette, type PaletteSet, parsePalette } from "../palette";
 import type { StudioContent } from "./request";
 
 export interface ContentDiagnostic {
@@ -24,9 +24,7 @@ export type LoadedContent =
 const VOCABULARY = "assets/vocabulary.json";
 const GODS = "gods";
 const SUBJECTS = "assets/subjects";
-const PALETTE_JSON = "palette/palette.json";
-const PALETTE_GPL = "palette/master.gpl";
-const PALETTE_HEX = "palette/master.hex";
+const PALETTES = "palette";
 const MAX_MESSAGE = 240;
 
 const clip = (message: string) =>
@@ -83,7 +81,105 @@ function jsonFiles(root: string, dir: string): Read<string[]> {
   }
 }
 
-/** Loads the vocabulary, god and visual profiles and approved palette under a content root. */
+interface PaletteFiles {
+  /** The subdirectory of the palette root: none for the root palette, else the directory's name (the palette's id). */
+  readonly subdirectory: string;
+  readonly json: Read<unknown>;
+  readonly gpl: Read<string>;
+  readonly hex: Read<string>;
+}
+
+const paletteFile = (subdirectory: string, name: string) =>
+  subdirectory === ""
+    ? `${PALETTES}/${name}`
+    : `${PALETTES}/${subdirectory}/${name}`;
+
+/** The text of every palette's three files: the palette root's, then each subdirectory's. */
+function readPaletteFiles(root: string): PaletteFiles[] {
+  let subdirectories: string[] = [];
+  try {
+    subdirectories = readdirSync(join(root, PALETTES))
+      .filter((name) => statSync(join(root, PALETTES, name)).isDirectory())
+      .sort();
+  } catch {
+    // A missing palette root shows up as the root palette's missing files.
+  }
+  return ["", ...subdirectories].map((subdirectory) => ({
+    subdirectory,
+    json: readJson(root, paletteFile(subdirectory, "palette.json")),
+    gpl: readText(root, paletteFile(subdirectory, "master.gpl")),
+    hex: readText(root, paletteFile(subdirectory, "master.hex")),
+  }));
+}
+
+/** Parses the palettes read from disk into a set by id; every problem names the file that has it. */
+function parsePaletteFiles(
+  files: readonly PaletteFiles[],
+  families: readonly string[],
+  problem: (file: string, message: string) => void,
+): PaletteSet {
+  const palettes = new Map<string, Palette>();
+  for (const { subdirectory, json, gpl, hex } of files) {
+    if (!json.ok || !gpl.ok || !hex.ok) continue;
+    const parsed = parsePalette(
+      { json: json.value, gpl: gpl.value, hex: hex.value },
+      families,
+    );
+    if (!parsed.ok) {
+      const name = parsed.path.includes("master.gpl")
+        ? "master.gpl"
+        : parsed.path.includes("master.hex")
+          ? "master.hex"
+          : "palette.json";
+      problem(
+        paletteFile(subdirectory, name),
+        `${parsed.path}: ${parsed.message}`,
+      );
+    } else if (subdirectory !== "" && parsed.value.id !== subdirectory) {
+      problem(
+        paletteFile(subdirectory, "palette.json"),
+        `id: the palette in ${PALETTES}/${subdirectory} declares "${parsed.value.id}", not "${subdirectory}"`,
+      );
+    } else if (palettes.has(parsed.value.id)) {
+      problem(
+        paletteFile(subdirectory, "palette.json"),
+        `id: another palette already has the id "${parsed.value.id}"`,
+      );
+    } else {
+      palettes.set(parsed.value.id, parsed.value);
+    }
+  }
+  return palettes;
+}
+
+export type LoadedPalettes =
+  | { readonly ok: true; readonly palettes: PaletteSet }
+  | { readonly ok: false; readonly diagnostics: readonly ContentDiagnostic[] };
+
+/**
+ * Reads and validates every palette under a content root afresh: `greek-master`
+ * from the palette root, any other from its subdirectory. Pack, approve and
+ * publish call it for each operation, so a palette edited on disk after the
+ * content was loaded is what they judge, never a cached copy.
+ */
+export function loadStudioPalettes(
+  contentRoot: string,
+  families: readonly string[],
+): LoadedPalettes {
+  const diagnostics: ContentDiagnostic[] = [];
+  const problem = (file: string, message: string) =>
+    diagnostics.push({ file, message: clip(message) });
+  const files = readPaletteFiles(contentRoot);
+  for (const { json, gpl, hex } of files)
+    for (const read of [json, gpl, hex])
+      if (!read.ok) diagnostics.push(read.diagnostic);
+  const palettes = parsePaletteFiles(files, families, problem);
+  return diagnostics.length > 0
+    ? { ok: false, diagnostics }
+    : { ok: true, palettes };
+}
+
+/** Loads the vocabulary, god and visual profiles and palettes under a content root. */
 export function loadStudioContent(contentRoot: string): LoadedContent {
   if (contentRoot === "")
     return {
@@ -100,12 +196,10 @@ export function loadStudioContent(contentRoot: string): LoadedContent {
   if (!godNames.ok) diagnostics.push(godNames.diagnostic);
   const subjectNames = jsonFiles(contentRoot, SUBJECTS);
   if (!subjectNames.ok) diagnostics.push(subjectNames.diagnostic);
-  const paletteJson = readJson(contentRoot, PALETTE_JSON);
-  if (!paletteJson.ok) diagnostics.push(paletteJson.diagnostic);
-  const gpl = readText(contentRoot, PALETTE_GPL);
-  if (!gpl.ok) diagnostics.push(gpl.diagnostic);
-  const hex = readText(contentRoot, PALETTE_HEX);
-  if (!hex.ok) diagnostics.push(hex.diagnostic);
+  const paletteFiles = readPaletteFiles(contentRoot);
+  for (const { json, gpl, hex } of paletteFiles)
+    for (const read of [json, gpl, hex])
+      if (!read.ok) diagnostics.push(read.diagnostic);
 
   const godInputs: { name: string; value: unknown }[] = [];
   for (const name of godNames.ok ? godNames.value : []) {
@@ -163,27 +257,11 @@ export function loadStudioContent(contentRoot: string): LoadedContent {
     }
   }
 
-  let palette: StudioContent["palette"] | undefined;
-  if (paletteJson.ok && gpl.ok && hex.ok) {
-    const parsed = parsePalette(
-      { json: paletteJson.value, gpl: gpl.value, hex: hex.value },
-      families,
-    );
-    if (parsed.ok) palette = parsed.value;
-    else {
-      const file = parsed.path.includes("master.gpl")
-        ? PALETTE_GPL
-        : parsed.path.includes("master.hex")
-          ? PALETTE_HEX
-          : PALETTE_JSON;
-      problem(file, `${parsed.path}: ${parsed.message}`);
-    }
-  }
+  const palettes = parsePaletteFiles(paletteFiles, families, problem);
 
-  if (diagnostics.length > 0 || palette === undefined)
-    return { ok: false, diagnostics };
+  if (diagnostics.length > 0) return { ok: false, diagnostics };
   return {
     ok: true,
-    content: { vocabulary: vocabulary.value, gods, visuals, palette },
+    content: { vocabulary: vocabulary.value, gods, visuals, palettes },
   };
 }

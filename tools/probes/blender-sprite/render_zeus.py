@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Round 2 renderer: the Zeus-shaped proxy on the UAL rig, x4 route only, two shading variants, ID and depth passes.
 
     blender --background --factory-startup --python-exit-code 1 --python render_zeus.py -- \\
