@@ -198,6 +198,11 @@ export function createEditOps(host: EditHost): EditOps {
         evidence[slot] = carried;
         continue;
       }
+      const rendered = set.rendered?.[slot];
+      if (rendered !== undefined) {
+        evidence[slot] = { params: rendered.params, palette: rendered.palette };
+        continue;
+      }
       const derived = set.derived?.[slot];
       if (derived !== undefined) {
         evidence[slot] = { params: derived.params, palette: derived.palette };

@@ -431,8 +431,8 @@ describe("native API mapping and durable results", () => {
 
     const engine = jobsById(r)["zeus-idle-0000"]?.engine;
     expect(engine?.runtime.name).not.toBe(SELECTED_PROFILE.runtime.id);
-    expect(engine?.model.id).not.toBe(SELECTED_PROFILE.components[0]?.id);
-    expect(engine?.model.sha256).not.toBe(
+    expect(engine?.model?.id).not.toBe(SELECTED_PROFILE.components[0]?.id);
+    expect(engine?.model?.sha256).not.toBe(
       SELECTED_PROFILE.components[0]?.sha256,
     );
     await r.runtime.close();

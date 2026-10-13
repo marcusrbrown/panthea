@@ -1,33 +1,55 @@
-// The local image runtime for one studio session: it verifies the configured
-// artifacts, owns one sd-server child in its own process group, drains the
-// session's queue through the server's native async API one job at a time, and
-// records every transition through the session's single ledger.
+// The local engine runtime for one studio session: it verifies the configured
+// artifacts, owns at most one engine child (sd-server or Blender) in its own
+// process group, drains the session's queue one job at a time (a consecutive run
+// of render jobs shares one Blender process), and records every transition
+// through the session's single ledger.
 //
 // Ownership rules: the child is spawned detached so its process group is its
 // own, and a group is only ever signalled after that ownership was checked, so
 // the whole family (including grandchildren that hold its pipes) is torn down
 // without touching anything else. A job's cancellation never relies on the
-// HTTP API: aborting kills the child and a fresh one starts before the next
-// job, and nothing a stopped child produces afterwards is stored.
+// engine's own API: aborting kills the child and a fresh one starts before the
+// next job, and nothing a stopped child produces afterwards is stored.
+//
+// Only one engine is live at a time (16 GiB: sd-server and Blender were never
+// measured loaded together), and at critical memory pressure no engine is
+// launched. An unavailable engine fails only the jobs of its own provider.
 //
 // Process groups are POSIX: this module reports the runtime unavailable on
 // other platforms. Groups, signals and `ps` were verified on macOS only.
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { accessSync, constants, createReadStream, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import type { GenerationEdit, ImageOutput } from "@panthea/contracts";
+import type { GenerationEdit, ImageOutput, Sha256 } from "@panthea/contracts";
 import type { RgbaImage } from "../conformance";
+import { createRenderEngine, type RenderEngineConfig } from "../render/engine";
 import { editSettings, imgGenBody, resolveEdit } from "./edit";
+import {
+  type Attempt,
+  type Engine,
+  type Ready,
+  type Running,
+  unsettled,
+} from "./engine";
 import { registryFrameReader } from "./frame-ref";
+import { matchesPin } from "./hash-file";
 import { decodePng } from "./png/decode";
-import { SELECTED_PROFILE, type SelectedProfile } from "./provider";
+import {
+  launch,
+  type OwnedChild,
+  stopGroup,
+  type TeardownResult,
+  tailOf,
+} from "./process";
+import { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
 import { adapterInput, buildSpec, type StudioContent } from "./request";
-import type { CommandResult, StudioSession } from "./session";
+import type { StudioSession } from "./session";
 import type { JobRecord } from "./store";
 import { parseEngineFacts } from "./workspace";
+
+export type { TeardownResult } from "./process";
 
 export interface RuntimeDeadlines {
   readonly httpMs: number;
@@ -50,6 +72,10 @@ export interface RuntimeConfig {
   readonly profile?: SelectedProfile;
   /** The child's whole environment; the parent's is never inherited. */
   readonly env?: Readonly<Record<string, string>>;
+  /** The render engine; absent means render jobs are not runnable here. */
+  readonly render?: RenderEngineConfig;
+  /** Reads the system memory pressure level; at 4 (critical) no engine is launched. Absent means no guard. */
+  readonly pressure?: () => number | undefined;
 }
 
 export type JobResult =
@@ -58,6 +84,13 @@ export type JobResult =
       readonly outcome: "succeeded";
       readonly output: ImageOutput;
       readonly image: RgbaImage;
+    }
+  | {
+      /** A render job: every frame post-processed and stored, with the role manifest. */
+      readonly jobId: string;
+      readonly outcome: "rendered";
+      readonly outputs: readonly ImageOutput[];
+      readonly manifest: Sha256;
     }
   | {
       readonly jobId: string;
@@ -77,7 +110,9 @@ export type DrainStop =
   | "unavailable"
   | "start-failed"
   | "closing"
-  | "session-closed";
+  | "session-closed"
+  /** Memory pressure is critical: nothing was launched and the head job is still queued. */
+  | "deferred";
 
 export interface RuntimeRefusal {
   readonly ok: false;
@@ -90,16 +125,10 @@ export type DrainResult =
       readonly ok: true;
       readonly results: readonly JobResult[];
       readonly stopped: DrainStop;
+      /** What to do about a drain that stopped with work left (deferred). */
+      readonly guidance?: string;
     }
   | RuntimeRefusal;
-
-export type TeardownResult =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly reason: "teardown-incomplete";
-      readonly message: string;
-    };
 
 export type AbortResult = TeardownResult | RuntimeRefusal;
 
@@ -120,8 +149,6 @@ const ROLE_FLAGS: Record<string, string> = {
   vae: "--vae",
 };
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
 function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -136,15 +163,6 @@ function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function until(cond: () => boolean, ms: number): Promise<boolean> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    if (cond()) return true;
-    await sleep(20);
-  }
-  return cond();
-}
-
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -157,31 +175,14 @@ type Verified =
       readonly binary: string;
       readonly components: readonly { role: string; path: string }[];
     }
-  | { readonly ok: false; readonly reason: string };
+  | { readonly ok: false; readonly reason: string }
+  | { readonly ok: false; readonly aborted: true };
 
-function hashFile(path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash("sha256");
-    createReadStream(path)
-      .on("data", (chunk) => hash.update(chunk))
-      .on("error", reject)
-      .on("end", () => resolve(hash.digest("hex")));
-  });
-}
-
-/**
- * Files whose bytes hashed to their pinned sha256, for the life of the
- * process. Hashing the models is most of a cold start (about 6 s of 8 s on the
- * real ones: tools/probes/studio-release), and a release that gives the lock
- * back opens a new runtime on the same files. An entry holds only while the
- * path, the size and the mtime (to the nanosecond) are what was hashed; any
- * other change is hashed again. The size is still checked first, every time.
- */
-const hashedFiles = new Set<string>();
-
+/** The size is checked first, every time; the hash is cached (see hash-file.ts). */
 async function verifyArtifacts(
   root: string,
   profile: SelectedProfile,
+  signal?: AbortSignal,
 ): Promise<Verified> {
   const checks = [
     {
@@ -228,17 +229,12 @@ async function verifyArtifacts(
   }
   if (problems.length > 0) return { ok: false, reason: problems.join("; ") };
   for (const check of checks) {
-    // The stat is taken before the hash: a file that changes while it is read
-    // has another mtime next time and is hashed again.
-    const stat = statSync(check.path, { bigint: true });
-    const key = `${check.path}\0${stat.size}\0${stat.mtimeNs}\0${check.sha256}`;
-    if (hashedFiles.has(key)) continue;
-    const actual = await hashFile(check.path);
-    if (actual !== check.sha256)
+    const pin = await matchesPin(check.path, check.sha256, signal);
+    if (pin.kind === "aborted") return { ok: false, aborted: true };
+    if (pin.kind === "mismatch")
       problems.push(
-        `${check.label} sha256 ${actual} does not match the pinned ${check.sha256}`,
+        `${check.label} sha256 ${pin.actual} does not match the pinned ${check.sha256}`,
       );
-    else hashedFiles.add(key);
   }
   if (problems.length > 0) return { ok: false, reason: problems.join("; ") };
   return {
@@ -259,170 +255,28 @@ function portFree(port: number): Promise<boolean> {
   });
 }
 
-interface ProcessRow {
-  readonly pid: number;
-  readonly ppid: number;
-  readonly pgid: number;
-}
-
-function processTable(): ProcessRow[] {
-  const result = spawnSync("ps", ["-ax", "-o", "pid=,ppid=,pgid="], {
-    encoding: "utf8",
-  });
-  return result.stdout
-    .split("\n")
-    .map((line) => line.trim().split(/\s+/).map(Number))
-    .filter((cols) => cols.length === 3 && cols.every(Number.isInteger))
-    .map(([pid, ppid, pgid]) => ({
-      pid: pid as number,
-      ppid: ppid as number,
-      pgid: pgid as number,
-    }));
-}
-
-const groupMembers = (pgid: number) =>
-  processTable()
-    .filter((row) => row.pgid === pgid)
-    .map((row) => row.pid);
-
-interface OwnedChild {
-  readonly proc: ChildProcess;
-  readonly pid: number;
-  /** The child's own process group: its pid. */
-  readonly pgid: number;
-  exited: boolean;
-  closed: boolean;
-  exit: string;
-  error: Error | undefined;
-  tail: string;
-}
-
-const tailOf = (child: OwnedChild) =>
-  child.tail.trim() === "" ? "" : ` Output: ${child.tail.trim()}`;
-
-type Launch =
-  | { readonly ok: true; readonly child: OwnedChild }
-  | {
-      readonly ok: false;
-      readonly kind: "unavailable" | "failed";
-      readonly message: string;
-    };
-
-async function launch(
-  binary: string,
-  args: readonly string[],
-  env: Readonly<Record<string, string>>,
-): Promise<Launch> {
-  const proc = spawn(binary, [...args], {
-    detached: true,
-    shell: false,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...env },
-  });
-  const child: OwnedChild = {
-    proc,
-    pid: proc.pid ?? 0,
-    pgid: proc.pid ?? 0,
-    exited: false,
-    closed: false,
-    exit: "",
-    error: undefined,
-    tail: "",
-  };
-  const collect = (data: Buffer) => {
-    child.tail = (child.tail + data.toString("utf8")).slice(-2000);
-  };
-  proc.stdout?.on("data", collect);
-  proc.stderr?.on("data", collect);
-  proc.on("error", (error) => {
-    child.error = error;
-    child.exited = true;
-    child.closed = true;
-  });
-  proc.on("exit", (code, signal) => {
-    child.exited = true;
-    child.exit = signal ? `signal ${signal}` : `exit code ${code}`;
-  });
-  proc.on("close", () => {
-    child.closed = true;
-  });
-  await new Promise<void>((resolve) => {
-    proc.once("spawn", () => resolve());
-    proc.once("error", () => resolve());
-  });
-  if (child.error || proc.pid === undefined)
-    return {
-      ok: false,
-      kind: "failed",
-      message: `could not spawn the server: ${child.error?.message ?? "no pid"}`,
-    };
-  const owned = await until(() => {
-    const rows = processTable();
-    const own = rows.find((row) => row.pid === child.pid);
-    const supervisor = rows.find((row) => row.pid === process.pid);
-    return own?.pgid === child.pid && supervisor?.pgid !== child.pid;
-  }, 2000);
-  if (!owned) {
-    if (!child.exited) process.kill(child.pid, "SIGKILL");
-    await until(() => child.closed, 3000);
-    return {
-      ok: false,
-      kind: "unavailable",
-      message:
-        "the server's own process group could not be established; refusing to run it without reliable teardown",
-    };
-  }
-  return { ok: true, child };
-}
-
-/** TERM, a bounded wait, then KILL, to the child's owned group; true when the group is gone and its pipes are closed. */
-async function stopGroup(
-  child: OwnedChild,
-  deadlines: RuntimeDeadlines,
-): Promise<TeardownResult> {
-  const gone = () => child.closed && groupMembers(child.pgid).length === 0;
-  if (gone()) return { ok: true };
-  const signal = (name: "SIGTERM" | "SIGKILL") => {
-    const rows = processTable();
-    const supervisor = rows.find((row) => row.pid === process.pid);
-    if (supervisor?.pgid === child.pgid) return;
-    if (!rows.some((row) => row.pgid === child.pgid)) return;
-    try {
-      process.kill(-child.pgid, name);
-    } catch (error) {
-      // Only zombies are left in a group this process owns: nothing to signal.
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ESRCH" && code !== "EPERM") throw error;
-    }
-  };
-  signal("SIGTERM");
-  if (await until(gone, deadlines.termGraceMs)) return { ok: true };
-  signal("SIGKILL");
-  if (await until(gone, deadlines.killMs)) return { ok: true };
-  return {
-    ok: false,
-    reason: "teardown-incomplete",
-    message: `processes ${groupMembers(child.pgid).join(", ") || "(none)"} of group ${child.pgid} survived SIGKILL`,
-  };
-}
-
+/** Undefined when the server answered; a message when it did not. An aborted wait returns whatever it had: the caller checks the signal first. */
 async function waitReady(
   child: OwnedChild,
   port: number,
   config: RuntimeConfig,
+  signal: AbortSignal,
 ): Promise<string | undefined> {
   const end = Date.now() + config.deadlines.startupMs;
   const died = () =>
     `the server exited before it was ready (${child.error ? child.error.message : child.exit}).${tailOf(child)}`;
-  while (Date.now() < end) {
+  while (Date.now() < end && !signal.aborted) {
     if (child.exited) return died();
     try {
       const response = await fetch(
         `http://127.0.0.1:${port}/sdcpp/v1/capabilities`,
         {
-          signal: AbortSignal.timeout(
-            Math.max(1, Math.min(config.deadlines.httpMs, end - Date.now())),
-          ),
+          signal: AbortSignal.any([
+            signal,
+            AbortSignal.timeout(
+              Math.max(1, Math.min(config.deadlines.httpMs, end - Date.now())),
+            ),
+          ]),
         },
       );
       if (child.exited) return died();
@@ -432,7 +286,7 @@ async function waitReady(
     } catch {
       // not listening yet
     }
-    await sleep(config.pollMs);
+    await sleepUnlessAborted(config.pollMs, signal);
   }
   return `the server was not ready within ${config.deadlines.startupMs} ms.${tailOf(child)}`;
 }
@@ -541,29 +395,6 @@ async function generate(
   }
 }
 
-type Ready =
-  | { readonly ok: true }
-  | {
-      readonly ok: false;
-      readonly kind: "unavailable";
-      readonly reason: string;
-    }
-  | { readonly ok: false; readonly kind: "failed"; readonly error: string };
-
-type Attempt =
-  | { readonly kind: "result"; readonly result: JobResult }
-  | { readonly kind: "skipped" }
-  | { readonly kind: "refused"; readonly message: string }
-  | { readonly kind: "session-closed" };
-
-/** A refused transition: a closed session or an unwritable record ends the drain; any other refusal means the job moved on. */
-function unsettled(refusal: Extract<CommandResult, { ok: false }>): Attempt {
-  if (refusal.reason === "closed") return { kind: "session-closed" };
-  if (refusal.reason === "write-failed")
-    return { kind: "refused", message: refusal.message };
-  return { kind: "skipped" };
-}
-
 const ENGINE_ROLES: Record<string, "model" | "encoder" | "vae"> = {
   "diffusion-model": "model",
   "text-encoder": "encoder",
@@ -643,21 +474,34 @@ export function engineFor(
   );
 }
 
-export function openRuntime(
+/** macOS memory pressure level (1 normal, 2 warning, 4 critical); undefined where it cannot be read. */
+export function systemMemoryPressure(): number | undefined {
+  if (process.platform !== "darwin") return undefined;
+  const read = spawnSync(
+    "sysctl",
+    ["-n", "kern.memorystatus_vm_pressure_level"],
+    { encoding: "utf8" },
+  );
+  const level = Number(read.stdout?.trim());
+  return Number.isInteger(level) ? level : undefined;
+}
+
+/** The pressure level at which no engine is launched. */
+export const CRITICAL_PRESSURE = 4;
+
+const PRESSURE_GUIDANCE =
+  "System memory pressure is critical: no engine is launched and the job stays queued. Free memory (quit other apps); the queue resumes by itself.";
+
+/** The image engine: one sd-server child, kept across jobs, driven through its native async API. */
+function createImageEngine(
   session: StudioSession,
   config: RuntimeConfig,
-): StudioRuntime {
-  const profile = config.profile ?? SELECTED_PROFILE;
-  let closed = false;
-  let closing = false;
+  profile: SelectedProfile,
+): Engine {
   let child: OwnedChild | undefined;
   let verified: Extract<Verified, { ok: true }> | undefined;
   let stopPending: Promise<TeardownResult> | undefined;
   let teardownFailed = false;
-  let running: Promise<DrainResult> | undefined;
-  let current:
-    | { id: string; controller: AbortController; aborted: boolean }
-    | undefined;
 
   // The child stays owned until its group is proven gone, so a failed teardown
   // can be retried against the same group.
@@ -674,7 +518,9 @@ export function openRuntime(
     return stopPending;
   };
 
-  async function ensureReady(): Promise<Ready> {
+  async function ensureReady(running: Running): Promise<Ready> {
+    const signal = running.controller.signal;
+    const aborted: Ready = { ok: false, kind: "aborted" };
     if (teardownFailed || stopPending || child?.exited) {
       const stopped = await stopChild();
       if (!stopped.ok)
@@ -689,11 +535,18 @@ export function openRuntime(
           "process-group teardown is only implemented for POSIX platforms",
       };
     if (!verified) {
-      const checked = await verifyArtifacts(config.artifactRoot, profile);
-      if (!checked.ok)
+      const checked = await verifyArtifacts(
+        config.artifactRoot,
+        profile,
+        signal,
+      );
+      if (!checked.ok) {
+        if ("aborted" in checked) return aborted;
         return { ok: false, kind: "unavailable", reason: checked.reason };
+      }
       verified = checked;
     }
+    if (signal.aborted) return aborted;
     if (!(await portFree(config.port)))
       return {
         ok: false,
@@ -717,7 +570,20 @@ export function openRuntime(
         ? { ok: false, kind: "unavailable", reason: launched.message }
         : { ok: false, kind: "failed", error: launched.message };
     child = launched.child;
-    const problem = await waitReady(launched.child, config.port, config);
+    if (signal.aborted) {
+      await stopChild();
+      return aborted;
+    }
+    const problem = await waitReady(
+      launched.child,
+      config.port,
+      config,
+      signal,
+    );
+    if (signal.aborted) {
+      await stopChild();
+      return aborted;
+    }
     if (problem !== undefined) {
       await stopChild();
       return { ok: false, kind: "failed", error: problem };
@@ -725,10 +591,8 @@ export function openRuntime(
     return { ok: true };
   }
 
-  async function runJob(record: JobRecord): Promise<Attempt> {
+  async function runJob(record: JobRecord, mine: Running): Promise<Attempt> {
     const { source, job } = record;
-    const started = session.start(job.id);
-    if (!started.ok) return unsettled(started);
     const fail = (error: string): Attempt => {
       const result = session.fail(job.id, error);
       if (!result.ok) return unsettled(result);
@@ -772,23 +636,12 @@ export function openRuntime(
       input.value,
       resolved?.ok ? resolved.value : undefined,
     );
-    const mine = {
-      id: job.id,
-      controller: new AbortController(),
-      aborted: false,
-    };
-    current = mine;
-    let generated: Generated;
-    try {
-      generated = await generate(
-        config.port,
-        body,
-        config,
-        mine.controller.signal,
-      );
-    } finally {
-      current = undefined;
-    }
+    const generated = await generate(
+      config.port,
+      body,
+      config,
+      mine.controller.signal,
+    );
 
     if (mine.aborted || generated.kind === "aborted")
       return { kind: "result", result: { jobId: job.id, outcome: "aborted" } };
@@ -829,13 +682,120 @@ export function openRuntime(
     };
   }
 
+  return {
+    provider: PROVIDER.id,
+    guidance: staging(config.artifactRoot),
+    batchOf: (queue) => queue.slice(0, 1),
+    ready: ensureReady,
+    async run(batch, running) {
+      return [await runJob(batch[0] as JobRecord, running)];
+    },
+    live: () => child !== undefined && !child.exited,
+    stop: stopChild,
+  };
+}
+
+export function openRuntime(
+  session: StudioSession,
+  config: RuntimeConfig,
+): StudioRuntime {
+  const profile = config.profile ?? SELECTED_PROFILE;
+  let closed = false;
+  let closing = false;
+  let running: Promise<DrainResult> | undefined;
+  let current: Running | undefined;
+  let active: Engine | undefined;
+  // The phases before a job runs (hashing, launch, version check) are covered by the job's own
+  // controller: the drain starts the job first, so an abort addresses it from the first moment.
+  const engines: readonly Engine[] = [
+    createImageEngine(session, config, profile),
+    ...(config.render === undefined
+      ? []
+      : [createRenderEngine(session, config, config.render)]),
+  ];
+  const track = (id: string): Running => {
+    current = { id, controller: new AbortController(), aborted: false };
+    return current;
+  };
+
   async function run(): Promise<DrainResult> {
     const results: JobResult[] = [];
-    const stop = (stopped: DrainStop): DrainResult => ({
+    let unavailableSeen = false;
+    const stop = (stopped: DrainStop, guidance?: string): DrainResult => ({
       ok: true,
       results,
       stopped,
+      ...(guidance === undefined ? {} : { guidance }),
     });
+    const refusedWrite = (message: string): DrainResult => ({
+      ok: false,
+      reason: "write-failed",
+      message,
+    });
+
+    /** Marks the running job (if given) and every queued job of the provider unavailable. Undefined when the drain goes on. */
+    const markUnavailable = (
+      provider: string,
+      reason: string,
+      guidance: string,
+      runningId?: string,
+    ): DrainResult | undefined => {
+      unavailableSeen = true;
+      const fresh = session.queued();
+      if (!fresh.ok) return stop("session-closed");
+      const ids = [
+        ...(runningId === undefined ? [] : [runningId]),
+        ...fresh.jobs
+          .filter(({ job }) => job.provider.id === provider)
+          .map(({ job }) => job.id),
+      ];
+      for (const id of ids) {
+        const recorded = session.unavailable(id, reason, guidance);
+        if (!recorded.ok) {
+          const refusal = unsettled(recorded);
+          if (refusal.kind === "session-closed") return stop("session-closed");
+          if (refusal.kind === "refused") return refusedWrite(refusal.message);
+          continue;
+        }
+        results.push({
+          jobId: id,
+          outcome: "unavailable",
+          reason,
+          staging: guidance,
+        });
+      }
+      return undefined;
+    };
+
+    /**
+     * An exception thrown inside an engine settles every job it left running as failed, stops the
+     * engine, and lets the drain go on. Undefined when the drain goes on; a result when it ends.
+     */
+    const settleThrown = async (
+      engine: Engine,
+      jobIds: readonly string[],
+      error: unknown,
+    ): Promise<DrainResult | undefined> => {
+      const message = `the ${engine.provider} engine threw: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      await engine.stop().catch(() => undefined);
+      for (const id of jobIds) {
+        const read = session.store.readJob(id);
+        if (read.kind !== "found" || read.value.job.status !== "running")
+          continue;
+        const recorded = session.fail(id, message);
+        if (!recorded.ok) {
+          const refusal = unsettled(recorded);
+          if (refusal.kind === "session-closed") return stop("session-closed");
+          if (refusal.kind === "refused") return refusedWrite(refusal.message);
+          continue;
+        }
+        results.push({ jobId: id, outcome: "failed", error: message });
+      }
+      return undefined;
+    };
+
     for (let first = true; ; first = false) {
       if (closing) return stop("closing");
       const queue = session.queued();
@@ -843,78 +803,127 @@ export function openRuntime(
         return first
           ? { ok: false, reason: "closed", message: queue.message }
           : stop("session-closed");
-      if (queue.jobs.length === 0) return stop("empty");
+      const head = queue.jobs[0];
+      if (head === undefined)
+        return stop(unavailableSeen ? "unavailable" : "empty");
 
-      const ready = await ensureReady();
-      if (!ready.ok) {
-        const fresh = session.queued();
-        if (!fresh.ok) return stop("session-closed");
-        if (ready.kind === "unavailable") {
-          const guidance = staging(config.artifactRoot);
-          for (const { job } of fresh.jobs) {
-            const recorded = session.unavailable(
-              job.id,
-              ready.reason,
-              guidance,
-            );
-            if (!recorded.ok) {
-              const refusal = unsettled(recorded);
-              if (refusal.kind === "session-closed")
-                return stop("session-closed");
-              if (refusal.kind === "refused")
-                return {
-                  ok: false,
-                  reason: "write-failed",
-                  message: refusal.message,
-                };
-              continue;
-            }
+      const engine = engines.find((e) => e.provider === head.job.provider.id);
+      if (engine === undefined) {
+        // No engine is configured for this provider: its jobs are unavailable, nothing else is.
+        const ended = markUnavailable(
+          head.job.provider.id,
+          `no engine is configured for provider ${head.job.provider.id}`,
+          `Configure the engine for provider ${head.job.provider.id} (the studio config's render section runs blender-eevee); nothing is downloaded and no other engine is tried.`,
+        );
+        if (ended) return ended;
+        continue;
+      }
+
+      // Only one engine is ever live: the other stops before this one launches.
+      for (const other of engines) {
+        if (other === engine || !other.live()) continue;
+        const stopped = await other.stop();
+        if (!stopped.ok) {
+          const started = session.start(head.job.id);
+          if (started.ok) {
+            session.fail(head.job.id, stopped.message);
             results.push({
-              jobId: job.id,
-              outcome: "unavailable",
-              reason: ready.reason,
-              staging: guidance,
-            });
-          }
-          return stop("unavailable");
-        }
-        const next = fresh.jobs[0];
-        if (next) {
-          const started = session.start(next.job.id);
-          const recorded = started.ok
-            ? session.fail(next.job.id, ready.error)
-            : started;
-          if (!recorded.ok) {
-            const refusal = unsettled(recorded);
-            if (refusal.kind === "session-closed")
-              return stop("session-closed");
-            if (refusal.kind === "refused")
-              return {
-                ok: false,
-                reason: "write-failed",
-                message: refusal.message,
-              };
-          } else {
-            results.push({
-              jobId: next.job.id,
+              jobId: head.job.id,
               outcome: "failed",
-              error: ready.error,
+              error: stopped.message,
             });
           }
+          return stop("start-failed");
         }
-        return stop("start-failed");
       }
       if (closing) return stop("closing");
 
-      const fresh = session.queued();
-      if (!fresh.ok) return stop("session-closed");
-      const next = fresh.jobs[0];
-      if (!next) continue;
-      const attempt = await runJob(next);
-      if (attempt.kind === "session-closed") return stop("session-closed");
-      if (attempt.kind === "refused")
-        return { ok: false, reason: "write-failed", message: attempt.message };
-      if (attempt.kind === "result") results.push(attempt.result);
+      // The memory guard: at critical pressure nothing is launched and the job stays queued.
+      if (!engine.live() && (config.pressure?.() ?? 0) >= CRITICAL_PRESSURE)
+        return stop("deferred", PRESSURE_GUIDANCE);
+
+      const batch = engine.batchOf(queue.jobs);
+      const started = session.start(head.job.id);
+      if (!started.ok) {
+        const refusal = unsettled(started);
+        if (refusal.kind === "session-closed") return stop("session-closed");
+        if (refusal.kind === "refused") return refusedWrite(refusal.message);
+        continue;
+      }
+      const running_ = track(head.job.id);
+      active = engine;
+      let ready: Awaited<ReturnType<Engine["ready"]>>;
+      try {
+        ready = await engine.ready(running_);
+      } catch (error) {
+        current = undefined;
+        active = undefined;
+        const ended = await settleThrown(engine, [head.job.id], error);
+        if (ended) return ended;
+        continue;
+      }
+      if (!ready.ok) {
+        current = undefined;
+        active = undefined;
+        if (ready.kind === "aborted") {
+          results.push({ jobId: head.job.id, outcome: "aborted" });
+          continue;
+        }
+        if (ready.kind === "unavailable") {
+          const ended = markUnavailable(
+            engine.provider,
+            ready.reason,
+            engine.guidance,
+            head.job.id,
+          );
+          if (ended) return ended;
+          continue;
+        }
+        const recorded = session.fail(head.job.id, ready.error);
+        if (!recorded.ok) {
+          const refusal = unsettled(recorded);
+          if (refusal.kind === "session-closed") return stop("session-closed");
+          if (refusal.kind === "refused") return refusedWrite(refusal.message);
+        } else {
+          results.push({
+            jobId: head.job.id,
+            outcome: "failed",
+            error: ready.error,
+          });
+        }
+        return stop("start-failed");
+      }
+
+      let attempts: Awaited<ReturnType<Engine["run"]>>;
+      try {
+        attempts = await engine.run(batch, running_, track);
+      } catch (error) {
+        current = undefined;
+        active = undefined;
+        const ended = await settleThrown(
+          engine,
+          batch.map((b) => b.job.id),
+          error,
+        );
+        if (ended) return ended;
+        continue;
+      }
+      current = undefined;
+      active = undefined;
+      for (const attempt of attempts) {
+        if (attempt.kind === "session-closed") return stop("session-closed");
+        if (attempt.kind === "refused") return refusedWrite(attempt.message);
+        if (attempt.kind === "result") results.push(attempt.result);
+        if (attempt.kind === "unavailable") {
+          const ended = markUnavailable(
+            engine.provider,
+            attempt.reason,
+            engine.guidance,
+            attempt.jobId,
+          );
+          if (ended) return ended;
+        }
+      }
     }
   }
 
@@ -968,7 +977,7 @@ export function openRuntime(
         };
       job.aborted = true;
       job.controller.abort();
-      return stopChild();
+      return (await active?.stop()) ?? { ok: true };
     },
 
     async close() {
@@ -980,8 +989,15 @@ export function openRuntime(
         job.aborted = true;
         job.controller.abort();
       }
+      // The live engine's process group goes first, so a drain that is hashing, launching or
+      // rendering ends inside the stop bound; only then is the drain awaited.
+      await Promise.all(engines.map((e) => e.stop()));
       if (running) await running.catch(() => undefined);
-      return stopChild();
+      for (const engine of engines) {
+        const stopped = await engine.stop();
+        if (!stopped.ok) return stopped;
+      }
+      return { ok: true };
     },
 
     async shutdown() {

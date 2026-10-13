@@ -20,6 +20,8 @@ import {
   newRequestRecord,
   type PackInput,
   parsePreviewResolve,
+  RENDER_ENGINE,
+  RENDER_PROVIDER,
   type RequestInput,
   registryFrameReader,
   resolveEdit,
@@ -310,15 +312,57 @@ function readFiles(
 interface Shape {
   readonly slots: RequestInput["slots"];
   readonly kind: "sprite" | "portrait";
+  /** Present on a recipe request: the palette and declared pivot for the render engine. */
+  readonly render?: NonNullable<RequestInput["render"]>;
 }
 
-/** The request fields `generate` and `resolve` both take, checked before anything is built or opened. */
+/**
+ * The request fields `generate` and `resolve` both take, checked before anything is built or
+ * opened. A palette and a pivot together make a recipe request for the render engine: the render
+ * profile comes from the subject, and a recipe request is batch 1 at the fixed seed, so it takes
+ * no batch, seed, style note or edit.
+ */
 function requestShape(a: Args): Shape | Outcome {
   const slots = parseSlots(a.slots);
   if (isOutcome(slots)) return slots;
   if (a.kind !== "sprite" && a.kind !== "portrait")
     return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
-  return { slots, kind: a.kind };
+  if (a.palette === undefined && a.pivot === undefined)
+    return { slots, kind: a.kind };
+  if (a.palette === undefined || a.pivot === undefined)
+    return refuse(
+      "invalid-arguments",
+      "a recipe request needs both --palette and --pivot",
+    );
+  if (a.kind !== "sprite")
+    return refuse("invalid-request", "only a sprite is rendered");
+  for (const taken of ["batch", "seed", "styleNote"] as const)
+    if (a[taken] !== undefined)
+      return refuse(
+        "invalid-request",
+        `a recipe request takes no ${taken}: it renders each slot once, at the fixed seed`,
+      );
+  const pivot = a.pivot as { x?: unknown; y?: unknown } | null;
+  if (
+    typeof pivot !== "object" ||
+    pivot === null ||
+    !Number.isInteger(pivot.x) ||
+    !Number.isInteger(pivot.y) ||
+    (pivot.x as number) < 0 ||
+    (pivot.y as number) < 0
+  )
+    return refuse(
+      "invalid-arguments",
+      "--pivot must be an object with non-negative integer x and y",
+    );
+  return {
+    slots,
+    kind: "sprite",
+    render: {
+      palette: a.palette as string,
+      pivot: { x: pivot.x as number, y: pivot.y as number },
+    },
+  };
 }
 
 /** The request record and spec for these arguments, built from content alone: no store, lock or runtime. */
@@ -342,8 +386,11 @@ function buildRequest(
         ? {}
         : { styleNote: a.styleNote as string }),
       ...(edit === undefined ? {} : { edit }),
+      ...(shape.render === undefined ? {} : { render: shape.render }),
     },
     studio.deps.drawSeed,
+    // The render engine declares its own cell sizes; an image request is gated by the image engine's.
+    shape.render === undefined ? undefined : RENDER_ENGINE,
   );
   return built.ok
     ? built.value
@@ -575,6 +622,22 @@ function editReply(
   });
 }
 
+/** Whether the job is one the render engine ran (its provider is the render engine's). */
+function isRenderJob(session: StudioSession, jobId: string): boolean {
+  const job = session.store.readJob(jobId);
+  return (
+    job.kind === "found" && job.value.job.provider.id === RENDER_PROVIDER.id
+  );
+}
+
+/** The subjects whose visual profile names a render profile; none when the content cannot be read. */
+function renderSubjectsOf(studio: Studio): string[] {
+  const content = studio.loadedContent();
+  return isOutcome(content)
+    ? []
+    : content.visuals.filter((v) => v.render !== undefined).map((v) => v.godId);
+}
+
 const LIST_KINDS = [
   "requests",
   "jobs",
@@ -603,6 +666,8 @@ const OPS: Record<string, OpDef> = {
             idleReason: studio.idleReason() ?? null,
             releaseFailure: studio.releaseFailed ?? null,
             conformSets: Object.keys(studio.config.conform ?? {}).sort(),
+            // The subjects that name a render profile: the app offers the recipe request for these.
+            renderSubjects: renderSubjectsOf(studio),
           });
     },
   },
@@ -850,6 +915,9 @@ const OPS: Record<string, OpDef> = {
       batch: { t: "int" },
       seed: { t: "int" },
       ...str("styleNote"),
+      // A recipe request for the render engine: both or neither (see requestShape).
+      ...str("palette"),
+      pivot: { t: "json" },
       ...str("editBaseJob"),
       ...str("editBaseOutput"),
       ...str("editBaseImage"),
@@ -879,6 +947,11 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(shape)) return shape;
       const edit = readEditArgs(a);
       if (isOutcome(edit)) return edit;
+      if (shape.render !== undefined && edit !== undefined)
+        return refuse(
+          "invalid-request",
+          "a recipe request takes no edit: it renders from the profile",
+        );
       const built = buildRequest(studio, content, a, shape, edit?.request);
       if (isOutcome(built)) return built;
       const spec = built.spec;
@@ -934,6 +1007,8 @@ const OPS: Record<string, OpDef> = {
       batch: { t: "int" },
       seed: { t: "int" },
       ...str("styleNote"),
+      ...str("palette"),
+      pivot: { t: "json" },
     },
     run: (studio, a) => {
       const content = studio.loadedContent();
@@ -1005,11 +1080,37 @@ const OPS: Record<string, OpDef> = {
     spec: { ...str("jobId", true), ...str("set"), params: { t: "json" } },
     run: async (studio, a) => {
       const params = resolveParams(studio, a);
-      if (isOutcome(params)) return params;
+      // A render job conforms by its role manifest: its cells are already native, so a --set or
+      // --params (the app always names a set) is not used. Naming neither is only valid for it.
+      if (isOutcome(params) && (a.set !== undefined || a.params !== undefined))
+        return params;
+      if (isOutcome(params)) {
+        const opened = await studio.owner();
+        if (isOutcome(opened)) return params;
+        if (!isRenderJob(opened, a.jobId as string)) return params;
+      }
       const session = await studio.owner();
       if (isOutcome(session)) return session;
       const content = studio.loadedContent();
       if (isOutcome(content)) return content;
+      if (isRenderJob(session, a.jobId as string)) {
+        const rendered = session.conformRendered(a.jobId as string, content);
+        return rendered.ok
+          ? done({
+              candidateId: rendered.candidate.id,
+              slotKey: rendered.candidate.slotKey,
+              frames: rendered.candidate.frames.length,
+              failedChecks: rendered.candidate.frames.reduce(
+                (n, f) =>
+                  n + f.report.checks.filter((c) => c.status === "fail").length,
+                0,
+              ),
+              revisionRecipeHash: rendered.candidate.revisionRecipeHash,
+              slotRecipeHash: rendered.candidate.slotRecipeHash,
+            })
+          : refuse(rendered.reason, safeMessage(rendered.message));
+      }
+      if (isOutcome(params)) return params;
       const result = session.conform(a.jobId as string, content, params);
       return result.ok
         ? done(candidateSummary(result.candidate))
@@ -1332,6 +1433,7 @@ const OPS: Record<string, OpDef> = {
         content,
         palettes,
         registry,
+        studio.renderAudit(),
       );
       return result.ok
         ? done({

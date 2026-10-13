@@ -30,6 +30,10 @@ import {
   type Sha256,
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
+import {
+  parseRenderedCandidate,
+  type RenderedCandidate,
+} from "../render/candidate";
 import { type CandidateRecord, parseCandidateRecord } from "./candidates";
 import { type EditRecord, parseEditRecord } from "./export-import";
 import { parseWorkingSetRecord, type WorkingSetRecord } from "./working-set";
@@ -291,6 +295,7 @@ export interface Store {
   putRequest(record: RequestRecord): void;
   putJob(record: JobRecord): void;
   putCandidate(record: CandidateRecord): void;
+  putRenderedCandidate(record: RenderedCandidate): void;
   putWorkingSet(record: WorkingSetRecord): void;
   putEdit(record: EditRecord): void;
   putAsset(record: StudioAssetRecord): void;
@@ -303,6 +308,7 @@ export interface Store {
   readJob(id: string): Read<JobRecord>;
   readRequest(id: string): Read<RequestRecord>;
   readCandidate(id: string): Read<CandidateRecord>;
+  readRenderedCandidate(id: string): Read<RenderedCandidate>;
   readWorkingSet(id: string): Read<WorkingSetRecord>;
   readEdit(id: string): Read<EditRecord>;
   readAsset(id: string): Read<StudioAssetRecord>;
@@ -342,6 +348,8 @@ export function openStore(root: string): Store {
       writeJson(join(paths.jobs, `${record.job.id}.json`), record),
     putCandidate: (record) =>
       writeJson(join(paths.candidates, `${record.id}.json`), record),
+    putRenderedCandidate: (record) =>
+      writeJson(join(paths.renderedCandidates, `${record.id}.json`), record),
     putWorkingSet: (record) =>
       writeJson(join(paths.workingSets, `${record.id}.json`), record),
     putAsset: (record) =>
@@ -370,6 +378,11 @@ export function openStore(root: string): Store {
       readRecord(join(paths.requests, `${id}.json`), parseRequestRecord),
     readCandidate: (id) =>
       readRecord(join(paths.candidates, `${id}.json`), parseCandidateRecord),
+    readRenderedCandidate: (id) =>
+      readRecord(
+        join(paths.renderedCandidates, `${id}.json`),
+        parseRenderedCandidate,
+      ),
     readAsset: (id) =>
       readRecord(join(paths.assets, `${id}.json`), parseStudioAssetRecord),
     readEdit: (id) =>

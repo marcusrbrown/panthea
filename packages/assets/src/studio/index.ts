@@ -1,4 +1,10 @@
 export {
+  BLENDER_PIN,
+  type Clock,
+  RENDER_ENGINE,
+  type RenderEngineConfig,
+} from "../render/engine";
+export {
   type AsepriteConfig,
   createEditorAdapter,
   type EditorAdapter,
@@ -73,7 +79,12 @@ export {
   timerScheduler,
   type WatchFs,
 } from "./preview-source";
-export { PROVIDER, SELECTED_PROFILE, type SelectedProfile } from "./provider";
+export {
+  PROVIDER,
+  RENDER_PROVIDER,
+  SELECTED_PROFILE,
+  type SelectedProfile,
+} from "./provider";
 export type {
   ApproveOptions,
   AssetFailure,
@@ -120,6 +131,7 @@ export {
 } from "./request";
 export {
   type AbortResult,
+  CRITICAL_PRESSURE,
   type DrainResult,
   type DrainStop,
   type JobResult,
@@ -128,6 +140,7 @@ export {
   type RuntimeDeadlines,
   type RuntimeRefusal,
   type StudioRuntime,
+  systemMemoryPressure,
   type TeardownResult,
 } from "./runtime";
 export { MAX_SEED } from "./seed";

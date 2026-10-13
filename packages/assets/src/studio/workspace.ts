@@ -6,6 +6,7 @@
 //   <root>/requests/<id>.json
 //   <root>/jobs/<id>.json
 //   <root>/candidates/<jobId>.json
+//   <root>/rendered-candidates/<jobId>.json   a render job read back through its role manifest
 //   <root>/working-sets/<id>.json
 //   <root>/edits/<id>.json
 //   <root>/edits/<id>/{sheet.png,sheet.json,workspace.aseprite}
@@ -59,6 +60,7 @@ export const studioPaths = (root: string) => ({
   requests: join(root, "requests"),
   jobs: join(root, "jobs"),
   candidates: join(root, "candidates"),
+  renderedCandidates: join(root, "rendered-candidates"),
   workingSets: join(root, "working-sets"),
   edits: join(root, "edits"),
   assets: join(root, "assets"),
@@ -105,7 +107,8 @@ export function parseJobSource(
 export interface EngineFacts {
   readonly runtime: RuntimeRef;
   readonly runtimeBinarySha256: Sha256;
-  readonly model: ModelRef;
+  /** The model that drew the image; null for an engine that has none (a render of kit models). */
+  readonly model: ModelRef | null;
   readonly loras: readonly ModelRef[];
   readonly encoder: ModelRef | null;
   readonly vae: ModelRef | null;
@@ -145,7 +148,7 @@ export function parseEngineFacts(
         `${path}.runtimeBinarySha256`,
       );
       if (!binary.ok) return binary;
-      const model = parseModelRef(record.model, `${path}.model`);
+      const model = parseOptionalModel(record.model, `${path}.model`);
       if (!model.ok) return model;
       const loras = parseArray(record.loras, `${path}.loras`, parseModelRef);
       if (!loras.ok) return loras;

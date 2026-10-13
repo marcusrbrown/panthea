@@ -1,0 +1,221 @@
+{
+  "envelope": {
+    "left": 40.0,
+    "right": 33.0,
+    "up": 68.0,
+    "down": 8.0,
+    "margin": {
+      "left": 16,
+      "right": 23,
+      "top": 10,
+      "bottom": 10
+    },
+    "min_margin": 10
+  },
+  "cells": [
+    {
+      "name": "cast_west_00",
+      "pixelHash": "35961752528aab2a2766ce56983fff28d58df743338935b1808fe8e8590e7450",
+      "height": 62,
+      "width": 57,
+      "bottomRow": 85,
+      "colours": 19,
+      "outsidePalette": 0,
+      "coloursFigure": 18,
+      "outsidePaletteFigure": 0,
+      "outline": true,
+      "binaryAlpha": true,
+      "box": [16, 24, 73, 86],
+      "overlapPx": 40,
+      "unknownIdPx": 0,
+      "stamps": {
+        "face": {
+          "planned": 3,
+          "drawn": 3,
+          "skipped": 0
+        },
+        "bolt": {
+          "angle": 135,
+          "drawn": 36,
+          "total": 82,
+          "core_drawn": 36,
+          "core_total": 42,
+          "occluded": 0,
+          "protected": 6,
+          "clipped": 0,
+          "outline_on_body": 0
+        }
+      }
+    },
+    {
+      "name": "cast_west_01",
+      "pixelHash": "754c5a48ad1dafb3c3563a29a7097529a4fbaa4ff9b5722eb57b1b9fc8a59906",
+      "height": 63,
+      "width": 49,
+      "bottomRow": 85,
+      "colours": 19,
+      "outsidePalette": 0,
+      "coloursFigure": 18,
+      "outsidePaletteFigure": 0,
+      "outline": true,
+      "binaryAlpha": true,
+      "box": [40, 23, 89, 86],
+      "overlapPx": 43,
+      "unknownIdPx": 0,
+      "stamps": {
+        "face": {
+          "planned": 3,
+          "drawn": 3,
+          "skipped": 0
+        },
+        "bolt": {
+          "angle": 0,
+          "drawn": 38,
+          "total": 90,
+          "core_drawn": 38,
+          "core_total": 46,
+          "occluded": 0,
+          "protected": 8,
+          "clipped": 0,
+          "outline_on_body": 0
+        }
+      }
+    },
+    {
+      "name": "cast_west_02",
+      "pixelHash": "62e94f12475c87dee3fb296c563a220d2424a3605075b8abaef1e4f334138992",
+      "height": 64,
+      "width": 48,
+      "bottomRow": 85,
+      "colours": 19,
+      "outsidePalette": 0,
+      "coloursFigure": 18,
+      "outsidePaletteFigure": 0,
+      "outline": true,
+      "binaryAlpha": true,
+      "box": [40, 22, 88, 86],
+      "overlapPx": 42,
+      "unknownIdPx": 0,
+      "stamps": {
+        "face": {
+          "planned": 3,
+          "drawn": 3,
+          "skipped": 0
+        },
+        "bolt": {
+          "angle": 0,
+          "drawn": 37,
+          "total": 90,
+          "core_drawn": 37,
+          "core_total": 46,
+          "occluded": 0,
+          "protected": 9,
+          "clipped": 0,
+          "outline_on_body": 0
+        }
+      }
+    },
+    {
+      "name": "cast_west_03",
+      "pixelHash": "7cb439dc15654e201083ec00965d4fed6cf0322bbfe66e05baa4726429f66d1c",
+      "height": 63,
+      "width": 48,
+      "bottomRow": 85,
+      "colours": 19,
+      "outsidePalette": 0,
+      "coloursFigure": 18,
+      "outsidePaletteFigure": 0,
+      "outline": true,
+      "binaryAlpha": true,
+      "box": [40, 23, 88, 86],
+      "overlapPx": 44,
+      "unknownIdPx": 0,
+      "stamps": {
+        "face": {
+          "planned": 3,
+          "drawn": 3,
+          "skipped": 0
+        },
+        "bolt": {
+          "angle": 0,
+          "drawn": 39,
+          "total": 90,
+          "core_drawn": 39,
+          "core_total": 46,
+          "occluded": 0,
+          "protected": 7,
+          "clipped": 0,
+          "outline_on_body": 0
+        }
+      }
+    },
+    {
+      "name": "cast_west_04",
+      "pixelHash": "87da0ab3b5a2f6d73c502bbfaae99d50c6ef21e002da9fdee7f9689b00e85d1a",
+      "height": 76,
+      "width": 33,
+      "bottomRow": 85,
+      "colours": 19,
+      "outsidePalette": 0,
+      "coloursFigure": 18,
+      "outsidePaletteFigure": 0,
+      "outline": true,
+      "binaryAlpha": true,
+      "box": [40, 10, 73, 86],
+      "overlapPx": 48,
+      "unknownIdPx": 0,
+      "stamps": {
+        "face": {
+          "planned": 3,
+          "drawn": 3,
+          "skipped": 0
+        },
+        "bolt": {
+          "angle": 90,
+          "drawn": 39,
+          "total": 90,
+          "core_drawn": 39,
+          "core_total": 46,
+          "occluded": 2,
+          "protected": 5,
+          "clipped": 0,
+          "outline_on_body": 0
+        }
+      }
+    },
+    {
+      "name": "cast_west_05",
+      "pixelHash": "35961752528aab2a2766ce56983fff28d58df743338935b1808fe8e8590e7450",
+      "height": 62,
+      "width": 57,
+      "bottomRow": 85,
+      "colours": 19,
+      "outsidePalette": 0,
+      "coloursFigure": 18,
+      "outsidePaletteFigure": 0,
+      "outline": true,
+      "binaryAlpha": true,
+      "box": [16, 24, 73, 86],
+      "overlapPx": 40,
+      "unknownIdPx": 0,
+      "stamps": {
+        "face": {
+          "planned": 3,
+          "drawn": 3,
+          "skipped": 0
+        },
+        "bolt": {
+          "angle": 135,
+          "drawn": 36,
+          "total": 82,
+          "core_drawn": 36,
+          "core_total": 42,
+          "occluded": 0,
+          "protected": 6,
+          "clipped": 0,
+          "outline_on_body": 0
+        }
+      }
+    }
+  ]
+}

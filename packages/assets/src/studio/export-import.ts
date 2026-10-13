@@ -39,6 +39,7 @@ import {
   parseFrameRefs,
   parsePoint,
   parseSlotBasis,
+  type RenderedEntry,
   type SlotBasis,
   slotBasisOf,
   type WorkingSetRecord,
@@ -164,11 +165,15 @@ export function handStepOf(edit: Pick<EditRecord, "id" | "step" | "base">): {
 } {
   const step = edit.step;
   const history = Object.entries(edit.base).flatMap(([slot, basis]) =>
-    basis.kind === "derived"
+    basis.kind === "rendered"
       ? [
-          `${slot} was derived by ${basis.recipe} v${basis.version} from ${basis.assetId} ${basis.revision} ${basis.slotKey} (source slot ${basis.slotHash}, params ${basis.params}, result ${basis.resultHash})`,
+          `${slot} was rendered by job ${basis.jobId} (role manifest ${basis.manifest})`,
         ]
-      : [],
+      : basis.kind === "derived"
+        ? [
+            `${slot} was derived by ${basis.recipe} v${basis.version} from ${basis.assetId} ${basis.revision} ${basis.slotKey} (source slot ${basis.slotHash}, params ${basis.params}, result ${basis.resultHash})`,
+          ]
+        : [],
   );
   const suffix = history.length === 0 ? "" : ` (${history.join("; ")})`;
   if (step?.method === "script")
@@ -643,6 +648,8 @@ export function baseFrameRefs(
 ): readonly FrameRef[] | undefined {
   const authored = set.frames[slot];
   if (authored !== undefined) return authored.frames;
+  const rendered = set.rendered?.[slot];
+  if (rendered !== undefined) return rendered.frames;
   const derived = set.derived?.[slot];
   if (derived !== undefined) return derived.frames;
   const pick = set.picks[slot];
@@ -763,6 +770,7 @@ export function applyFinish(args: {
   const { set, edit, preview } = args;
   const frames: Record<string, AuthoredFrames> = { ...set.frames };
   const derived: Record<string, DerivedEntry> = { ...set.derived };
+  const rendered: Record<string, RenderedEntry> = { ...set.rendered };
   for (const slot of edit.slots) {
     const made = preview.slots[slot];
     const limit = set.limits[slot];
@@ -779,6 +787,8 @@ export function applyFinish(args: {
       );
     // A derived slot an edit finishes becomes a hand step: it leaves the derived entries.
     if (derived[slot] !== undefined) delete derived[slot];
+    // So does a rendered slot: the hand step records the render it started from.
+    if (rendered[slot] !== undefined) delete rendered[slot];
     frames[slot] = {
       editId: edit.id,
       basis,
@@ -791,13 +801,14 @@ export function applyFinish(args: {
       ],
     };
   }
-  const { derived: _earlier, ...rest } = set;
+  const { derived: _earlier, rendered: _rendered, ...rest } = set;
   return {
     ok: true,
     value: {
       ...rest,
       frames,
       ...(Object.keys(derived).length === 0 ? {} : { derived }),
+      ...(Object.keys(rendered).length === 0 ? {} : { rendered }),
       status: deriveStatus(
         set.kind,
         set.required,
@@ -805,6 +816,7 @@ export function applyFinish(args: {
         frames,
         set.limits,
         derived,
+        rendered,
       ),
     },
   };

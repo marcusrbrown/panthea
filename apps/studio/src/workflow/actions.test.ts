@@ -32,6 +32,7 @@ import {
   readEditReport,
   readExistingSheet,
   releaseWriterLock,
+  renderSubjectsOf,
   reopenEditor,
   requestSignature,
   rerollArgs,
@@ -1731,6 +1732,69 @@ describe("the Generate form's arguments", () => {
     expect(
       buildRequestArgs({ ...form, seedText: "4294967295" }, "zeus-1"),
     ).toMatchObject({ seed: 4294967295 });
+  });
+
+  test("a recipe request carries the palette and the pivot, and no batch, seed or style note", () => {
+    const recipe = { palette: "greek-retro", pivotX: "56", pivotY: "78" };
+    expect(
+      buildRequestArgs(
+        { ...form, batch: 3, seedText: "9", styleNote: "ignored", recipe },
+        "zeus-1",
+      ),
+    ).toEqual({
+      id: "zeus-1",
+      subject: "zeus",
+      kind: "sprite",
+      slots: [{ state: "idle", direction: "south" }],
+      palette: "greek-retro",
+      pivot: { x: 56, y: 78 },
+    });
+    expect(() =>
+      buildRequestArgs({ ...form, recipe: { ...recipe, pivotX: "5.5" } }, "x"),
+    ).toThrow(/two whole numbers/);
+    expect(() =>
+      buildRequestArgs({ ...form, recipe: { ...recipe, palette: " " } }, "x"),
+    ).toThrow(/palette id/);
+    expect(() =>
+      buildRequestArgs(
+        { ...form, kind: "portrait", slots: "neutral", recipe },
+        "x",
+      ),
+    ).toThrow(/Only a sprite/);
+  });
+
+  test("the form signature changes with the recipe fields and is unchanged for an image request", () => {
+    const image = requestSignature({
+      subject: "zeus",
+      kind: "sprite",
+      slots: "a",
+      batch: 1,
+      styleNote: "",
+      seed: "",
+    });
+    expect(image).toBe('["zeus","sprite","a",1,"",""]');
+    const recipe = { palette: "greek-retro", pivotX: "56", pivotY: "78" };
+    const base = {
+      subject: "zeus",
+      kind: "sprite",
+      slots: "a",
+      batch: 1,
+      styleNote: "",
+      seed: "",
+    };
+    expect(requestSignature({ ...base, recipe })).not.toBe(image);
+    expect(requestSignature({ ...base, recipe })).not.toBe(
+      requestSignature({ ...base, recipe: { ...recipe, pivotY: "77" } }),
+    );
+  });
+
+  test("the subjects with a render profile are read from the host status, and a missing list is none", () => {
+    expect(renderSubjectsOf({ renderSubjects: ["zeus", 4, "hera"] })).toEqual([
+      "zeus",
+      "hera",
+    ]);
+    expect(renderSubjectsOf(undefined)).toEqual([]);
+    expect(renderSubjectsOf({})).toEqual([]);
   });
 
   test("a bad slot, a missing subject and a malformed seed throw their own messages", () => {

@@ -8,6 +8,11 @@ import { mkdirSync } from "node:fs";
 import type { GenerationJob, JobOutput, Sha256 } from "@panthea/contracts";
 import { parseSlug } from "@panthea/contracts";
 import type { PaletteSet } from "../palette";
+import type { RenderAuditConfig } from "../render/audit";
+import {
+  buildRenderedCandidate,
+  type RenderedCandidate,
+} from "../render/candidate";
 import {
   type CandidateRecord,
   type ConformParams,
@@ -41,7 +46,12 @@ import {
   type RequestRecord,
   type Store,
 } from "./store";
-import { newWorkingSet, pickKeyframe, replaceSheetOf } from "./working-set";
+import {
+  newWorkingSet,
+  pickKeyframe,
+  pickRendered,
+  replaceSheetOf,
+} from "./working-set";
 import {
   type EngineFacts,
   parseEngineFacts,
@@ -76,6 +86,12 @@ export interface StudioSession {
     content: StudioContent,
     params: ConformParams,
   ): ConformResult;
+  /**
+   * Reads a succeeded render job back through its role manifest into a rendered candidate: every
+   * cell measured report-only against the asset's palette limits and the declared pivot. Needs
+   * no conformance parameters: a render's cells are already native.
+   */
+  conformRendered(jobId: string, content: StudioContent): RenderedConformResult;
   openWorkingSet(
     id: string,
     requestId: string,
@@ -149,6 +165,8 @@ export interface StudioSession {
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+    /** Where the committed `tools/render` is, which a rendered asset's render audit needs. */
+    render?: RenderAuditConfig,
   ): AssetOpResult;
   /** Rejects an idle draft; the record keeps its manifest, and a rejected asset is never approved or published. */
   rejectAsset(id: string, reason?: string): AssetOpResult;
@@ -175,6 +193,14 @@ export type ConformFailure =
   | "invalid-params"
   | "unsupported-png"
   | "corrupt-png";
+
+export type RenderedConformResult =
+  | { readonly ok: true; readonly candidate: RenderedCandidate }
+  | {
+      readonly ok: false;
+      readonly reason: ConformFailure;
+      readonly message: string;
+    };
 
 export type ConformResult =
   | { readonly ok: true; readonly candidate: CandidateRecord }
@@ -406,6 +432,10 @@ export function openStudioSession(root: string): StudioOpen {
       refusal.ok
         ? refused("wrong-state", "unreachable")
         : { ok: false, reason: refusal.reason, message: refusal.message };
+    const renderedRefusal = (refusal: CommandResult): RenderedConformResult =>
+      refusal.ok
+        ? refused("wrong-state", "unreachable")
+        : { ok: false, reason: refusal.reason, message: refusal.message };
     const readRequestOrRefuse = (id: string) =>
       lookup("request", id, store.readRequest);
     const readSetOrRefuse = (id: string) =>
@@ -454,6 +484,7 @@ export function openStudioSession(root: string): StudioOpen {
       putRequest: closedWrite(store.putRequest),
       putJob: closedWrite(store.putJob),
       putCandidate: closedWrite(store.putCandidate),
+      putRenderedCandidate: closedWrite(store.putRenderedCandidate),
       putWorkingSet: closedWrite(store.putWorkingSet),
       putEdit: closedWrite(store.putEdit),
       putAsset: closedWrite(store.putAsset),
@@ -566,6 +597,31 @@ export function openStudioSession(root: string): StudioOpen {
           }
           return { ok: true, candidate: outcome.candidate };
         },
+        conformRendered(jobId, content) {
+          if (closed) return { ok: false, reason: "closed", message: CLOSED };
+          const job = lookup("job", jobId, store.readJob);
+          if (!job.ok) return renderedRefusal(job.refusal);
+          const request = lookup(
+            "request",
+            job.record.source.requestId,
+            store.readRequest,
+          );
+          if (!request.ok) return renderedRefusal(request.refusal);
+          const built = buildRenderedCandidate({
+            job: job.record,
+            request: request.record,
+            content,
+            readBlob: (hash) => store.readBlob(hash),
+          });
+          if (!built.ok)
+            return { ok: false, reason: "wrong-state", message: built.message };
+          try {
+            store.putRenderedCandidate(built.candidate);
+          } catch (error) {
+            return refused("write-failed", (error as Error).message);
+          }
+          return { ok: true, candidate: built.candidate };
+        },
         openWorkingSet(id, requestId, content) {
           if (closed) return closedRefusal();
           if (!parseSlug(id, "id").ok)
@@ -595,6 +651,19 @@ export function openStudioSession(root: string): StudioOpen {
           if (closed) return closedRefusal();
           const set = readSetOrRefuse(workingSetId);
           if (!set.ok) return set.refusal;
+          const rendered = store.readRenderedCandidate(candidateId);
+          if (rendered.kind === "found") {
+            if (slot !== undefined && slot !== rendered.value.slotKey)
+              return refused(
+                "wrong-state",
+                `candidate ${candidateId} was rendered for ${rendered.value.slotKey}; a sprite slot only takes a candidate drawn for it, not ${slot}`,
+              );
+            const next = pickRendered(set.record, rendered.value);
+            if (!next.ok) return refused(next.reason, next.message);
+            return ledgered("pick", candidateId, () =>
+              store.putWorkingSet(next.record),
+            );
+          }
           const candidate = readCandidateOrRefuse(candidateId);
           if (!candidate.ok) return candidate.refusal;
           const next = pickKeyframe(set.record, candidate.record, slot);

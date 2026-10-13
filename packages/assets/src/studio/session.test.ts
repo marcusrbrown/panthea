@@ -483,6 +483,25 @@ describe("a closed session's store", () => {
       ],
       ["putJob", (s) => s.putJob(failed)],
       ["putCandidate", (s) => s.putCandidate(doneCandidate("stale-job"))],
+      [
+        "putRenderedCandidate",
+        (s) =>
+          s.putRenderedCandidate({
+            schemaVersion: 1,
+            id: "stale-render",
+            source: { requestId: "r1", slotKey: "idle/west", ordinal: 0 },
+            subject: "zeus",
+            kind: "sprite",
+            slotKey: "idle/west",
+            manifest: sha256Hex(new Uint8Array([2])),
+            revisionRecipeHash: sha256Hex(new Uint8Array([3])),
+            slotRecipeHash: sha256Hex(new Uint8Array([4])),
+            postStepVersion: 1,
+            frames: [],
+            params: doneCandidate("x").params,
+            target: doneCandidate("x").target,
+          }),
+      ],
       ["putWorkingSet", (s) => s.putWorkingSet(workingSet("stale-set"))],
       [
         "putEdit",
@@ -595,11 +614,15 @@ describe("a closed session's store", () => {
 describe("public surface", () => {
   test("the studio subpath exposes the host, the lock-free reader and the preview source, not the unlocked store factory", () => {
     expect(Object.keys(studio).sort()).toEqual([
+      "BLENDER_PIN",
       "COALESCE_MS",
+      "CRITICAL_PRESSURE",
       "DEFAULT_BATCH",
       "MAX_SEED",
       "PREVIEW_SOURCE_KINDS",
       "PROVIDER",
+      "RENDER_ENGINE",
+      "RENDER_PROVIDER",
       "SELECTED_PROFILE",
       "STUDIO_SCHEMA_VERSION",
       "adapterInput",
@@ -632,6 +655,7 @@ describe("public surface", () => {
       "sortSheet",
       "studioPaths",
       "summarizeSheet",
+      "systemMemoryPressure",
       "timerScheduler",
     ]);
   });

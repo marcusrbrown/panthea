@@ -206,3 +206,6 @@ tools/scenarios/m2-greek-cast/unattended/**/*.sqlite*
 # Studio authoring store (local requests, jobs, ledgers, blobs); canon lives in the registry
 .studio/
 .worktrees
+
+# Hand-run render scratch (staged kit copies, recipes, outputs); never committed
+tools/render/scratch/

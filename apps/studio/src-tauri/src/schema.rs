@@ -28,7 +28,10 @@ use OpClass::{Long, Read, Write};
 /// Argument names are the session's own (`tools/studio/src/commands.ts`). The
 /// masked-edit fields of `generate` (`editBase*`, `editMask`, `editStrength`,
 /// `editCue`) name files by path and stay a CLI path; so does `reference`,
-/// which the session refuses as unavailable (the probe's NO-GO). `finish` takes no files:
+/// which the session refuses as unavailable (the probe's NO-GO). `palette` and
+/// `pivot` make `generate` and `resolve` a recipe request for a render engine
+/// (a palette id and a pixel point, never a place; the render profile comes from
+/// the subject, and a recipe request takes no batch, seed or style note). `finish` takes no files:
 /// it takes back what the editor saved. It may name the sheet hash it was
 /// reviewed at, and carry the step it is recorded with (`method` and
 /// `description` are free text published with the asset, not places).
@@ -54,6 +57,8 @@ pub const OPS: &[OpSpec] = &[
             "batch",
             "seed",
             "styleNote",
+            "palette",
+            "pivot",
         ],
         Read,
     ),
@@ -84,6 +89,8 @@ pub const OPS: &[OpSpec] = &[
             "batch",
             "seed",
             "styleNote",
+            "palette",
+            "pivot",
         ],
         Long,
     ),
@@ -590,6 +597,34 @@ mod tests {
             "release",
         ] {
             assert_eq!(lookup(op).unwrap().class, OpClass::Write, "{op}");
+        }
+    }
+
+    #[test]
+    fn generate_and_resolve_take_the_recipe_fields_and_they_are_not_places() {
+        for op in ["generate", "resolve"] {
+            let row = lookup(op).unwrap();
+            assert!(row.args.contains(&"palette"), "{op}");
+            assert!(row.args.contains(&"pivot"), "{op}");
+            assert!(
+                check(
+                    op,
+                    &json!({ "id": "a", "subject": "zeus", "kind": "sprite", "slots": [], "palette": "greek-retro", "pivot": { "x": 56, "y": 78 } })
+                )
+                .is_ok(),
+                "{op}"
+            );
+        }
+        for free_text in ["palette", "pivot"] {
+            assert!(!PATHISH.contains(&free_text), "{free_text}");
+        }
+        // The engine itself is never named by the webview: no op takes an executable.
+        for spec in OPS {
+            assert!(
+                !spec.args.contains(&"executable"),
+                "{} takes executable",
+                spec.op
+            );
         }
     }
 

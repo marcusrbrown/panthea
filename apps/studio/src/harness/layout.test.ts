@@ -1,5 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import type { PreviewItem } from "../renderer/preview";
+import {
+  bottomVertex,
+  canvasMetrics,
+  spriteOrigin,
+  ZOOMS,
+} from "@panthea/renderer";
+import {
+  LOGICAL_HEIGHT,
+  LOGICAL_SIZE,
+  LOGICAL_WIDTH,
+  type PreviewItem,
+} from "../renderer/preview";
 import {
   clockTiming,
   createPlaybackClock,
@@ -860,5 +871,150 @@ describe("following the selected clip's timing", () => {
     expect(world.listeners()).toBe(0);
     expect(seen.length).toBe(before);
     expect(playback.elapsed()).toBe(0);
+  });
+});
+
+describe("a rendered god-tall sprite in the preview (R16, R17)", () => {
+  // The retro Zeus: a 112x96 cell, pivot (56, 78), a 16-frame walk at 50 ms a frame.
+  const CELL = { w: 112, h: 96 };
+  const PIVOT = { x: 56, y: 78 };
+  const walk = (durationMs = 50) => ({
+    frames: Array.from({ length: 16 }, () => ({ durationMs })),
+    loopStart: 0,
+  });
+
+  const items = harnessItems({
+    subject: { source: "draft", id: "zeus-retro" },
+    portrait: undefined,
+    state: "walk",
+    direction: "south",
+    ability: undefined,
+    expression: "neutral",
+    animations: [{ state: "walk", direction: "south" }],
+    companion: false,
+  });
+  const subject = byId(items, "subject");
+
+  it("places the 112x96 cell with its pivot on the bottom vertex of the subject's tile", () => {
+    if (subject.kind !== "sprite") throw new Error("not a sprite");
+    const footprint = subject.footprint ?? { w: 1, h: 1 };
+    const vertex = bottomVertex(subject.cell, footprint);
+    const origin = spriteOrigin(subject.cell, footprint, PIVOT);
+    if (!vertex.ok || !origin.ok) throw new Error("not placeable");
+    expect(origin.value).toEqual({
+      x: vertex.value.x - PIVOT.x,
+      y: vertex.value.y - PIVOT.y,
+    });
+    // The cell's own (56, 78) lands exactly on the vertex.
+    expect({
+      x: origin.value.x + PIVOT.x,
+      y: origin.value.y + PIVOT.y,
+    }).toEqual(vertex.value);
+    // And the whole 112x96 cell is inside the harness viewport, on whole logical pixels.
+    const left = origin.value.x - HARNESS_CAMERA.x;
+    const top = origin.value.y - HARNESS_CAMERA.y;
+    for (const edge of [left, top, left + CELL.w, top + CELL.h])
+      expect(Number.isInteger(edge)).toBe(true);
+    expect(left).toBeGreaterThanOrEqual(0);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(left + CELL.w).toBeLessThanOrEqual(LOGICAL_WIDTH);
+    expect(top + CELL.h).toBeLessThanOrEqual(LOGICAL_HEIGHT);
+  });
+
+  it("draws at integer zoom only, so the 112x96 cell is 112z x 96z device pixels, with the placeholder mortal and structure for scale", () => {
+    expect([...ZOOMS]).toEqual([2, 3, 4]);
+    for (const zoom of ZOOMS) {
+      expect(Number.isInteger(zoom)).toBe(true);
+      const metrics = canvasMetrics(LOGICAL_SIZE, zoom, 1);
+      expect(metrics.backingWidth).toBe(LOGICAL_WIDTH * zoom);
+      expect(metrics.backingHeight).toBe(LOGICAL_HEIGHT * zoom);
+      // The cell's device size is a whole multiple: no fractional scale of a pixel-art cell.
+      expect((CELL.w * metrics.backingWidth) % LOGICAL_WIDTH).toBe(0);
+      expect(CELL.w * zoom).toBe(
+        (CELL.w * metrics.backingWidth) / LOGICAL_WIDTH,
+      );
+    }
+    // The placeholder context is still there around a rendered subject.
+    expect(byId(items, "mortal")).toMatchObject({ request: MISSING_SPRITE });
+    expect(byId(items, "structure")).toMatchObject({ request: MISSING_SPRITE });
+    expect(items.filter((item) => item.kind === "diamond")).toHaveLength(16);
+  });
+
+  it("plays the 16-frame clip at the manifest's timing: frame n at 50 n ms, wrapping to the loop start after 800 ms", () => {
+    let now = 0;
+    const timing = clockTiming(walk());
+    expect(timing.durations).toHaveLength(16);
+    const clock = createPlaybackClock(
+      timing.durations,
+      timing.loopStart,
+      () => now,
+    );
+    clock.play();
+    for (const [at, frame] of [
+      [0, 0],
+      [49, 0],
+      [50, 1],
+      [375, 7],
+      [750, 15],
+      [799, 15],
+      [800, 0],
+      [850, 1],
+    ] as const) {
+      now = at;
+      expect(clock.frame()).toBe(frame);
+    }
+  });
+
+  const settle = async () => {
+    for (let i = 0; i < 10; i += 1) await Promise.resolve();
+  };
+
+  it("live-reloads a re-rendered clip through a deterministic trigger: the new timing is taken, the paused frame held, and an unrelated change is ignored", async () => {
+    const entry = { source: "draft", id: "zeus-retro" } as const;
+    let current = { kind: "frames" as const, asset: walk(50) };
+    const listeners = new Set<(change: never) => void>();
+    let resolves = 0;
+    const source = {
+      resolve: async () => {
+        resolves += 1;
+        return current as never;
+      },
+      subscribe: (listener: (change: never) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    const emit = (change: {
+      changed: readonly { source: string; id: string }[];
+      listing: boolean;
+    }) => {
+      for (const listener of listeners) listener(change as never);
+    };
+    const now = 0;
+    const playback = createPlaybackClock([], undefined, () => now);
+    const seen: (readonly number[])[] = [];
+    const stop = followClipTiming({
+      source: source as never,
+      request: { ...entry, state: "walk", direction: "south" } as never,
+      playback,
+      onTiming: (durations) => seen.push(durations),
+    });
+    await settle();
+    expect(seen.at(-1)).toEqual(Array.from({ length: 16 }, () => 50));
+    playback.scrub(5);
+
+    // The asset is re-rendered and republished at 100 ms a frame.
+    current = { kind: "frames", asset: walk(100) };
+    const before = resolves;
+    emit({ changed: [{ source: "draft", id: "another" }], listing: false });
+    await settle();
+    expect(resolves).toBe(before);
+    emit({ changed: [entry], listing: false });
+    await settle();
+
+    expect(seen.at(-1)).toEqual(Array.from({ length: 16 }, () => 100));
+    expect(playback.frame()).toBe(5);
+    stop();
+    expect(listeners.size).toBe(0);
   });
 });

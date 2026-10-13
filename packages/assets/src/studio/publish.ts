@@ -29,6 +29,7 @@ import {
   publishAsset as publishToRegistry,
   readRevision,
 } from "../registry";
+import { auditRendered, type RenderAuditConfig } from "../render/audit";
 import { checkAssessments, licenceBlock, reviewLicences } from "./approval";
 import { auditDerivation, type PublishedSource } from "./derivation";
 import type { EditFailure, EditHost } from "./edit-session";
@@ -76,11 +77,16 @@ export interface AssetOps {
     content: StudioContent,
     palettes: PaletteSet,
   ): AssetOpResult;
+  /**
+   * `render` says where the committed `tools/render` is: a rendered asset publishes only with it,
+   * because its render audit recomputes the recipe from those inputs.
+   */
   publishAsset(
     id: string,
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+    render?: RenderAuditConfig,
   ): AssetOpResult;
   rejectAsset(id: string, reason?: string): AssetOpResult;
 }
@@ -433,6 +439,7 @@ export function createAssetOps(host: EditHost): AssetOps {
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+    render?: RenderAuditConfig,
   ): AssetOpResult {
     if (host.isClosed()) return refused("closed", CLOSED);
     const asset = load(id);
@@ -503,6 +510,27 @@ export function createAssetOps(host: EditHost): AssetOps {
     });
     if (derivedMismatch !== undefined)
       return refused("wrong-state", derivedMismatch);
+    // A rendered asset has no derived steps, so the derivation audit passed trivially: its own
+    // audit recomputes the recipe and the post step from the committed inputs and stored raw frames.
+    if (manifest.provenance.method === "rendered") {
+      if (render === undefined)
+        return refused(
+          "wrong-state",
+          "a rendered asset publishes only with the render root, which its render audit needs",
+        );
+      const rendered = auditRendered({
+        manifest,
+        atlas,
+        palettes,
+        renderRoot: render.renderRoot,
+        ...(render.current === undefined ? {} : { current: render.current }),
+        readBlob: (hash) => store.readBlob(hash),
+        jobs: store.status().jobs,
+        handEdited: new Set(Object.keys(set.value.frames)),
+      });
+      if (rendered !== undefined)
+        return refused("wrong-state", `the render audit: ${rendered}`);
+    }
     const mismatch = carriedCellsMismatch({
       manifest,
       atlas,

@@ -23,6 +23,7 @@ import {
   type Sha256,
   stateRuleFor,
 } from "@panthea/contracts";
+import type { RenderedCandidate } from "../render/candidate";
 import {
   type CandidateParams,
   type CandidateRecord,
@@ -62,7 +63,16 @@ export type SlotBasis =
       readonly editId: string;
       readonly sheetHash: Sha256;
     }
-  | DerivedBasis;
+  | DerivedBasis
+  | RenderedBasis;
+
+/** A render job's frames as an edit's starting point: a hand step over them records which job they came from. */
+export interface RenderedBasis {
+  readonly kind: "rendered";
+  readonly jobId: string;
+  /** The job's role manifest blob. */
+  readonly manifest: Sha256;
+}
 
 /**
  * A derived slot as an edit's starting point. It names the recipe and the
@@ -117,6 +127,30 @@ export interface DerivedEntry {
 }
 
 /**
+ * A slot picked from a render job: the job, the post step it ran under and all its cells. Picking
+ * it is not an edit: there is no step, and a hand edit on it later leaves these entries (it
+ * becomes a hand step over the rendered basis).
+ */
+export interface RenderedEntry {
+  /** The succeeded render job, which is also the rendered candidate's id. */
+  readonly jobId: string;
+  readonly source: JobSource;
+  /** The job's role manifest blob: raw frames per role, cells, locators. */
+  readonly manifest: Sha256;
+  /** The revision recipe hash the slot was rendered under; equal across a revision's slots. */
+  readonly revisionRecipeHash: Sha256;
+  /** The revision hash plus this slot's state, clip, facing and seed. */
+  readonly slotRecipeHash: Sha256;
+  /** The post-step parameters the cells were made under. */
+  readonly postStep: { readonly version: number };
+  readonly frames: readonly FrameRef[];
+  readonly loopStart?: number;
+  /** What the cells were reported against. */
+  readonly params: CandidateParams;
+  readonly palette: CandidateTarget["palette"];
+}
+
+/**
  * A realm variant to add at pack: the palette family and the colour map it is
  * recoloured under, with one step per slot of the source. The pixels are made
  * at pack, from the packed atlas.
@@ -141,6 +175,8 @@ export interface WorkingSetRecord {
   readonly frames: Readonly<Record<string, AuthoredFrames>>;
   /** Slots recomputed from a published revision; absent on a set that derives nothing. */
   readonly derived?: Readonly<Record<string, DerivedEntry>>;
+  /** Slots picked from a render job; absent on a set that picked none. */
+  readonly rendered?: Readonly<Record<string, RenderedEntry>>;
   /** Realm variants to add at pack, by palette family; absent when there are none. */
   readonly variants?: Readonly<Record<string, VariantRequest>>;
   readonly status: "open" | "complete";
@@ -158,9 +194,11 @@ export function deriveStatus(
   frames: Readonly<Record<string, AuthoredFrames>>,
   limits: Readonly<Record<string, FrameLimits>>,
   derived: Readonly<Record<string, DerivedEntry>> = {},
+  rendered: Readonly<Record<string, RenderedEntry>> = {},
 ): "open" | "complete" {
   const done = (slot: string) => {
-    if (derived[slot] !== undefined) return true;
+    if (derived[slot] !== undefined || rendered[slot] !== undefined)
+      return true;
     const authored = frames[slot];
     const limit = limits[slot];
     if (authored !== undefined && limit !== undefined)
@@ -191,6 +229,13 @@ export function slotBasisOf(
       kind: "keyframe",
       candidateId: pick.candidateId,
       imageHash: pick.imageHash,
+    };
+  const rendered = set.rendered?.[slot];
+  if (rendered !== undefined)
+    return {
+      kind: "rendered",
+      jobId: rendered.jobId,
+      manifest: rendered.manifest,
     };
   const derived = set.derived?.[slot];
   if (derived !== undefined)
@@ -243,6 +288,23 @@ export function parseSlotBasis(
           kind: "keyframe",
           candidateId: candidateId.value,
           imageHash: imageHash.value,
+        } as const);
+      },
+    );
+  if (kind === "rendered")
+    return parseStrictRecord(
+      value,
+      path,
+      ["kind", "jobId", "manifest"],
+      (record) => {
+        const jobId = parseSlug(record.jobId, `${path}.jobId`);
+        if (!jobId.ok) return jobId;
+        const manifest = parseSha256(record.manifest, `${path}.manifest`);
+        if (!manifest.ok) return manifest;
+        return ok({
+          kind: "rendered",
+          jobId: jobId.value,
+          manifest: manifest.value,
         } as const);
       },
     );
@@ -303,7 +365,7 @@ export function parseSlotBasis(
       if (record.kind !== "frames")
         return fail(
           `${path}.kind`,
-          'expected "keyframe", "frames" or "derived"',
+          'expected "keyframe", "frames", "derived" or "rendered"',
         );
       const editId = parseSlug(record.editId, `${path}.editId`);
       if (!editId.ok) return editId;
@@ -534,6 +596,91 @@ function parseDerivedEntry(
   );
 }
 
+function parseRenderedEntry(
+  value: unknown,
+  path: string,
+): ParseResult<RenderedEntry> {
+  return parseStrictRecord(
+    value,
+    path,
+    [
+      "jobId",
+      "source",
+      "manifest",
+      "revisionRecipeHash",
+      "slotRecipeHash",
+      "postStep",
+      "frames",
+      "loopStart",
+      "params",
+      "palette",
+    ],
+    (record) => {
+      const jobId = parseSlug(record.jobId, `${path}.jobId`);
+      if (!jobId.ok) return jobId;
+      const source = parseJobSource(record.source, `${path}.source`);
+      if (!source.ok) return source;
+      const manifest = parseSha256(record.manifest, `${path}.manifest`);
+      if (!manifest.ok) return manifest;
+      const revision = parseSha256(
+        record.revisionRecipeHash,
+        `${path}.revisionRecipeHash`,
+      );
+      if (!revision.ok) return revision;
+      const slotHash = parseSha256(
+        record.slotRecipeHash,
+        `${path}.slotRecipeHash`,
+      );
+      if (!slotHash.ok) return slotHash;
+      const postStep = parseStrictRecord(
+        record.postStep,
+        `${path}.postStep`,
+        ["version"],
+        (p) => {
+          const version = parseIntegerAtLeast(
+            p.version,
+            `${path}.postStep.version`,
+            1,
+          );
+          if (!version.ok) return version;
+          return ok({ version: version.value });
+        },
+      );
+      if (!postStep.ok) return postStep;
+      const frames = parseFrameRefs(record.frames, `${path}.frames`);
+      if (!frames.ok) return frames;
+      let loopStart: number | undefined;
+      if (record.loopStart !== undefined) {
+        const parsed = parseIntegerAtLeast(
+          record.loopStart,
+          `${path}.loopStart`,
+          0,
+        );
+        if (!parsed.ok) return parsed;
+        if (parsed.value >= frames.value.length)
+          return fail(`${path}.loopStart`, "expected a frame index");
+        loopStart = parsed.value;
+      }
+      const params = parseCandidateParams(record.params, `${path}.params`);
+      if (!params.ok) return params;
+      const palette = parseTargetPalette(record.palette, `${path}.palette`);
+      if (!palette.ok) return palette;
+      return ok({
+        jobId: jobId.value,
+        source: source.value,
+        manifest: manifest.value,
+        revisionRecipeHash: revision.value,
+        slotRecipeHash: slotHash.value,
+        postStep: postStep.value,
+        frames: frames.value,
+        ...(loopStart === undefined ? {} : { loopStart }),
+        params: params.value,
+        palette: palette.value,
+      });
+    },
+  );
+}
+
 function parseVariantRequest(
   value: unknown,
   path: string,
@@ -579,6 +726,7 @@ export function parseWorkingSetRecord(
       "picks",
       "frames",
       "derived",
+      "rendered",
       "variants",
       "status",
     ],
@@ -693,6 +841,39 @@ export function parseWorkingSetRecord(
           derived[slot] = entry.value;
         }
       }
+      const rendered: Record<string, RenderedEntry> = {};
+      if (record.rendered !== undefined) {
+        if (!isRecord(record.rendered))
+          return fail("workingSet.rendered", "expected an object");
+        for (const slot of Object.keys(record.rendered)) {
+          const path = `workingSet.rendered.${slot}`;
+          if (!required.value.includes(slot))
+            return fail(path, "a rendered slot that is not required");
+          if (
+            frames[slot] !== undefined ||
+            picks[slot] !== undefined ||
+            derived[slot] !== undefined
+          )
+            return fail(
+              path,
+              "a rendered slot also has a pick, authored frames or a derived entry",
+            );
+          const entry = parseRenderedEntry(record.rendered[slot], path);
+          if (!entry.ok) return entry;
+          if (entry.value.source.slotKey !== slot)
+            return fail(`${path}.source.slotKey`, `expected "${slot}"`);
+          const limit = limits.value[slot] as FrameLimits;
+          if (
+            entry.value.frames.length < limit.min ||
+            entry.value.frames.length > limit.max
+          )
+            return fail(
+              `${path}.frames`,
+              `expected ${limit.min}-${limit.max} frames, got ${entry.value.frames.length}`,
+            );
+          rendered[slot] = entry.value;
+        }
+      }
       const variants: Record<string, VariantRequest> = {};
       if (record.variants !== undefined) {
         if (!isRecord(record.variants))
@@ -720,6 +901,7 @@ export function parseWorkingSetRecord(
           frames,
           limits.value,
           derived,
+          rendered,
         )
       )
         return fail(
@@ -737,6 +919,7 @@ export function parseWorkingSetRecord(
         picks,
         frames,
         ...(Object.keys(derived).length === 0 ? {} : { derived }),
+        ...(Object.keys(rendered).length === 0 ? {} : { rendered }),
         ...(Object.keys(variants).length === 0 ? {} : { variants }),
         status: status.value,
       });
@@ -833,6 +1016,7 @@ export function replaceSheetOf(
         set.frames,
         set.limits,
         set.derived,
+        set.rendered,
       ),
     },
   };
@@ -877,6 +1061,10 @@ export function pickKeyframe(
     return refuse(
       `slot ${slot} is derived; a pick would not replace it (derive again, or edit it)`,
     );
+  if (set.rendered?.[slot] !== undefined)
+    return refuse(
+      `slot ${slot} is a render; an image pick would not replace it`,
+    );
   const frame: Keyframe = {
     candidateId: candidate.id,
     source: candidate.source,
@@ -904,6 +1092,79 @@ export function pickKeyframe(
         set.frames,
         set.limits,
         set.derived,
+        set.rendered,
+      ),
+    },
+  };
+}
+
+/**
+ * Snapshots a rendered candidate into its slot with all its frames. A render is not an edit:
+ * the slot gets no step and no authored frames, and counts as done. Another render replaces
+ * an earlier one; a slot with authored frames or an image pick is refused, as an image pick is.
+ */
+export function pickRendered(
+  set: WorkingSetRecord,
+  candidate: RenderedCandidate,
+): WorkingSetResult {
+  if (set.kind !== "sprite" || candidate.subject !== set.subject)
+    return refuse(
+      `candidate ${candidate.id} is a ${candidate.kind} for ${candidate.subject}, not a ${set.kind} for ${set.subject}`,
+    );
+  if (candidate.source.requestId !== set.sheetRequestId)
+    return refuse(
+      `candidate ${candidate.id} is from request ${candidate.source.requestId}, not the current sheet ${set.sheetRequestId}`,
+    );
+  const slot = candidate.source.slotKey;
+  if (!set.required.includes(slot))
+    return refuse(`slot ${slot} is not one this working set needs`);
+  if (set.frames[slot] !== undefined)
+    return refuse(
+      `slot ${slot} has authored frames; a pick would not replace them`,
+    );
+  if (set.picks[slot] !== undefined || set.derived?.[slot] !== undefined)
+    return refuse(
+      `slot ${slot} has an image pick or a derived entry; a render would not replace it`,
+    );
+  const limit = set.limits[slot] as FrameLimits;
+  if (
+    candidate.frames.length < limit.min ||
+    candidate.frames.length > limit.max
+  )
+    return refuse(
+      `slot ${slot} takes ${limit.min}-${limit.max} frames, the render has ${candidate.frames.length}`,
+    );
+  const entry: RenderedEntry = {
+    jobId: candidate.id,
+    source: candidate.source,
+    manifest: candidate.manifest,
+    revisionRecipeHash: candidate.revisionRecipeHash,
+    slotRecipeHash: candidate.slotRecipeHash,
+    postStep: { version: candidate.postStepVersion },
+    frames: candidate.frames.map((f) => ({
+      hash: f.hash,
+      durationMs: f.durationMs,
+    })),
+    ...(candidate.loopStart === undefined
+      ? {}
+      : { loopStart: candidate.loopStart }),
+    params: candidate.params,
+    palette: candidate.target.palette,
+  };
+  const rendered = { ...set.rendered, [slot]: entry };
+  return {
+    ok: true,
+    record: {
+      ...set,
+      rendered,
+      status: deriveStatus(
+        set.kind,
+        set.required,
+        set.picks,
+        set.frames,
+        set.limits,
+        set.derived,
+        rendered,
       ),
     },
   };

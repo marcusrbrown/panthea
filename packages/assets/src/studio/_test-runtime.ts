@@ -166,7 +166,7 @@ function main(): void {
   const log = (event: string, extra: Record<string, unknown> = {}) =>
     appendFileSync(
       logPath,
-      `${JSON.stringify({ pid: process.pid, event, ...extra })}\n`,
+      `${JSON.stringify({ pid: process.pid, event, at: Date.now(), ...extra })}\n`,
     );
   const behavior = (): Behavior =>
     JSON.parse(readFileSync(behaviorPath, "utf8"));

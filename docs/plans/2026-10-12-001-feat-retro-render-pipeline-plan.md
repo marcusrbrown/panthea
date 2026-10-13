@@ -413,7 +413,7 @@ flowchart TB
 
 ### Phase B: the render pipeline
 
-- [ ] **U5. TypeScript post step and stamp set**
+- [x] **U5. TypeScript post step and stamp set**
 
 **Goal:** Deterministic raw-frames-to-cells in the studio's own code.
 
@@ -446,7 +446,7 @@ flowchart TB
 
 **Verification:** Parity and goldens pass under `bun test`; no ffmpeg or Python in the studio path.
 
-- [ ] **U6. Blender render script, script contract, camera and model profiles**
+- [x] **U6. Blender render script, script contract, camera and model profiles**
 
 **Goal:** One GPL render script driven by a model profile and one camera, with one pose path and a contract the runner shares.
 
@@ -479,7 +479,7 @@ flowchart TB
 
 **Verification:** Parser tests pass; a fresh clone holds every kit file the Zeus profile needs; the script carries the GPL header and passes the boundary test.
 
-- [ ] **U7. Render engine in the studio runtime**
+- [x] **U7. Render engine in the studio runtime**
 
 **Goal:** Blender render jobs run in the shared queue under the existing lifecycle rules.
 
@@ -520,7 +520,7 @@ flowchart TB
 
 **Verification:** Fake-process tests pass; one real render of a Zeus slot through the CLI stores its raw frames and manifest on the owner's machine.
 
-- [ ] **U8. Rendered entries through pack, publish and the app**
+- [x] **U8. Rendered entries through pack, publish and the app**
 
 **Goal:** Rendered candidates become publishable revisions, reviewable in the app.
 

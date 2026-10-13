@@ -1,0 +1,43 @@
+{
+  "postStepVersion": 2,
+  "cells": [
+    {
+      "name": "cast_west_00",
+      "pixelHash": "d494d046ebdfeb64aa8c853308a3a324ca1f6c74af048ca65d9dd864dd1b102c"
+    },
+    {
+      "name": "cast_west_01",
+      "pixelHash": "93d60e843e1c2fbef5eab59f97e726b8892a3aaa6f3592f68aae63e4c152ad24"
+    },
+    {
+      "name": "cast_west_02",
+      "pixelHash": "f589c4aa9552f78a76fbf6d6b1eacd0ecfe74ddeaf556a79e46c451ac7902367"
+    },
+    {
+      "name": "cast_west_03",
+      "pixelHash": "e3ac93d789a22ac1828110c42bff0f2e5b638f82d8583f0100bfb85658ddd78c"
+    },
+    {
+      "name": "cast_west_04",
+      "pixelHash": "1f712d149b74c5d82d54e3869f7d2dcd7be91724523130f9bdc327567c4dbe68"
+    },
+    {
+      "name": "cast_west_05",
+      "pixelHash": "d494d046ebdfeb64aa8c853308a3a324ca1f6c74af048ca65d9dd864dd1b102c"
+    }
+  ],
+  "envelope": {
+    "left": 40,
+    "right": 33,
+    "up": 68,
+    "down": 8,
+    "margin": {
+      "left": 16,
+      "right": 23,
+      "top": 10,
+      "bottom": 10
+    },
+    "minMargin": 10,
+    "clipped": false
+  }
+}

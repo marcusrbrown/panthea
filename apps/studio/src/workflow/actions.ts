@@ -155,6 +155,13 @@ export function requestJobCount(
   );
 }
 
+/** The recipe request's own fields: the palette and the declared pivot, as typed. The render profile comes from the subject. */
+export interface RecipeForm {
+  readonly palette: string;
+  readonly pivotX: string;
+  readonly pivotY: string;
+}
+
 export interface RequestForm {
   readonly subject: string;
   readonly kind: string;
@@ -162,18 +169,29 @@ export interface RequestForm {
   readonly batch: number;
   readonly styleNote: string;
   readonly seed: string;
+  readonly recipe?: RecipeForm;
 }
 
 /** What the request form said, as one string: a resolve is only for the form it was sent from. */
 export function requestSignature(form: RequestForm): string {
-  return JSON.stringify([
+  const fields = [
     form.subject,
     form.kind,
     form.slots,
     form.batch,
     form.styleNote,
     form.seed,
-  ]);
+  ];
+  return JSON.stringify(
+    form.recipe === undefined
+      ? fields
+      : [
+          ...fields,
+          form.recipe.palette,
+          form.recipe.pivotX,
+          form.recipe.pivotY,
+        ],
+  );
 }
 
 /** Generate is ready only while the form still says what the resolve was made from. */
@@ -1087,6 +1105,19 @@ export interface GenerateForm {
   readonly batch: number;
   readonly styleNote: string;
   readonly seedText: string;
+  /** Set for a recipe request to the render engine; batch, seed and style note are then not sent. */
+  readonly recipe?: RecipeForm;
+}
+
+/** The subjects the host says have a render profile (its `status` lists them), as slugs. */
+export function renderSubjectsOf(status: unknown): readonly string[] {
+  const listed =
+    typeof status === "object" && status !== null
+      ? (status as { renderSubjects?: unknown }).renderSubjects
+      : undefined;
+  return Array.isArray(listed)
+    ? listed.filter((id): id is string => typeof id === "string")
+    : [];
 }
 
 /**
@@ -1105,6 +1136,25 @@ export function buildRequestArgs(
     throw new Error("Enter a subject and at least one slot.");
   const problem = slotProblem(form.slots, form.kind);
   if (problem !== undefined) throw new Error(problem);
+  if (form.recipe !== undefined) {
+    if (form.kind !== "sprite") throw new Error("Only a sprite is rendered.");
+    const palette = form.recipe.palette.trim();
+    const [x, y] = [form.recipe.pivotX, form.recipe.pivotY].map((text) =>
+      /^\d+$/.test(text.trim()) ? Number(text.trim()) : Number.NaN,
+    );
+    if (!palette) throw new Error("Enter the palette id for the render.");
+    if (!Number.isInteger(x) || !Number.isInteger(y))
+      throw new Error("The pivot is two whole numbers, x and y.");
+    // A recipe request renders each slot once at the fixed seed: no batch, seed or style note.
+    return {
+      id,
+      subject: subjectSlug(form.subject),
+      kind: form.kind,
+      slots: parsedSlots,
+      palette,
+      pivot: { x, y },
+    };
+  }
   const baseSeed = parseBaseSeed(
     form.seedText,
     requestJobCount(form.slots, form.kind, form.batch),

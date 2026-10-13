@@ -3,7 +3,14 @@
 // scenario runs the scan over the real repository.
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { checkLicenceBoundary, checkPythonSource } from "./licence-boundary";
@@ -200,5 +207,36 @@ describe("checkLicenceBoundary", () => {
 
   it("passes every real repository file", () => {
     expect(checkLicenceBoundary(REPO_ROOT)).toEqual([]);
+  });
+});
+
+describe("the render script", () => {
+  const script = readFileSync(
+    join(REPO_ROOT, "tools", "render", "blender", "render.py"),
+    "utf8",
+  );
+
+  it("carries the GPL header as its first line and imports Blender modules", () => {
+    expect(script.split("\n")[0]).toBe(HEADER);
+    expect(checkPythonSource(script)).toEqual({
+      hasHeader: true,
+      violations: [],
+    });
+    expect(script).toMatch(/^import bpy$/m);
+  });
+
+  it("is the only Python file under tools/render that imports bpy", () => {
+    expect(readdirSync(join(REPO_ROOT, "tools", "render", "blender"))).toEqual([
+      "render.py",
+    ]);
+  });
+
+  it("is self-contained: no imports from the probe directories and no dynamic code", () => {
+    expect(script).not.toMatch(
+      /^\s*(from|import)\s+(retro_|sprite_|zeus_|proxy_|palette_plan|render\b)/m,
+    );
+    expect(script).not.toContain("sys.path");
+    expect(script).not.toMatch(/\b(importlib|__import__)\b/);
+    expect(script).not.toMatch(/\b(exec|eval)\(/);
   });
 });

@@ -17,6 +17,7 @@ import {
   parseAssetId,
   parseAssetManifest,
   type RealmVariant,
+  type RenderedSlot,
   type Sha256,
 } from "@panthea/contracts";
 import {
@@ -29,6 +30,11 @@ import {
 import { sha256Hex } from "../hash";
 import { colourLimit, type Palette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
+import {
+  parseRenderJobManifest,
+  type RenderJobManifest,
+} from "../render/job-manifest";
+import { renderedRevisionOf, revisionHashOf } from "../render/recipe";
 import type { CandidateParams } from "./candidates";
 import {
   DEFAULT_CONFORM,
@@ -43,7 +49,11 @@ import { cutFrame } from "./frame-ref";
 import { decodePng } from "./png/decode";
 import { buildSpec, type StudioContent } from "./request";
 import type { CommandRecord, JobRecord, RequestRecord } from "./store";
-import type { DerivedBasis, WorkingSetRecord } from "./working-set";
+import type {
+  DerivedBasis,
+  RenderedBasis,
+  WorkingSetRecord,
+} from "./working-set";
 
 export interface PackInput {
   /** The studio's own id for this packed record. */
@@ -213,6 +223,8 @@ interface Ancestry {
   readonly inputHash?: Sha256;
   /** Present when the slot's oldest edit started from a derived slot. */
   readonly derivedFrom?: DerivedBasis;
+  /** Present when the slot's oldest edit started from a rendered slot. */
+  readonly renderedFrom?: RenderedBasis;
 }
 
 /** Follows a slot's frames back through its finished edits to the pick, and from the pick to its succeeded job. */
@@ -225,6 +237,7 @@ function trace(
     commands.some((c) => c.type === "finish-edit" && c.jobId === id);
   const chain: EditRecord[] = [];
   let derivedFrom: DerivedBasis | undefined;
+  let renderedFrom: RenderedBasis | undefined;
   const authored = set.frames[slot];
   let basis =
     authored === undefined
@@ -271,6 +284,9 @@ function trace(
     } else if (next.kind === "derived") {
       derivedFrom = next;
       basis = undefined;
+    } else if (next.kind === "rendered") {
+      renderedFrom = next;
+      basis = undefined;
     } else {
       const pick = set.picks[slot];
       if (
@@ -307,6 +323,11 @@ function trace(
   }
   if (derivedFrom !== undefined)
     return { ok: true, value: { edits: oldest.map((e) => e.id), derivedFrom } };
+  if (renderedFrom !== undefined)
+    return {
+      ok: true,
+      value: { edits: oldest.map((e) => e.id), renderedFrom },
+    };
   const pick = set.picks[slot];
   if (pick === undefined)
     return {
@@ -414,6 +435,14 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     return refuse(
       "a derived working set packs against a published revision, and this asset has none",
     );
+  // A rendered revision takes no generated image-model pick, whatever became of it afterwards.
+  if (Object.keys(set.rendered ?? {}).length > 0) {
+    const picked = newSlots.filter((slot) => set.picks[slot] !== undefined);
+    if (picked.length > 0)
+      return refuse(
+        `the working set mixes rendered slots with generated image-model picks (${picked.join(", ")}): a rendered revision takes no generated pick`,
+      );
+  }
   for (const slot of newSlots) {
     const derivedEntry = set.derived?.[slot];
     if (derivedEntry !== undefined) {
@@ -443,6 +472,31 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
             background: derivedEntry.params.background,
             alphaCutoff: derivedEntry.params.alphaCutoff,
             grid: derivedEntry.params.grid,
+          },
+        });
+      }
+      continue;
+    }
+    const renderedEntry = set.rendered?.[slot];
+    if (renderedEntry !== undefined) {
+      // A rendered slot's pixels are the post step's cells, stored when the render was
+      // ingested and recomputed from the raw frames again at publish.
+      for (const [index, frame] of renderedEntry.frames.entries()) {
+        const image = decoded(
+          sources.readBlob(frame.hash),
+          frame.hash,
+          cell,
+          `${slot} frame ${index}`,
+        );
+        if (!image.ok) return refuse(image.message);
+        cells.push({
+          slot,
+          image: image.image,
+          durationMs: frame.durationMs,
+          params: {
+            background: renderedEntry.params.background,
+            alphaCutoff: renderedEntry.params.alphaCutoff,
+            grid: renderedEntry.params.grid,
           },
         });
       }
@@ -501,6 +555,32 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     return refuse(
       `the working set mixes derived slots (${derivedSlots.join(", ")}) with generated slots (${generatedSlots.join(", ")}): pack them in separate revisions`,
     );
+  // Rendered lineage never shares a revision with generated or derived slots, and a rendered
+  // revision renders everything it holds: a carried cell would have no render behind it.
+  const renderedSlots = newSlots.filter(
+    (slot) =>
+      set.rendered?.[slot] !== undefined ||
+      ancestry.get(slot)?.renderedFrom !== undefined,
+  );
+  if (renderedSlots.length > 0) {
+    if (generatedSlots.length > 0)
+      return refuse(
+        `the working set mixes rendered slots (${renderedSlots.join(", ")}) with generated image-model picks (${generatedSlots.join(", ")}): a rendered revision takes no generated pick`,
+      );
+    if (derivedSlots.length > 0)
+      return refuse(
+        `the working set mixes rendered slots (${renderedSlots.join(", ")}) with derived slots (${derivedSlots.join(", ")}): pack them in separate revisions`,
+      );
+    const others = newSlots.filter((slot) => !renderedSlots.includes(slot));
+    if (others.length > 0)
+      return refuse(
+        `the working set mixes rendered slots with slots that are not rendered (${others.join(", ")})`,
+      );
+    if (Object.keys(set.variants ?? {}).length > 0)
+      return refuse(
+        "a rendered revision carries no realm variant: derive variants from it after it is published",
+      );
+  }
   for (const slot of newSlots) {
     const from = ancestry.get(slot)?.derivedFrom;
     if (
@@ -545,6 +625,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       );
     }
   }
+  if (renderedSlots.length > 0 && carriedKeys.length > 0)
+    return refuse(
+      `the published ${input.assetId} holds ${carriedKeys.join(", ")}, which this rendered working set does not replace: a rendered revision renders every slot it holds`,
+    );
   for (const key of carriedKeys)
     for (const carried of carriedCells.get(key) ?? [])
       cells.push({
@@ -771,6 +855,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     }
     const { job } = found;
     const engine = job.engine as NonNullable<JobRecord["engine"]>;
+    if (engine.model === null)
+      return refuse(
+        `job ${job.job.id} has no model, so it cannot be recorded as a generation`,
+      );
     const before = generations.get(job.job.id);
     const used = before?.used ?? [];
     generations.set(job.job.id, {
@@ -847,6 +935,93 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       edit = base.job.request.edit;
     }
   }
+  // Rendered lineage: every rendered slot names a succeeded render job whose role manifest blob is
+  // there and says what the job rendered, under one revision recipe.
+  const renderedJobs = new Map<
+    string,
+    { readonly record: JobRecord; readonly manifest: RenderJobManifest }
+  >();
+  const renderedOf = new Map<string, string>();
+  for (const slot of renderedSlots) {
+    const from = set.rendered?.[slot] ?? ancestry.get(slot)?.renderedFrom;
+    if (from === undefined) continue;
+    const record = sources.jobs.get(from.jobId);
+    if (
+      record === undefined ||
+      record.job.status !== "succeeded" ||
+      record.engine === undefined ||
+      record.engine.model !== null
+    )
+      return refuse(
+        `slot ${slot}: its render job ${from.jobId} is not a recorded succeeded render job`,
+      );
+    if (record.source.slotKey !== slot)
+      return refuse(
+        `slot ${slot}: its render job ${from.jobId} rendered ${record.source.slotKey}`,
+      );
+    const bytes = sources.readBlob(from.manifest);
+    if (bytes === undefined || sha256Hex(bytes) !== from.manifest)
+      return refuse(
+        `slot ${slot}: the role manifest ${from.manifest} of job ${from.jobId} is missing or altered`,
+      );
+    if (record.engine.settings.manifest !== from.manifest)
+      return refuse(
+        `slot ${slot}: the role manifest of job ${from.jobId} is not the one the slot records`,
+      );
+    const manifest = parseRenderJobManifest(bytes);
+    if (!manifest.ok)
+      return refuse(
+        `slot ${slot}: the role manifest of job ${from.jobId}: ${manifest.path}: ${manifest.message}`,
+      );
+    if (
+      revisionHashOf(manifest.value.revision) !==
+      manifest.value.revisionRecipeHash
+    )
+      return refuse(
+        `slot ${slot}: the revision recipe hash of job ${from.jobId} is not the hash of the fields its manifest records`,
+      );
+    const entry = set.rendered?.[slot];
+    if (entry !== undefined) {
+      const m = manifest.value;
+      if (
+        entry.frames.length !== m.frames.length ||
+        entry.frames.some(
+          (frame, index) => frame.hash !== m.frames[index]?.cell,
+        )
+      )
+        return refuse(
+          `slot ${slot}: its cells are not the cells of job ${from.jobId}'s role manifest`,
+        );
+      if (
+        entry.revisionRecipeHash !== m.revisionRecipeHash ||
+        entry.slotRecipeHash !== m.slotRecipeHash
+      )
+        return refuse(
+          `slot ${slot}: its recorded recipe hashes are not job ${from.jobId}'s`,
+        );
+    }
+    renderedJobs.set(from.jobId, { record, manifest: manifest.value });
+    renderedOf.set(slot, from.jobId);
+  }
+  const revisions = new Set(
+    [...renderedJobs.values()].map((j) => j.manifest.revisionRecipeHash),
+  );
+  if (revisions.size > 1)
+    return refuse(
+      `the rendered slots were rendered under ${revisions.size} different revision recipe hashes (${[...revisions].join(", ")}): render the whole matrix under one recipe`,
+    );
+  if (renderedSlots.length > 0) {
+    const spaced = [...renderedJobs.values()][0]?.manifest.revision;
+    if (
+      spaced !== undefined &&
+      (spaced.palette.id !== palette.id ||
+        spaced.pivot.x !== spec.pivot?.x ||
+        spaced.pivot.y !== spec.pivot?.y)
+    )
+      return refuse(
+        `the render's recipe names palette ${spaced.palette.id} and pivot (${spaced.pivot.x},${spaced.pivot.y}), the request's is ${palette.id} and (${spec.pivot?.x},${spec.pivot?.y})`,
+      );
+  }
   const licences: LicenceRecord[] = [];
   const derivedMode =
     derivedSlots.length > 0 || Object.keys(set.variants ?? {}).length > 0;
@@ -860,6 +1035,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
   for (const record of [
     ...[...generations.keys()].map((id) => sources.jobs.get(id) as JobRecord),
     ...baseJobs.values(),
+    ...[...renderedJobs.values()].map((j) => j.record),
   ])
     for (const licence of record.engine?.licences ?? [])
       if (!licences.some((l) => canonicalJson(l) === canonicalJson(licence)))
@@ -896,11 +1072,12 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         : { attribution: input.originalWork.attribution }),
     });
   }
-  const sourceRequests = new Set(
-    [...generations.keys()].map(
+  const sourceRequests = new Set([
+    ...[...generations.keys()].map(
       (id) => (sources.jobs.get(id) as JobRecord).source.requestId,
     ),
-  );
+    ...[...renderedJobs.values()].map((j) => j.record.source.requestId),
+  ]);
   const relatedJobs: JobRef[] = [...sources.jobs.values()]
     .filter(
       (record) =>
@@ -985,9 +1162,64 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       ) === at,
   );
   let provenance: Record<string, unknown>;
-  // A derived revision records its steps as its method; a drawn one (generated)
-  // records only the steps of the derived cells and variants it carries.
-  if (steps.length > 0 && derivedMode) {
+  // A hand-edited slot whose frame count changed is wholly hand work: it keeps its hand step and
+  // has no raw frames recorded, since a recorded slot's frame count is the render's. When no slot
+  // is still rendered, the revision is hand work and records no render (the jobs stay in
+  // relatedJobs, and each edit's rendered basis in handEdits).
+  const recorded: RenderedSlot[] = [];
+  if (renderedSlots.length > 0) {
+    for (const slot of renderedSlots) {
+      const job = renderedJobs.get(renderedOf.get(slot) as string);
+      if (job === undefined) continue;
+      const m = job.manifest;
+      const frames = ordered.filter((c) => c.slot === slot).length;
+      if (frames !== m.slot.frames) continue;
+      const key = parseSlotKey(slot);
+      recorded.push({
+        slotKey: slot,
+        recipeHash: m.slotRecipeHash,
+        revisionRecipeHash: m.revisionRecipeHash,
+        state: key.state,
+        clip: m.slot.clip,
+        facing: key.direction,
+        ...(key.ability === undefined ? {} : { ability: key.ability }),
+        seed: 0,
+        frameCount: m.slot.frames,
+        raw: {
+          colour: m.frames.map((f) => f.raw.colour),
+          id: m.frames.map((f) => f.raw.id),
+          depth: m.frames.map((f) => f.raw.depth),
+        },
+      });
+    }
+  }
+  if (recorded.length > 0) {
+    const first = [...renderedJobs.values()][0] as {
+      record: JobRecord;
+      manifest: RenderJobManifest;
+    };
+    provenance = {
+      method: "rendered",
+      revisionRecipe: renderedRevisionOf(
+        first.manifest.revision,
+        request.request.recipe?.profile ?? "",
+      ),
+      slots: recorded,
+      licences,
+      relatedJobs,
+      handEdits,
+      sourceAssets,
+    };
+  } else if (renderedSlots.length > 0) {
+    // Every rendered slot was hand-edited to another frame count.
+    provenance = {
+      method: "hand",
+      licences,
+      relatedJobs,
+      handEdits,
+      sourceAssets,
+    };
+  } else if (steps.length > 0 && derivedMode) {
     const first = steps[0] as DerivedStep;
     provenance = {
       method: "derived",
@@ -1159,12 +1391,14 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
               direction: slot.direction,
               ...(slot.ability === undefined ? {} : { ability: slot.ability }),
               ...(carried?.loopStart === undefined &&
-              set.derived?.[key]?.loopStart === undefined
+              set.derived?.[key]?.loopStart === undefined &&
+              set.rendered?.[key]?.loopStart === undefined
                 ? {}
                 : {
                     loopStart:
                       carried?.loopStart ??
-                      (set.derived?.[key]?.loopStart as number),
+                      set.derived?.[key]?.loopStart ??
+                      (set.rendered?.[key]?.loopStart as number),
                   }),
               frames: spans2(key),
             };
