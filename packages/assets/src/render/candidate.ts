@@ -273,8 +273,7 @@ export function buildRenderedCandidate(args: {
       "wrong-state",
       `${m.slot.state} is not drawn on the ${spec.value.cell.id} cell`,
     );
-  // Manifest timing: the state's fastest allowed rate, so every duration is inside its bounds.
-  const durationMs = Math.max(1, Math.round(1000 / (rule.fps?.max ?? 10)));
+  // Manifest timing: the profile's own durations, recorded in the role manifest.
 
   const colours = paletteColours(spec.value);
   const frames: RenderedFrame[] = [];
@@ -322,7 +321,11 @@ export function buildRenderedCandidate(args: {
         "wrong-state",
         `cell ${index} of job ${job.job.id} cannot be reported on: ${result.status === "invalid-input" ? `${result.field}: ${result.message}` : result.message}`,
       );
-    frames.push({ hash: frame.cell, durationMs, report: result.report });
+    frames.push({
+      hash: frame.cell,
+      durationMs: m.slot.frameMs[index] as number,
+      report: result.report,
+    });
   }
   return {
     ok: true,

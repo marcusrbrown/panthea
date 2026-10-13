@@ -27,11 +27,6 @@ import {
   type RawFrame,
   type StampLocators,
 } from "./post";
-import {
-  nearestBoltAngle,
-  roundHalfEven,
-  screenAngleDeg,
-} from "./stamp-composite";
 
 const fixture = loadRenderFixture();
 const COMMITTED_CONTENT = join(
@@ -271,26 +266,6 @@ const syntheticInput = (
   frames: [frame],
 });
 
-const goldCount = (image: RgbaImage): number => {
-  let n = 0;
-  for (let at = 0; at < image.rgba.length; at += 4) {
-    if (
-      image.rgba[at + 3] &&
-      fixture.palette.rampOf.get(
-        ((image.rgba[at] as number) << 16) |
-          ((image.rgba[at + 1] as number) << 8) |
-          (image.rgba[at + 2] as number),
-      ) === "pale-gold"
-    )
-      n += 1;
-  }
-  return n;
-};
-
-// The bolt is held at angle 0 (tip to the right of the base) with its grip at the cell's middle row.
-const BOLT = (baseDepth: number): StampLocators => ({
-  bolt: { basePx: [12, 16], tipPx: [16, 16], baseDepth },
-});
 const TORSO = (x1: number, depthM = 18.5): Block => ({
   x0: 2,
   y0: 2,
@@ -301,52 +276,44 @@ const TORSO = (x1: number, depthM = 18.5): Block => ({
   rgb: MARBLE,
 });
 
-describe("stamp occlusion by part id and depth", () => {
-  it("draws the bolt where it is nearer than the body (positive control)", () => {
-    const result = run(syntheticInput(syntheticFrame([TORSO(38)], BOLT(18.0))));
-    const bolt = result.cells[0]?.facts.stamps.bolt;
-    expect(bolt?.occluded).toBe(0);
-    expect(bolt?.drawn).toBe(
-      (bolt?.coreDrawn as number) + (bolt?.outlineOnBody as number),
-    );
-    expect(bolt?.coreDrawn).toBe(bolt?.coreTotal as number);
-    expect(
-      goldCount((result.cells[0] as { figure: RgbaImage }).figure),
-    ).toBeGreaterThan(0);
+describe("face stamp occlusion by part id", () => {
+  const HEAD = (part: PartId): Block => ({
+    x0: 10,
+    y0: 4,
+    x1: 30,
+    y1: 24,
+    part,
+    depthM: 19,
+    rgb: MARBLE,
+  });
+  const EYES: StampLocators = {
+    eyes: {
+      l: { px: [16, 12], depth: 19 },
+      r: { px: [24, 12], depth: 19 },
+    },
+  };
+
+  it("draws every eye pixel on the head (positive control)", () => {
+    const result = run(syntheticInput(syntheticFrame([HEAD("head")], EYES)));
+    const face = result.cells[0]?.facts.stamps.face;
+    expect(face?.planned).toBe(6);
+    expect(face?.drawn).toBe(6);
+    expect(face?.skipped).toBe(0);
   });
 
-  it("drops a bolt that lies fully behind the body", () => {
-    const result = run(syntheticInput(syntheticFrame([TORSO(38)], BOLT(19.5))));
-    const cell = result.cells[0];
-    expect(cell?.facts.stamps.bolt?.coreDrawn).toBe(0);
-    expect(cell?.facts.stamps.bolt?.occluded).toBe(
-      cell?.facts.stamps.bolt?.coreTotal as number,
-    );
-    expect(goldCount((cell as { figure: RgbaImage }).figure)).toBe(0);
+  it("draws nothing where hair or a beard covers the head", () => {
+    const result = run(syntheticInput(syntheticFrame([HEAD("beard")], EYES)));
+    expect(result.cells[0]?.facts.stamps.face).toEqual({
+      planned: 6,
+      drawn: 0,
+      skipped: 6,
+    });
   });
 
-  it("clips a bolt that is partly behind the body by depth: only the part that clears the body is drawn", () => {
-    // The body ends at x = 20; the bolt spans x = 12..28 and is behind the body.
-    const result = run(syntheticInput(syntheticFrame([TORSO(20)], BOLT(19.5))));
-    const bolt = result.cells[0]?.facts.stamps.bolt;
-    expect(bolt?.occluded).toBeGreaterThan(0);
-    expect(bolt?.coreDrawn).toBeGreaterThan(0);
-    expect((bolt?.coreDrawn as number) + (bolt?.occluded as number)).toBe(
-      bolt?.coreTotal as number,
-    );
-    const figure = (result.cells[0] as { figure: RgbaImage }).figure;
-    // Every gold pixel is right of the body: none is drawn over it.
-    for (let y = 0; y < figure.height; y += 1) {
-      for (let x = 0; x < 20; x += 1) {
-        const at = (y * figure.width + x) * 4;
-        const key =
-          ((figure.rgba[at] as number) << 16) |
-          ((figure.rgba[at + 1] as number) << 8) |
-          (figure.rgba[at + 2] as number);
-        if (figure.rgba[at + 3])
-          expect(fixture.palette.rampOf.get(key)).not.toBe("pale-gold");
-      }
-    }
+  it("has no prop stamp: the step version is 3 and a cell records its face stamps only", () => {
+    expect(POST_STEP_VERSION).toBe(3);
+    const result = run(syntheticInput(syntheticFrame([HEAD("head")], EYES)));
+    expect(Object.keys(result.cells[0]?.facts.stamps ?? {})).toEqual(["face"]);
   });
 });
 
@@ -569,21 +536,8 @@ describe("the decoded-pixel hash", () => {
   });
 });
 
-// Pixel rules the fixture slot does not reach, pinned to the probe's (Python's) arithmetic.
+// Pixel rules the fixture slot does not reach, pinned to the probe's arithmetic.
 describe("rules inherited from the probe", () => {
-  it("rounds halves to the even neighbour, as Python does, when it places and orients a bolt", () => {
-    expect(
-      [0.5, 1.5, 2.5, 3.5, -0.5, -2.5, 2.4, 2.6].map(roundHalfEven),
-    ).toEqual([0, 2, 2, 4, -0, -2, 2, 3]);
-    expect(nearestBoltAngle(22.5)).toBe(0);
-    expect(nearestBoltAngle(67.5)).toBe(90);
-    expect(nearestBoltAngle(337.5)).toBe(0);
-    expect(nearestBoltAngle(359)).toBe(0);
-    expect(screenAngleDeg([0, 0], [1, 0])).toBe(0);
-    expect(screenAngleDeg([0, 0], [0, 1])).toBe(270);
-    expect(screenAngleDeg([0, 0], [-1, -1])).toBeCloseTo(135, 9);
-  });
-
   it("gives a far pixel its largest depth gap, and the first neighbour (left, right, up, down) on a tie", () => {
     // Row 0: [A near] [B far] [C near]; B has two equal-gap neighbours, left and right.
     const parts: (PartId | null)[] = ["torso", "head", "arm_l"];

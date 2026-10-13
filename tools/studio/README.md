@@ -227,7 +227,7 @@ rewritten draft is never served under the old key.
 
 ## Rendered assets
 
-A recipe request renders each slot once (`generate` above). Each succeeded job holds the post-step cells in frame order and a role manifest blob (`engine.settings.manifest`) that names the raw colour, part-ID and depth frames, the locators the post step stamped from, and the recipe hashes. Then:
+A recipe request renders each slot once (`generate` above). Each succeeded job holds the post-step cells in frame order and a role manifest blob (`engine.settings.manifest`) that names the raw colour, part-ID and depth frames, the face-stamp locators the post step used, the frame count and per-frame durations the profile declared for the state, and the recipe hashes. Then:
 
 1. `conform --job-id <job>` reads the job back as a rendered candidate (stored under `rendered-candidates/`, separate from image candidates).
 2. `pick` takes the candidate id; **all** of the slot's frames go into the working set with no edit step, and the slot counts as done. A pick refuses a slot with authored frames or an image pick.
@@ -235,9 +235,9 @@ A recipe request renders each slot once (`generate` above). Each succeeded job h
 4. `pack` writes `rendered` provenance: the revision recipe, a slot entry per rendered slot (raw frame hashes per role), the kit licences and the related jobs. It refuses a revision whose slots were not all rendered under one revision recipe hash, a generated (image-model) pick, and any cell carried from an earlier revision.
 5. `publish` runs a render audit on top of the usual gates, offline and without Blender: it recomputes the revision recipe from the committed profile, camera, kit files, stamp set, script, post-step version, Blender pin and the palette on disk, runs the post step again from the stored raw frames and compares every cell and the atlas (a hand-edited slot keeps its hand pixels), and checks the job ledger. It needs `render.renderRoot` (default `<contentRoot>/../../tools/render`).
 
-The contact shadow is shade 0 of the ramp the render profile names in `shadow.ramp` (Zeus: `lapis`, `#243f63`, in the olympus family), so a rendered cell passes the palette check against the asset's own family without an exception. Post step v2.
+The contact shadow is shade 0 of the ramp the render profile names in `shadow.ramp` (Zeus: `lapis`, `#243f63`, in the olympus family), so a rendered cell passes the palette check against the asset's own family without an exception. Post step v3 (no prop stamps; the stamp set holds face stamps only).
 
-Manifest timing for a rendered slot is its state's fastest allowed rate (`1000 / fps.max` ms a frame, so walk is 50 ms); a looping clip (idle, walk, seated) has `loopStart` 0, the act clip none. `status` lists `renderSubjects`, the subjects that name a render profile.
+Frames and manifest timing for a rendered slot come from the render profile's clip for the state (Zeus: idle 10 frames of 250 ms, seated 8 frames of 208 or 209 ms, walk 16 of 50 ms); the engine refuses a profile whose frame count or durations fall outside the vocabulary's rule for the cell class before Blender starts. A looping clip (idle, walk, seated) has `loopStart` 0. `status` lists `renderSubjects`, the subjects that name a render profile.
 
 ## Approval and publication
 

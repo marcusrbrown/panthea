@@ -46,7 +46,10 @@ export const FIRST_LINE_MARKER = "RENDER start";
 export const RENDER_ROLES = ["colour", "id", "depth"] as const;
 export type RenderRole = (typeof RENDER_ROLES)[number];
 
-/** Part-ID names. A part's ID byte is `ID_BASE + ID_STEP * index`. Shared with the post step. */
+/**
+ * Part-ID names. A part's ID byte is `ID_BASE + ID_STEP * index`. Shared with the post step.
+ * `reserved_15` is the slot the thunderbolt prop used; it stays reserved so no later ID shifts.
+ */
 export const PART_IDS = [
   "head",
   "torso",
@@ -63,7 +66,7 @@ export const PART_IDS = [
   "hair",
   "tunic",
   "tunic_skirt",
-  "bolt",
+  "reserved_15",
   "trunk",
   "foliage",
   "stylobate",
@@ -77,6 +80,7 @@ export const PART_IDS = [
   "prop",
   "ground",
   "animal",
+  "himation",
 ] as const;
 export const ID_BASE = 16;
 export const ID_STEP = 8;
@@ -312,7 +316,6 @@ export function parseRenderRecipe(
     parseRamp,
   );
   if (!ramps.ok) return ramps;
-  const needed = Math.max(...camera.value.shading.bandShades) + 1;
   for (const [role, material] of Object.entries(profile.value.materials)) {
     const ramp = ramps.value.find((r) => r.id === material.ramp);
     if (ramp === undefined) {
@@ -321,6 +324,14 @@ export function parseRenderRecipe(
         `the palette has no ramp "${material.ramp}", which material "${role}" uses`,
       );
     }
+    const shades = material.bandShades ?? camera.value.shading.bandShades;
+    if (shades.length !== camera.value.shading.bandShades.length) {
+      return fail(
+        `${path}.profile.materials.${role}.bandShades`,
+        `lists ${shades.length} band shades, the camera has ${camera.value.shading.bandShades.length} bands`,
+      );
+    }
+    const needed = Math.max(...shades) + 1;
     if (ramp.shades.length < needed) {
       return fail(
         `${path}.palette.ramps`,
@@ -376,20 +387,13 @@ export interface FrameExtent {
   readonly right: number;
 }
 
-export interface BoltLocator {
-  readonly basePx: Vec2;
-  readonly tipPx: Vec2;
-  readonly baseDepth: number;
-}
-
 export interface PointLocator {
   readonly px: Vec2;
   readonly depth: number;
 }
 
-/** Where the post step anchors the stamps in this frame (1x cell pixels, camera depth in metres). */
+/** Where the post step anchors the face stamps in this frame (1x cell pixels, camera depth in metres). */
 export interface FrameLocators {
-  readonly bolt?: BoltLocator;
   readonly points: Readonly<Record<string, PointLocator>>;
 }
 
@@ -425,31 +429,7 @@ function parseLocators(
 ): ParseResult<FrameLocators> {
   if (!isRecord(value)) return fail(path, "expected a locators record");
   for (const key of Object.keys(value)) {
-    if (key !== "bolt" && key !== "points")
-      return fail(`${path}.${key}`, `unknown key "${key}"`);
-  }
-  let bolt: BoltLocator | undefined;
-  if (value.bolt !== undefined) {
-    const record = strict(value.bolt, `${path}.bolt`, [
-      "basePx",
-      "tipPx",
-      "baseDepth",
-    ]);
-    if (!record.ok) return record;
-    const basePx = parseVec2(record.value.basePx, `${path}.bolt.basePx`);
-    if (!basePx.ok) return basePx;
-    const tipPx = parseVec2(record.value.tipPx, `${path}.bolt.tipPx`);
-    if (!tipPx.ok) return tipPx;
-    const baseDepth = parseFiniteNumber(
-      record.value.baseDepth,
-      `${path}.bolt.baseDepth`,
-    );
-    if (!baseDepth.ok) return baseDepth;
-    bolt = {
-      basePx: basePx.value,
-      tipPx: tipPx.value,
-      baseDepth: baseDepth.value,
-    };
+    if (key !== "points") return fail(`${path}.${key}`, `unknown key "${key}"`);
   }
   if (!isRecord(value.points))
     return fail(`${path}.points`, "expected a points record");
@@ -466,7 +446,7 @@ function parseLocators(
     if (!depth.ok) return depth;
     points[name] = { px: px.value, depth: depth.value };
   }
-  return ok({ ...(bolt === undefined ? {} : { bolt }), points });
+  return ok({ points });
 }
 
 function parseSentinelFile(

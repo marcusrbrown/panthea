@@ -297,7 +297,7 @@ describe("a subject's render profile and required matrix", () => {
     expect(badDeferred.ok).toBe(false);
   });
 
-  it("is declared on the committed Zeus subject: god-tall, four facings, pronouncement deferred", () => {
+  it("is declared on the committed Zeus subject: god-tall, four facings, idle, walk and seated required, act deferred", () => {
     const parsed = parseGodVisualProfile(zeusSubject);
     if (!parsed.ok) throw new Error(parsed.message);
     expect(parsed.value.render).toEqual({
@@ -305,22 +305,26 @@ describe("a subject's render profile and required matrix", () => {
       matrix: {
         cellClass: "god-tall",
         directions: ["south", "north", "east", "west"],
-        required: [
-          { state: "idle" },
-          { state: "walk" },
-          { state: "seated" },
+        required: [{ state: "idle" }, { state: "walk" }, { state: "seated" }],
+        deferred: [
           { state: "act", ability: "thunderbolt" },
+          { state: "act", ability: "pronouncement" },
         ],
-        deferred: [{ state: "act", ability: "pronouncement" }],
       },
     });
+    // 12 slots: three states by four facings, and no act slot is required.
+    const keys = requiredRenderSlotKeys(
+      (parsed.value.render as NonNullable<typeof parsed.value.render>).matrix,
+    );
+    expect(keys).toHaveLength(12);
+    expect(keys.some((key) => key.startsWith("act"))).toBe(false);
     // The legacy fields are unchanged.
     expect(parsed.value).toMatchObject({
       godId: "zeus",
       paletteFamily: "olympus",
       iconography: ["thunderbolt"],
       portrait: "zeus-portrait",
-      asymmetry: { feature: "bolt hand" },
+      asymmetry: { feature: "left-shoulder himation" },
     });
   });
 });

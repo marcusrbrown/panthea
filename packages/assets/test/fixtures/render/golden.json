@@ -1,40 +1,40 @@
 {
-  "postStepVersion": 2,
+  "postStepVersion": 3,
   "cells": [
     {
       "name": "cast_west_00",
-      "pixelHash": "d494d046ebdfeb64aa8c853308a3a324ca1f6c74af048ca65d9dd864dd1b102c"
+      "pixelHash": "fcc8f360b80db90d5a11fa58ddcc25a9a3a170209627a762f6a65dabeaae8832"
     },
     {
       "name": "cast_west_01",
-      "pixelHash": "93d60e843e1c2fbef5eab59f97e726b8892a3aaa6f3592f68aae63e4c152ad24"
+      "pixelHash": "367e0997ce87bcc61c905937f292e679d4b104123ebd113a14ae16c7cdf1ea15"
     },
     {
       "name": "cast_west_02",
-      "pixelHash": "f589c4aa9552f78a76fbf6d6b1eacd0ecfe74ddeaf556a79e46c451ac7902367"
+      "pixelHash": "11e3caeb3146424accd1a6ad8636e10806490a835d38473f1a95166af1f091c1"
     },
     {
       "name": "cast_west_03",
-      "pixelHash": "e3ac93d789a22ac1828110c42bff0f2e5b638f82d8583f0100bfb85658ddd78c"
+      "pixelHash": "83909b8fc1a9a3d016fc4ada7755796e914ea8a04f97bc9315f0056591d15813"
     },
     {
       "name": "cast_west_04",
-      "pixelHash": "1f712d149b74c5d82d54e3869f7d2dcd7be91724523130f9bdc327567c4dbe68"
+      "pixelHash": "5c23e9a8ff40aa8d3b15426d8fb9bf0b7cd381c03e20e983c89e7d9eaf746d92"
     },
     {
       "name": "cast_west_05",
-      "pixelHash": "d494d046ebdfeb64aa8c853308a3a324ca1f6c74af048ca65d9dd864dd1b102c"
+      "pixelHash": "fcc8f360b80db90d5a11fa58ddcc25a9a3a170209627a762f6a65dabeaae8832"
     }
   ],
   "envelope": {
-    "left": 40,
-    "right": 33,
-    "up": 68,
+    "left": 29,
+    "right": 21,
+    "up": 56,
     "down": 8,
     "margin": {
-      "left": 16,
-      "right": 23,
-      "top": 10,
+      "left": 27,
+      "right": 35,
+      "top": 22,
       "bottom": 10
     },
     "minMargin": 10,

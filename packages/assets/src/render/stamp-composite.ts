@@ -1,63 +1,12 @@
 // Compositing the authored stamps onto the 1x interior. A face stamp pixel is drawn only on a
-// pixel the render left as `head`, so hair and beard that cover the face also cover the stamp. A
-// bolt stamp is hidden where a body part nearer than the bolt (by more than a tolerance) covers
-// the cell pixel, never drawn over the bolt hand, and clipped at the cell edge; its rim pixels
-// are drawn only where they land on the figure, as a separation line. Ports of the probe's
-// `stamp_plan.face_pixels`, `bake_plan.composite_stamp` and `apply_stamps`.
+// pixel the render left as `head`, so hair and beard that cover the face also cover the stamp.
+// There is no prop stamp. A port of the probe's `stamp_plan.face_pixels` and `apply_stamps`.
 
 import type { Rgb, RgbaImage } from "../conformance";
 import type { PartId } from "./parts";
 import type { Facing, StampLocators, StampRecord } from "./post";
-import type {
-  LoadedBoltStamp,
-  LoadedStamp,
-  LoadedStampSet,
-  StampPixel,
-} from "./stamps";
+import type { LoadedStamp, LoadedStampSet } from "./stamps";
 import { FACE_SLOTS, type FaceFacing } from "./stamps";
-
-/** A bolt pixel is hidden where a part nearer than the bolt by more than this many metres covers it. */
-export const BOLT_DEPTH_TOLERANCE_M = 0.06;
-/** The bolt is never drawn over these parts: the hand that holds it stays distinct. */
-export const BOLT_PROTECTED_PARTS: readonly PartId[] = ["hand_r"];
-/** How far beyond the hand's bolt base, toward the tip, the bolt's grip sits. */
-const BOLT_PUSH_PX = 2.0;
-
-/** Python's `round`: halves go to the even neighbour. */
-export function roundHalfEven(value: number): number {
-  if (Math.abs(value % 1) === 0.5) return 2 * Math.round(value / 2);
-  return Math.round(value);
-}
-
-/** Direction from base to tip in degrees counter-clockwise from screen right (screen y points down). */
-export function screenAngleDeg(
-  base: readonly [number, number],
-  tip: readonly [number, number],
-): number {
-  const degrees =
-    Math.atan2(-(tip[1] - base[1]), tip[0] - base[0]) * (180 / Math.PI);
-  return ((degrees % 360) + 360) % 360;
-}
-
-/** The orientation (a multiple of 45) nearest an angle. */
-export function nearestBoltAngle(angleDeg: number): number {
-  return (roundHalfEven((((angleDeg % 360) + 360) % 360) / 45) * 45) % 360;
-}
-
-/** Top-left cell position of a bolt stamp whose grip anchor sits `BOLT_PUSH_PX` beyond the hand's bolt base, toward the tip. */
-export function boltOrigin(
-  base: readonly [number, number],
-  tip: readonly [number, number],
-  anchor: readonly [number, number],
-): readonly [number, number] {
-  const dx = tip[0] - base[0];
-  const dy = tip[1] - base[1];
-  const length = Math.hypot(dx, dy);
-  const [ux, uy] = length > 1e-6 ? [dx / length, dy / length] : [0, 0];
-  const gx = base[0] + ux * BOLT_PUSH_PX;
-  const gy = base[1] + uy * BOLT_PUSH_PX;
-  return [roundHalfEven(gx) - anchor[0], roundHalfEven(gy) - anchor[1]];
-}
 
 export interface CompositeMaps {
   readonly parts: readonly (PartId | null)[];
@@ -154,52 +103,9 @@ function facePixels(
   return { drawn, planned, skipped };
 }
 
-interface BoltResult {
-  readonly drawn: Map<number, Rgb>;
-  readonly occluded: number;
-  readonly protectedPx: number;
-  readonly clipped: number;
-}
-
-function compositeBolt(
-  pixels: readonly StampPixel[],
-  origin: readonly [number, number],
-  stampDepth: number,
-  maps: CompositeMaps,
-): BoltResult {
-  const drawn = new Map<number, Rgb>();
-  let occluded = 0;
-  let protectedPx = 0;
-  let clipped = 0;
-  for (const pixel of pixels) {
-    const x = origin[0] + pixel.x;
-    const y = origin[1] + pixel.y;
-    if (x < 0 || x >= maps.width || y < 0 || y >= maps.height) {
-      clipped += 1;
-      continue;
-    }
-    const i = y * maps.width + x;
-    const part = maps.parts[i] ?? null;
-    if (part !== null && BOLT_PROTECTED_PARTS.includes(part)) {
-      protectedPx += 1;
-      continue;
-    }
-    if (
-      part !== null &&
-      (maps.depths[i] as number) < stampDepth - BOLT_DEPTH_TOLERANCE_M
-    ) {
-      occluded += 1;
-      continue;
-    }
-    drawn.set(i, pixel.rgb);
-  }
-  return { drawn, occluded, protectedPx, clipped };
-}
-
 /**
- * Face then bolt stamps onto the interior. The face is skipped on the north facing and when no
- * eye locator is given; the bolt is skipped when the frame has no bolt locator. Returns the
- * cell and a record of what was drawn.
+ * Face stamps onto the interior. The face is skipped on the north facing and when no eye locator
+ * is given. Returns the cell and a record of what was drawn.
  */
 export function applyStamps(
   interior: RgbaImage,
@@ -221,38 +127,5 @@ export function applyStamps(
       skipped: result.skipped,
     };
   }
-  let bolt: StampRecord["bolt"];
-  if (stamps.bolt !== undefined && locators.bolt !== undefined) {
-    const b = locators.bolt;
-    const angle = nearestBoltAngle(screenAngleDeg(b.basePx, b.tipPx));
-    const stamp: LoadedBoltStamp | undefined = stamps.bolt.get(angle);
-    if (stamp === undefined) {
-      throw new StampError(
-        "missing-stamp",
-        `the stamp set has no ${angle} degree bolt stamp`,
-      );
-    }
-    const origin = boltOrigin(b.basePx, b.tipPx, stamp.anchor);
-    const core = compositeBolt(stamp.core, origin, b.baseDepth, maps);
-    cell = paint(cell, core.drawn);
-    const rim = compositeBolt(stamp.outline, origin, b.baseDepth, maps);
-    // A separation line only where the rim lies on the figure as it now stands.
-    const onBody = new Map<number, Rgb>();
-    for (const [i, colour] of rim.drawn) {
-      if (cell.rgba[i * 4 + 3] !== 0) onBody.set(i, colour);
-    }
-    cell = paint(cell, onBody);
-    bolt = {
-      angle,
-      drawn: core.drawn.size + onBody.size,
-      total: stamp.core.length + stamp.outline.length,
-      coreDrawn: core.drawn.size,
-      coreTotal: stamp.core.length,
-      occluded: core.occluded,
-      protected: core.protectedPx,
-      clipped: core.clipped,
-      outlineOnBody: onBody.size,
-    };
-  }
-  return { cell, record: { face, ...(bolt === undefined ? {} : { bolt }) } };
+  return { cell, record: { face } };
 }

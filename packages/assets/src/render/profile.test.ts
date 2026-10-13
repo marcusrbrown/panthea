@@ -74,17 +74,117 @@ describe("the Zeus profile", () => {
     expect(profile.id).toBe("zeus");
     expect(profile.stampSet).toBe("zeus");
     expect(Object.keys(profile.clips).sort()).toEqual([
-      "act",
       "idle",
       "seated",
       "walk",
     ]);
-    expect(profile.clips.walk).toEqual({ action: "Walk_Loop", loop: true });
-    expect(profile.clips.seated).toEqual({
+    expect(profile.clips.walk).toEqual({
+      action: "Walk_Loop",
+      loop: true,
+      frames: 16,
+      frameMs: Array.from({ length: 16 }, () => 50),
+    });
+    expect(profile.clips.seated).toMatchObject({
       action: "Sitting_Idle_Loop",
       loop: true,
     });
-    expect(profile.clips.act.loop).toBe(false);
+    expect(profile.clips.idle).toMatchObject({
+      action: "Idle_Loop",
+      loop: true,
+    });
+  });
+
+  it("declares per-state frames and timing: idle 10 x 250 ms, seated 8 frames of 208-209 ms, walk 16 x 50 ms, all looping", () => {
+    const { idle, seated, walk } = parsed().clips;
+    expect(idle?.frames).toBe(10);
+    expect(idle?.frameMs).toEqual(Array.from({ length: 10 }, () => 250));
+    expect(seated?.frames).toBe(8);
+    expect(seated?.frameMs).toEqual([209, 208, 208, 209, 208, 208, 209, 208]);
+    expect(seated?.frameMs.reduce((a, b) => a + b, 0)).toBe(1667);
+    expect(walk?.frames).toBe(16);
+    expect(walk?.frameMs.every((ms) => ms === 50)).toBe(true);
+    for (const clip of [idle, seated, walk]) {
+      expect(clip?.loop).toBe(true);
+      expect(clip?.frameMs).toHaveLength(clip?.frames as number);
+    }
+  });
+
+  it("carries no bolt, no carry-arm aims, no act pose and no global adduction: the idle policy plants the legs, the seated corrections stay", () => {
+    const profile = parsed();
+    expect(JSON.stringify(profile)).not.toMatch(/bolt|schedule|mirror|fist/i);
+    expect(Object.keys(profile.pose).sort()).toEqual(["idle", "seated"]);
+    expect(profile.pose.seated?.rotations).toEqual({
+      spine_02: [14, 0, 0],
+      spine_03: [10, 0, 0],
+      neck_01: [-8, 0, 0],
+    });
+    expect(profile.pose.seated?.aims).toBeUndefined();
+    // No arm is aimed in any state: the arms hang from the clip with a soft elbow bend.
+    for (const entry of Object.values(profile.pose))
+      for (const bone of Object.keys(entry.aims ?? {}))
+        expect(bone).toMatch(/^(thigh|calf|foot|ball)_[lr]$/);
+    // The stance is the bearing only: a total spine extension of 4 to 8 degrees, no thigh adduction.
+    const stance = profile.body.stance;
+    expect(Object.keys(stance).every((bone) => bone.startsWith("spine_"))).toBe(
+      true,
+    );
+    const extension = Object.values(stance).reduce(
+      (sum, [x]) => sum + Math.abs(x),
+      0,
+    );
+    expect(extension).toBeGreaterThanOrEqual(4);
+    expect(extension).toBeLessThanOrEqual(8);
+  });
+
+  it("plants both feet in idle: the right leg comes forward and the feet are separated sideways", () => {
+    const aims = parsed().pose.idle?.aims;
+    expect(aims?.thigh_l?.[0]).toBeGreaterThan(0);
+    expect(aims?.thigh_r?.[0]).toBeLessThan(0);
+    // Both soles are aimed alike (toes forward, flat), so neither foot is left behind or tipped.
+    expect(aims?.foot_l?.[1]).toBe(aims?.foot_r?.[1]);
+    expect(aims?.foot_l?.[2]).toBe(aims?.foot_r?.[2]);
+  });
+
+  it("drapes a himation over the character's left shoulder, skinned to the clavicle, spine and pelvis, never to an arm", () => {
+    const profile = parsed();
+    expect(profile.himation?.role).toBe("himation");
+    expect(profile.materials.himation?.ramp).toBe("lapis");
+    const bones = new Set(
+      (profile.himation?.strips ?? []).flatMap((strip) =>
+        strip.weights.flatMap((w) => Object.keys(w.bones)),
+      ),
+    );
+    for (const bone of bones)
+      expect(bone).toMatch(/^(clavicle_l|spine_0[123]|pelvis|thigh_[lr])$/);
+    expect(bones.has("clavicle_l")).toBe(true);
+    expect(bones.has("pelvis")).toBe(true);
+    // A strip is an open arc, never a closed ring.
+    for (const row of (profile.himation?.strips ?? []).flatMap((s) => s.rows))
+      expect(row.toDeg - row.fromDeg).toBeLessThan(360);
+  });
+
+  it("keeps hair and beard to 2 or 3 tones and the large surfaces to the camera's 5 bands", () => {
+    const { materials } = parsed();
+    expect(new Set(materials.beard?.bandShades).size).toBeLessThanOrEqual(3);
+    expect(new Set(materials.hair?.bandShades).size).toBeLessThanOrEqual(3);
+    expect(new Set(materials.beard?.bandShades).size).toBeGreaterThanOrEqual(2);
+    for (const role of ["skin", "robe", "himation"])
+      expect(materials[role]?.bandShades).toBeUndefined();
+  });
+
+  it("uses olympus ramps only, and the planted-stance proportions of the makeover", () => {
+    const profile = parsed();
+    expect(
+      new Set(Object.values(profile.materials).map((m) => m.ramp)),
+    ).toEqual(new Set(["pale-gold", "cloud", "marble", "lapis"]));
+    expect(profile.body.scale).toEqual([1.16, 1.08, 1.0]);
+    expect(profile.body.footScale).toBe(1);
+    expect(profile.body.legs.length).toBeGreaterThanOrEqual(1.0);
+    expect(profile.body.legs.length).toBeLessThanOrEqual(1.05);
+    expect(profile.body.legs.thickness).toBeGreaterThanOrEqual(1.05);
+    expect(profile.body.legs.thickness).toBeLessThanOrEqual(1.1);
+    expect(profile.body.curlDeg).toBeGreaterThanOrEqual(30);
+    expect(profile.body.curlDeg).toBeLessThanOrEqual(45);
   });
 
   it("declares the palette ramp its contact shadow is taken from, an olympus ramp", () => {
@@ -165,7 +265,7 @@ describe("the Zeus profile", () => {
       profileHash(
         parsed(
           edited((p) => {
-            p.pose.walk.aims.hand_r[0] = -0.5;
+            p.body.legs.thickness = 1.09;
           }),
         ),
       ),
@@ -291,7 +391,7 @@ describe("parsing", () => {
   it("refuses a pose keyed by an output clip name instead of a semantic state", () => {
     const result = parseProfile(
       edited((p) => {
-        p.pose.walk16 = p.pose.walk;
+        p.pose.walk16 = p.pose.seated;
       }),
     );
     expect(result.ok).toBe(false);
@@ -302,14 +402,14 @@ describe("parsing", () => {
     expect(
       parseProfile(
         edited((p) => {
-          p.pose["walk:up"] = p.pose.walk;
+          p.pose["walk:up"] = p.pose.seated;
         }),
       ).ok,
     ).toBe(false);
     expect(
       parseProfile(
         edited((p) => {
-          delete p.clips.act.action;
+          delete p.clips.seated.action;
         }),
       ).ok,
     ).toBe(false);
@@ -336,11 +436,18 @@ describe("parsing", () => {
 describe("the pose policy", () => {
   const profile = parsed();
 
-  it("is keyed by semantic state and facing, the facing refining the state", () => {
-    const south = posePolicy(profile, { state: "walk", facing: "south" });
-    const west = posePolicy(profile, { state: "walk", facing: "west" });
-    expect(south.aims?.hand_r).toBeDefined();
-    expect(west.aims?.upperarm_r).not.toEqual(south.aims?.upperarm_r);
+  it("is keyed by semantic state and facing, the facing entry refining the state's", () => {
+    const refined = parsed(
+      edited((p) => {
+        p.pose["idle:west"] = { aims: { thigh_l: [0.2, 0, -1] } };
+      }),
+    );
+    const south = posePolicy(refined, { state: "idle", facing: "south" });
+    const west = posePolicy(refined, { state: "idle", facing: "west" });
+    expect(south.aims?.thigh_l).toEqual([0.07, 0, -1]);
+    expect(west.aims?.thigh_l).toEqual([0.2, 0, -1]);
+    // The facing entry replaces one bone and leaves the state's others.
+    expect(west.aims?.thigh_r).toEqual(south.aims?.thigh_r);
   });
 
   it("is the same for a variant clip as for its semantic state (16 against 8 frames)", () => {
@@ -360,24 +467,96 @@ describe("the pose policy", () => {
     ).not.toThrow();
   });
 
-  it("refines an act pose by key pose", () => {
-    const carry = posePolicy(profile, { state: "act", facing: "east", key: 0 });
-    const release = posePolicy(profile, {
-      state: "act",
-      facing: "east",
-      key: 2,
-    });
-    expect(carry.aims?.upperarm_r).not.toEqual(release.aims?.upperarm_r);
-    expect(carry.mirror).toBe(true);
+  it("has no act state to pose (deferred), and no key-pose or mirror field", () => {
+    expect(() => posePolicy(profile, { state: "act", facing: "east" })).toThrow(
+      "act",
+    );
+    expect(
+      parseProfile(
+        edited((p) => {
+          p.pose["idle:south:1"] = { aims: { thigh_l: [0, 0, -1] } };
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseProfile(
+        edited((p) => {
+          p.pose.idle.mirror = true;
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseProfile(
+        edited((p) => {
+          p.clips.idle.schedule = [[0, 1, 0.5]];
+        }),
+      ).ok,
+    ).toBe(false);
   });
 
   it("answers a facing with no entry of its own by the state's policy", () => {
     expect(posePolicy(profile, { state: "idle", facing: "south" })).toEqual(
       profile.pose.idle as never,
     );
+  });
+});
+
+describe("frames and timing in the profile", () => {
+  it("parses one duration for every frame, or one per frame, and refuses a mismatch, a zero and a missing count (positive control: the committed profile parses)", () => {
+    expect(parseProfile(committedJson()).ok).toBe(true);
+    const clip = (change: (clip: Json) => void) =>
+      parseProfile(edited((p) => change(p.clips.idle)));
+    const single = clip((c) => {
+      c.frames = 6;
+      c.frameMs = 300;
+    });
+    expect(single.ok && single.value.clips.idle?.frameMs).toEqual([
+      300, 300, 300, 300, 300, 300,
+    ]);
     expect(
-      posePolicy(profile, { state: "idle", facing: "south" }).mirror,
-    ).toBeUndefined();
+      clip((c) => {
+        c.frames = 3;
+        c.frameMs = [100, 200, 300];
+      }).ok,
+    ).toBe(true);
+    expect(
+      clip((c) => {
+        c.frameMs = [100, 200];
+      }).ok,
+    ).toBe(false);
+    expect(
+      clip((c) => {
+        c.frameMs = 0;
+      }).ok,
+    ).toBe(false);
+    expect(
+      clip((c) => {
+        c.frames = 0;
+      }).ok,
+    ).toBe(false);
+    expect(
+      clip((c) => {
+        delete c.frames;
+      }).ok,
+    ).toBe(false);
+    expect(
+      clip((c) => {
+        delete c.frameMs;
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("hashes the timing: a changed duration is a changed profile", () => {
+    const base = profileHash(parsed());
+    expect(
+      profileHash(
+        parsed(
+          edited((p) => {
+            p.clips.walk.frameMs = 60;
+          }),
+        ),
+      ),
+    ).not.toBe(base);
   });
 });
 

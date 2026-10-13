@@ -4,7 +4,7 @@
   "paletteFamily": "olympus",
   "iconography": ["thunderbolt"],
   "portrait": "zeus-portrait",
-  "asymmetry": { "feature": "bolt hand" },
+  "asymmetry": { "feature": "left-shoulder himation" },
   "render": {
     "profile": "zeus",
     "matrix": {
@@ -13,10 +13,12 @@
       "required": [
         { "state": "idle" },
         { "state": "walk" },
-        { "state": "seated" },
-        { "state": "act", "ability": "thunderbolt" }
+        { "state": "seated" }
       ],
-      "deferred": [{ "state": "act", "ability": "pronouncement" }]
+      "deferred": [
+        { "state": "act", "ability": "thunderbolt" },
+        { "state": "act", "ability": "pronouncement" }
+      ]
     }
   }
 }

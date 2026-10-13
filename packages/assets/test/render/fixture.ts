@@ -73,17 +73,6 @@ export interface ExpectedCell {
       readonly drawn: number;
       readonly skipped: number;
     };
-    readonly bolt?: {
-      readonly angle: number;
-      readonly drawn: number;
-      readonly total: number;
-      readonly core_drawn: number;
-      readonly core_total: number;
-      readonly occluded: number;
-      readonly protected: number;
-      readonly clipped: number;
-      readonly outline_on_body: number;
-    };
   };
 }
 

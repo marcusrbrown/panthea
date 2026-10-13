@@ -249,7 +249,9 @@ describe("subject asymmetry", () => {
 
   it("is declared on the committed Zeus subject and validates", () => {
     const committed = JSON.parse(readFileSync(subjectFile(COMMITTED), "utf8"));
-    expect(committed.asymmetry).toEqual({ feature: "bolt hand" });
+    expect(committed.asymmetry).toEqual({
+      feature: "left-shoulder himation",
+    });
     expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
   });
 
@@ -1016,7 +1018,9 @@ describe("render kits and the licence boundary", () => {
     ).toEqual([]);
 
     const missing = stampRepo();
-    rmSync(join(missing, "tools", "render", "stamps", "zeus", "bolt-045.png"));
+    rmSync(
+      join(missing, "tools", "render", "stamps", "zeus", "face-south-r.png"),
+    );
     const refusedMissing = validateAssets(contentRoot(), {
       repoRoot: missing,
       kitProfiles: [],
@@ -1024,8 +1028,24 @@ describe("render kits and the licence boundary", () => {
     expect(refusedMissing.ok).toBe(false);
     expect(refusedMissing.diagnostics).toEqual([
       {
-        file: "tools/render/stamps/zeus/bolt-045.png",
+        file: "tools/render/stamps/zeus/face-south-r.png",
         message: expect.stringContaining("missing"),
+      },
+    ]);
+
+    // No prop stamps: a bolt stamp file left on disk is refused as unlisted.
+    const stray = stampRepo();
+    writeFileSync(
+      join(stray, "tools", "render", "stamps", "zeus", "bolt-000.png"),
+      "a prop stamp",
+    );
+    expect(
+      validateAssets(contentRoot(), { repoRoot: stray, kitProfiles: [] })
+        .diagnostics,
+    ).toEqual([
+      {
+        file: "tools/render/stamps/zeus/bolt-000.png",
+        message: expect.stringContaining("not in stamps.json"),
       },
     ]);
 
@@ -1186,7 +1206,7 @@ describe("render profiles and the camera", () => {
   it("refuses a profile that does not parse, and a camera that does not parse", () => {
     const badProfile = renderCopy();
     editJson(profilePath(badProfile), (p) => {
-      p.pose.walk16 = p.pose.walk;
+      p.pose.walk16 = p.pose.seated;
     });
     expect(run(badProfile)).toEqual([
       {
@@ -1254,13 +1274,12 @@ describe("the retro matrix completeness rule", () => {
     writeFileSync(godFile(root), JSON.stringify({ ...god, sprite }));
   };
 
-  /** Every required slot of the Zeus matrix, as the slot keys a god-tall asset holds. */
+  /** Every required slot of the Zeus matrix (12: idle, walk and seated, four facings), as the slot keys a god-tall asset holds. */
   const allSlots = (): string[] =>
     FACINGS.flatMap((facing) => [
       `idle/${facing}`,
       `walk/${facing}`,
       `seated/${facing}`,
-      `act/${facing}/thunderbolt`,
     ]);
 
   /** A 112x96 sprite holding exactly `slots`, built explicitly through the real manifest parser. */
@@ -1350,12 +1369,23 @@ describe("the retro matrix completeness rule", () => {
     expect(validateAssets(root).ok).toBe(false);
   });
 
-  it("fails for a missing idle, seated and act slot too, and lists every missing slot", () => {
-    for (const missing of [
-      "idle/south",
-      "seated/east",
-      "act/north/thunderbolt",
-    ]) {
+  it("requires exactly 12 slots: idle, walk and seated by four facings (act is deferred)", () => {
+    expect(allSlots()).toHaveLength(12);
+    expect(allSlots().some((key) => key.startsWith("act"))).toBe(false);
+    const subject = JSON.parse(
+      readFileSync(
+        join(contentRoot(), "assets", "subjects", "zeus.json"),
+        "utf8",
+      ),
+    );
+    expect(subject.render.matrix.deferred).toEqual([
+      { state: "act", ability: "thunderbolt" },
+      { state: "act", ability: "pronouncement" },
+    ]);
+  });
+
+  it("fails for a missing idle and seated slot too, and lists every missing slot (positive control above: all 12 pass)", () => {
+    for (const missing of ["idle/south", "seated/east"]) {
       const root = contentRoot();
       publish(
         root,
@@ -1374,13 +1404,29 @@ describe("the retro matrix completeness rule", () => {
       root,
       godTallAsset(
         "zeus-retro",
-        allSlots().filter((key) => !key.startsWith("act/")),
+        allSlots().filter((key) => !key.startsWith("seated/")),
       ),
     );
     pointGodAt(root, "zeus-retro");
     const message = diagnosticsOf(root)[0]?.message ?? "";
-    for (const facing of FACINGS)
-      expect(message).toContain(`act/${facing}/thunderbolt`);
+    for (const facing of FACINGS) expect(message).toContain(`seated/${facing}`);
+  });
+
+  it("does not require the deferred act slots, and accepts them when present", () => {
+    const root = contentRoot();
+    publish(root, godTallAsset("zeus-retro", allSlots()));
+    pointGodAt(root, "zeus-retro");
+    expect(validateAssets(root).ok).toBe(true);
+    const withAct = contentRoot();
+    publish(
+      withAct,
+      godTallAsset("zeus-retro", [
+        ...allSlots(),
+        ...FACINGS.map((f) => `act/${f}/thunderbolt`),
+      ]),
+    );
+    pointGodAt(withAct, "zeus-retro");
+    expect(validateAssets(withAct).ok).toBe(true);
   });
 
   it("does not require the deferred pronouncement slot", () => {

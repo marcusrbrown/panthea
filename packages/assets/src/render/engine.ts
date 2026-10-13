@@ -34,6 +34,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix } from "node:path";
 import {
   canonicalJson,
+  durationBounds,
   type ImageOutput,
   type LicenceRecord,
   type Sha256,
@@ -184,6 +185,8 @@ interface PreparedSlot {
   readonly recipe: RenderRecipe["slots"][number];
   readonly clip: string;
   readonly seed: number;
+  /** Whole milliseconds each frame is shown: the profile's timing for the state. */
+  readonly frameMs: readonly number[];
 }
 
 interface Prepared {
@@ -391,7 +394,8 @@ function prepare(
       `stamps: ${stamps.problems.map((p) => `${p.file}: ${p.message}`).join("; ")}`,
     );
 
-  // Slots: one per job, in order, with the frame count the vocabulary's rule for the state allows.
+  // Slots: one per job, in order, with the profile's frame count and timing for the state, held
+  // to the vocabulary's rule for the state on this cell class.
   const slots: PreparedSlot[] = [];
   for (const record of batch) {
     const slot = record.job.request.slots[0];
@@ -420,7 +424,26 @@ function prepare(
       return problem(
         `direction ${facing} is not a facing the render script knows`,
       );
-    const frames = rule.frames.max;
+    const clipSpec = profile.clips[slot.state];
+    if (clipSpec === undefined)
+      return problem(
+        `profile ${profile.id} has no clip for ${slot.state} (it poses ${Object.keys(profile.clips).join(", ")})`,
+      );
+    const frames = clipSpec.frames;
+    if (frames < rule.frames.min || frames > rule.frames.max)
+      return problem(
+        `profile ${profile.id} renders ${slot.state} at ${frames} frames; the ${spec.value.cell.id} rule allows ${rule.frames.min === rule.frames.max ? rule.frames.max : `${rule.frames.min} to ${rule.frames.max}`}`,
+      );
+    if (rule.fps !== undefined) {
+      const bounds = durationBounds(rule.fps);
+      const bad = clipSpec.frameMs.find(
+        (ms) => ms < bounds.min || ms > bounds.max,
+      );
+      if (bad !== undefined)
+        return problem(
+          `profile ${profile.id} shows a ${slot.state} frame for ${bad} ms; the ${spec.value.cell.id} rule allows ${bounds.min} to ${bounds.max} ms (${rule.fps.min} to ${rule.fps.max} fps)`,
+        );
+    }
     slots.push({
       record,
       recipe: {
@@ -432,6 +455,7 @@ function prepare(
       },
       clip: `${slot.state}${frames}`,
       seed: record.job.request.seed ?? 0,
+      frameMs: clipSpec.frameMs,
     });
   }
 
@@ -1097,6 +1121,7 @@ function ingest(
             clip: slot.clip,
             facing: slot.recipe.facing,
             frames: slot.recipe.frames,
+            frameMs: slot.frameMs,
             seed: slot.seed,
             loop:
               prepared.recipe.profile.clips[slot.recipe.state]?.loop ?? false,

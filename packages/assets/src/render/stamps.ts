@@ -1,7 +1,7 @@
 // The authored stamp set (R4): small PNGs drawn on top of a rendered figure where the render
-// cannot show a detail, composited by the post step with part-id and depth occlusion. A bolt
-// stamp exists at the eight 45-degree orientations of the held thunderbolt; a face stamp is the
-// eye pixel and brow of one facing, placed by the projected eye locator.
+// cannot show a detail, composited by the post step with part-id occlusion. A face stamp is the
+// eye pixel and brow of one facing, placed by the projected eye locator. There are no prop
+// stamps: a character's identity comes from costume and bearing, never from a held object.
 //
 // `tools/render/stamps/stamps.json` lists every file with its size, anchor and sha256;
 // `validate:assets` runs `checkStamps` against it. Files on disk and entries must match both
@@ -30,11 +30,6 @@ import { sha256Hex } from "../hash";
 import { decodePng } from "../studio/png/decode";
 
 const SUPPORTED_SCHEMA_VERSIONS = [1] as const;
-const HEX_COLOUR = /^#[0-9a-f]{6}$/;
-
-/** The eight orientations of the bolt stamp: degrees counter-clockwise from screen right. */
-export const BOLT_ANGLES = [0, 45, 90, 135, 180, 225, 270, 315] as const;
-export type BoltAngle = (typeof BOLT_ANGLES)[number];
 
 /** The facings that carry a face stamp, and the eye slots each one draws. North shows no face. */
 export const FACE_SLOTS = {
@@ -55,10 +50,6 @@ interface VariantFile {
   readonly anchor: readonly [number, number];
 }
 
-export interface BoltVariant extends VariantFile {
-  readonly angle: BoltAngle;
-}
-
 export interface FaceVariant extends VariantFile {
   readonly facing: FaceFacing;
   readonly slot: string;
@@ -68,11 +59,6 @@ export interface StampSet {
   readonly id: string;
   /** The palette whose colours the stamps are authored in. */
   readonly palette: string;
-  readonly bolt?: {
-    /** The stamp's own darkest outline colour: its pixels of this colour are the bolt's rim. */
-    readonly outline: Rgb;
-    readonly variants: readonly BoltVariant[];
-  };
   readonly face?: { readonly variants: readonly FaceVariant[] };
 }
 
@@ -92,18 +78,8 @@ export interface LoadedStamp {
   readonly pixels: readonly StampPixel[];
 }
 
-export interface LoadedBoltStamp {
-  readonly anchor: readonly [number, number];
-  /** Pixels that are not the rim colour. */
-  readonly core: readonly StampPixel[];
-  /** Pixels of the rim colour: drawn only where they lie on the body. */
-  readonly outline: readonly StampPixel[];
-}
-
 export interface LoadedStampSet {
   readonly id: string;
-  /** By orientation in degrees. */
-  readonly bolt?: ReadonlyMap<number, LoadedBoltStamp>;
   /** By `facing/slot`. */
   readonly face?: ReadonlyMap<string, LoadedStamp>;
 }
@@ -174,20 +150,6 @@ function parseVariantFile(
   });
 }
 
-function parseBoltVariant(
-  value: unknown,
-  path: string,
-): ParseResult<BoltVariant> {
-  if (!isRecord(value)) return fail(path, "expected a bolt variant");
-  const angle = value.angle;
-  if (!BOLT_ANGLES.includes(angle as BoltAngle)) {
-    return fail(`${path}.angle`, `expected one of ${BOLT_ANGLES.join(", ")}`);
-  }
-  const file = parseVariantFile(value, path);
-  if (!file.ok) return file;
-  return ok({ ...file.value, angle: angle as BoltAngle });
-}
-
 function parseFaceVariant(
   value: unknown,
   path: string,
@@ -204,49 +166,20 @@ function parseFaceVariant(
   return ok({ ...file.value, facing: facing.value, slot: slot.value });
 }
 
-function parseHexColour(value: unknown, path: string): ParseResult<Rgb> {
-  if (typeof value !== "string" || !HEX_COLOUR.test(value)) {
-    return fail(path, "expected a lowercase #rrggbb colour");
-  }
-  return ok([
-    Number.parseInt(value.slice(1, 3), 16),
-    Number.parseInt(value.slice(3, 5), 16),
-    Number.parseInt(value.slice(5, 7), 16),
-  ] as const);
-}
-
 function parseSet(value: unknown, path: string): ParseResult<StampSet> {
   if (!isRecord(value)) return fail(path, "expected a stamp set");
+  for (const key of Object.keys(value)) {
+    if (key !== "id" && key !== "palette" && key !== "face") {
+      return fail(
+        `${path}.${key}`,
+        `unknown key "${key}": a stamp set holds face stamps only`,
+      );
+    }
+  }
   const id = parseSlug(value.id, `${path}.id`);
   if (!id.ok) return id;
   const palette = parseSlug(value.palette, `${path}.palette`);
   if (!palette.ok) return palette;
-
-  let bolt: StampSet["bolt"];
-  if (value.bolt !== undefined) {
-    if (!isRecord(value.bolt))
-      return fail(`${path}.bolt`, "expected an object");
-    const outline = parseHexColour(value.bolt.outline, `${path}.bolt.outline`);
-    if (!outline.ok) return outline;
-    const variants = parseArray(
-      value.bolt.variants,
-      `${path}.bolt.variants`,
-      parseBoltVariant,
-    );
-    if (!variants.ok) return variants;
-    const present = new Set(variants.value.map((v) => v.angle));
-    if (present.size !== variants.value.length) {
-      return fail(`${path}.bolt.variants`, "expected one variant per angle");
-    }
-    const absent = BOLT_ANGLES.filter((a) => !present.has(a));
-    if (absent.length > 0) {
-      return fail(
-        `${path}.bolt.variants`,
-        `expected all eight orientations; missing ${absent.join(", ")}`,
-      );
-    }
-    bolt = { outline: outline.value, variants: variants.value };
-  }
 
   let face: StampSet["face"];
   if (value.face !== undefined) {
@@ -281,7 +214,6 @@ function parseSet(value: unknown, path: string): ParseResult<StampSet> {
   return ok({
     id: id.value,
     palette: palette.value,
-    ...(bolt === undefined ? {} : { bolt }),
     ...(face === undefined ? {} : { face }),
   });
 }
@@ -300,10 +232,9 @@ export function parseStampManifest(value: unknown): ParseResult<StampManifest> {
   if (new Set(ids).size !== ids.length) {
     return fail("stamps.json.sets", "expected unique set ids");
   }
-  const files = sets.value.flatMap((s) => [
-    ...(s.bolt?.variants ?? []).map((v) => v.file),
-    ...(s.face?.variants ?? []).map((v) => v.file),
-  ]);
+  const files = sets.value.flatMap((s) =>
+    (s.face?.variants ?? []).map((v) => v.file),
+  );
   if (new Set(files).size !== files.length) {
     return fail("stamps.json.sets", "expected each stamp file listed once");
   }
@@ -425,10 +356,8 @@ function readVariant(renderRoot: string, entry: VariantFile): VariantRead {
   return { ok: true, width, height, pixels };
 }
 
-const variantsOf = (set: StampSet): readonly VariantFile[] => [
-  ...(set.bolt?.variants ?? []),
-  ...(set.face?.variants ?? []),
-];
+const variantsOf = (set: StampSet): readonly VariantFile[] =>
+  set.face?.variants ?? [];
 
 /**
  * Checks the stamp set under `renderRoot` (the `tools/render` directory): the manifest parses,
@@ -458,9 +387,6 @@ export function checkStamps(renderRoot: string): StampCheck {
   return { problems };
 }
 
-const sameColour = (a: Rgb, b: Rgb): boolean =>
-  a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
-
 /** Loads one stamp set's pixels, checking each file against the manifest as it goes. */
 export function loadStampSet(
   renderRoot: string,
@@ -483,23 +409,6 @@ export function loadStampSet(
     };
   }
   const problems: StampProblem[] = [];
-  let bolt: Map<number, LoadedBoltStamp> | undefined;
-  if (set.bolt !== undefined) {
-    bolt = new Map();
-    for (const variant of set.bolt.variants) {
-      const result = readVariant(renderRoot, variant);
-      if (!result.ok) {
-        problems.push(result.problem);
-        continue;
-      }
-      const rim = set.bolt.outline;
-      bolt.set(variant.angle, {
-        anchor: variant.anchor,
-        core: result.pixels.filter((p) => !sameColour(p.rgb, rim)),
-        outline: result.pixels.filter((p) => sameColour(p.rgb, rim)),
-      });
-    }
-  }
   let face: Map<string, LoadedStamp> | undefined;
   if (set.face !== undefined) {
     face = new Map();
@@ -520,7 +429,6 @@ export function loadStampSet(
     ok: true,
     set: {
       id: set.id,
-      ...(bolt === undefined ? {} : { bolt }),
       ...(face === undefined ? {} : { face }),
     },
   };

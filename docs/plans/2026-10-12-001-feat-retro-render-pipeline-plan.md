@@ -607,6 +607,11 @@ flowchart TB
 
 **Verification:** Owner visual approval recorded; packaged game shows retro Zeus; evidence README and traceability updated.
 
+**Note (2026-10-12, retro Zeus makeover).** The owner rejected the first studio render and changed U10's scope. The old text above is kept as written.
+- The required matrix is **12 slots**: idle, walk and seated by four facings. `act/thunderbolt` is deferred beside `act/pronouncement`; it needs no art, no matrix slot and no `act` frames before promotion. The shared `act` state contract and Zeus's gameplay thunderbolt stay.
+- **No props on characters.** The bolt, its stamps and locators are gone (post step v3); Zeus's identity comes from a lapis himation over the left shoulder and a regal stance. Test scenarios above that read "act" or "every required slot" mean the 12.
+- **Frames and timing are per state** in the profile and used by the engine and the manifest: idle 10 × 250 ms, seated 8 frames of 208–209 ms, walk 16 × 50 ms, all looping with `loopStart` 0. The preregistered criteria record these as proposals the owner critiques from the animated preview. The packaged inspection check must read back every one of the 12 slots, including the 16-frame walk, at zoom 1–4 (`INSPECT_SIZE` is already 576×432 for a 16-frame 112×96 clip).
+
 ## System-Wide Impact
 
 - **Interaction graph:** runtime drain, job ledger and candidate flow gain a second engine; publish gains a `rendered` audit; the app Generate form gains a recipe path; the client layout target widens.
