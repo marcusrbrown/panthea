@@ -305,7 +305,7 @@ flowchart TB
 
 **Verification:** README records each measurement against the preregistered criteria, with the criteria hash unchanged.
 
-- [ ] **U2. Licence boundary and curated kit library**
+- [x] **U2. Licence boundary and curated kit library**
 
 **Goal:** Fail-closed kit intake and the GPL/MIT boundary, enforced in code.
 
@@ -345,7 +345,7 @@ flowchart TB
 
 **Verification:** `bun run check` passes; `kits.json` and the committed kit files agree both ways, with total size under the cap.
 
-- [ ] **U3. Vocabulary, contracts and request shape for retro**
+- [x] **U3. Vocabulary, contracts and request shape for retro**
 
 **Goal:** A 112×96 rendered asset can be requested, described and validated.
 
@@ -380,7 +380,7 @@ flowchart TB
 
 **Verification:** `bun run check` and `validate:assets` pass; legacy fixtures unchanged.
 
-- [ ] **U4. Keyed palettes and the `greek-retro` version**
+- [x] **U4. Keyed palettes and the `greek-retro` version**
 
 **Goal:** A second approved palette with its own limits, selected per asset.
 
