@@ -21,7 +21,8 @@
       "!tools/probes/sandbox/src/fixtures/lua",
       "!tools/probes/sandbox/results",
       "!tools/probes/catchup-bench/fixtures",
-      "!tools/probes/catchup-bench/results"
+      "!tools/probes/catchup-bench/results",
+      "!tools/probes/studio-render/criteria.json"
     ]
   },
   "formatter": {
