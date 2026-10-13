@@ -767,6 +767,35 @@ export function openRuntime(
       return undefined;
     };
 
+    /**
+     * An exception thrown inside an engine settles every job it left running as failed, stops the
+     * engine, and lets the drain go on. Undefined when the drain goes on; a result when it ends.
+     */
+    const settleThrown = async (
+      engine: Engine,
+      jobIds: readonly string[],
+      error: unknown,
+    ): Promise<DrainResult | undefined> => {
+      const message = `the ${engine.provider} engine threw: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      await engine.stop().catch(() => undefined);
+      for (const id of jobIds) {
+        const read = session.store.readJob(id);
+        if (read.kind !== "found" || read.value.job.status !== "running")
+          continue;
+        const recorded = session.fail(id, message);
+        if (!recorded.ok) {
+          const refusal = unsettled(recorded);
+          if (refusal.kind === "session-closed") return stop("session-closed");
+          if (refusal.kind === "refused") return refusedWrite(refusal.message);
+          continue;
+        }
+        results.push({ jobId: id, outcome: "failed", error: message });
+      }
+      return undefined;
+    };
+
     for (let first = true; ; first = false) {
       if (closing) return stop("closing");
       const queue = session.queued();
@@ -823,7 +852,16 @@ export function openRuntime(
       }
       const running_ = track(head.job.id);
       active = engine;
-      const ready = await engine.ready(running_);
+      let ready: Awaited<ReturnType<Engine["ready"]>>;
+      try {
+        ready = await engine.ready(running_);
+      } catch (error) {
+        current = undefined;
+        active = undefined;
+        const ended = await settleThrown(engine, [head.job.id], error);
+        if (ended) return ended;
+        continue;
+      }
       if (!ready.ok) {
         current = undefined;
         active = undefined;
@@ -856,7 +894,20 @@ export function openRuntime(
         return stop("start-failed");
       }
 
-      const attempts = await engine.run(batch, running_, track);
+      let attempts: Awaited<ReturnType<Engine["run"]>>;
+      try {
+        attempts = await engine.run(batch, running_, track);
+      } catch (error) {
+        current = undefined;
+        active = undefined;
+        const ended = await settleThrown(
+          engine,
+          batch.map((b) => b.job.id),
+          error,
+        );
+        if (ended) return ended;
+        continue;
+      }
       current = undefined;
       active = undefined;
       for (const attempt of attempts) {

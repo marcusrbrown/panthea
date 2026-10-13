@@ -359,6 +359,24 @@ export function plantUnlistedBuffer(renderRoot: string): string {
   return `${kit}/${file}`;
 }
 
+/**
+ * Points a referenced glTF at a buffer whose uri is not valid percent-encoding (`bad%ZZ.bin`), then
+ * re-pins the changed file, so the uri is the only thing wrong with the render root.
+ */
+export function plantMalformedBufferUri(renderRoot: string): string {
+  const kit = "universal-base-characters";
+  const file = "Hair_Beard.gltf";
+  const path = join(renderRoot, "kits", kit, file);
+  const gltf = JSON.parse(readFileSync(path, "utf8")) as {
+    buffers: { uri?: string; byteLength: number }[];
+  };
+  gltf.buffers.push({ uri: "bad%ZZ.bin", byteLength: 4 });
+  const bytes = Buffer.from(JSON.stringify(gltf));
+  writeFileSync(path, bytes);
+  repin(renderRoot, kit, file, bytes);
+  return `${kit}/${file}`;
+}
+
 /** Changes a non-glTF kit file's bytes without re-pinning it: the closure check cannot see it. */
 export function corruptKitFile(renderRoot: string): string {
   const kit = "universal-base-characters";

@@ -1162,14 +1162,12 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       ) === at,
   );
   let provenance: Record<string, unknown>;
+  // A hand-edited slot whose frame count changed is wholly hand work: it keeps its hand step and
+  // has no raw frames recorded, since a recorded slot's frame count is the render's. When no slot
+  // is still rendered, the revision is hand work and records no render (the jobs stay in
+  // relatedJobs, and each edit's rendered basis in handEdits).
+  const recorded: RenderedSlot[] = [];
   if (renderedSlots.length > 0) {
-    const first = [...renderedJobs.values()][0] as {
-      record: JobRecord;
-      manifest: RenderJobManifest;
-    };
-    // A hand-edited slot whose frame count changed is wholly hand work: it keeps its hand step
-    // and has no raw frames recorded, since a recorded slot's frame count is the render's.
-    const recorded: RenderedSlot[] = [];
     for (const slot of renderedSlots) {
       const job = renderedJobs.get(renderedOf.get(slot) as string);
       if (job === undefined) continue;
@@ -1194,10 +1192,12 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         },
       });
     }
-    if (recorded.length === 0)
-      return refuse(
-        "every rendered slot was hand-edited to another frame count: nothing records the render",
-      );
+  }
+  if (recorded.length > 0) {
+    const first = [...renderedJobs.values()][0] as {
+      record: JobRecord;
+      manifest: RenderJobManifest;
+    };
     provenance = {
       method: "rendered",
       revisionRecipe: renderedRevisionOf(
@@ -1205,6 +1205,15 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         request.request.recipe?.profile ?? "",
       ),
       slots: recorded,
+      licences,
+      relatedJobs,
+      handEdits,
+      sourceAssets,
+    };
+  } else if (renderedSlots.length > 0) {
+    // Every rendered slot was hand-edited to another frame count.
+    provenance = {
+      method: "hand",
       licences,
       relatedJobs,
       handEdits,

@@ -842,6 +842,83 @@ describe("a hand edit on a rendered slot", () => {
   );
 });
 
+describe("a rendered slot hand-edited to another frame count", () => {
+  test(
+    "when no slot is still rendered, the revision packs, approves and publishes as hand work with the render job kept in relatedJobs",
+    async () => {
+      const { rig, ids } = await oneSlot();
+      const candidate = rig.session.store.readRenderedCandidate(
+        ids[0] as string,
+      );
+      if (candidate.kind !== "found") throw new Error("no candidate");
+      const frames = candidate.value.frames.slice(0, 4).map((f) => {
+        const decoded = decodePng(
+          rig.session.store.readBlob(f.hash) as Uint8Array,
+        );
+        if (!decoded.ok) throw new Error("cell");
+        return {
+          rgba: new Uint8Array(decoded.image.rgba),
+          width: 112,
+          height: 96,
+        };
+      });
+      const sheet = sheetOf({ w: 112, h: 96 }, [
+        {
+          slot: "idle/west",
+          frames,
+          durations: frames.map(() => 200),
+          pivot: null,
+        },
+      ]);
+      const opened = rig.session.openEdit(
+        "hand-four",
+        "zeus-set",
+        ["idle/west"],
+        content,
+      );
+      if (!opened.ok) throw new Error(opened.message);
+      const finished = rig.session.finishEdit(
+        "hand-four",
+        sheet.png,
+        sheet.json,
+        content,
+      );
+      if (!finished.ok) throw new Error(finished.message);
+
+      const packed = packOk(rig, "zeus-set");
+      const manifest = manifestOf(packed.asset);
+      if (manifest.kind !== "sprite") throw new Error("not a sprite");
+      expect(manifest.animations[0]?.frames).toHaveLength(4);
+      expect(manifest.animations[0]?.frames.map((f) => f.durationMs)).toEqual([
+        200, 200, 200, 200,
+      ]);
+      const provenance = manifest.provenance as unknown as {
+        method: string;
+        relatedJobs: { jobId: string }[];
+        handEdits: { description: string }[];
+        generations?: unknown;
+        slots?: unknown;
+      };
+      expect(provenance.method).toBe("hand");
+      expect(provenance.relatedJobs.map((j) => j.jobId)).toEqual([
+        ids[0] as string,
+      ]);
+      expect(provenance.handEdits).toHaveLength(1);
+      expect(provenance.handEdits[0]?.description).toMatch(
+        new RegExp(`idle/west was rendered by job ${ids[0]}`),
+      );
+      expect(provenance.generations).toBeUndefined();
+      expect(provenance.slots).toBeUndefined();
+
+      // No rendered slot remains, so publish runs no render audit (and needs no render root).
+      const published = approveAndPublish(rig, approvedPalettes(), undefined);
+      if (!published.ok) throw new Error(published.message);
+      expect(published.asset.record.state).toBe("canon");
+    },
+    T,
+  );
+});
+
 describe("a complete Zeus matrix", () => {
   const STATES = ["idle", "walk", "seated", "act"] as const;
   const FACINGS = ["south", "east", "north", "west"] as const;

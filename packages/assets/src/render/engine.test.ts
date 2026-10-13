@@ -19,6 +19,7 @@ import {
   eventually,
   jobsById,
   openRig,
+  plantMalformedBufferUri,
   plantUnlistedBuffer,
   RENDER_ROOT,
   type Rig,
@@ -466,6 +467,56 @@ describe("failures are failed, never unavailable", () => {
   );
 
   test(
+    "a malformed percent-encoded buffer uri fails the render job with a named problem, and the image job after it still runs in the same drain",
+    async () => {
+      const rig = await openRig({
+        launches: [{}],
+        sd: {},
+        mutateRenderRoot: (root) => {
+          plantMalformedBufferUri(root);
+        },
+      });
+      const [render] = submitRender(rig, "zeus-retro");
+      const [sd] = submitSd(rig, "sd-a");
+      const result = await drain(rig);
+      const job = jobsById(rig)[render as string]?.job;
+      if (job?.status !== "failed")
+        throw new Error(`expected failed, got ${job?.status}`);
+      expect(job.error).toMatch(/bad%ZZ\.bin/);
+      expect(job.error).toMatch(/not a valid uri/);
+      expect(outcomes(result.results)).toEqual([
+        `${render}:failed`,
+        `${sd}:succeeded`,
+      ]);
+      expect(events(rig, "start")).toHaveLength(0);
+      expect(scratchLeft(rig)).toEqual([]);
+    },
+    T,
+  );
+
+  test(
+    "an exception thrown while an engine prepares settles the job as failed and the drain goes on to the next job",
+    async () => {
+      const rig = await openRig({ launches: [{}], sd: {} });
+      // The scratch parent is a file, so creating the job's work directory throws.
+      writeFileSync(rig.tempParent, "not a directory");
+      const [render] = submitRender(rig, "zeus-retro");
+      const [sd] = submitSd(rig, "sd-a");
+      const result = await drain(rig);
+      const job = jobsById(rig)[render as string]?.job;
+      if (job?.status !== "failed")
+        throw new Error(`expected failed, got ${job?.status}`);
+      expect(job.error).toMatch(/ENOTDIR|EEXIST|not a directory/);
+      expect(outcomes(result.results)).toEqual([
+        `${render}:failed`,
+        `${sd}:succeeded`,
+      ]);
+      expect(events(rig, "start")).toHaveLength(0);
+    },
+    T,
+  );
+
+  test(
     "a planted unlisted buffer fails the job before launch; the same recipe without it runs",
     async () => {
       // Positive control: the same copy of the render root, nothing planted.
@@ -583,6 +634,50 @@ describe("abort and quit", () => {
       expect(statusOf(rig, third)).toBe("succeeded");
       expect(startPids(rig)).toHaveLength(2);
       expect(alive(startPids(rig)[0] as number)).toBe(false);
+      expect(scratchLeft(rig)).toEqual([]);
+    },
+    T,
+  );
+
+  test(
+    "after an abort the restarted batch is refused when the profile changed since the request's first slot, instead of rendering under the old recipe hash",
+    async () => {
+      const rig = await openRig({
+        launches: [{ holdAfterSlots: 1 }, {}],
+        mutateRenderRoot: () => {},
+      });
+      const [first, second, third] = submitRender(rig, "zeus-retro", [
+        west("idle"),
+        west("walk"),
+        west("seated"),
+      ]) as [string, string, string];
+      const drained = rig.runtime.drain();
+      await eventually(
+        () =>
+          statusOf(rig, first) === "succeeded" &&
+          statusOf(rig, second) === "running",
+      );
+      const path = join(rig.base, "render-root", "profiles", "zeus.json");
+      const profile = JSON.parse(readFileSync(path, "utf8"));
+      profile.body.headScale += 0.05;
+      writeFileSync(path, JSON.stringify(profile, null, 2));
+      expect((await rig.runtime.abort(second)).ok).toBe(true);
+      const result = await drained;
+      if (!result.ok) throw new Error(result.message);
+
+      expect(outcomes(result.results)).toEqual([
+        `${first}:rendered`,
+        `${second}:aborted`,
+        `${third}:failed`,
+      ]);
+      const job = jobsById(rig)[third]?.job;
+      if (job?.status !== "failed")
+        throw new Error(`expected failed, got ${job?.status}`);
+      expect(job.error).toMatch(
+        /inputs changed since this request's first slot/,
+      );
+      // Nothing was rendered for it: only the first launch's two slots ever ran.
+      expect(events(rig, "start")).toHaveLength(1);
       expect(scratchLeft(rig)).toEqual([]);
     },
     T,

@@ -239,8 +239,17 @@ function unstagedBufferProblems(
   for (const buffer of buffers) {
     if (typeof buffer?.uri !== "string" || buffer.uri.startsWith("data:"))
       continue;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(buffer.uri);
+    } catch {
+      problems.push(
+        `${kit}/${gltfPath} names a buffer "${buffer.uri}" which is not a valid uri`,
+      );
+      continue;
+    }
     const resolved = posix.normalize(
-      posix.join(posix.dirname(gltfPath), decodeURIComponent(buffer.uri)),
+      posix.join(posix.dirname(gltfPath), decoded),
     );
     if (!listed.has(resolved))
       problems.push(
@@ -426,25 +435,31 @@ function prepare(
     });
   }
 
+  // One request is one revision: the recipe is computed from the inputs as they are now, and a
+  // later slot (a restarted batch after an abort) must still match the first slot's. If it does
+  // not, the job is refused before any render, so no slot is recorded under a recipe hash that is
+  // not the hash of the inputs it was rendered from.
   const revisionKey = first.source.requestId;
-  let revision = revisions.get(revisionKey);
-  if (revision === undefined) {
-    revision = revisionRecipe({
-      profile: profileHash(profile),
-      camera: cameraHash(camera),
-      palette: { id: palette.id, digest: paletteDigest(palette) },
-      pivot: recipeRequest.pivot,
-      script: RENDER_SCRIPT_SHA256,
-      postStep: {
-        version: POST_STEP_VERSION,
-        settings: postSettingsFor(profile.shadow.ramp),
-      },
-      blender: render.pin,
-      kit: kitHash(profile.kitFiles),
-      stamps: stampSetHash(stampSet),
-    });
-    revisions.set(revisionKey, revision);
-  }
+  const revision = revisionRecipe({
+    profile: profileHash(profile),
+    camera: cameraHash(camera),
+    palette: { id: palette.id, digest: paletteDigest(palette) },
+    pivot: recipeRequest.pivot,
+    script: RENDER_SCRIPT_SHA256,
+    postStep: {
+      version: POST_STEP_VERSION,
+      settings: postSettingsFor(profile.shadow.ramp),
+    },
+    blender: render.pin,
+    kit: kitHash(profile.kitFiles),
+    stamps: stampSetHash(stampSet),
+  });
+  const earlier = revisions.get(revisionKey);
+  if (earlier !== undefined && earlier.hash !== revision.hash)
+    return problem(
+      `inputs changed since this request's first slot: the revision recipe was ${earlier.hash} and is now ${revision.hash} (a profile, camera, palette, kit, stamp set or script differs); render the request again`,
+    );
+  revisions.set(revisionKey, earlier ?? revision);
 
   const parent = render.tempParent ?? tmpdir();
   mkdirSync(parent, { recursive: true });
