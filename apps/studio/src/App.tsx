@@ -677,7 +677,6 @@ function PreviewHarness({
         ref={container}
         id="preview"
         style={{
-          display: "inline-block",
           background: "#171817",
           imageRendering: "pixelated",
         }}

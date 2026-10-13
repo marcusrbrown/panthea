@@ -1,4 +1,5 @@
 import { MAX_SEED } from "@panthea/assets/browser";
+import { FOOTPRINT_MAX } from "@panthea/renderer";
 import type { Dispatch } from "react";
 import { HostError, type StudioHost, type StudioOp } from "../host/client";
 import type {
@@ -615,7 +616,9 @@ export function buildPackArgs(
       !Number.isInteger(w) ||
       !Number.isInteger(h) ||
       w < 1 ||
-      h < 1
+      h < 1 ||
+      w > FOOTPRINT_MAX ||
+      h > FOOTPRINT_MAX
     )
       return undefined;
     footprint = { w, h };

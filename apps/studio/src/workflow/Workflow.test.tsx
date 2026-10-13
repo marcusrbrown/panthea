@@ -11,6 +11,7 @@ import {
   deriveChoices,
   deriveGuarded,
   packWorkingSetGuarded,
+  pickCandidateGuarded,
 } from "./actions";
 import {
   initialWorkflowState,
@@ -217,6 +218,62 @@ describe("a refused first config choice", () => {
 });
 
 describe("WorkflowView controls", () => {
+  test("the candidate sheet shows rendered job details and a frame-strip tile", () => {
+    const candidate = {
+      id: "zeus-retro-idle-0000",
+      status: "done",
+      rendered: true,
+      requestId: "r1",
+      slotKey: "idle/south",
+      frameCount: 16,
+      revisionRecipeHash: "a".repeat(64),
+      slotRecipeHash: "b".repeat(64),
+    };
+    const state = workflowReducer(
+      stateFor(undefined, {
+        requests: [{ id: "r1", subject: "zeus" }],
+        candidates: [candidate],
+      }),
+      { type: "sheet", value: { workingSetId: "set-r1", candidateCount: 1 } },
+    );
+
+    const html = render(state);
+
+    expect(html).toContain("zeus-retro-idle-0000");
+    expect(html).toContain("16 frames");
+    expect(html).toContain("recipe");
+    expect(html).toContain("Frame strip");
+    expect(html).toContain("Pick</button>");
+  });
+
+  test("Pick sends a rendered candidate id and slot through the existing rendered pick path", async () => {
+    const transport = fakeTransport({ studio_call: () => ({ ok: true }) });
+    const renderedHost = createStudioHost(transport);
+    const ui = {
+      allowed: () => true,
+      setBusy: () => undefined,
+      setMessage: () => undefined,
+      setRefusalDetails: () => undefined,
+    };
+
+    await pickCandidateGuarded(renderedHost, ui, "set-r1", {
+      id: "zeus-retro-idle-0000",
+      rendered: true,
+      slotKey: "idle/south",
+    });
+
+    expect(transport.to("studio_call").map((call) => call.args)).toEqual([
+      {
+        op: "pick",
+        args: {
+          workingSetId: "set-r1",
+          candidateId: "zeus-retro-idle-0000",
+          slot: "idle/south",
+        },
+      },
+    ]);
+  });
+
   test("record options include unique record ids and put the newest draft first", () => {
     const html = render(
       stateFor(undefined, {
@@ -277,26 +334,38 @@ describe("WorkflowView controls", () => {
     expect(record).toBeGreaterThan(preview);
   });
 
-  test("gives preview controls a visible group title over the scene", () => {
+  test("keeps preview controls below the full-width canvas without overlaying it", () => {
     const css = readFileSync(
       new URL("./workflow.css", import.meta.url),
       "utf8",
     );
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 
-    expect(css).toMatch(
-      /\.preview-controls\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*1;/s,
-    );
+    expect(css).toMatch(/\.preview-controls\s*\{[^}]*position:\s*static;/s);
     expect(css).toMatch(
       /\.preview-controls-title\s*\{[^}]*color:\s*var\(--ink-soft\);/s,
     );
+    expect(css).toMatch(/\.preview-compact #preview\s*\{[^}]*order:\s*-1;/s);
     expect(css).toMatch(
-      /\.preview-compact #preview\s*\{[^}]*position:\s*relative;[^}]*z-index:\s*0;/s,
+      /\.preview-compact #preview\s*\{[^}]*justify-content:\s*safe center;/s,
+    );
+    expect(css).toMatch(
+      /\.preview-compact #preview\s*\{[^}]*overflow:\s*auto;/s,
+    );
+    expect(css).not.toMatch(
+      /\.preview-compact #preview canvas\s*\{[^}]*max-width:\s*100%/s,
+    );
+    expect(css).toMatch(
+      /\.preview-compact #preview canvas\s*\{[^}]*flex:\s*0 0 auto;/s,
+    );
+    expect(css).toMatch(
+      /\.workflow-grid > \.asset-column\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/s,
     );
     expect(css).toContain(".preview-compact > section:not(.preview-controls)");
     expect(app).toMatch(
       /<section\s+className="preview-controls"\s+aria-label="Preview controls">/,
     );
+    expect(app).not.toContain('display: "inline-block"');
     expect(app).toContain(
       '<span className="preview-controls-title">Preview controls</span>',
     );
@@ -567,6 +636,8 @@ describe("WorkflowView controls", () => {
     );
     expect(html).toContain("Footprint width");
     expect(html).toContain("Footprint height");
+    expect(html).toMatch(/Footprint width \(tiles\)[\s\S]*?max="8"/);
+    expect(html).toMatch(/Footprint height \(tiles\)[\s\S]*?max="8"/);
     expect(html).toContain("Original-work licence");
     expect(html).toContain("Author / method description");
     expect(html).not.toContain("Still-frame time (ms)");

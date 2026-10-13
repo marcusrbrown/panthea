@@ -166,10 +166,7 @@
 }
 .workflow-grid {
   display: grid;
-  grid-template-columns: minmax(285px, 0.9fr) minmax(300px, 1fr) minmax(
-      330px,
-      1.08fr
-    );
+  grid-template-columns: minmax(285px, 0.9fr) minmax(300px, 1fr);
   align-items: start;
   margin-top: 21px;
 }
@@ -182,6 +179,12 @@
 }
 .workspace-column + .workspace-column {
   border-left: 1px solid var(--line);
+}
+.workflow-grid > .asset-column {
+  grid-column: 1 / -1;
+  padding: 18px 0 0;
+  border-top: 1px solid var(--line);
+  border-left: 0;
 }
 .section-heading {
   display: flex;
@@ -466,10 +469,13 @@
 }
 .candidate-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
   margin-top: 8px;
 }
 .candidate-row {
+  min-width: 0;
   padding: 10px;
   border: 1px solid var(--line);
   background: var(--paper);
@@ -506,6 +512,48 @@
 }
 .candidate-pixels-failed {
   color: var(--bad);
+}
+.rendered-frame-preview {
+  width: 100%;
+  min-width: 0;
+  margin: 9px 0 0;
+  padding: 8px;
+  background: var(--desk);
+}
+.rendered-frame-strip {
+  display: flex;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 96px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: var(--line) transparent;
+}
+.rendered-frame-strip img {
+  flex: 0 0 auto;
+  display: block;
+  image-rendering: pixelated;
+  background: var(--paper-raised);
+}
+.rendered-frame-strip-loading,
+.rendered-frame-strip-failed {
+  align-items: center;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+}
+.rendered-frame-strip-failed {
+  color: var(--bad);
+}
+.rendered-frame-preview figcaption {
+  margin-top: 6px;
+  color: var(--ink-soft);
+  font-size: 0.65rem;
+}
+.rendered-candidate-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.rendered-candidate-facts code {
+  font-size: 0.65rem;
 }
 .candidate-title strong {
   font-size: 0.76rem;
@@ -631,6 +679,9 @@
   font-size: 0.6rem;
 }
 .preview-compact {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   overflow: hidden;
   background: #191a18;
 }
@@ -639,8 +690,7 @@
   display: none;
 }
 .preview-controls {
-  position: relative;
-  z-index: 1;
+  position: static;
   display: grid;
   gap: 7px;
   margin: 0 0 8px;
@@ -791,16 +841,18 @@
   gap: 1px;
 }
 .preview-compact #preview {
-  position: relative;
-  z-index: 0;
-  display: block;
+  order: -1;
+  display: flex;
+  justify-content: safe center;
+  overflow: auto;
   width: 100%;
   min-height: 190px;
   image-rendering: pixelated;
 }
 .preview-compact #preview canvas {
   display: block;
-  max-width: 100%;
+  flex: 0 0 auto;
+  max-width: none;
   image-rendering: pixelated;
 }
 .working-set-select {

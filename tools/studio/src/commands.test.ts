@@ -257,6 +257,92 @@ describe("reading without the writer lock", () => {
     rig.session.close();
   });
 
+  test("status, candidate listing and sheet include rendered candidates without file paths", async () => {
+    const rig = assetRig();
+    spriteSet(rig);
+    const image = rig.session.store.status().candidates[0];
+    if (!image || image.result.status !== "done")
+      throw new Error("expected a conformed image candidate");
+    const hash = (value: string) =>
+      createHash("sha256").update(value).digest("hex") as never;
+    rig.session.store.putRenderedCandidate({
+      schemaVersion: 1,
+      id: "zeus-rendered-idle-0000",
+      source: image.source,
+      subject: image.subject,
+      kind: "sprite",
+      slotKey: image.source.slotKey,
+      manifest: image.input.hash,
+      revisionRecipeHash: hash("revision recipe"),
+      slotRecipeHash: hash("slot recipe"),
+      postStepVersion: 2,
+      frames: [
+        {
+          hash: image.result.imageHash,
+          durationMs: 100,
+          report: image.result.report,
+        },
+      ],
+      loopStart: 0,
+      params: image.params,
+      target: image.target,
+    });
+
+    const config: StudioConfig = { studioRoot: rig.root };
+    const status = await run(config, "status", {});
+    const candidates = await run(config, "list", { kind: "candidates" });
+    const view = await run(config, "sheet", { workingSetId: "w" });
+
+    expect(status.outcome).toMatchObject({
+      ok: true,
+      result: {
+        counts: { candidates: 2, renderedCandidates: 1 },
+        renderedCandidates: [
+          {
+            id: "zeus-rendered-idle-0000",
+            jobId: "zeus-rendered-idle-0000",
+            slotKey: "idle/south",
+            frameCount: 1,
+            revisionRecipeHash: hash("revision recipe"),
+          },
+        ],
+      },
+    });
+    expect(candidates.outcome.ok).toBe(true);
+    if (candidates.outcome.ok)
+      expect(candidates.outcome.result).toContainEqual(
+        expect.objectContaining({
+          id: "zeus-rendered-idle-0000",
+          rendered: true,
+          slotKey: "idle/south",
+          frameCount: 1,
+          revisionRecipeHash: hash("revision recipe"),
+        }),
+      );
+    expect(view.outcome).toMatchObject({
+      ok: true,
+      result: {
+        slots: [
+          {
+            slotKey: "idle/south",
+            candidates: 2,
+            renderedCandidates: [
+              {
+                id: "zeus-rendered-idle-0000",
+                frameCount: 1,
+                revisionRecipeHash: hash("revision recipe"),
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect(
+      JSON.stringify([status.outcome, candidates.outcome, view.outcome]),
+    ).not.toContain(rig.root);
+    rig.session.close();
+  });
+
   test("list refuses an unknown kind", async () => {
     const { outcome } = await run({ studioRoot: tempRoot() }, "list", {
       kind: "secrets",
@@ -671,6 +757,74 @@ describe("conform, sets, picks and rejection through the session", () => {
       readStudioStatus(rig.root).workingSets[0]?.picks["idle/south"]
         ?.candidateId,
     ).toBe(jobId);
+  });
+
+  test("pick a rendered candidate through the host and keep its full slot animation", async () => {
+    const rig = assetRig();
+    const [jobId] = runSlots(rig, "zeus-idle", "sprite", [
+      { state: "idle", direction: "south" },
+    ]);
+    const image = rig.session.store.status().candidates[0];
+    const result = image?.result;
+    if (!jobId || !image || result?.status !== "done")
+      throw new Error("expected a conformed source candidate");
+    const hash = (value: string) =>
+      createHash("sha256").update(value).digest("hex") as never;
+    rig.session.store.putRenderedCandidate({
+      schemaVersion: 1,
+      id: jobId,
+      source: image.source,
+      subject: image.subject,
+      kind: "sprite",
+      slotKey: image.source.slotKey,
+      manifest: image.input.hash,
+      revisionRecipeHash: hash("revision recipe"),
+      slotRecipeHash: hash("slot recipe"),
+      postStepVersion: 2,
+      frames: Array.from({ length: 16 }, () => ({
+        hash: result.imageHash,
+        durationMs: 100,
+        report: result.report,
+      })),
+      loopStart: 0,
+      params: image.params,
+      target: image.target,
+    });
+    rig.session.store.putWorkingSet(
+      workingSet("w", {
+        sheetRequestId: "zeus-idle",
+        required: ["idle/south"],
+        limits: { "idle/south": { min: 16, max: 16 } },
+      }),
+    );
+    rig.session.close();
+    const config: StudioConfig = {
+      studioRoot: rig.root,
+      contentRoot: "/content",
+    };
+    const over = {
+      loadContent: () => ({ ok: true as const, content: rig.content }),
+      loadPalettes: () => ({
+        ok: true as const,
+        palettes: rig.content.palettes,
+      }),
+    };
+    const picked = await run(
+      config,
+      "pick",
+      { workingSetId: "w", candidateId: jobId, slot: "idle/south" },
+      over,
+    );
+
+    expect(picked.outcome.ok, JSON.stringify(picked.outcome)).toBe(true);
+    const rendered = readStudioStatus(rig.root).workingSets[0]?.rendered?.[
+      "idle/south"
+    ];
+    expect(rendered).toMatchObject({ jobId });
+    expect(rendered?.frames).toHaveLength(16);
+    expect(rendered?.frames.every((frame) => frame.durationMs === 100)).toBe(
+      true,
+    );
   });
 
   test("conform needs exactly one of a named set and inline params, and every numeric threshold explicit", async () => {

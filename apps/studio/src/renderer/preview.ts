@@ -21,13 +21,13 @@ import {
   type PixelBuffer,
   type Point,
   type PreviewView,
+  ZOOMS as RENDER_ZOOMS,
   type RenderBackend,
+  type Zoom as RenderZoom,
   roundCamera,
   type SceneEntity,
   type SceneLayer,
   type SceneResolution,
-  ZOOMS,
-  type Zoom,
 } from "@panthea/renderer";
 import type {
   AssetProblem,
@@ -44,9 +44,12 @@ export {
   type PreviewView,
   type RenderBackend,
   roundCamera,
-  ZOOMS,
-  type Zoom,
 };
+
+// The game uses 2×–4× scene zooms. The studio also needs a native-size view
+// when an owner checks the source pixels before packing.
+export const ZOOMS = [1, ...RENDER_ZOOMS] as const;
+export type Zoom = (typeof ZOOMS)[number];
 
 // The studio draws at a fixed 480x270.
 export const LOGICAL_WIDTH = 480;
@@ -257,7 +260,12 @@ export function createPreview(options: PreviewOptions): Preview {
 
   function applyView(): void {
     if (live === undefined) return;
-    const metrics = canvasMetrics(LOGICAL_SIZE, zoom, devicePixelRatio());
+    const rendererZoom = zoom as RenderZoom;
+    const metrics = canvasMetrics(
+      LOGICAL_SIZE,
+      rendererZoom,
+      devicePixelRatio(),
+    );
     const { canvas } = live;
     if (
       canvas.width !== metrics.backingWidth ||
@@ -268,7 +276,7 @@ export function createPreview(options: PreviewOptions): Preview {
     }
     canvas.style.width = `${metrics.cssWidth}px`;
     canvas.style.height = `${metrics.cssHeight}px`;
-    live.backend.view({ zoom, camera, metrics });
+    live.backend.view({ zoom: rendererZoom, camera, metrics });
   }
 
   function open(previous: HTMLCanvasElement | undefined): Live {
