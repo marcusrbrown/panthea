@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -945,9 +946,10 @@ const FIXTURE_PROFILE = {
 
 describe("render kits and the licence boundary", () => {
   it("passes the committed repository", () => {
-    expect(
-      validateAssets(COMMITTED, { repoRoot: REPO_ROOT, kitProfiles: [] }),
-    ).toEqual({ ok: true, diagnostics: [] });
+    expect(validateAssets(COMMITTED, { repoRoot: REPO_ROOT })).toEqual({
+      ok: true,
+      diagnostics: [],
+    });
   });
 
   it("runs the render checks only when asked, so a content-only root is untouched", () => {
@@ -1017,6 +1019,161 @@ describe("render kits and the licence boundary", () => {
     expect(
       validateAssets(contentRoot(), { repoRoot, kitProfiles: [] }).diagnostics,
     ).toEqual([]);
+  });
+});
+
+// biome-ignore lint/suspicious/noExplicitAny: the tests edit an untyped JSON document
+type Json = any;
+
+describe("render profiles and the camera", () => {
+  /** A repository root holding a copy of the committed tools/render (kits, profiles, camera, script). */
+  function renderCopy(): string {
+    const root = mkdtempSync(join(tmpdir(), "assets-render-copy-"));
+    dirs.push(root);
+    cpSync(join(REPO_ROOT, "tools", "render"), join(root, "tools", "render"), {
+      recursive: true,
+      filter: (source) => !source.includes(`${"/"}scratch`),
+    });
+    return root;
+  }
+  const profilePath = (root: string) =>
+    join(root, "tools", "render", "profiles", "zeus.json");
+  const kitsPath = (root: string) => join(root, "tools", "render", "kits.json");
+  const editJson = (path: string, change: (json: Json) => void) => {
+    const json = JSON.parse(readFileSync(path, "utf8"));
+    change(json);
+    writeFileSync(path, JSON.stringify(json));
+  };
+  const run = (root: string) =>
+    validateAssets(contentRoot(), { repoRoot: root }).diagnostics;
+
+  it("passes the committed profile, camera and kits together", () => {
+    expect(run(renderCopy())).toEqual([]);
+  });
+
+  it("refuses a profile naming a kit file that kits.json does not list", () => {
+    const root = renderCopy();
+    editJson(profilePath(root), (p) => {
+      p.kitFiles.push({
+        kit: "universal-base-characters",
+        path: "Missing.gltf",
+        sha256: "0".repeat(64),
+      });
+    });
+    const diagnostics = run(root);
+    expect(diagnostics.length).toBeGreaterThan(0);
+    expect(diagnostics.some((d) => d.message.includes("Missing.gltf"))).toBe(
+      true,
+    );
+  });
+
+  it("refuses a kit ref whose sha256 differs from kits.json", () => {
+    const root = renderCopy();
+    editJson(profilePath(root), (p) => {
+      p.kitFiles[0].sha256 = "f".repeat(64);
+    });
+    const diagnostics = run(root);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.file).toBe("tools/render/profiles/zeus.json");
+    expect(diagnostics[0]?.message).toContain("sha256");
+  });
+
+  it("refuses a referencedBy list that omits the profile, and one that lists a file it does not read", () => {
+    const omitted = renderCopy();
+    editJson(kitsPath(omitted), (k) => {
+      k.kits[0].files[0].referencedBy = [];
+    });
+    expect(run(omitted).map((d) => d.message)).toEqual([
+      expect.stringContaining("referencedBy omits"),
+    ]);
+
+    const stray = renderCopy();
+    editJson(profilePath(stray), (p) => {
+      // Dropping a hair piece's model leaves its file listed in kitFiles but unused; dropping the
+      // kit ref itself leaves kits.json listing a file the profile no longer references.
+      p.models.hair = p.models.hair.slice(0, 2);
+      p.kitFiles = p.kitFiles.filter(
+        (r: { path: string }) =>
+          r.path !== "Hair_Long.gltf" && r.path !== "Hair_Long.bin",
+      );
+    });
+    const messages = run(stray).map((d) => d.message);
+    expect(messages).toHaveLength(2);
+    expect(
+      messages.every((m) => m.includes("does not reference this file")),
+    ).toBe(true);
+  });
+
+  it("refuses a profile referencing an unassessed kit file, through validate:assets", () => {
+    const root = renderCopy();
+    editJson(kitsPath(root), (k) => {
+      k.kits[0].licence = { spdx: "CC-BY-4.0" };
+    });
+    const diagnostics = run(root);
+    expect(diagnostics.length).toBeGreaterThan(0);
+    expect(
+      diagnostics.every((d) => d.message.includes("ownerAssessment")),
+    ).toBe(true);
+  });
+
+  it("refuses a profile that does not parse, and a camera that does not parse", () => {
+    const badProfile = renderCopy();
+    editJson(profilePath(badProfile), (p) => {
+      p.pose.walk16 = p.pose.walk;
+    });
+    expect(run(badProfile)).toEqual([
+      {
+        file: "tools/render/profiles/zeus.json",
+        message: expect.stringContaining("walk16"),
+      },
+    ]);
+
+    const badCamera = renderCopy();
+    editJson(join(badCamera, "tools", "render", "camera.json"), (c) => {
+      c.rotationDeg = [55, 0, 45];
+    });
+    expect(run(badCamera)).toEqual([
+      {
+        file: "tools/render/camera.json",
+        message: expect.stringContaining("2:1"),
+      },
+    ]);
+  });
+
+  it("refuses a missing camera, and a profile file whose name is not its id", () => {
+    const noCamera = renderCopy();
+    rmSync(join(noCamera, "tools", "render", "camera.json"));
+    expect(run(noCamera)).toEqual([
+      { file: "tools/render/camera.json", message: "file is missing" },
+    ]);
+
+    const misnamed = renderCopy();
+    renameSync(
+      profilePath(misnamed),
+      join(dirname(profilePath(misnamed)), "other.json"),
+    );
+    expect(run(misnamed).map((d) => d.file)).toContain(
+      "tools/render/profiles/other.json",
+    );
+  });
+
+  it("refuses a subject whose render.profile names no profile (positive control: zeus passes)", () => {
+    const root = renderCopy();
+    const content = contentRoot();
+    const subject = join(content, "assets", "subjects", "zeus.json");
+    const json = JSON.parse(readFileSync(subject, "utf8"));
+    expect(validateAssets(content, { repoRoot: root }).diagnostics).toEqual([]);
+    writeFileSync(
+      subject,
+      JSON.stringify({ ...json, render: { ...json.render, profile: "ghost" } }),
+    );
+    const diagnostics = validateAssets(content, { repoRoot: root }).diagnostics;
+    expect(diagnostics).toEqual([
+      {
+        file: "assets/subjects/zeus.json",
+        message: expect.stringContaining('"ghost"'),
+      },
+    ]);
   });
 });
 
