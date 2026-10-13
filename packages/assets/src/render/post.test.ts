@@ -465,11 +465,11 @@ describe("raw frames that cannot be processed", () => {
 });
 
 describe("hand-off to conformance", () => {
-  it("passes every fixture cell under the greek-retro limits and the declared pivot (draft palette)", () => {
+  it("passes every fixture cell under the greek-retro limits and the declared pivot (approved palette)", () => {
     const loaded = loadStudioPalettes(COMMITTED_CONTENT, PALETTE_FAMILIES);
     if (!loaded.ok) throw new Error(JSON.stringify(loaded.diagnostics));
     const retro = loaded.palettes.get("greek-retro");
-    expect(retro?.approval.status).toBe("draft");
+    expect(retro?.approval.status).toBe("approved");
     expect(retro?.limits?.colours.sprite).toBe(48);
     for (const cell of run(fixture.current).cells) {
       const result = conformImage({

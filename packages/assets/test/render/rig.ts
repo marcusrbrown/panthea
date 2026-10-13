@@ -439,8 +439,19 @@ export function approvedPalettes(): PaletteSet {
   ]);
 }
 
-/** The palettes as the content loaded them: `greek-retro` is a draft. */
-export const draftPalettes = (): PaletteSet => content.palettes;
+/**
+ * Every palette of the content with `greek-retro` an explicit draft, whatever the committed
+ * file's status: what a fixture needs to prove that approve and publish refuse a draft palette.
+ */
+export function draftPalettes(): PaletteSet {
+  const retro = content.palettes.get("greek-retro");
+  if (retro === undefined)
+    throw new Error("no greek-retro palette in the content");
+  return new Map([
+    ...content.palettes,
+    ["greek-retro", { ...retro, approval: { status: "draft" } }],
+  ]);
+}
 
 export const registryOf = (rig: Rig): string => {
   const root = join(rig.base, "registry");

@@ -785,7 +785,11 @@ describe("recipe requests for the render engine", () => {
         id: "greek-retro",
         family: "olympus",
         maxColours: 48,
-        approval: { status: "draft" },
+        approval: {
+          status: "approved",
+          digest:
+            "40f059ffae86409cd87d776492fd797f5efc6ad970114810fd97102e83e9c686",
+        },
       },
     });
     expect(spec.slots.map((s) => s.key)).toEqual(["walk/south"]);
