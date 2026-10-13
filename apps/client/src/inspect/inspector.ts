@@ -48,8 +48,15 @@ import {
   selectionQuery,
 } from "./selection";
 
-/** The fixed 1x render target. Wide enough for a row of 96-wide portraits or four 128-wide frames. */
-export const INSPECT_SIZE = { width: 576, height: 288 } as const;
+/**
+ * The fixed 1x render target. Wide enough for a row of 96-wide portraits, four
+ * 128-wide frames or four 112-wide god-tall frames (16 + 4 * 112 + 3 * 8 = 488
+ * <= 560). Tall enough for a 16-frame god-tall clip, the longest the vocabulary
+ * allows: four rows of 96 with 8 between and 16 above end at 16 + 4 * 96 +
+ * 3 * 8 = 424, rounded up to the 16 px grid: 432. The canvas is 4 x that at the
+ * largest checked zoom: 2304 x 1728.
+ */
+export const INSPECT_SIZE = { width: 576, height: 432 } as const;
 
 const PAD = 16;
 const GAP = 8;

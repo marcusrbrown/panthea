@@ -412,8 +412,25 @@ test("frames sit at whole pixels in a row, wrap before the edge, and one that ca
     expect(rect.x + rect.w).toBeLessThanOrEqual(INSPECT_SIZE.width);
     expect(rect.y + rect.h).toBeLessThanOrEqual(INSPECT_SIZE.height);
   }
+  // 112x96 god-tall frames: four to a row, and a 16-frame clip (the retro walk, or the longest
+  // idle, seated or act) takes four rows, the last ending at 16 + 4 * 96 + 3 * 8 = 424 <= 432.
+  const tall = placeFrames(
+    Array.from({ length: 16 }, () => ({ w: 112, h: 96 })),
+  );
+  expect(tall.map((r) => [r.x, r.y])).toEqual(
+    [16, 120, 224, 328].flatMap((y) => [16, 136, 256, 376].map((x) => [x, y])),
+  );
+  for (const rect of tall) {
+    expect(rect.x + rect.w).toBeLessThanOrEqual(INSPECT_SIZE.width);
+    expect(rect.y + rect.h).toBeLessThanOrEqual(INSPECT_SIZE.height);
+  }
+  expect(INSPECT_SIZE).toEqual({ width: 576, height: 432 });
+  expect(INSPECT_SIZE.height % 16).toBe(0);
   expect(() => placeFrames([{ w: 600, h: 10 }])).toThrow(/does not fit/);
   expect(() =>
-    placeFrames(Array.from({ length: 9 }, () => ({ w: 128, h: 128 }))),
+    placeFrames(Array.from({ length: 13 }, () => ({ w: 128, h: 128 }))),
+  ).toThrow(/does not fit/);
+  expect(() =>
+    placeFrames(Array.from({ length: 17 }, () => ({ w: 112, h: 96 }))),
   ).toThrow(/does not fit/);
 });

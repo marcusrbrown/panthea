@@ -107,6 +107,10 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 - **Image-to-3D generation.** Not evaluated: no licensed local model was tried, and generated meshes would still need rigging and topology cleanup before they could share the animation clips. Not pursued.
 - **Paper doll or sprite layering.** Cheap for variants, but it needs hand-drawn parts per direction and animation, so it repeats the hand-pixel cost and gives no new range of motion.
 
+## Dated notes
+
+**2026-10-12.** The client logical target is now 624×592 for `god-tall` cells, replacing the 576×592 in the Client target paragraph above (U9: width 2 × 305 = 610 rounded up to the 16 px grid; height unchanged). The inspection fixture's 1x target (`INSPECT_SIZE`) is now 576×432, up from 576×288, so a 16-frame 112×96 clip fits. The packaged-app check at zoom 1–4 is still owed (U10, with the real art).
+
 ## Evidence/links
 
 [tools/probes/retro-render/README.md](../../tools/probes/retro-render/README.md) (PR #214; three rounds, the owner's acceptance, the resample check, envelope and pivot numbers, provenance), [tools/probes/blender-sprite/README.md](../../tools/probes/blender-sprite/README.md) (PR #213; the NO-GO and the preregistered criteria), [art guide](../product/art-guide.md), [decisions D14, D15, D19, D23, D26](../product/decisions.md), [ADR-0009](0009-asset-registry-lifecycle-and-uris.md) (registry revisions), [ADR-0011](0011-game-canon-art-loading.md) (game canon loading), [content-direction.md](../product/content-direction.md).
