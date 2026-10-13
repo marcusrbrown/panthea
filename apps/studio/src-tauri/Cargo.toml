@@ -17,7 +17,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # Pinned exactly, as in apps/desktop: tauri, tauri-runtime and
 # tauri-runtime-wry must all resolve to the same release.
-tauri = { version = "=2.12.1", features = [] }
+tauri = { version = "=2.12.3", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Spawns the studio sidecar only; the webview gets no shell permission.

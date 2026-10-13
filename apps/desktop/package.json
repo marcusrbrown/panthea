@@ -9,6 +9,6 @@
     "sidecar:build": "bash ../../tools/probes/backend-lifecycle/scripts/build-sidecar.sh"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.12.1"
+    "@tauri-apps/cli": "2.12.2"
   }
 }
