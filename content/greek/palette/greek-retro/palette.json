@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "id": "greek-retro",
+  "approval": {
+    "status": "draft"
+  },
+  "limits": {
+    "shades": {
+      "min": 4,
+      "max": 6
+    },
+    "colours": {
+      "sprite": 48
+    }
+  },
+  "families": [
+    {
+      "id": "town",
+      "ramps": [
+        {
+          "id": "soil",
+          "shades": [
+            "#382d29",
+            "#70503b",
+            "#936545",
+            "#b77a4e",
+            "#ce9866",
+            "#e4b77e"
+          ]
+        },
+        {
+          "id": "olive",
+          "shades": [
+            "#3b4431",
+            "#515c3d",
+            "#68764a",
+            "#838e55",
+            "#9ea65f",
+            "#d5c887"
+          ]
+        },
+        {
+          "id": "terracotta",
+          "shades": [
+            "#63392f",
+            "#834736",
+            "#a4553c",
+            "#ce7651",
+            "#dd9267",
+            "#ecae7d"
+          ]
+        },
+        {
+          "id": "stone-sky",
+          "shades": [
+            "#56655d",
+            "#6f7d70",
+            "#889684",
+            "#a6ae95",
+            "#c4c6a6",
+            "#eee0bd"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "olympus",
+      "ramps": [
+        {
+          "id": "marble",
+          "shades": [
+            "#526471",
+            "#70848e",
+            "#8fa6ad",
+            "#abbfc0",
+            "#c7d8d4",
+            "#f0eee0"
+          ]
+        },
+        {
+          "id": "pale-gold",
+          "shades": [
+            "#76572f",
+            "#947039",
+            "#b38b43",
+            "#c8a559",
+            "#ddbf70",
+            "#f4e4ae"
+          ]
+        },
+        {
+          "id": "cloud",
+          "shades": [
+            "#637b89",
+            "#8098a4",
+            "#9fb5bf",
+            "#bacbcf",
+            "#d6e1df",
+            "#f3f0dc"
+          ]
+        },
+        {
+          "id": "lapis",
+          "shades": [
+            "#243f63",
+            "#3c6290",
+            "#567ba4",
+            "#7194b8",
+            "#9bb2c6",
+            "#c5d1d3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "underworld",
+      "ramps": [
+        {
+          "id": "bone",
+          "shades": [
+            "#514940",
+            "#696053",
+            "#827766",
+            "#9d907b",
+            "#b9aa91",
+            "#e4d8ba"
+          ]
+        }
+      ]
+    }
+  ]
+}

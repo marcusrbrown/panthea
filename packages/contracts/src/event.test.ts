@@ -2844,3 +2844,88 @@ test("a trouble names the afflicted mortal, the trouble, its god, the season, wh
   }
   expect(WITNESSED_EVENT_KINDS as readonly string[]).not.toContain("trouble");
 });
+
+test("a strike names the prayer it answers on its own event: mortal-struck, building-damaged and a strike ignition carry it, and it is their cause; one that answers nothing names nothing and stays a root", () => {
+  const events = log(
+    {
+      kind: "mortal-struck",
+      entityId: "lykos",
+      actor: "poseidon",
+      resource: "food",
+      amount: 2,
+      petitionId: "evt-90",
+    },
+    {
+      kind: "building-damaged",
+      entityId: "old-oak",
+      amount: 1,
+      actor: "zeus",
+      petitionId: "evt-91",
+    },
+    {
+      kind: "building-ignited",
+      entityId: "the-tavern",
+      cause: { kind: "strike", actor: "zeus", petitionId: "evt-92" },
+    },
+    { kind: "mortal-struck", entityId: "lykos", actor: "poseidon", amount: 0 },
+    {
+      kind: "building-damaged",
+      entityId: "old-oak",
+      amount: 1,
+      actor: "zeus",
+    },
+    {
+      kind: "building-ignited",
+      entityId: "the-tavern",
+      cause: { kind: "strike", actor: "zeus" },
+    },
+  );
+  const cause = (n: number) => {
+    const event = events.get(`evt-${n}`);
+    return event === undefined ? undefined : eventCause(event);
+  };
+  expect(String(cause(1))).toBe("evt-90");
+  expect(String(cause(2))).toBe("evt-91");
+  expect(String(cause(3))).toBe("evt-92");
+  expect(cause(4)).toBeUndefined();
+  expect(cause(5)).toBeUndefined();
+  expect(cause(6)).toBeUndefined();
+  const named = events.get("evt-3");
+  expect(
+    JSON.parse(
+      JSON.stringify(named?.kind === "building-ignited" && named.cause),
+    ),
+  ).toEqual({
+    kind: "strike",
+    actor: "zeus",
+    petitionId: "evt-92",
+  });
+});
+
+test("a malformed petition id on a strike event is refused, and a strike with none still parses", () => {
+  const shapes = [
+    { kind: "mortal-struck", entityId: "lykos", actor: "poseidon", amount: 0 },
+    { kind: "building-damaged", entityId: "old-oak", amount: 1, actor: "zeus" },
+    {
+      kind: "building-ignited",
+      entityId: "the-tavern",
+      cause: { kind: "strike", actor: "zeus" },
+    },
+  ];
+  for (const shape of shapes) {
+    expect(parseEvent(envelope(shape)).ok).toBe(true);
+  }
+  for (const petitionId of ["", 4, null]) {
+    for (const shape of shapes.slice(0, 2)) {
+      expect(parseEvent(envelope({ ...shape, petitionId })).ok).toBe(false);
+    }
+    expect(
+      parseEvent(
+        envelope({
+          ...shapes[2],
+          cause: { kind: "strike", actor: "zeus", petitionId },
+        }),
+      ).ok,
+    ).toBe(false);
+  }
+});

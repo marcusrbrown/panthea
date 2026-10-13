@@ -352,6 +352,8 @@ describe("recordModelRequest", () => {
       proposalId,
       role: "zeus",
       outcome: "intent",
+      exhaustedReason: undefined,
+      cap: undefined,
       steps: [{ ...OLLAMA_STEP, elapsedMs: 812, mode: "native" }],
       elapsedMs: 815,
       promptDigest: sha256("What does Zeus do?"),
@@ -934,4 +936,80 @@ test("proposal ids are time-ordered, so the trace's outcome rows and their links
   expect([...ids].sort()).toEqual(ids);
   expect(ids[0]?.startsWith("proposal-")).toBe(true);
   expect(new Set(ids).size).toBe(ids.length);
+});
+
+describe("the cap figures on a model request", () => {
+  const cap = {
+    estimatedTokens: 2_874,
+    ratio: 2.85,
+    shed: { events: 3, actions: 1, memories: 0, prayers: 2 },
+  };
+
+  test("an answered request keeps the estimated tokens, the ratio and the shed count of each tier", () => {
+    const proposalId = createProposalId();
+    recordModelRequest(db, {
+      proposalId,
+      role: "zeus",
+      route: intentRoute,
+      prompt: "p",
+      output: "o",
+      cap,
+    });
+
+    expect(getModelRequestByProposalId(db, proposalId)?.cap).toEqual(cap);
+    expect(
+      db
+        .query(
+          "SELECT estimated_tokens, token_ratio, shed_events, shed_actions, shed_memories, shed_prayers FROM trace_model_requests",
+        )
+        .get(),
+    ).toEqual({
+      estimated_tokens: 2_874,
+      token_ratio: 2.85,
+      shed_events: 3,
+      shed_actions: 1,
+      shed_memories: 0,
+      shed_prayers: 2,
+    });
+  });
+
+  test("a turn that was over the cap is recorded exhausted with the reason, and sent nothing", () => {
+    const id = recordModelRequest(db, {
+      role: "zeus",
+      route: { kind: "exhausted", steps: [], elapsedMs: 0 },
+      prompt: "p",
+      exhaustedReason: "prompt-over-cap",
+      cap,
+    });
+
+    const row = getModelRequest(db, id);
+    expect(row).toMatchObject({
+      outcome: "exhausted",
+      exhaustedReason: "prompt-over-cap",
+      steps: [],
+      cap,
+    });
+  });
+
+  test("a request recorded without them reads back with none, and a chain the router exhausted has no reason", () => {
+    const id = recordModelRequest(db, {
+      role: "zeus",
+      route: { kind: "exhausted", steps: [], elapsedMs: 1 },
+      prompt: "p",
+    });
+
+    const row = getModelRequest(db, id);
+    expect(row?.cap).toBeUndefined();
+    expect(row?.exhaustedReason).toBeUndefined();
+  });
+
+  test("only an exhausted request can carry a reason", () => {
+    expect(() =>
+      db.run(
+        `INSERT INTO trace_model_requests
+           (id, role, outcome, steps, elapsed_ms, prompt_digest, recorded_at, exhausted_reason)
+         VALUES ('r', 'zeus', 'intent', '[]', 1, 'd', 1, 'prompt-over-cap')`,
+      ),
+    ).toThrow();
+  });
 });

@@ -8,9 +8,9 @@ import {
   WORLD_CONTROLS,
 } from "./steps/context";
 
-test("the model defaults to the M2 local baseline, qwen3 8B at 4K, and reasoning is unset", () => {
+test("the model defaults to the M2 local baseline, granite3.3 8B at 4K, and reasoning is unset", () => {
   const args = parseArgs(["--real"]);
-  expect(args.model).toBe("qwen3-8b-4k");
+  expect(args.model).toBe("granite3.3-8b-4k");
   expect(args.reasoningEffort).toBeUndefined();
 });
 
@@ -255,7 +255,7 @@ test("--steps names staged steps that start a world of their own, and nothing el
     "--steps=S15",
     "--steps=S21,S1",
     "--steps=",
-    "--steps=S26",
+    "--steps=S28",
   ]) {
     expect(() => parseArgs([bad])).toThrow(/staged steps/);
   }
@@ -271,6 +271,8 @@ test("each staged-world control runs only its own step, and the others run the s
     "refusal-revenge": "S22",
     "no-answerer": "S24",
     "director-off": "S25",
+    "remote-bless": "S26",
+    "remote-strike": "S27",
   });
   // A control with no staged step reruns the story to the step it breaks.
   for (const control of ["chain", "isolation", "trace", "petition-privacy"]) {
@@ -279,4 +281,93 @@ test("each staged-world control runs only its own step, and the others run the s
   // The in-process world control is not a process control.
   expect(CONTROL_NAMES as readonly string[]).not.toContain("trouble-route");
   expect(WORLD_CONTROLS).toEqual(["trouble-route"]);
+});
+
+// --- The unattended run ----------------------------------------------------------------------
+
+test("--unattended selects the one-world run at the full sixty minutes, on local Ollama, and the existing modes are off", () => {
+  const args = parseArgs(["--unattended"]);
+  expect(args).toMatchObject({
+    unattended: true,
+    unattendedMinutes: 60,
+    scripted: undefined,
+    episodes: 0,
+    real: false,
+    writeReadme: false,
+  });
+  // Without it nothing changes: the story, the episodes and the real run parse as they did.
+  expect(parseArgs([])).toMatchObject({
+    unattended: false,
+    unattendedMinutes: 60,
+    scripted: undefined,
+  });
+  expect(parseArgs(["--episodes=2"]).unattended).toBe(false);
+  expect(parseArgs(["--real"]).unattended).toBe(false);
+});
+
+test("--unattended-minutes scales the running phases, takes a positive whole number, and needs --unattended", () => {
+  expect(parseArgs(["--unattended", "--unattended-minutes=6"])).toMatchObject({
+    unattended: true,
+    unattendedMinutes: 6,
+  });
+  expect(
+    parseArgs(["--unattended", "--unattended-minutes=1"]).unattendedMinutes,
+  ).toBe(1);
+  for (const bad of ["0", "-3", "2.5", "six", ""]) {
+    expect(() =>
+      parseArgs(["--unattended", `--unattended-minutes=${bad}`]),
+    ).toThrow(/--unattended-minutes/);
+  }
+  expect(() => parseArgs(["--unattended-minutes=6"])).toThrow(
+    /--unattended-minutes applies only with --unattended/,
+  );
+});
+
+test("--unattended is refused with every other mode and with a hosted endpoint: one world, local only", () => {
+  for (const other of [
+    "--episodes=1",
+    "--real",
+    "--write-readme",
+    "--positive-control=chain",
+    "--steps=S21",
+    "--base-url=http://127.0.0.1:9000/v1",
+    "--key-ref=k",
+  ]) {
+    expect(() => parseArgs(["--unattended", other])).toThrow(/--unattended/);
+    expect(() => parseArgs([other, "--unattended"])).toThrow(/--unattended/);
+  }
+  // Control: the flags that do apply parse alongside it.
+  expect(
+    parseArgs([
+      "--unattended",
+      "--skip-build",
+      "--model=m",
+      "--reasoning-effort=none",
+      "--out=/tmp/x",
+    ]),
+  ).toMatchObject({
+    unattended: true,
+    skipBuild: true,
+    model: "m",
+    reasoningEffort: "none",
+    out: "/tmp/x",
+  });
+});
+
+test("--scripted answers the run from the scripted provider instead of Ollama, in one of two modes, and only with --unattended", () => {
+  expect(parseArgs(["--unattended", "--scripted=answer"]).scripted).toBe(
+    "answer",
+  );
+  expect(parseArgs(["--unattended", "--scripted=empty-200"]).scripted).toBe(
+    "empty-200",
+  );
+  expect(() => parseArgs(["--unattended", "--scripted=other"])).toThrow(
+    /--scripted/,
+  );
+  expect(() => parseArgs(["--unattended", "--scripted="])).toThrow(
+    /--scripted/,
+  );
+  expect(() => parseArgs(["--scripted=answer"])).toThrow(
+    /--scripted applies only with --unattended/,
+  );
 });

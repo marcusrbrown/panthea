@@ -50,6 +50,7 @@ import {
   type WorldControlRun,
 } from "./steps/s23-world";
 import { stepDefection } from "./steps/s24-defection";
+import { stepRemoteBless, stepRemoteStrike } from "./steps/s26-afar";
 import { launchConfigFor } from "./steps/staging";
 
 export {
@@ -130,6 +131,8 @@ export async function runStory(
         }
         if (id === "S24") await stepDefection(recorder, running);
         if (id === "S25") await stepDirectorClock(recorder, running);
+        if (id === "S26") await stepRemoteBless(recorder, running);
+        if (id === "S27") await stepRemoteStrike(recorder, running);
       }
       return {
         steps: recorder.results,
@@ -165,6 +168,8 @@ export async function runStory(
     const worldControls = await stepTroubleRoute(recorder, running);
     await stepDefection(recorder, running);
     await stepDirectorClock(recorder, running);
+    await stepRemoteBless(recorder, running);
+    await stepRemoteStrike(recorder, running);
     return {
       steps: recorder.results,
       binaryBytes,

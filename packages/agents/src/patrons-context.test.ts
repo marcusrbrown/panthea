@@ -387,19 +387,22 @@ test("the schema requires a petition for a bless and for a refusal, each from it
   );
   expect(refusal?.then.required).toEqual(["petition"]);
   expect(refusal?.then.properties.petition.enum).toEqual([petition.id]);
-  // A bless is offered only where the petitioner is here: Iris is at the square, Hermes is not.
-  expect(
-    conditions.some((c) => c.if.properties.action?.const === "bless"),
-  ).toBe(false);
+  // A bless is offered wherever the petitioner is: Iris is at the square, Hermes is not, and the prayer is its own id.
+  const blessing = conditions.find(
+    (c) => c.if.properties.action?.const === "bless",
+  );
+  expect(blessing?.then.required).toEqual(["petition"]);
+  expect(blessing?.then.properties.petition.enum).toEqual([petition.id]);
+  // And the same with Hermes standing at the square beside her.
   const here = new Run(actorAt(greekState(), "hermes", "town-square"));
   const { petition: nearby } = here.struckAndPrays("poseidon", IRIS);
-  const blessing = (
+  const beside = (
     here.view("hermes").schema.jsonSchema as unknown as {
       allOf: typeof conditions;
     }
   ).allOf.find((c) => c.if.properties.action?.const === "bless");
-  expect(blessing?.then.required).toEqual(["petition"]);
-  expect(blessing?.then.properties.petition.enum).toEqual([nearby.id]);
+  expect(beside?.then.required).toEqual(["petition"]);
+  expect(beside?.then.properties.petition.enum).toEqual([nearby.id]);
 });
 
 test("a prayer about a trouble in a god's domain is marked as one, naming the trouble, from anyone: Zeus is shown a squall, and the prayer went to him though the afflicted reveres another", () => {

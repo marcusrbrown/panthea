@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "studio",
+  "description": "Grants the main window only the studio app commands. Paths never cross: file and folder pickers run in native code, and the editor is launched there. No shell, filesystem, dialog or other plugin permission is granted.",
+  "windows": ["main"],
+  "permissions": [
+    "allow-studio-call",
+    "allow-subscribe-studio",
+    "allow-preview-bytes",
+    "allow-edit-open",
+    "allow-edit-export",
+    "allow-edit-import",
+    "allow-config-status",
+    "allow-config-choose"
+  ]
+}

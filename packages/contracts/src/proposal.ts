@@ -209,6 +209,11 @@ export interface StrikeProposal extends ProposalBase {
   readonly kind: "strike";
   readonly target: EntityId;
   readonly power: number;
+  /**
+   * The punish prayer this strike answers, when it answers one. The world checks the claim: the prayer exists, is open
+   * and addressed to the striker, and the target is the offender or a listed building. The strike's own events carry it.
+   */
+  readonly petition?: EventId;
 }
 
 export interface RepairProposal extends ProposalBase {
@@ -553,11 +558,17 @@ export function parseProposal(input: unknown): ParseResult<Proposal> {
       if (!target.ok) return target;
       const power = parseNonNegativeNumber(input.power, "power");
       if (!power.ok) return power;
+      const petition =
+        input.petition === undefined
+          ? ok<EventId | undefined>(undefined)
+          : parseEventId(input.petition, "petition");
+      if (!petition.ok) return petition;
       return ok({
         ...base,
         kind: "strike",
         target: target.value,
         power: power.value,
+        ...(petition.value === undefined ? {} : { petition: petition.value }),
       });
     }
     case "repair": {

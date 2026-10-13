@@ -15,7 +15,9 @@
       "version": "0.1.0",
       "dependencies": {
         "@panthea/agents": "workspace:*",
+        "@panthea/assets": "workspace:*",
         "@panthea/contracts": "workspace:*",
+        "@panthea/renderer": "workspace:*",
         "@panthea/world": "workspace:*",
         "@tauri-apps/api": "2.12.1",
         "react": "19.3.0",
@@ -24,6 +26,7 @@
         "three-flatland": "0.1.0-alpha.10",
       },
       "devDependencies": {
+        "@panthea/testkit": "workspace:*",
         "@types/react": "19.3.0",
         "@types/react-dom": "19.3.0",
         "@types/three": "0.185.4",
@@ -49,6 +52,30 @@
         "@panthea/telemetry": "workspace:*",
         "@panthea/world": "workspace:*",
       },
+      "devDependencies": {
+        "@panthea/testkit": "workspace:*",
+      },
+    },
+    "apps/studio": {
+      "name": "@panthea/studio",
+      "version": "0.1.0",
+      "dependencies": {
+        "@panthea/assets": "workspace:*",
+        "@panthea/renderer": "workspace:*",
+        "@tauri-apps/api": "2.12.1",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+        "three": "0.185.1",
+        "three-flatland": "0.1.0-alpha.10",
+      },
+      "devDependencies": {
+        "@tauri-apps/cli": "2.12.1",
+        "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+        "@types/three": "0.185.4",
+        "@vitejs/plugin-react": "4.7.0",
+        "vite": "7.3.6",
+      },
     },
     "packages/agents": {
       "name": "@panthea/agents",
@@ -60,11 +87,15 @@
         "@panthea/world": "workspace:*",
         "ai": "7.0.127",
       },
+      "devDependencies": {
+        "@panthea/testkit": "workspace:*",
+      },
     },
     "packages/assets": {
       "name": "@panthea/assets",
       "version": "0.1.0",
       "dependencies": {
+        "@panthea/content": "workspace:*",
         "@panthea/contracts": "workspace:*",
       },
     },
@@ -90,6 +121,18 @@
         "@panthea/contracts": "workspace:*",
       },
     },
+    "packages/renderer": {
+      "name": "@panthea/renderer",
+      "version": "0.1.0",
+      "dependencies": {
+        "@panthea/assets": "workspace:*",
+        "three": "0.185.1",
+        "three-flatland": "0.1.0-alpha.10",
+      },
+      "devDependencies": {
+        "@types/three": "0.185.4",
+      },
+    },
     "packages/telemetry": {
       "name": "@panthea/telemetry",
       "version": "0.1.0",
@@ -97,11 +140,26 @@
         "@panthea/contracts": "workspace:*",
       },
     },
+    "packages/testkit": {
+      "name": "@panthea/testkit",
+      "version": "0.1.0",
+      "dependencies": {
+        "@panthea/renderer": "workspace:*",
+        "@panthea/world": "workspace:*",
+        "three": "0.185.1",
+      },
+      "devDependencies": {
+        "@types/three": "0.185.4",
+      },
+    },
     "packages/world": {
       "name": "@panthea/world",
       "version": "0.1.0",
       "dependencies": {
         "@panthea/contracts": "workspace:*",
+      },
+      "devDependencies": {
+        "@panthea/testkit": "workspace:*",
       },
     },
     "tools/content": {
@@ -208,6 +266,16 @@
         "@panthea/telemetry": "workspace:*",
         "@panthea/tools-probes-shared": "workspace:*",
         "@panthea/world": "workspace:*",
+      },
+    },
+    "tools/studio": {
+      "name": "@panthea/tools-studio",
+      "version": "0.1.0",
+      "bin": {
+        "studio": "./src/index.ts",
+      },
+      "dependencies": {
+        "@panthea/assets": "workspace:*",
       },
     },
   },
@@ -372,9 +440,15 @@
 
     "@panthea/persistence": ["@panthea/persistence@workspace:packages/persistence"],
 
+    "@panthea/renderer": ["@panthea/renderer@workspace:packages/renderer"],
+
     "@panthea/simulation": ["@panthea/simulation@workspace:apps/simulation"],
 
+    "@panthea/studio": ["@panthea/studio@workspace:apps/studio"],
+
     "@panthea/telemetry": ["@panthea/telemetry@workspace:packages/telemetry"],
+
+    "@panthea/testkit": ["@panthea/testkit@workspace:packages/testkit"],
 
     "@panthea/tools-content": ["@panthea/tools-content@workspace:tools/content"],
 
@@ -401,6 +475,8 @@
     "@panthea/tools-probes-shared": ["@panthea/tools-probes-shared@workspace:tools/probes/shared"],
 
     "@panthea/tools-scenarios": ["@panthea/tools-scenarios@workspace:tools/scenarios"],
+
+    "@panthea/tools-studio": ["@panthea/tools-studio@workspace:tools/studio"],
 
     "@panthea/world": ["@panthea/world@workspace:packages/world"],
 

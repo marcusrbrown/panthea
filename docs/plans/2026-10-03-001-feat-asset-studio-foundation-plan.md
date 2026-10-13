@@ -127,7 +127,7 @@ Lessons from existing probes: subprocesses provide real memory/crash containment
 | Rendering | Studio-owned isometric layer first; client adoption/extraction waits for coordinated Unit 8. No new simulation positions invented to animate walk. |
 | Sound | zzfx-style parameter synthesis first; seeded mutation, fixed sample rate and pinned encoder. Package or vendoring choice remains an approval gate. |
 
-Packing consumes approved sets without granting canon status; publish performs the explicit approved-to-canon transition after palette/licence gates. CLI lifecycle actions include pick, approve, reject, exception, edit finish/discard, export/import edited, and queue remove/abort, in addition to the six pipeline verbs. These actions expose existing flows, not extra product scope.
+Packing consumes selected draft frame sets and produces the final atlas and manifest first. Approval applies once to that exact packed record, and publish performs the explicit approved-to-canon transition after palette, provenance and licence gates. Deliberate owner edits can import and record exact pixels even when report-only conformance fails; automatic replacement proposals need explicit owner approval. CLI lifecycle actions include pick, approve, reject, exception, edit finish/discard, export/import edited, and queue remove/abort, in addition to the six pipeline verbs. These actions expose existing flows, not extra product scope.
 
 ---
 
@@ -229,17 +229,18 @@ flowchart TB
 - **Verification:** The owner approved the current `greek-master` palette digest on 2026-10-05. This approval is not canon asset approval. Any guide-default change is a separate owner question.
 
 ### Unit 5. Shared pipeline and CLI
-- [ ] Exercise request, edit and publish flows headlessly.
+- [x] Exercise request, edit and publish flows headlessly. PR #174 published the six-expression Zeus portrait. The idle-south sprite was deferred at that point (owner, 2026-10-08) and was published afterwards as `zeus-sprite` (PR #188, 2026-10-09); `docs/evidence/asset-studio/unit5/README.md` records both.
 - **Requirements:** R2, R4–R12, R18, R20; F1, F2, F4; AE3, AE5, AE6.
 - **Dependencies:** Units 2, 3; Unit 1's selected draft generator (Z-Image-Turbo without a LoRA), Unit 4 approval for canon.
-- **Files:** Create `tools/studio/package.json`, `src/index.ts`, `src/cli.test.ts`; `packages/assets/src/jobs.ts`, `jobs.test.ts`, `pipeline.ts`, `pipeline.test.ts`, `aseprite.ts`, `aseprite.test.ts`, `packing.ts`, `packing.test.ts`; editor scripts and contact-sheet fixtures; update exports, `content/greek/assets/`, traceability and asset ADR.
-- **Approach:** CLI exposes generate/conform/open/derive/pack/publish plus lifecycle and queue actions. Resolve free text into an explicit pack subject/spec; default batch four, append rerolls, replace sheet on request edit. Reports sort fewest changes first. Serialize heavy providers and restart subprocess to abort; missing providers report staging. Tagged Aseprite documents use untrimmed cells and preserve tags/slices; explicit PNG+JSON editing remains available without Aseprite. The installed Aseprite is 1.3.18.6 at `/Applications/Aseprite.app` and not on `PATH`, so `open` uses a configured executable path or `PATH` discovery. Derive reports unsupported operations until Unit 9 rather than fabricating frames.
+- **Child plan:** `docs/plans/2026-10-05-001-feat-studio-pipeline-cli-plan.md` is the authoritative Unit 5 implementation plan.
+- **Files:** See the child plan. In summary: create `tools/studio/` and a node-only `@panthea/assets/studio` subpath for the session host, durable authoring store, request builder, runtime adapter, bounded PNG decode, candidate conformance, Aseprite/export-import seam, packing, approval and publish gates; update contract/provenance tests, package exports, `content/greek/assets/`, traceability and ADRs only where implementation requires them.
+- **Approach:** CLI and the future app sidecar call the same shared host functions over a single long-lived newline-JSON stdio session; no studio control-plane daemon, socket, HTTP service or token. The owned `sd-server` runtime may still use its existing local loopback HTTP API behind the adapter. The owning session holds an OS-backed SQLite exclusive lock for one authoring root; read-only list/status can inspect another active session, while mutations refuse busy. Resolve content-backed specs; default batch four is per slot, appends rerolls and preserves picked drafts when a request sheet is replaced. Serialize heavy providers and restart the owned subprocess to abort; missing providers report staging and no hosted fallback is wired. Generated keyframes become a local working set, not a valid sprite record. Picked portrait keyframes are auto-conformed native cells unless deliberately edited; multi-frame sprite animations need a complete imported frame set. Aseprite or PNG+JSON import is the hand-edit seam for animation frames. Packing consumes selected draft frame sets and creates the final atlas and manifest; approval applies once to that exact record; publish calls `publishAsset` unchanged after palette, provenance and licence gates. Unit 5 includes the greenfield generated-provenance contract change, selected-profile licence checks, and real selected-runtime cancellation/readiness evidence. Derive reports unsupported operations until Unit 9 rather than fabricating frames.
 - **Patterns:** Probe subprocess adapters; strict contracts; shared library functions for every action.
-- **Test scenarios:** Unknown subject blocks with choices; same seed/spec yields same adapter inputs; reroll appends new seeds; pick/approve/reject/exception exercise legal states. Three-job remove/abort preserves cancellation and starts third after restart. Missing editor fails open but export/import works; save/finish/discard preserves or restores edit-session pixels and provenance; palette-changing headless conform exits nonzero with diff. Packing is reproducible; publish rejects unapproved palette/licence and preserves partial-state fallback.
-- **Verification:** Real local F1/F2/F4 on Zeus idle-south and six-expression portrait set, including installed Aseprite fidelity. T1 also needs seated and strike sets before its checkpoint. Owner approvals are explicit; CLI invocation never invents them.
+- **Test scenarios:** Unknown subject blocks with choices; same seed/spec yields same adapter inputs; reroll appends new seeds; pick/approve/reject/exception exercise legal states. Three-job remove/abort preserves cancellation and starts third after restart, with cancelled late output discarded. Missing editor fails open but export/import works; save/finish/discard preserves or restores edit-session pixels and provenance; deliberate hand-pixel imports store exact bytes and refresh reports. Headless conform on a hand-edited draft where the proposal would replace pixels exits nonzero with a structured diff and leaves hand pixels untouched. Packing rejects incomplete frame sets without manufacturing frames, preserves all source job references/licences/hand edits, and is reproducible; publish rejects unapproved palette, failed source-job cross-check, missing prior canon revision, incompatible licences or stale reports before any write and preserves partial-state fallback.
+- **Verification:** Real local F1/F2/F4 on Zeus idle-south and six-expression portrait set, including installed Aseprite fidelity, real selected-runtime readiness/cancellation/late-output evidence, deterministic pack bytes, complete provenance and explicit owner approval for any canon publication. T1 also needs seated and strike sets before its checkpoint. Owner approvals are explicit; CLI invocation never invents them. (2026-10-10: seated and strike no longer gate Unit 8. They are queued studio work, and the game draws placeholders until they are published.)
 
 ### Unit 6. Isometric preview layer
-- [ ] Establish representative pixel-exact preview.
+- [x] Establish representative pixel-exact preview. The child plan `docs/plans/2026-10-08-002-feat-studio-isometric-preview-plan.md` is authoritative. Installed TileMap2D places isometric maps orthogonally, so placement is studio-owned. Browser evidence on the WebGL2 backend is in `docs/evidence/asset-studio/unit6/`; packaged proof stays with Unit 7.
 - **Requirements:** R16, R17; U08, X02.
 - **Dependencies:** Unit 2; fixture assets may precede canon.
 - **Files:** Create `apps/studio/src/renderer/scene.ts`, `scene.test.ts`, `tiles.ts`, `tiles.test.ts`, preview fixtures and window evidence; update traceability.
@@ -249,9 +250,10 @@ flowchart TB
 - **Verification:** Actual renderer inspection plus window-only screenshots at integer zoom; placement support is reported from execution, not inferred from a type declaration.
 
 ### Unit 7. Separate Tauri studio
-- [ ] Host pipeline and full owner workflow.
+- [x] Host pipeline and full owner workflow.
 - **Requirements:** R8, R10–R12, R16–R18; AE6, AE9; U08, X02.
 - **Dependencies:** Units 5, 6; approval before capabilities, build pipeline or dependency changes.
+- **Child plan:** `docs/plans/2026-10-08-003-feat-studio-tauri-app-plan.md` is the authoritative Unit 7 implementation plan. Its U1–U5 are done; U6 (packaged evidence, headroom and parity) is recorded in `docs/evidence/asset-studio/unit7/README.md`, which also lists what that run did not prove.
 - **Files:** Create `apps/studio/package.json`, `src/App.tsx`, `src/App.test.tsx`, native crate/config/capabilities, `src-tauri/src/sidecar.rs`, `commands.rs`, native tests and sidecar build script; update evidence, traceability and ADR/index.
 - **Approach:** Bun pipeline sidecar supervised by native host. Explicit command bridge, no webview shell/filesystem permissions. Request form displays resolved input before queueing; queue shows progress/error/retry and remove/abort. Contact sheet exposes checks, scale, changes, pick/approve/reroll and frame playback. Editing-externally state supports finish/discard; unavailable editor offers export/import. Live reload includes draft and approved preview.
 - **Patterns:** Desktop named-command capability and sidecar supervision, without simulation-specific commands or credentials.
@@ -261,7 +263,14 @@ flowchart TB
 The primary studio workspace groups request and queue, candidate sheet with reports/provenance, and selected-asset preview. Actions follow lifecycle: candidates can be picked/rejected; failed conformance needs an owner exception before approval; drafts can edit/approve/reject; external editing offers finish/discard; approved sets can pack/publish subject to palette/licence gates. Queue states distinguish empty, unavailable/staging, queued, running, aborting/restarting, cancelled, removed, failed and completed. Late results after cancellation are discarded, not presented as completed. Tests prove controls remain usable throughout those transitions.
 
 ### Unit 8. Packaged game resolution
-- [ ] Draw canon Zeus in packaged client.
+- [x] Draw canon Zeus in packaged client.
+- (2026-10-11) Complete. The code landed in #200, the timed T1 sitting and canon seated in #206, and the thunderbolt act (strike art) in #208. Canon `zeus-sprite` revision `1382b7f7` covers idle, seated and act/south/thunderbolt. The evidence is in `docs/evidence/asset-studio/{unit8,seated,act}/`.
+- **Child plan:** `docs/plans/2026-10-10-002-feat-packaged-game-canon-art-plan.md` is authoritative. Dated note (owner, 2026-10-10), with the earlier text below kept as written:
+  - **Sprite id in world state.** It is set at genesis from `GodProfile.sprite`, and from content for other inhabitants. The frame carries it, and the store moves to version 7. This replaces "does not … modify world frames/store" and "no store/observer/settings changes".
+  - **Native loader checks integrity only.** It checks sha256 and keeps reads inside the bundled registry. The webview parses the schema and fetches atlases by verified content hash, not by id.
+  - **Shared pixel core.** The client adopts it, and isometric place layout is deferred.
+  - **Verification scope.** It proves canon idle-south in the live world, the six portraits in the inspection fixture, and seated and strike as placeholders. Seated and strike art and the timed owner sitting are queued studio work. Normal play is idle-only until strike art exists and strike events carry an ability id.
+  - **Zeus's canon id is `zeus-sprite`.** Where the text below says `placeholder-zeus`, read `zeus-sprite`; the placeholder is only the fallback.
 - **Requirements:** R3, R4, R20, R24; AE1; U07, U08, X02.
 - **Dependencies:** Units 4–7, owner canon approval; core agreement and desktop capability/build approval.
 - **Files:** Modify `apps/client/src/renderer/scene.ts`, `markers.ts`, visual-resolution tests; `apps/desktop/src-tauri/src/commands.rs`, permission/capability/config surfaces and native tests; create `tools/scenarios/studio-zeus-scene/README.md`, `src/run.ts`, `src/run.test.ts`; canon manifests/mappings under `content/greek/assets/`; traceability and ADR/index. If extraction is agreed, add `packages/renderer/` exports/tests and both consumers in this unit.
@@ -273,7 +282,14 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 ### Tier 2: Visual reference scene
 
 ### Unit 9. Derivation and repair
-- [ ] Expand approved sets honestly and reproducibly.
+- [x] Expand approved sets honestly and reproducibly.
+- (2026-10-11) Complete. Studio features in #209, derivation and masked repair in #210. Reference conditioning was NO-GO. Zeus's other directions and overlays are deferred (see the child plan).
+- **Child plan:** `docs/plans/2026-10-11-001-feat-studio-derivation-repair-plan.md` is authoritative. Dated note (owner, 2026-10-11); the earlier text below is kept as written.
+  - **Zeus's remaining idle directions are deferred.** The bolt hand blocks mirroring, so north, east and west are new art. That work waits for the sprite-pipeline research. Verification is a real derive-to-publish run on a symmetric fixture, plus the Zeus mirror refusal.
+  - **Overlays move to Unit 10**, alongside the first structure.
+  - **Reference conditioning is probed first on the pinned runtime**, which already parses `ref_images`.
+  - **The unit also adds studio features:** preview of every published key, release of the writer lock when idle, scripted finish in the app, a seed field, queue responsiveness, and the slot hint.
+  - (2026-10-11) Progress: the child plan's derivation and repair units are built (mirror, whole-asset palette swap into a realm palette and idle bob from a published revision; the `derive` op through pack and publish; realm variants regenerated and verified at every publish; a masked edit on a published frame). The reference-conditioning probe was NO-GO (`tools/probes/art-reference/README.md`), so reference requests return `unavailable` and R14's generated route is partial. R13 stays partial (overlays move to Unit 10) and so does R20 (the Zeus idle directions are deferred). Evidence: `docs/evidence/asset-studio/unit9/README.md`. Not verified: a real repair job on a GPU, and the derive-to-publish path through the packaged game.
 - **Requirements:** R2, R13–R15, R20; AE4; U06, U07, X02.
 - **Dependencies:** Tier 1 complete; chosen provider must expose reference/inpaint capability or report unavailable.
 - **Files:** Create `packages/assets/src/derive.ts`, `derive.test.ts`, `reference.ts`, `reference.test.ts`; extend CLI/app frame playback tests and committed derivation fixtures; update traceability.
@@ -284,6 +300,7 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 
 ### Unit 10. Structures and effects
 - [ ] Complete visual reference scene.
+- (2026-10-11) This unit also owns the damage/fire overlay derivation op and its vocabulary, moved from Unit 9. T2 completion also waits on Zeus's north, east and west idle art, deferred from Unit 9 to the sprite-pipeline research.
 - **Requirements:** R20, R21; AE7; X02, X03.
 - **Dependencies:** Unit 9.
 - **Files:** Add tree/building/lightning manifests and bytes under `content/greek/assets/`; create `packages/assets/src/overlays.test.ts`, `effects.test.ts`; extend studio preview fixtures/tests and scenario evidence; update traceability.
@@ -295,6 +312,7 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 ### Tier 3: World tiles and sound
 
 ### Unit 11. Dual-grid tiles and map preview
+- (2026-10-10) The game client's isometric place layout was deferred from Unit 8 and belongs here, next to the tiles. Unit 8's shared pixel core already carries the isometric math.
 - [ ] Produce seamless map-ready terrain.
 - **Requirements:** R19, R20; F5; X02.
 - **Dependencies:** Tier 2; existing preview layer.

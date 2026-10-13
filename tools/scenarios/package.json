@@ -7,7 +7,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "scenario:m1": "bun run m1-living-world/src/run.ts",
-    "scenario:m2": "bun run m2-greek-cast/src/run.ts"
+    "scenario:m2": "bun run m2-greek-cast/src/run.ts",
+    "scenario:zeus-scene:digests": "bun run studio-zeus-scene/src/generate.ts"
   },
   "dependencies": {
     "@panthea/agents": "workspace:*",

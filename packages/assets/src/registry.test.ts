@@ -21,7 +21,9 @@ import {
   canonicalJson,
   canonicalManifestText,
   newCandidate,
+  type RealmVariant,
   type Sha256,
+  type SpriteManifest,
   transitionAsset,
 } from "@panthea/contracts";
 import {
@@ -33,9 +35,13 @@ import {
 } from "./fixtures";
 import { sha256Hex } from "./hash";
 import type { Palette } from "./palette";
+import { encodeRgbaPng } from "./placeholder";
 import {
+  checkBlob,
   loadRegistry,
+  parseAssetManifest,
   publishAsset,
+  readRevision,
   selectRevision,
   writeRevision,
 } from "./registry";
@@ -767,7 +773,19 @@ describe("publishing needs the approved palette the manifest names", () => {
       blobs: base.blobs,
       manifest: {
         ...base.manifest,
-        realmVariants: [{ paletteFamily: "underworld", paletteId: id }],
+        realmVariants: [
+          {
+            paletteFamily: "underworld",
+            paletteId: id,
+            atlas: base.manifest.atlas,
+            map: [
+              {
+                source: { ramp: "marble", index: 0 },
+                target: { ramp: "ash", index: 0 },
+              },
+            ],
+          },
+        ],
       },
     };
   };
@@ -784,6 +802,95 @@ describe("publishing needs the approved palette the manifest names", () => {
     );
     expect(result.ok).toBe(true);
     expect(loadRegistry(dir, vocabulary).problems).toEqual([]);
+  });
+
+  describe("a realm variant's own atlas blob", () => {
+    const variantPng = encodeRgbaPng(
+      new Uint8Array(256 * 80 * 4).fill(9),
+      256,
+      80,
+    );
+    const variantHash = sha256Hex(variantPng);
+    const withOwnAtlas = (): FixtureAsset => {
+      const asset = withVariant("fixture-master");
+      const manifest = asset.manifest as SpriteManifest;
+      const [variant] = manifest.realmVariants;
+      return {
+        blobs: new Map([...asset.blobs, [variantHash, variantPng]]),
+        manifest: {
+          ...manifest,
+          realmVariants: [
+            {
+              ...(variant as RealmVariant),
+              atlas: { blob: variantHash, width: 256, height: 80 },
+            },
+          ],
+        },
+      };
+    };
+
+    it("is stored with the revision and read back by hash", () => {
+      const dir = root();
+      const asset = withOwnAtlas();
+      const result = publishAsset(
+        dir,
+        approved(asset),
+        asset.blobs,
+        vocabulary,
+        palette,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(existsSync(join(dir, "blobs", `${variantHash}.png`))).toBe(true);
+      expect(loadRegistry(dir, vocabulary).problems).toEqual([]);
+      const read = readRevision(
+        dir,
+        asset.manifest.id,
+        result.value.revision,
+        vocabulary,
+      );
+      expect(read.ok && [...read.value.variantAtlases.keys()]).toEqual([
+        variantHash,
+      ]);
+      expect(read.ok && read.value.variantAtlases.get(variantHash)).toEqual(
+        variantPng,
+      );
+    });
+
+    it("must be provided or already stored: nothing is written without it", () => {
+      const dir = root();
+      const asset = withOwnAtlas();
+      const result = writeRevision(
+        dir,
+        asset.manifest,
+        asset.blobs.size === 0
+          ? asset.blobs
+          : new Map([...asset.blobs].slice(0, 1)),
+        vocabulary,
+      );
+      expect(result.ok).toBe(false);
+      expect(!result.ok && result.message).toContain(variantHash);
+      expect(existsSync(join(dir, "manifests"))).toBe(false);
+    });
+
+    it("is verified on load: a missing or corrupt variant blob drops the entry", () => {
+      const asset = withOwnAtlas();
+      for (const damage of ["missing", "corrupt"] as const) {
+        const dir = root();
+        expect(
+          publishAsset(dir, approved(asset), asset.blobs, vocabulary, palette)
+            .ok,
+        ).toBe(true);
+        const path = join(dir, "blobs", `${variantHash}.png`);
+        if (damage === "missing") rmSync(path);
+        else writeFileSync(path, new Uint8Array([1, 2, 3]));
+        const load = loadRegistry(dir, vocabulary);
+        expect(load.snapshot.entries.size).toBe(0);
+        expect(load.problems.map((p) => p.file)).toEqual([
+          `blobs/${variantHash}.png`,
+        ]);
+      }
+    });
   });
 
   it("refuses a draft palette", () => {
@@ -832,5 +939,199 @@ describe("publishing needs the approved palette the manifest names", () => {
       asset,
       "only approved assets publish",
     );
+  });
+});
+
+describe("reading one published revision", () => {
+  it("returns an older revision's manifest and its exact stored PNG bytes after the index has moved on", () => {
+    const dir = root();
+    const first = spriteFixture("placeholder-zeus", 1);
+    const older = publish(dir, first);
+    const second = spriteFixture("placeholder-zeus", 2);
+    const newer = publish(dir, second);
+    expect(
+      loadRegistry(dir, vocabulary).snapshot.entries.get("placeholder-zeus")
+        ?.revision,
+    ).toBe(newer.revision);
+
+    const read = readRevision(
+      dir,
+      "placeholder-zeus" as AssetId,
+      older.revision,
+      vocabulary,
+    );
+
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.value.manifest).toEqual(first.manifest);
+    expect(read.value.atlas).toEqual(
+      first.blobs.get(first.manifest.atlas.blob) as Uint8Array,
+    );
+    expect(sha256Hex(read.value.atlas)).toBe(first.manifest.atlas.blob);
+    expect(read.value.atlas).toEqual(
+      new Uint8Array(
+        readFileSync(join(dir, "blobs", `${first.manifest.atlas.blob}.png`)),
+      ),
+    );
+    const current = readRevision(
+      dir,
+      "placeholder-zeus" as AssetId,
+      newer.revision,
+      vocabulary,
+    );
+    expect(current.ok && current.value.manifest).toEqual(second.manifest);
+  });
+
+  it("writes nothing and does not select the revision it reads", () => {
+    const dir = root();
+    const older = publish(dir, spriteFixture("placeholder-zeus", 1));
+    publish(dir, spriteFixture("placeholder-zeus", 2));
+    const before = {
+      index: textOf(join(dir, "index.json")),
+      manifests: listing(join(dir, "manifests")),
+      blobs: listing(join(dir, "blobs")),
+    };
+
+    readRevision(
+      dir,
+      "placeholder-zeus" as AssetId,
+      older.revision,
+      vocabulary,
+    );
+
+    expect({
+      index: textOf(join(dir, "index.json")),
+      manifests: listing(join(dir, "manifests")),
+      blobs: listing(join(dir, "blobs")),
+    }).toEqual(before);
+  });
+
+  const read = (dir: string, revision: string, id = "placeholder-zeus") =>
+    readRevision(dir, id as AssetId, revision as Sha256, vocabulary);
+
+  it("refuses a missing revision, one that is not valid hex and one for another asset", () => {
+    const dir = root();
+    const first = publish(dir, spriteFixture("placeholder-zeus", 1));
+
+    for (const result of [
+      read(dir, "9".repeat(64)),
+      read(dir, "not-a-hash"),
+      read(dir, first.revision, "zeus-portrait"),
+    ])
+      expect(result.ok).toBe(false);
+  });
+
+  it("refuses a tampered, non-canonical, missing or corrupt older revision, each by its own code", () => {
+    const dir = root();
+    const older = publish(dir, spriteFixture("placeholder-zeus", 1));
+    publish(dir, spriteFixture("placeholder-zeus", 2));
+    const manifestPath = join(dir, "manifests", `${older.revision}.json`);
+    const good = textOf(manifestPath);
+    const blobPath = join(
+      dir,
+      "blobs",
+      `${spriteFixture("placeholder-zeus", 1).manifest.atlas.blob}.png`,
+    );
+    const goodBlob = new Uint8Array(readFileSync(blobPath));
+
+    writeFileSync(manifestPath, "{}");
+    const tampered = read(dir, older.revision);
+    expect(!tampered.ok && tampered.code).toBe("corrupt-manifest");
+    writeFileSync(
+      manifestPath,
+      JSON.stringify(spriteFixture("placeholder-zeus", 1).manifest, null, 2),
+    );
+    expect(read(dir, older.revision).ok).toBe(false);
+    writeFileSync(manifestPath, good);
+    expect(read(dir, older.revision).ok).toBe(true);
+
+    writeFileSync(blobPath, "corrupt");
+    const corrupt = read(dir, older.revision);
+    expect(corrupt.ok).toBe(false);
+    rmSync(blobPath);
+    const missing = read(dir, older.revision);
+    expect(!missing.ok && missing.code).toBe("missing-blob");
+    writeFileSync(blobPath, goodBlob);
+    expect(read(dir, older.revision).ok).toBe(true);
+  });
+
+  it("refuses a hash-consistent blob that is not a whole PNG", () => {
+    const dir = root();
+    const asset = spriteFixture("placeholder-zeus", 1);
+    const older = publish(dir, asset);
+    const blobPath = join(dir, "blobs", `${asset.manifest.atlas.blob}.png`);
+    const bytes = new Uint8Array(readFileSync(blobPath));
+    writeFileSync(blobPath, bytes.slice(0, 40));
+
+    expect(read(dir, older.revision).ok).toBe(false);
+  });
+});
+
+describe("the blob gate is exported for read-only callers", () => {
+  const sprite = spriteFixture();
+  const bytes = [...sprite.blobs.values()][0] as Uint8Array;
+  const { atlas } = sprite.manifest;
+
+  it("accepts the exact bytes the manifest names", () => {
+    expect(checkBlob(bytes, atlas.blob, atlas, "atlas.png")).toEqual({
+      ok: true,
+      value: true,
+    });
+  });
+
+  it("refuses a truncated PNG whose own hash is the recorded one", () => {
+    const cut = bytes.slice(0, 29);
+    const checked = checkBlob(cut, sha256Hex(cut), atlas, "atlas.png");
+    expect(checked.ok).toBe(false);
+    if (!checked.ok) expect(checked.code).toBe("corrupt-blob");
+  });
+
+  it("refuses an intact PNG whose size is not the declared atlas size", () => {
+    const checked = checkBlob(
+      bytes,
+      atlas.blob,
+      { width: atlas.width + 1, height: atlas.height },
+      "atlas.png",
+    );
+    expect(checked.ok).toBe(false);
+  });
+
+  it("re-exports the manifest parser so callers need no contracts dependency", () => {
+    const parsed = parseAssetManifest(
+      JSON.parse(JSON.stringify(sprite.manifest)),
+      vocabulary,
+    );
+    expect(parsed.ok).toBe(true);
+  });
+});
+
+describe("the published legacy manifests", () => {
+  const manifests = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "content",
+    "greek",
+    "assets",
+    "registry",
+    "manifests",
+  );
+
+  it("each parses against the committed vocabulary and re-serialises byte for byte", () => {
+    const names = readdirSync(manifests).filter((name) =>
+      name.endsWith(".json"),
+    );
+    expect(names.length).toBeGreaterThanOrEqual(3);
+    for (const name of names) {
+      const text = readFileSync(join(manifests, name), "utf8");
+      const parsed = parseAssetManifest(
+        JSON.parse(text),
+        committedVocabulary(),
+      );
+      if (!parsed.ok)
+        throw new Error(`${name}: ${parsed.path}: ${parsed.message}`);
+      expect(canonicalManifestText(parsed.value), name).toBe(text);
+    }
   });
 });

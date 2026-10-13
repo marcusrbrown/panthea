@@ -39,6 +39,47 @@ export interface RoutineResult {
   readonly urgent?: boolean;
 }
 
+/**
+ * The currency each mortal's earlier proposals in one round of decisions have spoken for: a seller's sale claims
+ * the buyer's price, a buyer's purchase claims its own. Every mortal decides from the same committed state, so
+ * without this each seller sees the one buyer who can pay and picks it, and all but the first are refused
+ * ("counterparty lacks N currency") and choose the same sale again. A caller deciding for a whole town in one
+ * tick passes one map through every `decideRoutineProposal`; each decision adds its own claims to it.
+ */
+export type CurrencyClaims = Map<EntityId, number>;
+
+/** What `id` holds in currency, less what this round's earlier proposals have spoken for. */
+function freeCurrency(
+  candidate: ActorState,
+  claims: CurrencyClaims | undefined,
+): number {
+  return (
+    getResourceAmount(candidate.inventory, "currency") -
+    (claims?.get(candidate.id) ?? 0)
+  );
+}
+
+/** Notes in `claims` the currency a chosen trade will move, from each side that pays it. */
+function claimCurrency(
+  claims: CurrencyClaims,
+  actorId: EntityId,
+  trade: {
+    counterparty: EntityId;
+    give: readonly ResourceAmount[];
+    receive: readonly ResourceAmount[];
+  },
+): void {
+  const claim = (id: EntityId, lines: readonly ResourceAmount[]) => {
+    for (const line of lines) {
+      if (line.resource === "currency") {
+        claims.set(id, (claims.get(id) ?? 0) + line.amount);
+      }
+    }
+  };
+  claim(actorId, trade.give);
+  claim(trade.counterparty, trade.receive);
+}
+
 /** The first other living actor at `actorId`'s location satisfying `predicate`, in `state.actors`' deterministic iteration order. */
 export function findCounterparty(
   state: WorldState,
@@ -260,6 +301,7 @@ export function surplusWant(
   state: WorldState,
   actorId: EntityId,
   actor: ActorState,
+  claims?: CurrencyClaims,
 ): Want | undefined {
   const gatherAmount = gatherAmountOf(state.rules);
   const resource = actor.gathers;
@@ -284,7 +326,7 @@ export function surplusWant(
       // Someone who gathers the same thing has no use for more of it: two
       // gatherers of one good would pass it back and forth and never gather.
       candidate.gathers !== resource &&
-      getResourceAmount(candidate.inventory, "currency") >= askPrice &&
+      freeCurrency(candidate, claims) >= askPrice &&
       evaluateTradeAcceptance(
         state.rules,
         candidate.drives ?? NEUTRAL_DRIVES,
@@ -349,10 +391,13 @@ function deriveTargets(built: ProposalDetails): readonly EntityId[] {
  * it is dead, unknown, or not routine-driven (has no authored drives).
  * Candidates are ranked by a drive-weighted utility and the highest
  * *eligible* one wins; ties keep whichever candidate is listed first below.
+ * Deciding for a whole town in one tick, pass the same `claims` to each call (in the order the proposals will
+ * run): a sale is offered only to a buyer whose currency the round's earlier trades have not already spoken for.
  */
 export function decideRoutineProposal(
   state: WorldState,
   actorId: EntityId,
+  claims?: CurrencyClaims,
 ): RoutineResult | undefined {
   const actor = getActor(state, actorId);
   if (!actor?.alive || !actor.drives) return undefined;
@@ -395,7 +440,7 @@ export function decideRoutineProposal(
     });
   }
 
-  const surplus = surplusWant(state, actorId, actor);
+  const surplus = surplusWant(state, actorId, actor, claims);
   if (surplus && "deal" in surplus) {
     const { counterparty: buyer, give, receive } = surplus.deal;
     candidates.push({
@@ -428,7 +473,7 @@ export function decideRoutineProposal(
         actorId,
         actor,
         (candidate) =>
-          getResourceAmount(candidate.inventory, "currency") >= askPrice &&
+          freeCurrency(candidate, claims) >= askPrice &&
           evaluateTradeAcceptance(
             state.rules,
             candidate.drives ?? NEUTRAL_DRIVES,
@@ -560,6 +605,9 @@ export function decideRoutineProposal(
   };
 
   const built = chosen.build();
+  if (claims !== undefined && built.kind === "trade") {
+    claimCurrency(claims, actorId, built);
+  }
   const proposal: Proposal = {
     schemaVersion: 1,
     actor: actorId,

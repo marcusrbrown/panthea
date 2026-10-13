@@ -1,0 +1,70 @@
+/* The surface clips html, body and #root (a game window never scrolls), so the
+   fixture is its own scroll container: a report longer than the window stays
+   reachable. */
+.inspect {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: auto;
+  padding: 16px 20px;
+  background: #1f2430;
+  color: #e6e9ef;
+  font:
+    13px / 1.45 ui-monospace,
+    "SF Mono",
+    Menlo,
+    monospace;
+}
+.inspect h1 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+.inspect-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 12px 0;
+}
+.inspect-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.inspect-controls fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 4px;
+}
+/* The surface's buttons inherit the page colour, which here is light text on
+   the default light button face. */
+.inspect button {
+  color: #1f2430;
+}
+.inspect button[aria-pressed="true"] {
+  outline: 2px solid #8fb8ff;
+}
+.inspect-stage {
+  overflow: auto;
+  margin: 12px 0;
+  background: #0f1219;
+}
+.inspect-stage canvas {
+  display: block;
+}
+.inspect-failure,
+.inspect-report [data-status="fail"] strong {
+  color: #ff8a80;
+}
+.inspect-report [data-status="pass"] strong {
+  color: #9be28f;
+}
+.inspect-report ul {
+  margin: 4px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+.inspect-report li small {
+  color: #aab2c0;
+}

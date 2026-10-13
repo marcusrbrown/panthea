@@ -33,6 +33,8 @@ One real limit was found and is not yet fixed: with `three@0.185.1`'s `WebGPURen
 
 **2026-09-28, probe app removed:** `apps/probe-renderer`, the app behind the packaged-bundle evidence above, was deleted after M0 so the repository has one Tauri app (`apps/desktop`, rendering through `apps/client`). The evidence does not move: method and results stay in [tools/probes/renderer-webgl2/README.md](../../tools/probes/renderer-webgl2/README.md), and the app source is at commit `ce9e5a4` (`git show ce9e5a4:apps/probe-renderer/...`). The remaining Windows and Linux packaged renderer runs (P05) will use the desktop app with a measurement harness rather than a new probe app.
 
+**2026-10-08, isometric ordering:** the probe's "isometric ordering" came from the probe's own placement, not from three-flatland. In alpha.10, `TileMap2D` declares an `isometric` orientation but places tiles on an orthogonal grid, and `Sprite2D.zIndex` sorts only within one batch, so it cannot order sprites across textures. The studio preview therefore owns projection and depth: a depth key written to sprite z, with alpha-cutout depth testing. `apps/studio/src/renderer/iso.test.ts` records the `TileMap2D` behaviour by running it. See [the isometric projection learning](../solutions/best-practices/studio-owned-isometric-projection-depth-2026-10-08.md).
+
 ## Evidence/links
 
 [tools/probes/webgpu-wkwebview/README.md](../../tools/probes/webgpu-wkwebview/README.md); [tools/probes/renderer-webgl2/README.md](../../tools/probes/renderer-webgl2/README.md); [stack-2026-09-26.md](../research/stack-2026-09-26.md); [decisions.md D25](../product/decisions.md); [m0-exit.md](../product/m0-exit.md).

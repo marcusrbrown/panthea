@@ -57,6 +57,7 @@ import {
   petitionBalanceOf,
   petitionFor,
   refusability,
+  strikability,
 } from "./petitions";
 import { talkAroundThread, validatePractice } from "./practices";
 import { REPAIR_RESOURCE, repairAmountPerTickOf, repairCostOf } from "./repair";
@@ -454,6 +455,7 @@ function strikeMortal(
     return reject("dead-actor", `${proposal.target} is no longer living`);
   }
   const taken = goodsStruck(state, mortal);
+  const named = prayerNamed(proposal);
   return commit([
     {
       kind: "resource-consumed",
@@ -467,8 +469,16 @@ function strikeMortal(
       actor: proposal.actor,
       amount: taken?.amount ?? 0,
       ...(taken === undefined ? {} : { resource: taken.resource }),
+      ...named,
     },
   ]);
+}
+
+/** The prayer a strike says it answers, in the form an event names it; nothing when it names none. The claim is judged before this is read (`handleStrike`). */
+function prayerNamed(proposal: StrikeProposal): { petitionId?: EventId } {
+  return proposal.petition === undefined
+    ? {}
+    : { petitionId: proposal.petition };
 }
 
 function handleStrike(
@@ -491,6 +501,16 @@ function handleStrike(
       "insufficient-power",
       `actor lacks ${proposal.power} divine power to strike`,
     );
+  }
+  // A strike that names a prayer answers it: the world judges the claim and does not take it on trust.
+  if (proposal.petition !== undefined) {
+    const answerable = strikability(
+      state,
+      proposal.petition,
+      proposal.actor,
+      proposal.target,
+    );
+    if (!answerable.ok) return reject("malformed", answerable.message);
   }
   const target = getBuilding(state, proposal.target);
   if (!target) {
@@ -522,7 +542,11 @@ function handleStrike(
     events.push({
       kind: "building-ignited",
       entityId: target.id,
-      cause: { kind: "strike", actor: proposal.actor },
+      cause: {
+        kind: "strike",
+        actor: proposal.actor,
+        ...prayerNamed(proposal),
+      },
     });
   } else {
     events.push({
@@ -530,6 +554,7 @@ function handleStrike(
       entityId: target.id,
       amount: proposal.power,
       actor: proposal.actor,
+      ...prayerNamed(proposal),
     });
   }
   return commit(events);
@@ -745,9 +770,7 @@ function handleBless(state: WorldState, proposal: BlessProposal): RuleOutcome {
   if (!petitioner?.alive) {
     return reject("dead-actor", "the petitioner is no longer living");
   }
-  if (petitioner.locationId !== god.locationId) {
-    return reject("not-adjacent", "a god blesses only a mortal it stands with");
-  }
+  // A blessing answers an open prayer addressed to this god, wherever either stands: `blessability` is the gate.
   const cost = petitionBalanceOf(state.rules, "blessDivinityCost");
   if (getResourceAmount(god.inventory, DIVINE_CAPACITY_RESOURCE) < cost) {
     return reject(

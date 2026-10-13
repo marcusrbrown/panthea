@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 1,
+  "note": "Provenance for the third-party inputs of the blender-sprite probe. The files themselves live outside git, in the main checkout at tools/probes/blender-sprite/models/ (ignored by tools/probes/*/models/).",
+  "modelsDirectory": "<main-checkout>/tools/probes/blender-sprite/models/",
+  "assets": [
+    {
+      "id": "quaternius-universal-animation-library-standard",
+      "name": "Universal Animation Library [Standard]",
+      "author": "Quaternius",
+      "version": "Standard (free) tier; the itch.io listing was updated 2026-06-16 (v2.0 with root-motion variants)",
+      "sourceUrl": "https://quaternius.itch.io/universal-animation-library",
+      "packPage": "https://quaternius.com/packs/universalanimationlibrary.html",
+      "acquired": {
+        "date": "2026-10-11",
+        "by": "the owner, through a browser (the itch.io download needs a browser session; curl cannot fetch it)",
+        "archive": "Universal Animation Library[Standard].zip",
+        "archiveBytes": 15904933,
+        "archiveSha256": "cc73fc4e495b82958207316596317a3f40b9fa38065bde1027937452da537724"
+      },
+      "licence": {
+        "spdx": "CC0-1.0",
+        "name": "CC0 1.0 Universal (Public Domain Dedication)",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "text": "License: CC0 1.0 Universal (CC0 1.0) Public Domain Dedication https://creativecommons.org/publicdomain/zero/1.0/. Models by @Quaternius. (Verbatim from License.txt in the archive, which also carries Patreon and Discord links.)",
+        "licenceFile": "Universal Animation Library[Standard]/License.txt",
+        "licenceFileSha256": "6d01f55c6e4c49a2c9963e147e561945ae2c83958c8ca667d90a6bffdbfac061",
+        "commercialUse": true,
+        "attributionRequired": false
+      },
+      "baseCharacter": "The library's own mannequin mesh (the 'Mannequin' object in the glTF, rig 'Armature', 65 bones). No separate base-character pack was downloaded.",
+      "filesUsed": [
+        {
+          "path": "Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard.glb",
+          "bytes": 7618436,
+          "sha256": "69591853d817488edaa8fd9bf8fc1d821eaeaf789f8627b3cd23b41c4ed67997",
+          "role": "Mannequin mesh, rig and 46 actions, no root motion. The only model file render.py reads."
+        },
+        {
+          "path": "Universal Animation Library[Standard]/License.txt",
+          "bytes": 332,
+          "sha256": "6d01f55c6e4c49a2c9963e147e561945ae2c83958c8ca667d90a6bffdbfac061",
+          "role": "Licence text."
+        }
+      ],
+      "filesExtractedNotUsed": [
+        {
+          "path": "Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard_RM.glb",
+          "sha256": "be684571ed655a1b892c2c07e6e2aeca053b606c442d34004adaf1d944090d01",
+          "role": "Same actions with root motion baked in."
+        },
+        {
+          "path": "Universal Animation Library[Standard]/Unity/UAL1_Standard.fbx",
+          "sha256": "21b32d912da3cb93426d974fb945e86f5b2e86970acd2ce89905e0fbf9f1dcc2"
+        },
+        {
+          "path": "Universal Animation Library[Standard]/Unity/UAL1_Standard_RM.fbx",
+          "sha256": "5a5f5de6f18e9c91cdbc40eb26319ec85cc45070bc00965bc2737beb4b2984ea"
+        },
+        {
+          "path": "Universal Animation Library[Standard]/README.txt",
+          "sha256": "ccd02718886b5a57f10f0a8911a38cfe10c36880e1d6dfa3445923fba32d2a72"
+        },
+        {
+          "path": "Universal Animation Library[Standard]/Godot_Setup.png",
+          "sha256": "8fde3e49385c3b3dc214bfe2bc61dde6f873a06f57cab9b245c8fc2543bc7496"
+        },
+        {
+          "path": "Universal Animation Library[Standard]/Unity_Setup.png",
+          "sha256": "1f9ac00f442c4342fae060150a2cfb5a825f7e3b6e8ffd8ce01044e4fe31f7c9"
+        },
+        {
+          "path": "Universal Animation Library[Standard]/Unreal_Setup.png",
+          "sha256": "c2c64e659943c634f538329ea0904f7902ab4194d0aaae77ac486d236171d00c"
+        }
+      ],
+      "clipsUsed": [
+        "Idle_Loop",
+        "Walk_Loop",
+        "Spell_Simple_Shoot",
+        "Sitting_Idle_Loop"
+      ],
+      "notes": [
+        "The Standard tier has 46 actions; the Pro and Source tiers (paid) have the rest and are not used.",
+        "Source-tier .blend files are not part of this download; the glTF is imported through Blender's glTF importer."
+      ]
+    },
+    {
+      "id": "greek-master-palette",
+      "name": "greek-master palette (Olympus family), project-owned",
+      "sourcePath": "content/greek/palette/palette.json",
+      "licence": "project content",
+      "role": "Ramp colours for the toon shader and the palette the post step snaps to."
+    }
+  ],
+  "tooling": {
+    "blender": {
+      "version": "5.2.2 LTS",
+      "buildHash": "d13f752e3b9c",
+      "buildDate": "2026-09-15",
+      "path": "/Applications/Blender.app/Contents/MacOS/Blender"
+    }
+  }
+}

@@ -207,14 +207,55 @@ test("a god without the power to strike is told why and given no object: no abil
   expect(damaged.entry).toContain("destroyed");
 });
 
-test("a god that is away is shown travel to the building's place, and no strike object until it is there", () => {
+test("a god that is away is shown the strike on the building directly, as the whole object, and no travel to its place", () => {
   const run = new Run();
   const petition = run.prayPunish("zeus");
   const entry = entryOf(run.view("zeus").context.prompt, petition);
-  expect(entry).toContain("punish freely: if you choose this, travel to");
-  expect(entry).toContain("once you are there, strike woodshed");
-  expect(entry).toMatch(/\{"action":"travel","to":"[^"]+"\}/);
-  // No strike object on the building until the god is there; the mortal who owns it may be struck wherever it is.
-  const building = entry.split("\n").find((l) => l.includes("punish freely"));
-  expect(building).not.toMatch(/\{"action":"strike"/);
+  expect(entry).toContain(
+    'punish freely, from where you stand: {"action":"strike","target":"woodshed","power":1}',
+  );
+  expect(entry).not.toContain("travel");
+  expect(entry).not.toContain("once you are there");
+  // Copied exactly, it parses, builds from the prayer, and answers it through the real world, with Zeus far from the shed.
+  const view = run.view("zeus");
+  const shown = /punish freely, from where you stand: (\{[^}]*\})/.exec(entry);
+  expect(shown).not.toBeNull();
+  const parsed = view.schema.parse(JSON.parse(shown?.[1] as string));
+  if (!parsed.ok) throw new Error(parsed.message);
+  const built = buildModelProposal(
+    id("zeus"),
+    view.snapshot,
+    parsed.value,
+    view.remembered,
+  );
+  if (!built.ok || built.kind !== "proposal") throw new Error("no proposal");
+  const zeusAt = getActor(run.state, id("zeus"))?.locationId;
+  const ran = run.tick(built.proposal as never);
+  expect(ran.rejected).toEqual([]);
+  expect(run.state.petitions.get(petition)?.status).toBe("answered");
+  expect(getActor(run.state, id("zeus"))?.locationId).toBe(zeusAt);
+});
+
+test("a god that cannot strike, or a listed building it would not strike, is shown no remote strike line, and the owner's line says why", () => {
+  // Hades has no strike ability: the building is not offered, and the owner's line carries the reason.
+  const hades = new Run();
+  const forHades = hades.prayPunish("hades");
+  const entry = entryOf(hades.view("hades").context.prompt, forHades);
+  expect(entry).not.toContain("from where you stand");
+  expect(entry).toContain("no power to strike");
+  // A destroyed shed would answer nothing, so it is not offered from afar.
+  const wrecked = new Run();
+  const petition = wrecked.prayPunish("zeus");
+  const shed = wrecked.state.buildings.get(id("woodshed"));
+  if (!shed) throw new Error("shed");
+  wrecked.state = {
+    ...wrecked.state,
+    buildings: new Map(wrecked.state.buildings).set(shed.id, {
+      ...shed,
+      status: "destroyed",
+    } as never),
+  };
+  const gone = entryOf(wrecked.view("zeus").context.prompt, petition);
+  expect(gone).not.toContain('"target":"woodshed"');
+  expect(gone).toContain('"target":"woodcutter"');
 });

@@ -8,6 +8,8 @@ fn main() {
             "set_endpoint_key",
             "delete_endpoint_key",
             "endpoint_key_status",
+            "canon_registry",
+            "canon_atlas",
         ]),
     ))
     .expect("tauri build configuration should be valid");

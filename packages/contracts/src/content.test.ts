@@ -52,6 +52,7 @@ function validPack(): Record<string, unknown> {
         id: "npc-1",
         name: "Tavernkeeper",
         locationId: "agora",
+        sprite: "placeholder-npc-1",
         drives: { thrift: 0.5, appetite: 0.2, greed: 0.1, piety: 0.3 },
         devotion: { god: "athena", affinity: 2 },
       },
@@ -64,6 +65,37 @@ function validPack(): Record<string, unknown> {
 test("a valid minimal content pack parses", () => {
   const result = parseContentPack(validPack());
   expect(result.ok).toBe(true);
+});
+
+test("a non-deity inhabitant carries its authored sprite id through parsing", () => {
+  const result = parseContentPack(validPack());
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.inhabitants[0]?.sprite).toBe("placeholder-npc-1");
+  // A deity's sprite comes from its profile, folded in at pack assembly; parsing leaves it absent.
+  expect(result.value.inhabitants[1]?.sprite).toBeUndefined();
+});
+
+test("a non-deity inhabitant without a sprite fails parsing", () => {
+  const pack = validPack();
+  const inhabitants = pack.inhabitants as Record<string, unknown>[];
+  const { sprite: _dropped, ...withoutSprite } = inhabitants[0] ?? {};
+  inhabitants[0] = withoutSprite;
+  const result = parseContentPack(pack);
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.path).toBe("inhabitants[0].sprite");
+});
+
+test("a deity inhabitant with a sprite field fails parsing: the god profile is the only source", () => {
+  const pack = validPack();
+  const inhabitants = pack.inhabitants as Record<string, unknown>[];
+  inhabitants[1] = { ...inhabitants[1], sprite: "zeus-sprite" };
+  const result = parseContentPack(pack);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.path).toBe("inhabitants[1].sprite");
+    expect(result.message).toContain("god profile");
+  }
 });
 
 test("a location referencing an unknown realm fails to load", () => {
@@ -241,6 +273,7 @@ test("an inhabitant may be authored as a deity", () => {
   const first = (pack.inhabitants as Record<string, unknown>[])[0];
   first.deity = true;
   delete first.devotion;
+  delete first.sprite;
   const result = parseContentPack(pack);
   expect(result.ok).toBe(true);
   if (result.ok) {

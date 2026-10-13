@@ -12,10 +12,35 @@ import {
   parseSlug,
   parseStrictRecord,
   parseString,
+  parseUniqueSlugs,
 } from "@panthea/contracts";
 import type { GodProfile, LabeledProfileInput } from "./god-profile";
 
 export const GOD_VISUAL_PROFILE_SCHEMA_VERSIONS = ASSET_SCHEMA_VERSIONS;
+
+/** One slot a matrix names: a state, and the ability when the state is bound to one. */
+export interface RenderMatrixSlot {
+  readonly state: string;
+  readonly ability?: string;
+}
+
+/**
+ * The slots a rendered asset of this subject must hold, on one cell class. Every
+ * required slot is held in every facing. Slots under `deferred` are named so
+ * that leaving them out is a recorded decision, not an omission.
+ */
+export interface RenderMatrix {
+  readonly cellClass: string;
+  readonly directions: readonly string[];
+  readonly required: readonly RenderMatrixSlot[];
+  readonly deferred: readonly RenderMatrixSlot[];
+}
+
+/** The render profile a subject names (a file under tools/render/profiles) and the matrix it must fill. */
+export interface RenderSubject {
+  readonly profile: string;
+  readonly matrix: RenderMatrix;
+}
 
 export interface GodVisualProfile {
   readonly schemaVersion: number;
@@ -25,6 +50,108 @@ export interface GodVisualProfile {
   readonly iconography: readonly string[];
   /** Asset id of the god's portrait, when one is mapped. */
   readonly portrait?: string;
+  /**
+   * Present when the god is drawn, not mirrored, on the west side. The
+   * subject is authoritative: derivation refuses to mirror while it is set.
+   */
+  readonly asymmetry?: { readonly feature: string };
+  /** Present when the god is drawn by the render pipeline; absent for a hand-drawn god. */
+  readonly render?: RenderSubject;
+}
+
+/** The slot keys (`state/direction[/ability]`) a rendered asset must hold: each required slot in each facing. */
+export function requiredRenderSlotKeys(matrix: RenderMatrix): string[] {
+  return matrix.required.flatMap(({ state, ability }) =>
+    matrix.directions.map((direction) =>
+      [state, direction, ability]
+        .filter((part) => part !== undefined)
+        .join("/"),
+    ),
+  );
+}
+
+const slotId = ({ state, ability }: RenderMatrixSlot): string =>
+  ability === undefined ? state : `${state}/${ability}`;
+
+function parseMatrixSlots(
+  value: unknown,
+  path: string,
+  options: { readonly nonEmpty: boolean },
+): ParseResult<readonly RenderMatrixSlot[]> {
+  const slots = parseArray(value, path, (slot, slotPath) =>
+    parseStrictRecord(slot, slotPath, ["state", "ability"], (record) => {
+      const state = parseSlug(record.state, `${slotPath}.state`);
+      if (!state.ok) return state;
+      if (record.ability === undefined) return ok({ state: state.value });
+      const ability = parseSlug(record.ability, `${slotPath}.ability`);
+      if (!ability.ok) return ability;
+      return ok({ state: state.value, ability: ability.value });
+    }),
+  );
+  if (!slots.ok) return slots;
+  if (options.nonEmpty && slots.value.length === 0)
+    return fail(path, "expected at least one slot");
+  const seen = new Set<string>();
+  for (const [index, slot] of slots.value.entries()) {
+    const id = slotId(slot);
+    if (seen.has(id)) return fail(`${path}[${index}]`, `duplicate "${id}"`);
+    seen.add(id);
+  }
+  return slots;
+}
+
+function parseRenderSubject(
+  value: unknown,
+  path: string,
+): ParseResult<RenderSubject> {
+  return parseStrictRecord(value, path, ["profile", "matrix"], (record) => {
+    const profile = parseSlug(record.profile, `${path}.profile`);
+    if (!profile.ok) return profile;
+    const matrix = parseStrictRecord(
+      record.matrix,
+      `${path}.matrix`,
+      ["cellClass", "directions", "required", "deferred"],
+      (m): ParseResult<RenderMatrix> => {
+        const cellClass = parseSlug(m.cellClass, `${path}.matrix.cellClass`);
+        if (!cellClass.ok) return cellClass;
+        const directions = parseUniqueSlugs(
+          m.directions,
+          `${path}.matrix.directions`,
+        );
+        if (!directions.ok) return directions;
+        const required = parseMatrixSlots(
+          m.required,
+          `${path}.matrix.required`,
+          {
+            nonEmpty: true,
+          },
+        );
+        if (!required.ok) return required;
+        const deferred = parseMatrixSlots(
+          m.deferred ?? [],
+          `${path}.matrix.deferred`,
+          { nonEmpty: false },
+        );
+        if (!deferred.ok) return deferred;
+        const requiredIds = new Set(required.value.map(slotId));
+        for (const [index, slot] of deferred.value.entries()) {
+          if (requiredIds.has(slotId(slot)))
+            return fail(
+              `${path}.matrix.deferred[${index}]`,
+              `"${slotId(slot)}" is required, so it is not deferred`,
+            );
+        }
+        return ok({
+          cellClass: cellClass.value,
+          directions: directions.value,
+          required: required.value,
+          deferred: deferred.value,
+        });
+      },
+    );
+    if (!matrix.ok) return matrix;
+    return ok({ profile: profile.value, matrix: matrix.value });
+  });
 }
 
 export function parseGodVisualProfile(
@@ -34,7 +161,15 @@ export function parseGodVisualProfile(
   return parseStrictRecord(
     input,
     path,
-    ["schemaVersion", "godId", "paletteFamily", "iconography", "portrait"],
+    [
+      "schemaVersion",
+      "godId",
+      "paletteFamily",
+      "iconography",
+      "portrait",
+      "asymmetry",
+      "render",
+    ],
     (record) => {
       const schemaVersion = parseSchemaVersion(
         record.schemaVersion,
@@ -64,22 +199,40 @@ export function parseGodVisualProfile(
           return fail(`${path}.iconography[${index}]`, `duplicate "${entry}"`);
         seen.add(entry);
       }
-      if (record.portrait === undefined) {
-        return ok({
-          schemaVersion: schemaVersion.value,
-          godId: godId.value,
-          paletteFamily: paletteFamily.value,
-          iconography: iconography.value,
-        });
+      let portrait: string | undefined;
+      if (record.portrait !== undefined) {
+        const parsed = parseAssetId(record.portrait, `${path}.portrait`);
+        if (!parsed.ok) return parsed;
+        portrait = parsed.value;
       }
-      const portrait = parseAssetId(record.portrait, `${path}.portrait`);
-      if (!portrait.ok) return portrait;
+      let asymmetry: { feature: string } | undefined;
+      if (record.asymmetry !== undefined) {
+        const parsed = parseStrictRecord(
+          record.asymmetry,
+          `${path}.asymmetry`,
+          ["feature"],
+          (a) => {
+            const feature = parseString(a.feature, `${path}.asymmetry.feature`);
+            return feature.ok ? ok({ feature: feature.value }) : feature;
+          },
+        );
+        if (!parsed.ok) return parsed;
+        asymmetry = parsed.value;
+      }
+      let render: RenderSubject | undefined;
+      if (record.render !== undefined) {
+        const parsed = parseRenderSubject(record.render, `${path}.render`);
+        if (!parsed.ok) return parsed;
+        render = parsed.value;
+      }
       return ok({
         schemaVersion: schemaVersion.value,
         godId: godId.value,
         paletteFamily: paletteFamily.value,
         iconography: iconography.value,
-        portrait: portrait.value,
+        ...(portrait === undefined ? {} : { portrait }),
+        ...(asymmetry === undefined ? {} : { asymmetry }),
+        ...(render === undefined ? {} : { render }),
       });
     },
   );
@@ -88,7 +241,8 @@ export function parseGodVisualProfile(
 /**
  * Parses a set of visual profiles against the god profiles and the
  * vocabulary's palette families: each belongs to a known god, at most once,
- * names a known family, and no two share a portrait id.
+ * names a known family, names only abilities its god has in a render matrix,
+ * and no two share a portrait id.
  */
 export function parseGodVisualProfiles(
   inputs: readonly LabeledProfileInput[],
@@ -121,6 +275,20 @@ export function parseGodVisualProfiles(
         `${label}.paletteFamily`,
         `unknown palette family "${profile.paletteFamily}"`,
       );
+    }
+    if (profile.render !== undefined) {
+      const god = gods.find((g) => g.id === profile.godId);
+      const abilities = new Set(god?.abilities.map((a) => a.id));
+      for (const group of ["required", "deferred"] as const) {
+        for (const [index, slot] of profile.render.matrix[group].entries()) {
+          if (slot.ability !== undefined && !abilities.has(slot.ability)) {
+            return fail(
+              `${label}.render.matrix.${group}[${index}].ability`,
+              `"${slot.ability}" is not an ability of ${profile.godId}`,
+            );
+          }
+        }
+      }
     }
     if (profile.portrait !== undefined) {
       if (seenPortraits.has(profile.portrait)) {

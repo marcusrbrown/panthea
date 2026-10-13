@@ -290,6 +290,10 @@ export function startService(options: StartOptions): ServiceHandle {
   // transition concurrently.
   let catchUpInProgress = false;
   let pauseRequestedDuringCatchUp = false;
+  // True from the end of a catch-up pass until the next live tick commits. A pass that starts while it is true follows
+  // another with nothing in between: the wall time the earlier pass took, read as a gap. It is the same absence, so its
+  // summary adds to the earlier one's (`continuesPrevious`) instead of replacing it.
+  let catchUpJustRan = false;
 
   const catchUpControl: CatchUpControl = {
     isRunning: () => catchUpInProgress,
@@ -301,12 +305,14 @@ export function startService(options: StartOptions): ServiceHandle {
   async function runCatchUpNow(nowWallMs: number): Promise<boolean> {
     catchUpInProgress = true;
     pauseRequestedDuringCatchUp = false;
+    const continuesPrevious = catchUpJustRan;
     // Bracketed in the log so an operator, and a test reading the service's
     // output, can tell exactly when a catch-up (startup or after sleep) ran.
     log("panthea-simulation: catch-up started");
     try {
       const result = await runCatchUp(state, prng, tickDeps, {
         nowWallMs,
+        continuesPrevious,
         onChunkCommitted: () => pauseRequestedDuringCatchUp,
       });
       if (shuttingDown) {
@@ -315,6 +321,7 @@ export function startService(options: StartOptions): ServiceHandle {
       }
       state = result.state;
       prng = result.prng;
+      catchUpJustRan = result.degraded === undefined;
       refreshStatusAfterCatchUp(statusRef, result, store);
       return Boolean(result.degraded);
     } finally {
@@ -423,6 +430,7 @@ export function startService(options: StartOptions): ServiceHandle {
       serverHandle.broadcastFrame();
       return "halted";
     }
+    catchUpJustRan = false;
     state = step.state;
     prng = step.prng;
     queue = [...step.nextQueue];

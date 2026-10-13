@@ -455,12 +455,18 @@ const tavernPack = (): ContentPack => ({
   inhabitants: [
     {
       id: "zeus",
+      sprite: "placeholder-zeus",
       name: "Zeus",
       locationId: "tavern",
       deity: true,
       startingInventory: [{ resource: "divinity", amount: 100 }],
     },
-    { id: "farmer", name: "The Farmer", locationId: "tavern" },
+    {
+      id: "farmer",
+      sprite: "placeholder-farmer",
+      name: "The Farmer",
+      locationId: "tavern",
+    },
   ],
   rules: {
     catchUpCapMs: 0,
@@ -1506,8 +1512,26 @@ const wrongsWorld = () => {
     actor: "poseidon",
     resource: "food",
     amount: 2,
+    petitionId: "evt-8-2",
   };
-  return [stolen, prayed, refused, revenge, trouble, turned, changed, struck];
+  const unprompted = {
+    ...envelope("evt-61-9", 9, 61),
+    kind: "mortal-struck",
+    entityId: "ismene",
+    actor: "poseidon",
+    amount: 0,
+  };
+  return [
+    stolen,
+    prayed,
+    refused,
+    revenge,
+    trouble,
+    turned,
+    changed,
+    struck,
+    unprompted,
+  ];
 };
 
 test("a transcript shows each wrong with its wrongdoer, victim, temperament and need, and each revenge, trouble, season turn, strike, refusal, and defection with its cause (R18)", () => {
@@ -1529,7 +1553,13 @@ test("a transcript shows each wrong with its wrongdoer, victim, temperament and 
     "a squall in zeus's domain (autumn, the god's floor) damaged shop of ismene [evt-30-5]",
   );
   expect(lines).toContain("the season turned from spring to summer");
-  expect(lines).toContain("poseidon struck lykos and took 2 food [evt-60-8]");
+  // A strike that answers a prayer says which, from its own event; one that answers none says nothing of the kind.
+  expect(lines).toContain(
+    "poseidon struck lykos and took 2 food, answering the prayer [evt-8-2] [evt-60-8]",
+  );
+  expect(lines).toContain(
+    "poseidon struck ismene, who carried nothing [evt-61-9]",
+  );
   expect(lines).toContain("poseidon refused doris's prayer [evt-8-2]");
   expect(lines).toContain(
     "doris left poseidon for athena: poseidon left 1 prayers unanswered ([evt-8-2]) and athena answered [evt-45-9] [evt-50-7]",
@@ -1618,7 +1648,7 @@ test("the transcript's numbers list food, troubles by god, wrongs between differ
   expect(section).toContain("Defections: 1");
 });
 
-test("the summary shows the checks across the episodes, each episode's numbers, and each god's p95 queue wait against the 90 s target", () => {
+test("the summary shows the checks across the episodes, each episode's numbers, and each god's p95 queue wait against the 105 s target", () => {
   const rec = {
     ...record([], wrongsWorld()),
     patrons: new Map([
@@ -1645,7 +1675,7 @@ test("the summary shows the checks across the episodes, each episode's numbers, 
   expect(text).toMatch(
     /\| 1 \| 0 \(at most 250\) \| 0 \/ 1 \| zeus 1 \| 2 \| 2 \/ 1 \| 1 \|/,
   );
-  expect(text).toContain("ADR-0005 allows 90 s");
+  expect(text).toContain("ADR-0005 allows 105 s");
   // With no gate run, it says so.
   expect(
     renderSummary([rec], { seconds: 300, model: "m", files: ["episode-1.md"] }),

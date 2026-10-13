@@ -6,6 +6,7 @@ import {
   ASSET_SCHEMA_VERSIONS,
   type AssetKind,
   type AssetManifest,
+  type GenerationRef,
   type GenerationRequest,
   type OwnerException,
   type Provenance,
@@ -385,10 +386,21 @@ export interface ConformanceCheck {
   readonly message?: string;
 }
 
+/** A cell the report did not measure: it was carried, pixel for pixel, from a published revision. */
+export interface CarriedCell {
+  /** The cell's logical key: `state/direction[/ability]` or an expression. */
+  readonly key: string;
+  /** The revision of the asset the cell was taken from, which is the one that vouched for it. */
+  readonly revision: Sha256;
+}
+
 export interface ConformanceReport {
   readonly schemaVersion: number;
+  /** Over `checks` alone: carried cells are neither passing nor failing here. */
   readonly status: "pass" | "fail";
   readonly checks: readonly ConformanceCheck[];
+  /** Absent when nothing was carried. */
+  readonly carried?: readonly CarriedCell[];
 }
 
 export function parseConformanceReport(
@@ -398,7 +410,7 @@ export function parseConformanceReport(
   return parseStrictRecord(
     input,
     path,
-    ["schemaVersion", "status", "checks"],
+    ["schemaVersion", "status", "checks", "carried"],
     (record) => {
       const schemaVersion = parseSchemaVersion(
         record.schemaVersion,
@@ -450,10 +462,38 @@ export function parseConformanceReport(
             : "a failing report names a failed check",
         );
       }
+      const carried =
+        record.carried === undefined
+          ? ok(undefined)
+          : parseArray(
+              record.carried,
+              `${path}.carried`,
+              (value, carriedPath) =>
+                parseStrictRecord(
+                  value,
+                  carriedPath,
+                  ["key", "revision"],
+                  (item) => {
+                    const key = parseString(item.key, `${carriedPath}.key`);
+                    if (!key.ok) return key;
+                    const revision = parseSha256(
+                      item.revision,
+                      `${carriedPath}.revision`,
+                    );
+                    if (!revision.ok) return revision;
+                    return ok({ key: key.value, revision: revision.value });
+                  },
+                ),
+            );
+      if (!carried.ok) return carried;
+      const keys = carried.value?.map((cell) => cell.key) ?? [];
+      if (new Set(keys).size !== keys.length)
+        return fail(`${path}.carried`, "a cell is carried once");
       return ok({
         schemaVersion: schemaVersion.value,
         status: status.value,
         checks: checks.value,
+        ...(carried.value === undefined ? {} : { carried: carried.value }),
       });
     },
   );
@@ -642,12 +682,22 @@ export function transitionAsset(
   }
 }
 
-/** Cross-checks a provenance record against the job records it names. */
+/**
+ * Cross-checks a provenance record against the job ledger: every related job
+ * is there with the same status and, when it succeeded, exactly the same
+ * outputs; every generation names a succeeded job, the request it ran for and
+ * only outputs that job produced. Source assets are revisions, not jobs, and
+ * are never looked up here.
+ */
 export function checkProvenanceAgainstJobs(
   provenance: Provenance,
   jobs: readonly GenerationJob[],
 ): AssetResult<true> {
   const byId = new Map(jobs.map((job) => [job.id, job]));
+  const generated =
+    provenance.method === "generated"
+      ? new Map(provenance.generations.map((g) => [g.jobId, g]))
+      : new Map<string, GenerationRef>();
   for (const ref of provenance.relatedJobs) {
     const job = byId.get(ref.jobId);
     if (job === undefined)
@@ -655,43 +705,40 @@ export function checkProvenanceAgainstJobs(
         "job-mismatch",
         `job "${ref.jobId}" is not in the ledger`,
       );
-    if (
-      provenance.method === "generated" &&
-      ref.jobId === provenance.jobId &&
-      job.status !== "succeeded"
-    ) {
+    const generation = generated.get(ref.jobId);
+    if (generation !== undefined && job.status !== "succeeded")
       return assetFail(
         "job-not-succeeded",
-        `source job "${ref.jobId}" is ${job.status} in the ledger`,
+        `generation job "${ref.jobId}" is ${job.status} in the ledger`,
       );
-    }
-    if (job.status !== ref.status) {
+    if (job.status !== ref.status)
       return assetFail(
         "job-mismatch",
         `job "${ref.jobId}" is ${job.status} in the ledger, ${ref.status} in the provenance`,
       );
-    }
-    if (job.status === "succeeded") {
-      const recorded = new Set<string>(ref.outputs ?? []);
-      const actual = new Set<string>(job.outputs.map((output) => output.hash));
-      if (
-        recorded.size !== actual.size ||
-        [...actual].some((hash) => !recorded.has(hash))
-      ) {
-        return assetFail(
-          "hash-mismatch",
-          `job "${ref.jobId}" outputs differ from the provenance`,
-        );
-      }
-    }
-    if (provenance.method === "generated" && ref.jobId === provenance.jobId) {
-      if (canonicalJson(job.request) !== canonicalJson(provenance.request)) {
-        return assetFail(
-          "job-mismatch",
-          `job "${ref.jobId}" was run for a different request`,
-        );
-      }
-    }
+    if (job.status !== "succeeded") continue;
+    const recorded = new Set<string>(ref.outputs ?? []);
+    const actual = new Set<string>(job.outputs.map((output) => output.hash));
+    if (
+      recorded.size !== actual.size ||
+      [...actual].some((hash) => !recorded.has(hash))
+    )
+      return assetFail(
+        "hash-mismatch",
+        `job "${ref.jobId}" outputs differ from the provenance`,
+      );
+    if (generation === undefined) continue;
+    if (canonicalJson(job.request) !== canonicalJson(generation.request))
+      return assetFail(
+        "job-mismatch",
+        `job "${ref.jobId}" was run for a different request`,
+      );
+    const stray = generation.used.find((hash) => !actual.has(hash));
+    if (stray !== undefined)
+      return assetFail(
+        "hash-mismatch",
+        `job "${ref.jobId}" never output the used hash ${stray}`,
+      );
   }
   return assetOk(true);
 }

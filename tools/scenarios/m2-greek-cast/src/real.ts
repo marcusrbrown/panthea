@@ -31,6 +31,8 @@ export interface RealOptions {
   readonly reasoningEffort?: "none";
   /** The endpoint's OpenAI-compatible base URL; `${ollama}/v1` when unset. */
   readonly baseUrl?: string;
+  /** `baseUrl` only passes requests through to the local Ollama at `ollama` (the unattended run's outage proxy): the endpoint is named and recorded as that Ollama. */
+  readonly upstreamIsLocal?: true | undefined;
   /** The key reference the endpoint names, whose key is in `keys`. */
   readonly keyRef?: string;
   /** Keys by key reference, read once from the Keychain. Only ever sent on the launch line. */
@@ -54,7 +56,10 @@ export interface RealRecord {
  * step with the cast. Names a key by reference, never carries one.
  */
 export function routingConfigFor(options: RealOptions): object {
-  const id = options.baseUrl === undefined ? "ollama" : "hosted";
+  const id =
+    options.baseUrl === undefined || options.upstreamIsLocal === true
+      ? "ollama"
+      : "hosted";
   return {
     endpoints: [
       {
@@ -156,6 +161,7 @@ export async function endpointOptions(
 export function endpointKind(
   options: RealOptions,
 ): "hosted" | "local" | undefined {
+  if (options.upstreamIsLocal === true) return "local";
   if (options.baseUrl === undefined) return undefined;
   return isLocalUrl(options.baseUrl) ? "local" : "hosted";
 }

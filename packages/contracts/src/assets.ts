@@ -175,6 +175,11 @@ export interface CellClass {
   readonly kinds: readonly VocabularyKind[];
 }
 
+/**
+ * One rule for a state. A state id may carry several rules, each naming the
+ * cell classes it applies to; a rule that names none applies to every class
+ * and so is the only rule its state may have. Look rules up with `stateRuleFor`.
+ */
 export interface StateRule {
   readonly id: string;
   readonly frames: Range;
@@ -297,6 +302,59 @@ function uniqueBy<T>(
   return undefined;
 }
 
+const ANY_CELL_CLASS = "*";
+
+/**
+ * State rules are unique by (state id, cell class): two rules of one id may not
+ * claim the same class, and a rule naming no class claims all of them.
+ */
+function uniqueStateRules(
+  rules: readonly StateRule[],
+  path: string,
+): ParseFailure | undefined {
+  const claimed = new Map<string, Set<string>>();
+  for (const [index, rule] of rules.entries()) {
+    const taken = claimed.get(rule.id) ?? new Set<string>();
+    const wanted = rule.cellClasses ?? [ANY_CELL_CLASS];
+    const clash = wanted.find(
+      (cell) =>
+        taken.has(cell) ||
+        taken.has(ANY_CELL_CLASS) ||
+        (cell === ANY_CELL_CLASS && taken.size > 0),
+    );
+    if (clash !== undefined) {
+      return fail(
+        `${path}[${index}]`,
+        clash === ANY_CELL_CLASS
+          ? `duplicate "${rule.id}": another rule already covers some cell class`
+          : `duplicate "${rule.id}" for cell class "${clash}"`,
+      );
+    }
+    for (const cell of wanted) taken.add(cell);
+    claimed.set(rule.id, taken);
+  }
+  return undefined;
+}
+
+/** The rule for `stateId` on cell class `cellClassId`, or undefined when the class does not draw the state. */
+export function stateRuleFor(
+  vocabulary: AssetVocabulary,
+  stateId: string,
+  cellClassId: string | undefined,
+): StateRule | undefined {
+  return vocabulary.states.find(
+    (rule) =>
+      rule.id === stateId &&
+      (rule.cellClasses === undefined ||
+        (cellClassId !== undefined && rule.cellClasses.includes(cellClassId))),
+  );
+}
+
+/** The distinct state ids, in the order the vocabulary first names them. */
+export function stateIds(vocabulary: AssetVocabulary): readonly string[] {
+  return [...new Set(vocabulary.states.map((rule) => rule.id))];
+}
+
 export function parseAssetVocabulary(
   input: unknown,
   path = "vocabulary",
@@ -356,7 +414,7 @@ export function parseAssetVocabulary(
       if (!states.ok) return states;
       if (states.value.length === 0)
         return fail(`${path}.states`, "expected at least one state");
-      const dupState = uniqueBy(states.value, (s) => s.id, `${path}.states`);
+      const dupState = uniqueStateRules(states.value, `${path}.states`);
       if (dupState) return dupState;
       const effect = parseStrictRecord(
         record.effect,
@@ -414,6 +472,53 @@ export interface GenerationSlot {
   readonly expression?: string;
 }
 
+/**
+ * What a masked edit starts from: an earlier job's output, named by the job and
+ * the output hash used; a hand-authored image imported as a studio blob,
+ * which no job made and which provenance records as hand work; or one frame
+ * of a published revision (a frame ref), which repair edits from.
+ */
+export type EditBase =
+  | { readonly kind: "job"; readonly jobId: string; readonly output: Sha256 }
+  | {
+      readonly kind: "hand";
+      readonly image: Sha256;
+      readonly description: string;
+    }
+  | {
+      readonly kind: "published";
+      readonly assetId: AssetId;
+      readonly revision: Sha256;
+      readonly slotKey: string;
+      readonly frameIndex: number;
+      readonly frameHash: Sha256;
+    };
+
+/**
+ * A masked img2img edit of a base. The mask is a studio blob (white marks the
+ * pixels the model may change). `cue` is the wording of the change.
+ */
+export interface GenerationEdit {
+  readonly base: EditBase;
+  readonly mask: Sha256;
+  /** Denoising strength, greater than 0 and at most 1. */
+  readonly strength: number;
+  readonly cue: string;
+}
+
+/**
+ * What a render recipe request adds to a sprite request: the render profile, the
+ * palette and the declared pivot. There is no camera id (the one camera is a
+ * committed file whose hash is in the revision recipe) and no seed or batch to
+ * choose: a recipe request is stored with batch 1 and seed 0.
+ */
+export interface RecipeRequest {
+  /** Render profile id, from the subject. */
+  readonly profile: string;
+  readonly palette: string;
+  readonly pivot: Point;
+}
+
 export interface GenerationRequest {
   readonly schemaVersion: number;
   /** Subject id from the content pack, e.g. a god id. */
@@ -423,7 +528,30 @@ export interface GenerationRequest {
   readonly batch: number;
   readonly styleNote?: string;
   readonly seed?: number;
+  /** Present when the generation edits an earlier job's output instead of drawing from noise. */
+  readonly edit?: GenerationEdit;
+  /**
+   * Present on a recipe request, the variant a render engine runs. Then `batch`
+   * is 1, `seed` is 0, and there is no style note or edit.
+   */
+  readonly recipe?: RecipeRequest;
 }
+
+/** A request that carries a recipe, with the fixed batch and seed its parse stores. */
+export type RecipeGenerationRequest = GenerationRequest & {
+  readonly recipe: RecipeRequest;
+  readonly batch: 1;
+  readonly seed: 0;
+};
+
+export function isRecipeRequest(
+  request: GenerationRequest,
+): request is RecipeGenerationRequest {
+  return request.recipe !== undefined;
+}
+
+/** The seed a recipe request stores and every render job runs with. */
+export const RECIPE_SEED = 0;
 
 export const LICENCE_ROLES = [
   "model",
@@ -464,9 +592,14 @@ export interface AssetRevisionRef {
   readonly revision: Sha256;
 }
 
+/** How an edit step was made: by the owner's hand in an editor, or by a script that ran on the frames. */
+export type HandEditMethod = "hand" | "script";
+
 export interface HandEditStep {
   readonly description: string;
   readonly hash?: Sha256;
+  /** Absent means "hand": steps recorded before scripted edits were told apart carry none. */
+  readonly method?: HandEditMethod;
 }
 
 export interface OwnerException {
@@ -493,17 +626,30 @@ interface ProvenanceCommon {
   readonly ownerException?: OwnerException;
 }
 
-export interface GeneratedProvenance extends ProvenanceCommon {
-  readonly method: "generated";
-  /** The succeeded job whose outputs produced this asset. */
+/** One succeeded job that contributed to an asset, with the exact narrowed request and engine that ran it. */
+export interface GenerationRef {
   readonly jobId: string;
   readonly request: GenerationRequest;
   readonly runtime: RuntimeRef;
   readonly model: ModelRef;
   readonly loras: readonly ModelRef[];
+  readonly encoder: ModelRef | null;
+  readonly vae: ModelRef | null;
   readonly seed: number;
   readonly settings: Readonly<Record<string, SettingValue>>;
-  readonly resultHashes: readonly Sha256[];
+  /** The job outputs this asset actually uses; a non-empty subset of the job's outputs. */
+  readonly used: readonly Sha256[];
+}
+
+export interface GeneratedProvenance extends ProvenanceCommon {
+  readonly method: "generated";
+  readonly generations: readonly GenerationRef[];
+  /**
+   * The steps of the derived cells and realm variants this revision carries
+   * from its prior revision, so a drawn or repaired revision does not lose their
+   * lineage. Absent when it carries none; when present, non-empty.
+   */
+  readonly steps?: readonly DerivedStep[];
 }
 
 export interface HandProvenance extends ProvenanceCommon {
@@ -511,17 +657,105 @@ export interface HandProvenance extends ProvenanceCommon {
   readonly editor?: string;
 }
 
+/** JSON a recipe takes as parameters: integers only, so canonical text is stable. */
+export type CanonicalJson =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly CanonicalJson[]
+  | { readonly [key: string]: CanonicalJson };
+
+/** The published slot a derived slot was computed from. */
+export interface DerivedSource {
+  readonly assetId: AssetId;
+  readonly revision: Sha256;
+  readonly slotKey: string;
+  /** SHA-256 over the source slot's frames' RGBA, in order, plus its duration list. */
+  readonly slotHash: Sha256;
+}
+
+/** One recipe application: a slot listed here is derived; any other slot is carried or a hand step. */
+export interface DerivedStep {
+  readonly recipe: string;
+  readonly version: number;
+  readonly params: { readonly [key: string]: CanonicalJson };
+  readonly source: DerivedSource;
+  readonly outputSlot: string;
+  readonly resultHash: Sha256;
+}
+
 export interface DerivedProvenance extends ProvenanceCommon {
   readonly method: "derived";
   readonly operation: string;
   readonly runtime: RuntimeRef;
+  /** Non-empty: `method: "derived"` applies exactly when a manifest has steps. */
+  readonly steps: readonly DerivedStep[];
   readonly resultHashes: readonly Sha256[];
+}
+
+export const RAW_FRAME_ROLES = ["colour", "id", "depth"] as const;
+export type RawFrameRole = (typeof RAW_FRAME_ROLES)[number];
+
+/** The Blender that rendered: a recorded tool fact, not an output licence record. */
+export interface BlenderPin {
+  readonly version: string;
+  /** The build hash the binary reports. */
+  readonly build: string;
+  /** SHA-256 of the binary. */
+  readonly sha256: Sha256;
+}
+
+/**
+ * Everything shared by the slots of one rendered revision. `hash` is the
+ * revision recipe hash over the other fields; a contract holds no hashing, so
+ * the render audit recomputes it.
+ */
+export interface RenderedRevisionRecipe {
+  readonly hash: Sha256;
+  readonly profile: { readonly id: string; readonly hash: Sha256 };
+  readonly camera: Sha256;
+  readonly palette: { readonly id: string; readonly digest: Sha256 };
+  readonly pivot: Point;
+  readonly script: Sha256;
+  /** POST_STEP_VERSION when the cells were made. */
+  readonly postStep: number;
+  readonly blender: BlenderPin;
+  readonly kit: Sha256;
+  readonly stamps: Sha256;
+}
+
+/** One slot of a rendered revision, from one job: its recipe, the raw frames it came from and its seed. */
+export interface RenderedSlot {
+  /** `state/facing[/ability]`, the manifest's slot key. */
+  readonly slotKey: string;
+  /** The slot recipe hash: the revision hash plus this slot's state, clip, facing and seed. */
+  readonly recipeHash: Sha256;
+  /** The revision recipe hash this slot was rendered under; equal across the revision's slots. */
+  readonly revisionRecipeHash: Sha256;
+  readonly state: string;
+  /** The animation clip the profile's clip map chose for the state. */
+  readonly clip: string;
+  readonly facing: string;
+  readonly ability?: string;
+  /** Always 0: a recipe request has a fixed base seed. */
+  readonly seed: 0;
+  readonly frameCount: number;
+  /** Blob hashes of the raw frames per role, one per frame, in frame order. */
+  readonly raw: { readonly [role in RawFrameRole]: readonly Sha256[] };
+}
+
+export interface RenderedProvenance extends ProvenanceCommon {
+  readonly method: "rendered";
+  readonly revisionRecipe: RenderedRevisionRecipe;
+  readonly slots: readonly RenderedSlot[];
 }
 
 export type Provenance =
   | GeneratedProvenance
   | HandProvenance
-  | DerivedProvenance;
+  | DerivedProvenance
+  | RenderedProvenance;
 
 export interface Rect {
   readonly x: number;
@@ -572,9 +806,28 @@ export interface SpriteAnimation {
   readonly frames: readonly Frame[];
 }
 
+/** A shade of a palette ramp. */
+export interface RampShade {
+  readonly ramp: string;
+  readonly index: number;
+}
+
+/** One source shade and the shade it becomes in the variant's palette. */
+export interface ColourMapping {
+  readonly source: RampShade;
+  readonly target: RampShade;
+}
+
+/**
+ * A realm recolour of the whole asset: its own atlas (same size as the source
+ * atlas, alpha preserved) and the map `(sourceRamp, index) → (targetRamp, index)`
+ * it was recoloured under, so publish can rerun it from the source atlas.
+ */
 export interface RealmVariant {
   readonly paletteFamily: string;
   readonly paletteId: string;
+  readonly atlas: Atlas;
+  readonly map: readonly ColourMapping[];
 }
 
 export interface SpriteManifest extends ManifestCommon {
@@ -651,6 +904,184 @@ function parseSlot(value: unknown, path: string): ParseResult<GenerationSlot> {
   );
 }
 
+function parseEditBase(value: unknown, path: string): ParseResult<EditBase> {
+  if (!isRecord(value)) return fail(path, "expected an object");
+  const kind = parseEnum(value.kind, `${path}.kind`, [
+    "job",
+    "hand",
+    "published",
+  ] as const);
+  if (!kind.ok) return kind;
+  if (kind.value === "published")
+    return parseStrictRecord<EditBase>(
+      value,
+      path,
+      ["kind", "assetId", "revision", "slotKey", "frameIndex", "frameHash"],
+      (record) => {
+        const assetId = parseAssetId(record.assetId, `${path}.assetId`);
+        if (!assetId.ok) return assetId;
+        const revision = parseSha256(record.revision, `${path}.revision`);
+        if (!revision.ok) return revision;
+        const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+        if (!slotKey.ok) return slotKey;
+        const frameIndex = parseIntegerAtLeast(
+          record.frameIndex,
+          `${path}.frameIndex`,
+          0,
+        );
+        if (!frameIndex.ok) return frameIndex;
+        const frameHash = parseSha256(record.frameHash, `${path}.frameHash`);
+        if (!frameHash.ok) return frameHash;
+        return ok({
+          kind: "published",
+          assetId: assetId.value,
+          revision: revision.value,
+          slotKey: slotKey.value,
+          frameIndex: frameIndex.value,
+          frameHash: frameHash.value,
+        });
+      },
+    );
+  if (kind.value === "job")
+    return parseStrictRecord<EditBase>(
+      value,
+      path,
+      ["kind", "jobId", "output"],
+      (record) => {
+        const jobId = parseSlug(record.jobId, `${path}.jobId`);
+        if (!jobId.ok) return jobId;
+        const output = parseSha256(record.output, `${path}.output`);
+        if (!output.ok) return output;
+        return ok({ kind: "job", jobId: jobId.value, output: output.value });
+      },
+    );
+  return parseStrictRecord<EditBase>(
+    value,
+    path,
+    ["kind", "image", "description"],
+    (record) => {
+      const image = parseSha256(record.image, `${path}.image`);
+      if (!image.ok) return image;
+      const description = parseString(
+        record.description,
+        `${path}.description`,
+      );
+      if (!description.ok) return description;
+      return ok({
+        kind: "hand",
+        image: image.value,
+        description: description.value,
+      });
+    },
+  );
+}
+
+function parseGenerationEdit(
+  value: unknown,
+  path: string,
+): ParseResult<GenerationEdit> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["base", "mask", "strength", "cue"],
+    (record) => {
+      const base = parseEditBase(record.base, `${path}.base`);
+      if (!base.ok) return base;
+      const mask = parseSha256(record.mask, `${path}.mask`);
+      if (!mask.ok) return mask;
+      const { strength } = record;
+      if (
+        typeof strength !== "number" ||
+        !Number.isFinite(strength) ||
+        strength <= 0 ||
+        strength > 1
+      )
+        return fail(
+          `${path}.strength`,
+          "expected a number above 0 and at most 1",
+        );
+      const cue = parseString(record.cue, `${path}.cue`);
+      if (!cue.ok) return cue;
+      return ok({
+        base: base.value,
+        mask: mask.value,
+        strength,
+        cue: cue.value,
+      });
+    },
+  );
+}
+
+function parseNonNegativePoint(
+  value: unknown,
+  path: string,
+): ParseResult<Point> {
+  return parseStrictRecord(value, path, ["x", "y"], (record) => {
+    const x = parseIntegerAtLeast(record.x, `${path}.x`, 0);
+    if (!x.ok) return x;
+    const y = parseIntegerAtLeast(record.y, `${path}.y`, 0);
+    if (!y.ok) return y;
+    return ok({ x: x.value, y: y.value });
+  });
+}
+
+/**
+ * A recipe request: the sprite request a render engine runs. It takes no style
+ * note or edit, a batch of 1 and a seed of 0 (absent means those values), and
+ * is stored with the fixed batch and seed. Whether the pivot lies inside the
+ * cell is the request builder's check; a request does not know its cell.
+ */
+function parseRecipeRequest(
+  record: Record<string, unknown>,
+  path: string,
+  schemaVersion: number,
+  subject: string,
+  kind: AssetKind,
+  slots: readonly GenerationSlot[],
+): ParseResult<GenerationRequest> {
+  if (kind !== "sprite")
+    return fail(`${path}.kind`, "a recipe request draws a sprite");
+  for (const key of ["styleNote", "edit"] as const) {
+    if (record[key] !== undefined)
+      return fail(`${path}.${key}`, `a recipe request takes no ${key}`);
+  }
+  if (record.batch !== undefined && record.batch !== 1)
+    return fail(`${path}.batch`, "a recipe request has batch 1");
+  if (record.seed !== undefined && record.seed !== RECIPE_SEED)
+    return fail(
+      `${path}.seed`,
+      `a recipe request has a fixed seed of ${RECIPE_SEED}`,
+    );
+  const recipe = parseStrictRecord(
+    record.recipe,
+    `${path}.recipe`,
+    ["profile", "palette", "pivot"],
+    (r): ParseResult<RecipeRequest> => {
+      const profile = parseSlug(r.profile, `${path}.recipe.profile`);
+      if (!profile.ok) return profile;
+      const palette = parseSlug(r.palette, `${path}.recipe.palette`);
+      if (!palette.ok) return palette;
+      const pivot = parseNonNegativePoint(r.pivot, `${path}.recipe.pivot`);
+      if (!pivot.ok) return pivot;
+      return ok({
+        profile: profile.value,
+        palette: palette.value,
+        pivot: pivot.value,
+      });
+    },
+  );
+  if (!recipe.ok) return recipe;
+  return ok({
+    schemaVersion,
+    subject,
+    kind,
+    slots,
+    batch: 1,
+    seed: RECIPE_SEED,
+    recipe: recipe.value,
+  });
+}
+
 export function parseGenerationRequest(
   input: unknown,
   path = "request",
@@ -658,7 +1089,17 @@ export function parseGenerationRequest(
   return parseStrictRecord(
     input,
     path,
-    ["schemaVersion", "subject", "kind", "slots", "batch", "styleNote", "seed"],
+    [
+      "schemaVersion",
+      "subject",
+      "kind",
+      "slots",
+      "batch",
+      "styleNote",
+      "seed",
+      "edit",
+      "recipe",
+    ],
     (record) => {
       const schemaVersion = parseSchemaVersion(
         record.schemaVersion,
@@ -680,6 +1121,16 @@ export function parseGenerationRequest(
         `${path}.slots`,
       );
       if (duplicate) return duplicate;
+      if (record.recipe !== undefined) {
+        return parseRecipeRequest(
+          record,
+          path,
+          schemaVersion.value,
+          subject.value,
+          kind.value,
+          slots.value,
+        );
+      }
       const batch = parsePositiveInteger(record.batch, `${path}.batch`);
       if (!batch.ok) return batch;
       let styleNote: string | undefined;
@@ -694,6 +1145,12 @@ export function parseGenerationRequest(
         if (!parsed.ok) return parsed;
         seed = parsed.value;
       }
+      let edit: GenerationEdit | undefined;
+      if (record.edit !== undefined) {
+        const parsed = parseGenerationEdit(record.edit, `${path}.edit`);
+        if (!parsed.ok) return parsed;
+        edit = parsed.value;
+      }
       return ok({
         schemaVersion: schemaVersion.value,
         subject: subject.value,
@@ -702,6 +1159,7 @@ export function parseGenerationRequest(
         batch: batch.value,
         ...(styleNote === undefined ? {} : { styleNote }),
         ...(seed === undefined ? {} : { seed }),
+        ...(edit === undefined ? {} : { edit }),
       });
     },
   );
@@ -709,7 +1167,7 @@ export function parseGenerationRequest(
 
 // --- Provenance -------------------------------------------------------------------
 
-function parseLicence(
+export function parseLicence(
   value: unknown,
   path: string,
 ): ParseResult<LicenceRecord> {
@@ -789,15 +1247,38 @@ function parseHandEdit(
   value: unknown,
   path: string,
 ): ParseResult<HandEditStep> {
-  return parseStrictRecord(value, path, ["description", "hash"], (record) => {
-    const description = parseString(record.description, `${path}.description`);
-    if (!description.ok) return description;
-    if (record.hash === undefined)
-      return ok({ description: description.value });
-    const hash = parseSha256(record.hash, `${path}.hash`);
-    if (!hash.ok) return hash;
-    return ok({ description: description.value, hash: hash.value });
-  });
+  return parseStrictRecord(
+    value,
+    path,
+    ["description", "hash", "method"],
+    (record) => {
+      const description = parseString(
+        record.description,
+        `${path}.description`,
+      );
+      if (!description.ok) return description;
+      let method: HandEditMethod | undefined;
+      if (record.method !== undefined) {
+        const parsed = parseEnum(record.method, `${path}.method`, [
+          "hand",
+          "script",
+        ] as const);
+        if (!parsed.ok) return parsed;
+        method = parsed.value;
+      }
+      let hash: Sha256 | undefined;
+      if (record.hash !== undefined) {
+        const parsed = parseSha256(record.hash, `${path}.hash`);
+        if (!parsed.ok) return parsed;
+        hash = parsed.value;
+      }
+      return ok({
+        description: description.value,
+        ...(hash === undefined ? {} : { hash }),
+        ...(method === undefined ? {} : { method }),
+      });
+    },
+  );
 }
 
 function parseRevisionRef(
@@ -813,7 +1294,10 @@ function parseRevisionRef(
   });
 }
 
-function parseModelRef(value: unknown, path: string): ParseResult<ModelRef> {
+export function parseModelRef(
+  value: unknown,
+  path: string,
+): ParseResult<ModelRef> {
   return parseStrictRecord(value, path, ["id", "sha256"], (record) => {
     const id = parseString(record.id, `${path}.id`);
     if (!id.ok) return id;
@@ -823,7 +1307,108 @@ function parseModelRef(value: unknown, path: string): ParseResult<ModelRef> {
   });
 }
 
-function parseRuntimeRef(
+function parseCanonicalJson(
+  value: unknown,
+  path: string,
+): ParseResult<CanonicalJson> {
+  if (value === null || typeof value === "boolean") return ok(value);
+  if (typeof value === "string") {
+    if (URL_VALUE.test(value))
+      return fail(path, "params never carry credentials or endpoints");
+    return ok(value);
+  }
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value)
+      ? ok(value)
+      : fail(path, "expected an integer");
+  }
+  if (Array.isArray(value)) return parseArray(value, path, parseCanonicalJson);
+  if (isRecord(value)) return parseCanonicalParams(value, path);
+  return fail(path, "expected JSON");
+}
+
+function parseCanonicalParams(
+  value: unknown,
+  path: string,
+): ParseResult<{ readonly [key: string]: CanonicalJson }> {
+  if (!isRecord(value)) return fail(path, "expected an object");
+  const params: { [key: string]: CanonicalJson } = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const entryPath = `${path}.${key}`;
+    // `params["__proto__"] = x` would reparent the object and drop the key, so the
+    // canonical bytes would no longer cover what was recorded.
+    if (key === "__proto__")
+      return fail(entryPath, "params never carry a __proto__ key");
+    if (SECRET_KEY.test(key))
+      return fail(entryPath, "params never carry credentials or endpoints");
+    const parsed = parseCanonicalJson(entry, entryPath);
+    if (!parsed.ok) return parsed;
+    params[key] = parsed.value;
+  }
+  return ok(params);
+}
+
+function parseDerivedSource(
+  value: unknown,
+  path: string,
+): ParseResult<DerivedSource> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["assetId", "revision", "slotKey", "slotHash"],
+    (record) => {
+      const assetId = parseAssetId(record.assetId, `${path}.assetId`);
+      if (!assetId.ok) return assetId;
+      const revision = parseSha256(record.revision, `${path}.revision`);
+      if (!revision.ok) return revision;
+      const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+      if (!slotKey.ok) return slotKey;
+      const slotHash = parseSha256(record.slotHash, `${path}.slotHash`);
+      if (!slotHash.ok) return slotHash;
+      return ok({
+        assetId: assetId.value,
+        revision: revision.value,
+        slotKey: slotKey.value,
+        slotHash: slotHash.value,
+      });
+    },
+  );
+}
+
+export function parseDerivedStep(
+  value: unknown,
+  path: string,
+): ParseResult<DerivedStep> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["recipe", "version", "params", "source", "outputSlot", "resultHash"],
+    (record) => {
+      const recipe = parseString(record.recipe, `${path}.recipe`);
+      if (!recipe.ok) return recipe;
+      const version = parsePositiveInteger(record.version, `${path}.version`);
+      if (!version.ok) return version;
+      const params = parseCanonicalParams(record.params, `${path}.params`);
+      if (!params.ok) return params;
+      const source = parseDerivedSource(record.source, `${path}.source`);
+      if (!source.ok) return source;
+      const outputSlot = parseString(record.outputSlot, `${path}.outputSlot`);
+      if (!outputSlot.ok) return outputSlot;
+      const resultHash = parseSha256(record.resultHash, `${path}.resultHash`);
+      if (!resultHash.ok) return resultHash;
+      return ok({
+        recipe: recipe.value,
+        version: version.value,
+        params: params.value,
+        source: source.value,
+        outputSlot: outputSlot.value,
+        resultHash: resultHash.value,
+      });
+    },
+  );
+}
+
+export function parseRuntimeRef(
   value: unknown,
   path: string,
 ): ParseResult<RuntimeRef> {
@@ -841,7 +1426,7 @@ const SECRET_KEY =
 const URL_VALUE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 /** Generation settings are scalars; credential-like keys and endpoint-like values never enter a record. */
-function parseSettings(
+export function parseGenerationSettings(
   value: unknown,
   path: string,
 ): ParseResult<Readonly<Record<string, SettingValue>>> {
@@ -878,7 +1463,270 @@ const COMMON_PROVENANCE_KEYS = [
   "ownerException",
 ] as const;
 
-const PROVENANCE_METHODS = ["generated", "hand", "derived"] as const;
+const PROVENANCE_METHODS = [
+  "generated",
+  "hand",
+  "derived",
+  "rendered",
+] as const;
+
+/**
+ * The steps of a provenance record: each a valid step, one per slot (a palette
+ * swap also names its realm, so a slot keeps its own step and one swap per
+ * realm), each with its source among the record's source assets.
+ */
+function parseStepList(
+  value: unknown,
+  path: string,
+  sourceAssets: readonly AssetRevisionRef[],
+): ParseResult<readonly DerivedStep[]> {
+  const steps = parseArray(value, `${path}.steps`, parseDerivedStep);
+  if (!steps.ok) return steps;
+  const duplicateSlot = uniqueBy(
+    steps.value,
+    (step) =>
+      step.recipe === "palette-swap"
+        ? `palette-swap:${String(step.params.targetFamily)}:${step.outputSlot}`
+        : step.outputSlot,
+    `${path}.steps`,
+  );
+  if (duplicateSlot) return duplicateSlot;
+  for (const [index, step] of steps.value.entries()) {
+    const { assetId, revision } = step.source;
+    if (
+      !sourceAssets.some(
+        (ref) => ref.assetId === assetId && ref.revision === revision,
+      )
+    )
+      return fail(
+        `${path}.steps[${index}].source`,
+        `the step's source ${assetId} ${revision} is not among sourceAssets`,
+      );
+  }
+  return ok(steps.value);
+}
+
+const BLENDER_BUILD = /^[0-9a-f]{7,40}$/;
+
+function parseBlenderPin(
+  value: unknown,
+  path: string,
+): ParseResult<BlenderPin> {
+  return parseStrictRecord(
+    value,
+    path,
+    ["version", "build", "sha256"],
+    (record) => {
+      const version = parseString(record.version, `${path}.version`);
+      if (!version.ok) return version;
+      if (typeof record.build !== "string" || !BLENDER_BUILD.test(record.build))
+        return fail(`${path}.build`, "expected a lowercase hex build hash");
+      const sha256 = parseSha256(record.sha256, `${path}.sha256`);
+      if (!sha256.ok) return sha256;
+      return ok({
+        version: version.value,
+        build: record.build,
+        sha256: sha256.value,
+      });
+    },
+  );
+}
+
+function parseRenderedRevisionRecipe(
+  value: unknown,
+  path: string,
+): ParseResult<RenderedRevisionRecipe> {
+  return parseStrictRecord(
+    value,
+    path,
+    [
+      "hash",
+      "profile",
+      "camera",
+      "palette",
+      "pivot",
+      "script",
+      "postStep",
+      "blender",
+      "kit",
+      "stamps",
+    ],
+    (record) => {
+      const hash = parseSha256(record.hash, `${path}.hash`);
+      if (!hash.ok) return hash;
+      const profile = parseStrictRecord(
+        record.profile,
+        `${path}.profile`,
+        ["id", "hash"],
+        (p) => {
+          const id = parseSlug(p.id, `${path}.profile.id`);
+          if (!id.ok) return id;
+          const profileHash = parseSha256(p.hash, `${path}.profile.hash`);
+          if (!profileHash.ok) return profileHash;
+          return ok({ id: id.value, hash: profileHash.value });
+        },
+      );
+      if (!profile.ok) return profile;
+      const camera = parseSha256(record.camera, `${path}.camera`);
+      if (!camera.ok) return camera;
+      const palette = parseStrictRecord(
+        record.palette,
+        `${path}.palette`,
+        ["id", "digest"],
+        (p) => {
+          const id = parseSlug(p.id, `${path}.palette.id`);
+          if (!id.ok) return id;
+          const digest = parseSha256(p.digest, `${path}.palette.digest`);
+          if (!digest.ok) return digest;
+          return ok({ id: id.value, digest: digest.value });
+        },
+      );
+      if (!palette.ok) return palette;
+      const pivot = parseNonNegativePoint(record.pivot, `${path}.pivot`);
+      if (!pivot.ok) return pivot;
+      const script = parseSha256(record.script, `${path}.script`);
+      if (!script.ok) return script;
+      const postStep = parsePositiveInteger(
+        record.postStep,
+        `${path}.postStep`,
+      );
+      if (!postStep.ok) return postStep;
+      const blender = parseBlenderPin(record.blender, `${path}.blender`);
+      if (!blender.ok) return blender;
+      const kit = parseSha256(record.kit, `${path}.kit`);
+      if (!kit.ok) return kit;
+      const stamps = parseSha256(record.stamps, `${path}.stamps`);
+      if (!stamps.ok) return stamps;
+      return ok({
+        hash: hash.value,
+        profile: profile.value,
+        camera: camera.value,
+        palette: palette.value,
+        pivot: pivot.value,
+        script: script.value,
+        postStep: postStep.value,
+        blender: blender.value,
+        kit: kit.value,
+        stamps: stamps.value,
+      });
+    },
+  );
+}
+
+function parseRenderedSlot(
+  revisionHash: Sha256,
+): (value: unknown, path: string) => ParseResult<RenderedSlot> {
+  return (value, path) =>
+    parseStrictRecord(
+      value,
+      path,
+      [
+        "slotKey",
+        "recipeHash",
+        "revisionRecipeHash",
+        "state",
+        "clip",
+        "facing",
+        "ability",
+        "seed",
+        "frameCount",
+        "raw",
+      ],
+      (record) => {
+        const state = parseSlug(record.state, `${path}.state`);
+        if (!state.ok) return state;
+        const facing = parseSlug(record.facing, `${path}.facing`);
+        if (!facing.ok) return facing;
+        const ability = parseOptionalSlug(record.ability, `${path}.ability`);
+        if (!ability.ok) return ability;
+        const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+        if (!slotKey.ok) return slotKey;
+        const expected = [state.value, facing.value, ability.value]
+          .filter((part) => part !== undefined)
+          .join("/");
+        if (slotKey.value !== expected)
+          return fail(
+            `${path}.slotKey`,
+            `expected "${expected}", the slot's state, facing and ability`,
+          );
+        const recipeHash = parseSha256(record.recipeHash, `${path}.recipeHash`);
+        if (!recipeHash.ok) return recipeHash;
+        const slotRevision = parseSha256(
+          record.revisionRecipeHash,
+          `${path}.revisionRecipeHash`,
+        );
+        if (!slotRevision.ok) return slotRevision;
+        if (slotRevision.value !== revisionHash)
+          return fail(
+            `${path}.revisionRecipeHash`,
+            "a revision's slots are rendered under one revision recipe hash",
+          );
+        const clip = parseString(record.clip, `${path}.clip`);
+        if (!clip.ok) return clip;
+        if (record.seed !== RECIPE_SEED)
+          return fail(
+            `${path}.seed`,
+            `a rendered slot ran at the fixed seed ${RECIPE_SEED}`,
+          );
+        const frameCount = parsePositiveInteger(
+          record.frameCount,
+          `${path}.frameCount`,
+        );
+        if (!frameCount.ok) return frameCount;
+        const raw = parseStrictRecord(
+          record.raw,
+          `${path}.raw`,
+          RAW_FRAME_ROLES,
+          (r) => {
+            const roles: { -readonly [R in RawFrameRole]?: readonly Sha256[] } =
+              {};
+            for (const role of RAW_FRAME_ROLES) {
+              const hashes = parseArray(
+                r[role],
+                `${path}.raw.${role}`,
+                parseSha256,
+              );
+              if (!hashes.ok) return hashes;
+              if (hashes.value.length !== frameCount.value)
+                return fail(
+                  `${path}.raw.${role}`,
+                  `expected ${frameCount.value} hashes, one per frame`,
+                );
+              roles[role] = hashes.value;
+            }
+            return ok(roles as { [role in RawFrameRole]: readonly Sha256[] });
+          },
+        );
+        if (!raw.ok) return raw;
+        return ok({
+          slotKey: slotKey.value,
+          recipeHash: recipeHash.value,
+          revisionRecipeHash: slotRevision.value,
+          state: state.value,
+          clip: clip.value,
+          facing: facing.value,
+          ...(ability.value === undefined ? {} : { ability: ability.value }),
+          seed: RECIPE_SEED,
+          frameCount: frameCount.value,
+          raw: raw.value,
+        });
+      },
+    );
+}
+
+function parseRenderedSlots(
+  value: unknown,
+  path: string,
+  revisionHash: Sha256,
+): ParseResult<readonly RenderedSlot[]> {
+  const slots = parseArray(value, path, parseRenderedSlot(revisionHash));
+  if (!slots.ok) return slots;
+  if (slots.value.length === 0)
+    return fail(path, "a rendered revision records at least one slot");
+  const duplicate = uniqueBy(slots.value, (slot) => slot.slotKey, path);
+  if (duplicate) return duplicate;
+  return slots;
+}
 
 export function parseProvenance(
   input: unknown,
@@ -888,18 +1736,10 @@ export function parseProvenance(
   const method = parseEnum(input.method, `${path}.method`, PROVENANCE_METHODS);
   if (!method.ok) return { ...method, reason: "unknown-kind" };
   const extraKeys = {
-    generated: [
-      "jobId",
-      "request",
-      "runtime",
-      "model",
-      "loras",
-      "seed",
-      "settings",
-      "resultHashes",
-    ],
+    generated: ["generations", "steps"],
     hand: ["editor"],
-    derived: ["operation", "runtime", "resultHashes"],
+    derived: ["operation", "runtime", "steps", "resultHashes"],
+    rendered: ["revisionRecipe", "slots"],
   }[method.value];
   const unknown = rejectUnknownKeys(
     input,
@@ -973,15 +1813,34 @@ export function parseProvenance(
     });
   }
 
-  const resultHashes = parseSha256List(
-    input.resultHashes,
-    `${path}.resultHashes`,
-  );
-  if (!resultHashes.ok) return resultHashes;
-  const runtime = parseRuntimeRef(input.runtime, `${path}.runtime`);
-  if (!runtime.ok) return runtime;
+  if (method.value === "rendered") {
+    const revisionRecipe = parseRenderedRevisionRecipe(
+      input.revisionRecipe,
+      `${path}.revisionRecipe`,
+    );
+    if (!revisionRecipe.ok) return revisionRecipe;
+    const slots = parseRenderedSlots(
+      input.slots,
+      `${path}.slots`,
+      revisionRecipe.value.hash,
+    );
+    if (!slots.ok) return slots;
+    return ok({
+      method: "rendered",
+      revisionRecipe: revisionRecipe.value,
+      slots: slots.value,
+      ...common,
+    });
+  }
 
   if (method.value === "derived") {
+    const resultHashes = parseSha256List(
+      input.resultHashes,
+      `${path}.resultHashes`,
+    );
+    if (!resultHashes.ok) return resultHashes;
+    const runtime = parseRuntimeRef(input.runtime, `${path}.runtime`);
+    if (!runtime.ok) return runtime;
     if (sourceAssets.value.length === 0) {
       return fail(
         `${path}.sourceAssets`,
@@ -990,73 +1849,213 @@ export function parseProvenance(
     }
     const operation = parseString(input.operation, `${path}.operation`);
     if (!operation.ok) return operation;
+    const steps = parseStepList(input.steps, path, sourceAssets.value);
+    if (!steps.ok) return steps;
+    if (steps.value.length === 0)
+      return fail(`${path}.steps`, "a derived asset records at least one step");
     return ok({
       method: "derived",
       operation: operation.value,
       runtime: runtime.value,
+      steps: steps.value,
       resultHashes: resultHashes.value,
       ...common,
     });
   }
 
-  const jobId = parseSlug(input.jobId, `${path}.jobId`);
-  if (!jobId.ok) return jobId;
-  const request = parseGenerationRequest(input.request, `${path}.request`);
-  if (!request.ok) return request;
-  const model = parseModelRef(input.model, `${path}.model`);
-  if (!model.ok) return model;
-  const loras = parseArray(input.loras, `${path}.loras`, parseModelRef);
-  if (!loras.ok) return loras;
-  const seed = parseIntegerAtLeast(input.seed, `${path}.seed`, 0);
-  if (!seed.ok) return seed;
-  const settings = parseSettings(input.settings, `${path}.settings`);
-  if (!settings.ok) return settings;
-
-  const source = relatedJobs.value.find((job) => job.jobId === jobId.value);
-  if (source === undefined) {
-    return fail(
-      `${path}.jobId`,
-      `source job "${jobId.value}" is not in relatedJobs`,
-    );
+  const generations = parseArray(
+    input.generations,
+    `${path}.generations`,
+    parseGenerationRef,
+  );
+  if (!generations.ok) return generations;
+  if (generations.value.length === 0)
+    return fail(`${path}.generations`, "expected at least one generation");
+  const duplicate = uniqueBy(
+    generations.value,
+    (generation) => generation.jobId,
+    `${path}.generations`,
+  );
+  if (duplicate) return duplicate;
+  let carried: readonly DerivedStep[] | undefined;
+  if (input.steps !== undefined) {
+    const steps = parseStepList(input.steps, path, sourceAssets.value);
+    if (!steps.ok) return steps;
+    if (steps.value.length === 0)
+      return fail(`${path}.steps`, "expected at least one step, or none");
+    carried = steps.value;
   }
-  if (source.status !== "succeeded") {
-    return fail(
-      `${path}.jobId`,
-      `source job "${jobId.value}" is ${source.status}, not succeeded`,
-    );
-  }
-  const outputs = new Set<string>(source.outputs ?? []);
-  const results = new Set<string>(resultHashes.value);
-  if (
-    outputs.size !== results.size ||
-    [...results].some((hash) => !outputs.has(hash))
-  ) {
-    return fail(
-      `${path}.resultHashes`,
-      "result hashes differ from the source job's outputs",
-    );
-  }
-  const licensed = new Set(licences.value.map((licence) => licence.subject));
-  for (const component of [model.value, ...loras.value]) {
-    if (!licensed.has(component.id)) {
+  for (const [index, generation] of generations.value.entries()) {
+    const at = `${path}.generations[${index}]`;
+    const job = relatedJobs.value.find((ref) => ref.jobId === generation.jobId);
+    if (job === undefined)
       return fail(
-        `${path}.licences`,
-        `no licence record for "${component.id}"`,
+        `${at}.jobId`,
+        `job "${generation.jobId}" is not in relatedJobs`,
       );
+    if (job.status !== "succeeded")
+      return fail(
+        `${at}.jobId`,
+        `job "${generation.jobId}" is ${job.status}, not succeeded`,
+      );
+    const outputs = new Set<string>(job.outputs ?? []);
+    const stray = generation.used.find((hash) => !outputs.has(hash));
+    if (stray !== undefined)
+      return fail(
+        `${at}.used`,
+        `used hash ${stray} is not an output of job "${generation.jobId}"`,
+      );
+    const { edit } = generation.request;
+    if (edit?.base.kind === "job") {
+      const { jobId, output } = edit.base;
+      const base = relatedJobs.value.find((ref) => ref.jobId === jobId);
+      if (base === undefined)
+        return fail(
+          `${at}.request.edit.base.jobId`,
+          `base job "${jobId}" is not in relatedJobs`,
+        );
+      if (base.status !== "succeeded")
+        return fail(
+          `${at}.request.edit.base.jobId`,
+          `base job "${jobId}" is ${base.status}, not succeeded`,
+        );
+      if (!(base.outputs ?? []).includes(output))
+        return fail(
+          `${at}.request.edit.base.output`,
+          `base output ${output} is not an output of job "${jobId}"`,
+        );
+    }
+    if (edit?.base.kind === "published") {
+      const { assetId, revision } = edit.base;
+      if (
+        !sourceAssets.value.some(
+          (ref) => ref.assetId === assetId && ref.revision === revision,
+        )
+      )
+        return fail(
+          `${at}.request.edit.base.revision`,
+          `the published base ${assetId} ${revision} is not among sourceAssets`,
+        );
+    }
+    if (edit?.base.kind === "hand") {
+      const { image } = edit.base;
+      if (!handEdits.value.some((step) => step.hash === image))
+        return fail(
+          `${at}.request.edit.base.image`,
+          `the hand-authored base ${image} is not recorded in handEdits`,
+        );
+    }
+    const licensed = (subject: string, role: LicenceRole) =>
+      licences.value.some(
+        (licence) => licence.subject === subject && licence.role === role,
+      );
+    const needs: [string, LicenceRole][] = [
+      [generation.runtime.name, "runtime"],
+      [generation.model.id, "model"],
+      ...generation.loras.map((ref): [string, LicenceRole] => [ref.id, "lora"]),
+      ...(generation.encoder === null
+        ? []
+        : [[generation.encoder.id, "encoder"] as [string, LicenceRole]]),
+      ...(generation.vae === null
+        ? []
+        : [[generation.vae.id, "vae"] as [string, LicenceRole]]),
+    ];
+    for (const [subject, role] of needs) {
+      if (!licensed(subject, role))
+        return fail(
+          `${path}.licences`,
+          `no ${role} licence record for "${subject}"`,
+        );
     }
   }
   return ok({
     method: "generated",
-    jobId: jobId.value,
-    request: request.value,
-    runtime: runtime.value,
-    model: model.value,
-    loras: loras.value,
-    seed: seed.value,
-    settings: settings.value,
-    resultHashes: resultHashes.value,
+    generations: generations.value,
+    ...(carried === undefined ? {} : { steps: carried }),
     ...common,
   });
+}
+
+function parseGenerationRef(
+  value: unknown,
+  path: string,
+): ParseResult<GenerationRef> {
+  return parseStrictRecord(
+    value,
+    path,
+    [
+      "jobId",
+      "request",
+      "runtime",
+      "model",
+      "loras",
+      "encoder",
+      "vae",
+      "seed",
+      "settings",
+      "used",
+    ],
+    (record) => {
+      const jobId = parseSlug(record.jobId, `${path}.jobId`);
+      if (!jobId.ok) return jobId;
+      const request = parseGenerationRequest(record.request, `${path}.request`);
+      if (!request.ok) return request;
+      if (request.value.slots.length !== 1 || request.value.batch !== 1)
+        return fail(
+          `${path}.request`,
+          "a generation records the narrowed request: one slot, batch 1",
+        );
+      if (request.value.recipe !== undefined)
+        return fail(
+          `${path}.request`,
+          "a render is recorded as rendered provenance, never as a generation",
+        );
+      if (request.value.seed === undefined)
+        return fail(`${path}.request`, "a generation records the seed it ran");
+      const runtime = parseRuntimeRef(record.runtime, `${path}.runtime`);
+      if (!runtime.ok) return runtime;
+      const model = parseModelRef(record.model, `${path}.model`);
+      if (!model.ok) return model;
+      const loras = parseArray(record.loras, `${path}.loras`, parseModelRef);
+      if (!loras.ok) return loras;
+      const encoder = parseOptionalModelRef(record.encoder, `${path}.encoder`);
+      if (!encoder.ok) return encoder;
+      const vae = parseOptionalModelRef(record.vae, `${path}.vae`);
+      if (!vae.ok) return vae;
+      const seed = parseIntegerAtLeast(record.seed, `${path}.seed`, 0);
+      if (!seed.ok) return seed;
+      if (seed.value !== request.value.seed)
+        return fail(`${path}.seed`, "the seed differs from the request's seed");
+      const settings = parseGenerationSettings(
+        record.settings,
+        `${path}.settings`,
+      );
+      if (!settings.ok) return settings;
+      const used = parseSha256List(record.used, `${path}.used`);
+      if (!used.ok) return used;
+      if (new Set(used.value).size !== used.value.length)
+        return fail(`${path}.used`, "expected unique hashes");
+      return ok({
+        jobId: jobId.value,
+        request: request.value,
+        runtime: runtime.value,
+        model: model.value,
+        loras: loras.value,
+        encoder: encoder.value,
+        vae: vae.value,
+        seed: seed.value,
+        settings: settings.value,
+        used: used.value,
+      });
+    },
+  );
+}
+
+function parseOptionalModelRef(
+  value: unknown,
+  path: string,
+): ParseResult<ModelRef | null> {
+  return value === null ? ok(null) : parseModelRef(value, path);
 }
 
 export function parseOwnerException(
@@ -1219,16 +2218,74 @@ function parsePalette(
   return ok({ paletteFamily: paletteFamily.value, paletteId: paletteId.value });
 }
 
+export function parseColourMapping(
+  value: unknown,
+  path: string,
+): ParseResult<ColourMapping> {
+  return parseStrictRecord(value, path, ["source", "target"], (record) => {
+    const source = parseRampShade(record.source, `${path}.source`);
+    if (!source.ok) return source;
+    const target = parseRampShade(record.target, `${path}.target`);
+    if (!target.ok) return target;
+    return ok({ source: source.value, target: target.value });
+  });
+}
+
+function parseRampShade(value: unknown, path: string): ParseResult<RampShade> {
+  return parseStrictRecord(value, path, ["ramp", "index"], (record) => {
+    const ramp = parseSlug(record.ramp, `${path}.ramp`);
+    if (!ramp.ok) return ramp;
+    const index = parseIntegerAtLeast(record.index, `${path}.index`, 0);
+    if (!index.ok) return index;
+    return ok({ ramp: ramp.value, index: index.value });
+  });
+}
+
 function parseRealmVariant(
   vocabulary: AssetVocabulary,
+  sourceAtlas: Atlas,
 ): (value: unknown, path: string) => ParseResult<RealmVariant> {
   return (value, path) =>
-    parseStrictRecord(value, path, ["paletteFamily", "paletteId"], (record) =>
-      parsePalette(record, path, vocabulary),
+    parseStrictRecord(
+      value,
+      path,
+      ["paletteFamily", "paletteId", "atlas", "map"],
+      (record) => {
+        const palette = parsePalette(record, path, vocabulary);
+        if (!palette.ok) return palette;
+        const atlas = parseAtlas(record.atlas, `${path}.atlas`);
+        if (!atlas.ok) return atlas;
+        if (
+          atlas.value.width !== sourceAtlas.width ||
+          atlas.value.height !== sourceAtlas.height
+        ) {
+          return fail(
+            `${path}.atlas`,
+            `expected the source atlas size ${sourceAtlas.width}x${sourceAtlas.height}`,
+          );
+        }
+        const map = parseArray(record.map, `${path}.map`, parseColourMapping);
+        if (!map.ok) return map;
+        if (map.value.length === 0)
+          return fail(`${path}.map`, "expected at least one colour mapping");
+        const duplicate = uniqueBy(
+          map.value,
+          (entry) => `${entry.source.ramp}/${entry.source.index}`,
+          `${path}.map`,
+        );
+        if (duplicate) return duplicate;
+        return ok({
+          paletteFamily: palette.value.paletteFamily,
+          paletteId: palette.value.paletteId,
+          atlas: atlas.value,
+          map: map.value,
+        });
+      },
     );
 }
 
-function durationBounds(fps: Range): Range {
+/** The frame durations, in ms, a state's frame rate range allows. */
+export function durationBounds(fps: Range): Range {
   return { min: Math.floor(1000 / fps.max), max: Math.ceil(1000 / fps.min) };
 }
 
@@ -1246,14 +2303,11 @@ function parseSpriteAnimation(
       (record) => {
         const state = parseSlug(record.state, `${path}.state`);
         if (!state.ok) return state;
-        const rule = vocabulary.states.find((s) => s.id === state.value);
-        if (rule === undefined) {
+        if (!vocabulary.states.some((s) => s.id === state.value)) {
           return fail(`${path}.state`, `unknown state "${state.value}"`);
         }
-        if (
-          rule.cellClasses !== undefined &&
-          (cellClass === undefined || !rule.cellClasses.includes(cellClass.id))
-        ) {
+        const rule = stateRuleFor(vocabulary, state.value, cellClass?.id);
+        if (rule === undefined) {
           return fail(
             `${path}.state`,
             `state "${state.value}" is not allowed on this cell class`,
@@ -1362,7 +2416,7 @@ function parseSpriteBody(
   const realmVariants = parseArray(
     record.realmVariants,
     `${path}.realmVariants`,
-    parseRealmVariant(vocabulary),
+    parseRealmVariant(vocabulary, atlas),
   );
   if (!realmVariants.ok) return realmVariants;
   const duplicateRealm = uniqueBy(
@@ -1650,28 +2704,99 @@ export function parseAssetManifest(
     provenance: provenance.value,
   };
   const context: FrameContext = { cell: cell.value, atlas: atlas.value };
-  switch (manifestKind) {
+  const body = (): ParseResult<AssetManifest> => {
+    switch (manifestKind) {
+      case "sprite":
+        return parseSpriteBody(
+          input,
+          path,
+          vocabulary,
+          cell.value,
+          cellClass,
+          atlas.value,
+          common,
+        );
+      case "portrait":
+        return parsePortraitBody(input, path, vocabulary, context, common);
+      case "effect":
+        return parseEffectBody(
+          input,
+          path,
+          vocabulary,
+          cell.value,
+          context,
+          common,
+        );
+    }
+  };
+  if (provenance.value.method === "rendered" && manifestKind !== "sprite") {
+    return fail(
+      `${path}.provenance.method`,
+      `a ${manifestKind} is not rendered; only sprites are`,
+    );
+  }
+  const manifest = body();
+  if (!manifest.ok) return manifest;
+  const recorded = manifest.value.provenance;
+  if (recorded.method === "rendered" && manifest.value.kind === "sprite") {
+    const { pivot, animations } = manifest.value;
+    const recipePivot = recorded.revisionRecipe.pivot;
+    if (recipePivot.x !== pivot.x || recipePivot.y !== pivot.y) {
+      return fail(
+        `${path}.provenance.revisionRecipe.pivot`,
+        `the recipe's pivot (${recipePivot.x},${recipePivot.y}) is not the manifest's (${pivot.x},${pivot.y})`,
+      );
+    }
+    for (const [index, slot] of recorded.slots.entries()) {
+      const animation = animations.find(
+        (a) =>
+          a.state === slot.state &&
+          a.direction === slot.facing &&
+          a.ability === slot.ability,
+      );
+      if (animation === undefined) {
+        return fail(
+          `${path}.provenance.slots[${index}]`,
+          `slot "${slot.slotKey}" is not in the manifest's animations`,
+        );
+      }
+      if (animation.frames.length !== slot.frameCount) {
+        return fail(
+          `${path}.provenance.slots[${index}].frameCount`,
+          `the manifest's "${slot.slotKey}" has ${animation.frames.length} frames, the render ${slot.frameCount}`,
+        );
+      }
+    }
+  }
+  const carried =
+    recorded.method === "derived" || recorded.method === "generated"
+      ? recorded.steps
+      : undefined;
+  if (carried === undefined) return manifest;
+  const slots = new Set(slotKeys(manifest.value));
+  for (const [index, step] of carried.entries()) {
+    if (!slots.has(step.outputSlot)) {
+      return fail(
+        `${path}.provenance.steps[${index}].outputSlot`,
+        `slot "${step.outputSlot}" is not in the manifest's animations`,
+      );
+    }
+  }
+  return manifest;
+}
+
+/** The slot keys a manifest holds: `state/direction[/ability]`, an expression, or an effect animation's name. */
+export function slotKeys(manifest: AssetManifest): readonly string[] {
+  switch (manifest.kind) {
     case "sprite":
-      return parseSpriteBody(
-        input,
-        path,
-        vocabulary,
-        cell.value,
-        cellClass,
-        atlas.value,
-        common,
+      return manifest.animations.map(
+        (a) =>
+          `${a.state}/${a.direction}${a.ability === undefined ? "" : `/${a.ability}`}`,
       );
     case "portrait":
-      return parsePortraitBody(input, path, vocabulary, context, common);
+      return manifest.expressions.map((e) => e.expression);
     case "effect":
-      return parseEffectBody(
-        input,
-        path,
-        vocabulary,
-        cell.value,
-        context,
-        common,
-      );
+      return manifest.animations.map((a) => a.name);
   }
 }
 

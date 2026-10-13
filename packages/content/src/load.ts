@@ -133,6 +133,35 @@ export function loadGodProfiles(
   return parseGodProfiles(inputs, pack.inhabitants, pack.rules);
 }
 
+/**
+ * `pack` with each deity inhabitant's sprite id set from its god profile's `sprite`: the profile is the only
+ * source of a deity's sprite, so pack assembly (the directory loader's callers and the embedded Greek pack)
+ * folds it in before genesis. Mortals already carry theirs from `inhabitants.json`. A deity with no profile in
+ * `profiles` is refused, since it would otherwise reach genesis with nothing to draw.
+ */
+export function withGodSprites(
+  pack: ContentPack,
+  profiles: readonly GodProfile[],
+): ParseResult<ContentPack> {
+  const spriteByGod = new Map(profiles.map((god) => [god.id, god.sprite]));
+  const inhabitants = [];
+  for (const [index, inhabitant] of pack.inhabitants.entries()) {
+    if (inhabitant.deity !== true) {
+      inhabitants.push(inhabitant);
+      continue;
+    }
+    const sprite = spriteByGod.get(inhabitant.id);
+    if (sprite === undefined) {
+      return fail(
+        `inhabitants[${index}].${inhabitant.id}`,
+        `deity ${inhabitant.id} has no god profile to take its sprite from`,
+      );
+    }
+    inhabitants.push({ ...inhabitant, sprite });
+  }
+  return ok({ ...pack, inhabitants });
+}
+
 /** Loads and parses the motif catalogue at `file` (e.g. `content/greek/lore/motifs.json`). */
 export function loadMotifCatalogue(file: string): ParseResult<MotifCatalogue> {
   const raw = readJsonFile(file, "motifs.json");

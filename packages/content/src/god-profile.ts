@@ -117,7 +117,11 @@ export interface GodProfile {
   readonly inventions: readonly GodInvention[];
   /** The domain troubles the world brings, each sourced; absent means the god has none. */
   readonly troubles: readonly GodTrouble[];
-  /** Placeholder sprite id; final art is a later milestone. */
+  /**
+   * The god's stable sprite id: the only source of its actor's `sprite` in world state, folded into the pack at
+   * assembly (`withGodSprites`). `placeholder-<god>` until the studio publishes canon art for it, then the
+   * published asset id (Zeus's is `zeus-sprite`).
+   */
   readonly sprite: string;
 }
 

@@ -43,6 +43,7 @@ import {
   followEvent,
   getProposalOutcomeByProposalId,
 } from "@panthea/telemetry";
+import { testActor } from "@panthea/testkit/world";
 import {
   createPrng,
   DEFAULT_MEMORY_BALANCE,
@@ -60,6 +61,10 @@ import {
   type WorldState,
   withActor,
 } from "@panthea/world";
+import {
+  loadEmbeddedGreekGodProfiles,
+  loadEmbeddedGreekWorldPack,
+} from "./greek-world-pack";
 import { applyOneTick, type QueuedProposal, stepWorldTick } from "./tick";
 import {
   createEventSource,
@@ -108,14 +113,17 @@ test("real world reducers/rules through a real store: tick, restart, and export/
   try {
     const storePath = join(storeDir, "world.sqlite");
 
-    const seededState = withActor(loadGreekWorldState(), {
-      id: toEntityId("wanderer"),
-      locationId: toEntityId("wilderness-grove"),
-      alive: true,
-      capabilities: [],
-      inventory: new Map(),
-      revision: 0,
-    });
+    const seededState = withActor(
+      loadGreekWorldState(),
+      testActor({
+        id: toEntityId("wanderer"),
+        locationId: toEntityId("wilderness-grove"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map(),
+        revision: 0,
+      }),
+    );
 
     const projectionReducers = createWorldProjectionReducers(seededState);
 
@@ -294,14 +302,17 @@ test("rebuild restores the seeded actor even from a freshly constructed composit
   try {
     const storePath = join(storeDir, "world.sqlite");
 
-    const seeded = withActor(loadGreekWorldState(), {
-      id: toEntityId("wanderer"),
-      locationId: toEntityId("wilderness-grove"),
-      alive: true,
-      capabilities: [],
-      inventory: new Map(),
-      revision: 0,
-    });
+    const seeded = withActor(
+      loadGreekWorldState(),
+      testActor({
+        id: toEntityId("wanderer"),
+        locationId: toEntityId("wilderness-grove"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map(),
+        revision: 0,
+      }),
+    );
     const seededReducers = createWorldProjectionReducers(seeded);
 
     let store = openStore(storePath, seededReducers);
@@ -384,14 +395,17 @@ test("an archive whose genesis row contains a malformed actor entry is rejected 
 
   try {
     const storePath = join(storeDir, "world.sqlite");
-    const seeded = withActor(loadGreekWorldState(), {
-      id: toEntityId("wanderer"),
-      locationId: toEntityId("wilderness-grove"),
-      alive: true,
-      capabilities: [],
-      inventory: new Map(),
-      revision: 0,
-    });
+    const seeded = withActor(
+      loadGreekWorldState(),
+      testActor({
+        id: toEntityId("wanderer"),
+        locationId: toEntityId("wilderness-grove"),
+        alive: true,
+        capabilities: [],
+        inventory: new Map(),
+        revision: 0,
+      }),
+    );
     const reducers = createWorldProjectionReducers(seeded);
 
     const store = openStore(storePath, reducers);
@@ -1083,6 +1097,69 @@ test("startup succeeds with the embedded god profiles by default", () => {
   expect(() => loadGreekWorldState()).not.toThrow();
 });
 
+test("genesis gives every actor its sprite id: a god's from its profile alone, a mortal's from its content id", () => {
+  const state = loadGreekWorldState();
+  const sprites = new Map(
+    [...state.actors.values()].map((actor) => [actor.id, actor.sprite]),
+  );
+  expect(sprites.get(toEntityId("zeus"))).toBe("zeus-sprite");
+  const pack = loadEmbeddedGreekWorldPack();
+  if (!pack.ok) throw new Error(pack.message);
+  const profiles = loadEmbeddedGreekGodProfiles(pack.value);
+  if (!profiles.ok) throw new Error(profiles.message);
+  expect(profiles.value.length).toBe(7);
+  for (const god of profiles.value) {
+    expect(sprites.get(toEntityId(god.id))).toBe(god.sprite);
+  }
+  expect(sprites.get(toEntityId("hera"))).toBe("placeholder-hera");
+  for (const inhabitant of pack.value.inhabitants) {
+    if (inhabitant.deity) continue;
+    expect(sprites.get(toEntityId(inhabitant.id))).toBe(
+      `placeholder-${inhabitant.id}`,
+    );
+  }
+  for (const [actor, sprite] of sprites) {
+    expect({ actor, sprite: typeof sprite }).toEqual({
+      actor,
+      sprite: "string",
+    });
+  }
+});
+
+test("an archive's content hash covers each actor's sprite: changing one in the stored genesis changes the hash", () => {
+  const storeDir = tempDir("panthea-sprite-store-");
+  const exportDir = tempDir("panthea-sprite-export-");
+  try {
+    const seeded = loadGreekWorldState();
+    const reducers = createWorldProjectionReducers(seeded);
+    const store = openStore(join(storeDir, "world.sqlite"), reducers);
+    const exportPath = join(exportDir, "archive.sqlite");
+    const manifest = exportArchive(store, exportPath);
+    closeStore(store);
+
+    const archiveDb = new Database(exportPath);
+    const row = archiveDb
+      .query("SELECT data FROM genesis WHERE id = 1")
+      .get() as { data: string };
+    expect(row.data).toContain('"sprite":"zeus-sprite"');
+    archiveDb.run("UPDATE genesis SET data = ? WHERE id = 1", [
+      row.data.replace('"sprite":"zeus-sprite"', '"sprite":"zeus-redrawn"'),
+    ]);
+    const rehashed = computeContentHash(archiveDb, {
+      formatVersion: manifest.formatVersion,
+      sqliteSchemaVersion: manifest.sqliteSchemaVersion,
+      payloadSchemaVersion: manifest.payloadSchemaVersion,
+      worldId: manifest.worldId,
+      eventSequence: manifest.eventSequence,
+    });
+    archiveDb.close();
+    expect(rehashed).not.toBe(manifest.contentHash);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+    rmSync(exportDir, { recursive: true, force: true });
+  }
+});
+
 // --- Memory, beliefs, and relationships through the real store ----------------------
 
 const id = toEntityId;
@@ -1101,14 +1178,17 @@ function socialSeed(memoryBalance?: Record<string, number>): WorldState {
     withActor(greek, { ...zeus, locationId: id("tavern") }),
     { ...hera, locationId: id("town-square") },
   );
-  const seeded = withActor(placed, {
-    id: id("bard"),
-    locationId: id("tavern"),
-    alive: true,
-    capabilities: [],
-    inventory: new Map(),
-    revision: 0,
-  });
+  const seeded = withActor(
+    placed,
+    testActor({
+      id: id("bard"),
+      locationId: id("tavern"),
+      alive: true,
+      capabilities: [],
+      inventory: new Map(),
+      revision: 0,
+    }),
+  );
   // These stories are about what gods and reports do; the town's own wrongs are tested apart.
   const { temperamentOdds: _wrongs, ...rules } = seeded.rules;
   const quiet = { ...seeded, rules };
@@ -2428,14 +2508,14 @@ test("a god's strike on a mortal takes goods up to the strikeGoodsCap and the pr
           },
           { ...ferryman, locationId: id("altar") },
         ),
-        {
+        testActor({
           id: id("wanderer"),
           locationId: id("town-square"),
           alive: true,
           capabilities: [],
           inventory: new Map(),
           revision: 0,
-        },
+        }),
       );
       const world = liveWorld(storePath, seed);
       const held = getResourceAmount(ferryman.inventory, "food");
@@ -2913,4 +2993,104 @@ test("the season, floor, loss, and director tunables survive commit, reopen, reb
   expect(high.director).toBe(0);
   expect(floorsOf(high).length).toBeGreaterThan(40);
   expect(new Set(floorsOf(high).map((e) => e.god)).size).toBe(7);
+});
+
+// --- The director replays from the journal (M2 Unit 12) ---------------------------------------------------
+
+/** The director's own trouble in `events`, reduced to when, what, to whom, and the attribution it carries. */
+const directorEvents = (events: readonly WorldEvent[]) =>
+  events.flatMap((event) => {
+    if (
+      (event.kind === "theft" || event.kind === "stock-spoiled") &&
+      event.cause === "director"
+    ) {
+      return [
+        [event.id, event.tick, event.kind, String(event.entityId), "director"],
+      ];
+    }
+    if (event.kind === "building-ignited" && event.cause.kind === "director") {
+      return [
+        [event.id, event.tick, event.kind, String(event.entityId), "director"],
+      ];
+    }
+    return [];
+  });
+
+test("director events replay from the journal without re-deciding: reopen, rebuild, and the read of the live row leave the journal's director events, the director's clock, and the persisted generator untouched, and a resumed world fires when an uninterrupted one would", () => {
+  const storeDir = tempDir("panthea-sim-director-replay-");
+  try {
+    const storePath = join(storeDir, "world.sqlite");
+    const authored = loadGreekWorldState();
+    const seed: WorldState = {
+      ...authored,
+      rules: {
+        ...authored.rules,
+        petitionBalance: {
+          ...authored.rules.petitionBalance,
+          directorIntervalTicks: 10,
+        },
+      },
+    };
+    const world = liveWorld(storePath, seed);
+    for (let tick = 0; tick < 55; tick += 1) world.run();
+    const journaled = directorEvents(listEvents(world.store.db));
+    // Five fires so far, at 10, 20, 30, 40, 50, each carrying its attribution.
+    expect(journaled.map((fire) => fire[1])).toEqual([10, 20, 30, 40, 50]);
+    expect(world.state.director.lastFireTick).toBe(50);
+    const eventCount = getCurrentSequence(world.store.db);
+    const persisted = readPrngState(world.store.db);
+    closeStore(world.store);
+
+    // Reopen: the live row, and a full rebuild from the journal, give the director's clock the journal holds.
+    const reducers = createWorldProjectionReducers(seed);
+    const store = openStore(storePath, reducers);
+    const live = restoreWorldTime(
+      readLiveProjections(store, reducers),
+      readClock(store.db),
+    );
+    const rebuilt = restoreWorldTime(
+      rebuildProjections(store, reducers),
+      readClock(store.db),
+    );
+    expect(live.director).toEqual({ lastFireTick: 50 });
+    expect(rebuilt.director).toEqual({ lastFireTick: 50 });
+    expect(rebuilt).toEqual(live);
+    // Neither added an event nor drew from the generator: the journal and the persisted PRNG are as they were.
+    expect(getCurrentSequence(store.db)).toBe(eventCount);
+    expect(directorEvents(listEvents(store.db))).toEqual(journaled);
+    expect(readPrngState(store.db)).toBe(persisted);
+
+    // The resumed world, from the rebuilt state and the persisted generator, fires at 60 and not before: its clock is
+    // the journal's, not a fresh one (a fresh one would fire at tick 56) and not a re-decision.
+    const restoredPrng = deserializePrngState(persisted) ?? createPrng(1);
+    let state = rebuilt;
+    let prng = restoredPrng;
+    const resumed: WorldEvent[] = [];
+    for (let tick = 0; tick < 10; tick += 1) {
+      const step = runTick(state, prng, []);
+      state = step.state;
+      prng = step.prng;
+      resumed.push(...step.events);
+    }
+    expect(directorEvents(resumed).map((fire) => fire[1])).toEqual([60]);
+
+    // And an uninterrupted world fires exactly the same trouble: the restart changed nothing about what happens.
+    let straightState: WorldState = seed;
+    let straightPrng = createPrng(1);
+    const straight: WorldEvent[] = [];
+    for (let tick = 0; tick < 65; tick += 1) {
+      const step = runTick(straightState, straightPrng, []);
+      straightState = step.state;
+      straightPrng = step.prng;
+      straight.push(...step.events);
+    }
+    expect(
+      directorEvents([...listEvents(store.db), ...resumed]).map((fire) =>
+        fire.slice(1),
+      ),
+    ).toEqual(directorEvents(straight).map((fire) => fire.slice(1)));
+    closeStore(store);
+  } finally {
+    rmSync(storeDir, { recursive: true, force: true });
+  }
 });

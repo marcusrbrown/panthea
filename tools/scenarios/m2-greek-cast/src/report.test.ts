@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { EnvironmentInfo } from "@panthea/tools-probes-shared";
 import type { StepResult } from "../../m1-living-world/src/helpers";
+import { DEFAULT_MODEL, FULL_UNATTENDED_MINUTES, parseArgs } from "./args";
 import { PRACTICE_CONTROLS } from "./practice-controls";
 import { buildReportInput, type RunSummary } from "./report";
 import { CONTROL_NAMES } from "./steps/context";
@@ -137,4 +140,102 @@ test("the how-to-run text names every positive control the runner has, process a
   for (const name of [...CONTROL_NAMES, ...PRACTICE_CONTROLS]) {
     expect(input.howToRun).toContain(`\`${name}\``);
   }
+});
+
+// --- The unattended one-hour procedure ----------------------------------------------------------
+
+const procedure = (): string => {
+  const text = buildReportInput(summary).howToRun;
+  return text.slice(text.indexOf("### Unattended one-hour run (M2 exit gate)"));
+};
+
+test("the how-to-run text carries the unattended one-hour procedure: preparing the machine, the command, what is kept, how to read the result, and development runs", () => {
+  const text = procedure();
+  expect(text.startsWith("### Unattended one-hour run (M2 exit gate)")).toBe(
+    true,
+  );
+  for (const part of [
+    "Prepare the machine",
+    "The command",
+    "What the run keeps",
+    "Reading the result",
+    "Development runs",
+  ]) {
+    expect(text).toContain(part);
+  }
+  // Preparing the machine: other work closed, the two readings and their targets, Ollama and its model.
+  for (const fact of [
+    "Rancher Desktop",
+    "Docker",
+    "uptime",
+    "sysctl vm.swapusage",
+    "under about 2",
+    "granite3.3-8b-4k",
+    "tools/probes/inference-baseline/README.md",
+  ]) {
+    expect(text).toContain(fact);
+  }
+  // No keep-alive figure is quoted, here or anywhere in the how-to-run text.
+  expect(buildReportInput(summary).howToRun).not.toMatch(/keep[-_ ]?alive/i);
+});
+
+test("the command the procedure gives parses to the one-hour run on the default model, and the flags it names are the ones the code has", () => {
+  const command = /scenario:m2 (--unattended[^\n#]*)/
+    .exec(procedure())?.[1]
+    ?.trim()
+    .split(/\s+/);
+  expect(command).toBeDefined();
+  const args = parseArgs(command ?? []);
+  expect(args).toMatchObject({
+    unattended: true,
+    unattendedMinutes: FULL_UNATTENDED_MINUTES,
+    model: DEFAULT_MODEL,
+    scripted: undefined,
+  });
+  expect(FULL_UNATTENDED_MINUTES).toBe(60);
+  expect(DEFAULT_MODEL).toBe("granite3.3-8b-4k");
+  const text = procedure();
+  for (const flag of [
+    "--skip-build",
+    "--out=",
+    "--unattended-minutes=",
+    "--scripted=answer",
+    "--scripted=empty-200",
+    "--model=",
+  ]) {
+    expect(text).toContain(flag);
+  }
+  // The development flags parse as described.
+  expect(
+    parseArgs(["--unattended", "--unattended-minutes=6", "--scripted=answer"]),
+  ).toMatchObject({ unattendedMinutes: 6, scripted: "answer" });
+});
+
+test("the procedure's exit codes and files match the code: 0 is a pass, 1 a gate failure, 2 only the empty-response fault; the store and archive are the git-ignored files", () => {
+  const text = procedure();
+  expect(text).toMatch(/\b0\b[^\n]*PASS/);
+  expect(text).toMatch(/\b1\b[^\n]*(dead sidecar|sidecar)/);
+  expect(text).toMatch(/\b2\b[^\n]*empty/i);
+  for (const file of [
+    "report.md",
+    "run.json",
+    "baseline.json",
+    "frames.jsonl",
+    "proxy-records.jsonl",
+    "memory.jsonl",
+    "diagnostics/",
+    "app-data/",
+    "archive.sqlite",
+  ]) {
+    expect(text).toContain(file);
+  }
+  expect(text).toContain("## Threshold table");
+  expect(text).toContain("## Rating sheet");
+  expect(text).toContain("docs/product/acceptance.md");
+  expect(text).toContain("not a gate run");
+});
+
+test("the committed README carries the generated how-to-run text, so --write-readme does not undo the procedure and the procedure cannot drift from its source", () => {
+  const readme = readFileSync(join(import.meta.dir, "..", "README.md"), "utf8");
+  expect(readme).toContain(buildReportInput(summary).howToRun);
 });

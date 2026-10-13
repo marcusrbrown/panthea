@@ -13,5 +13,8 @@
   },
   "dependencies": {
     "@panthea/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@panthea/testkit": "workspace:*"
   }
 }

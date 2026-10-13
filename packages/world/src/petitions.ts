@@ -922,6 +922,55 @@ export function blessability(
 }
 
 /**
+ * Whether a strike by `god` on `target` may name petition `petitionId` as the prayer it answers: the petition is addressed
+ * to that god, still open inside its answer window, and a request to punish an offender whose mortal is `target`, or one
+ * of whose listed buildings is `target` and still operational (a damaged one would answer nothing: `judgeAnswers`). The
+ * one rule a strike that names its prayer is validated by, so an event never names a prayer its strike did not answer.
+ */
+export function strikability(
+  state: WorldState,
+  petitionId: EventId,
+  god: EntityId,
+  target: EntityId,
+):
+  | { readonly ok: true; readonly petition: Petition }
+  | { readonly ok: false; readonly message: string } {
+  const petition = state.petitions.get(petitionId);
+  if (
+    petition === undefined ||
+    petition.god !== god ||
+    petition.status !== "open" ||
+    !inAnswerWindow(state, petition, state.tick)
+  ) {
+    return {
+      ok: false,
+      message: `${petitionId} is not an open petition addressed to this god`,
+    };
+  }
+  const { request } = petition;
+  if (request.kind !== "punish") {
+    return {
+      ok: false,
+      message: `${petitionId} asks for help, which a bless answers, not a strike`,
+    };
+  }
+  if (request.offender === target) return { ok: true, petition };
+  if (!request.buildings.includes(target)) {
+    return {
+      ok: false,
+      message: `${target} is neither the offender nor a listed building of ${petitionId}`,
+    };
+  }
+  if (state.buildings.get(target)?.status !== "operational") {
+    return {
+      ok: false,
+      message: `${target} is not operational, so a strike on it would not answer ${petitionId}`,
+    };
+  }
+  return { ok: true, petition };
+}
+
+/**
  * Whether `god` may refuse petition `petitionId`: it is addressed to that god, still open, and inside its
  * answer window, the same standing a bless needs. A refusal asks nothing of the world beyond that.
  */

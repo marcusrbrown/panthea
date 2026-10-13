@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { createReceiptEmitter, type ReceiptError } from "./receipts";
+import type { RecentEvent } from "@panthea/contracts";
+import { fakeClock } from "../test/fake-clock";
+import {
+  createReceiptEmitter,
+  RECEIPT_RATE_PER_SECOND,
+  type ReceiptError,
+  StaleSessionError,
+} from "./receipts";
+import { receiptDrawnEvents } from "./renderer/presentation";
 
 function harness(options: { readonly failFor?: ReadonlySet<string> } = {}) {
   const sent: string[] = [];
@@ -115,4 +123,310 @@ test("a failure from an earlier session does not unmark the current session's re
 
   expect(await emitter.present("session-2", "evt-1-1")).toBe("duplicate");
   expect(sent).toEqual(["evt-1-1", "evt-1-1"]);
+});
+
+function rated(maxPerSecond?: number) {
+  const sent: { id: string; at: number }[] = [];
+  const errors: ReceiptError[] = [];
+  const clock = fakeClock();
+  const emitter = createReceiptEmitter({
+    presentEvent: async (eventId) => {
+      sent.push({ id: eventId, at: clock.now() });
+    },
+    onError: (error) => errors.push(error),
+    now: clock.now,
+    schedule: clock.schedule,
+    ...(maxPerSecond === undefined ? {} : { maxPerSecond }),
+  });
+  return {
+    emitter,
+    sent,
+    sentIds: () => sent.map((relay) => relay.id),
+    errors,
+    clock,
+  };
+}
+
+const ids = (count: number, from = 0) =>
+  Array.from({ length: count }, (_, index) => `evt-1-${from + index}`);
+
+test("a burst past the per-second rate is held, and the emitter drains it on its own as slots free, with no further draw", async () => {
+  const { emitter, sentIds, errors, clock } = rated(3);
+  const burst = ids(5);
+
+  const first = await Promise.all(
+    burst.map((id) => emitter.present("session-1", id)),
+  );
+  expect(first).toEqual(["sent", "sent", "sent", "deferred", "deferred"]);
+  expect(sentIds()).toEqual(burst.slice(0, 3));
+
+  // A slot frees only when a relay is more than a second old.
+  await clock.advance(1000);
+  expect(sentIds()).toEqual(burst.slice(0, 3));
+
+  await clock.advance(1);
+  expect(sentIds()).toEqual(burst);
+  expect(clock.pending()).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("a held event presented again is not sent twice, and once drained it is a duplicate", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("deferred");
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("deferred");
+
+  await clock.advance(1001);
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("duplicate");
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2"]);
+});
+
+test("held events go out in the order they were drawn, and a new one never jumps the queue", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await emitter.present("session-1", "evt-1-3");
+  await clock.advance(1001);
+  await emitter.present("session-1", "evt-1-4");
+  await clock.advance(1001);
+  await clock.advance(1001);
+
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2", "evt-1-3", "evt-1-4"]);
+});
+
+test("a session change drops the held events and their timer, and the new session relays its own", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  expect(clock.pending()).toBe(1);
+
+  expect(await emitter.present("session-2", "evt-2-1")).toBe("deferred");
+  await clock.advance(1001);
+
+  expect(sentIds()).toEqual(["evt-1-1", "evt-2-1"]);
+  expect(clock.pending()).toBe(0);
+});
+
+test("observing a new session drops the held events and their timer even when nothing is presented, so no old-session receipt is relayed after it", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await emitter.present("session-1", "evt-1-3");
+  expect(clock.pending()).toBe(1);
+
+  emitter.observeSession("session-2");
+  expect(clock.pending()).toBe(0);
+
+  await clock.advance(5000);
+  expect(sentIds()).toEqual(["evt-1-1"]);
+});
+
+test("observing the session already in force changes nothing", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  emitter.observeSession("session-1");
+  await clock.advance(1001);
+
+  expect(sentIds()).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("duplicate");
+});
+
+test("a sidecar restart while a burst is held, in a realm that then draws nothing, relays none of the burst under the new session", async () => {
+  // The sequence the view takes: a Mortal burst is held; the view moves to a
+  // realm with no drawable events (the draw hands back none, so nothing is
+  // presented); the sidecar restarts, and the next frame carries a new session.
+  const { emitter, sentIds, clock } = rated(3);
+  const burst = ids(8).map((id) => ({ id: id as RecentEvent["id"] }));
+
+  await receiptDrawnEvents("session-1", burst, emitter);
+  expect(sentIds()).toHaveLength(3);
+
+  emitter.observeSession("session-2"); // the frame is accepted
+  await receiptDrawnEvents("session-2", [], emitter); // and draws nothing
+  await clock.advance(5000);
+
+  expect(sentIds()).toHaveLength(3);
+  expect(clock.pending()).toBe(0);
+});
+
+test("disposal drops the held events and cancels the drain, and later presents start afresh", async () => {
+  const { emitter, sentIds, clock } = rated(1);
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  emitter.dispose();
+  expect(clock.pending()).toBe(0);
+
+  await clock.advance(5000);
+  expect(sentIds()).toEqual(["evt-1-1"]);
+
+  // The emitter is memoised across a development remount, so it must work after.
+  expect(await emitter.present("session-1", "evt-1-3")).toBe("sent");
+});
+
+test("a held relay that fails is reported with its event and session, and is not retried until presented again", async () => {
+  const errors: ReceiptError[] = [];
+  const attempts: string[] = [];
+  const failing = new Set(["evt-1-2"]);
+  const clock = fakeClock();
+  const emitter = createReceiptEmitter({
+    presentEvent: async (eventId) => {
+      attempts.push(eventId);
+      if (failing.has(eventId)) throw new Error("rate limited");
+    },
+    onError: (error) => errors.push(error),
+    now: clock.now,
+    schedule: clock.schedule,
+    maxPerSecond: 1,
+  });
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await clock.advance(1001);
+  await clock.advance(5000);
+
+  expect(attempts).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(errors).toEqual([
+    { sessionId: "session-1", eventId: "evt-1-2", message: "rate limited" },
+  ]);
+
+  failing.clear();
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("sent");
+});
+
+test("a window of drawn events drawn once is delivered in full by the drain alone, never more than the pace in any second", async () => {
+  // A realm switched back to presents its whole window at once, and when the
+  // world is paused no later frame presents it again.
+  const SERVICE_LIMIT = 50;
+  const { emitter, sent, sentIds, errors, clock } = rated();
+  const window = ids(120);
+
+  await receiptDrawnEvents(
+    "session-1",
+    window.map((id) => ({ id: id as RecentEvent["id"] })),
+    emitter,
+  );
+  for (let second = 0; second < 4; second += 1) await clock.advance(1001);
+
+  expect(sentIds()).toEqual(window);
+  expect(new Set(sentIds()).size).toBe(window.length);
+  for (const relay of sent) {
+    const inSecond = sent.filter(
+      (other) => other.at >= relay.at && other.at <= relay.at + 1000,
+    );
+    expect(inSecond.length).toBeLessThan(SERVICE_LIMIT);
+  }
+  expect(errors).toEqual([]);
+});
+
+test("the default rate leaves headroom under the service's 50 per second", async () => {
+  const { emitter, sentIds } = rated();
+
+  await Promise.all(ids(80).map((id) => emitter.present("session-1", id)));
+
+  expect(sentIds()).toHaveLength(RECEIPT_RATE_PER_SECOND);
+  expect(RECEIPT_RATE_PER_SECOND).toBeLessThan(50);
+});
+
+function staling(staleFor: ReadonlySet<string>) {
+  const attempts: { id: string; session: string }[] = [];
+  const errors: ReceiptError[] = [];
+  const clock = fakeClock();
+  const emitter = createReceiptEmitter({
+    presentEvent: async (eventId, sessionId) => {
+      attempts.push({ id: eventId, session: sessionId });
+      if (staleFor.has(eventId)) throw new StaleSessionError();
+    },
+    onError: (error) => errors.push(error),
+    now: clock.now,
+    schedule: clock.schedule,
+    maxPerSecond: 1,
+  });
+  return { emitter, attempts, errors, clock };
+}
+
+test("every relay carries the session the event was drawn under", async () => {
+  const { emitter, attempts, clock } = staling(new Set());
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2"); // held, drained later
+  await clock.advance(1001);
+  await emitter.present("session-2", "evt-2-1"); // held: the pace is shared
+  await clock.advance(1001);
+
+  expect(attempts).toEqual([
+    { id: "evt-1-1", session: "session-1" },
+    { id: "evt-1-2", session: "session-1" },
+    { id: "evt-2-1", session: "session-2" },
+  ]);
+});
+
+test("a held receipt the shell refuses as stale is dropped: not reported, not retried, and not relayed again when presented", async () => {
+  const { emitter, attempts, errors, clock } = staling(new Set(["evt-1-2"]));
+
+  await emitter.present("session-1", "evt-1-1");
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("deferred");
+  await clock.advance(1001);
+  await clock.advance(5000);
+
+  expect(attempts.map((attempt) => attempt.id)).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(errors).toEqual([]);
+  expect(await emitter.present("session-1", "evt-1-2")).toBe("duplicate");
+  expect(attempts).toHaveLength(2);
+});
+
+test("a stale refusal of the session in force drops the rest of the held events, which would all be refused", async () => {
+  const { emitter, attempts, errors, clock } = staling(new Set(["evt-1-2"]));
+
+  await emitter.present("session-1", "evt-1-1");
+  await emitter.present("session-1", "evt-1-2");
+  await emitter.present("session-1", "evt-1-3");
+  await emitter.present("session-1", "evt-1-4");
+  await clock.advance(1001);
+  await clock.advance(5000);
+
+  expect(attempts.map((attempt) => attempt.id)).toEqual(["evt-1-1", "evt-1-2"]);
+  expect(errors).toEqual([]);
+  expect(clock.pending()).toBe(0);
+});
+
+test("a stale refusal reaching a relay drawn under an earlier session leaves the current session's held events alone", async () => {
+  let release: (() => void) | undefined;
+  const attempts: string[] = [];
+  const errors: ReceiptError[] = [];
+  const clock = fakeClock();
+  const emitter = createReceiptEmitter({
+    presentEvent: (eventId) => {
+      attempts.push(eventId);
+      if (eventId === "evt-1-1") {
+        return new Promise<void>((_resolve, reject) => {
+          release = () => reject(new StaleSessionError());
+        });
+      }
+      return Promise.resolve();
+    },
+    onError: (error) => errors.push(error),
+    now: clock.now,
+    schedule: clock.schedule,
+    maxPerSecond: 1,
+  });
+
+  const inFlight = emitter.present("session-1", "evt-1-1");
+  emitter.observeSession("session-2");
+  await emitter.present("session-2", "evt-2-1");
+  await emitter.present("session-2", "evt-2-2");
+  release?.();
+  await inFlight;
+  await clock.advance(1001);
+  await clock.advance(1001);
+
+  expect(attempts).toEqual(["evt-1-1", "evt-2-1", "evt-2-2"]);
+  expect(errors).toEqual([]);
 });

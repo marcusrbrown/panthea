@@ -49,6 +49,7 @@ function seededState() {
     id: toEntityId("wanderer"),
     locationId: toEntityId("grove"),
     alive: true,
+    sprite: "placeholder-wanderer",
     capabilities: ["divine"],
     inventory: new Map([["wood", 3]]),
     revision: 2,
@@ -59,6 +60,34 @@ test("encode -> JSON round-trip -> decode reproduces the original state", () => 
   const original = seededState();
   const roundTripped = decode(JSON.parse(JSON.stringify(encode(original))));
   expect(roundTripped).toEqual(original);
+});
+
+test("a codec round trip preserves each actor's sprite id", () => {
+  const original = seededState();
+  const encoded = JSON.parse(JSON.stringify(encode(original)));
+  expect(encoded.actors[0][1].sprite).toBe("placeholder-wanderer");
+  const restored = decode(encoded);
+  expect(restored.actors.get(toEntityId("wanderer"))?.sprite).toBe(
+    "placeholder-wanderer",
+  );
+});
+
+test("decode requires an actor's sprite: a stored actor without one, or with a non-string or empty one, is refused", () => {
+  const base = encode(seededState());
+  const [id, actor] = base.actors[0] as unknown as [
+    string,
+    Record<string, unknown>,
+  ];
+  const { sprite: _dropped, ...withoutSprite } = actor;
+  expect(() => decode({ ...base, actors: [[id, withoutSprite]] })).toThrow(
+    /sprite/,
+  );
+  expect(() =>
+    decode({ ...base, actors: [[id, { ...actor, sprite: 7 }]] }),
+  ).toThrow(/sprite/);
+  expect(() =>
+    decode({ ...base, actors: [[id, { ...actor, sprite: "" }]] }),
+  ).toThrow(/sprite/);
 });
 
 test("the encoded form is JSON-safe (no Maps survive JSON.stringify without the codec)", () => {
@@ -269,6 +298,7 @@ function economyPack(): ContentPack {
     inhabitants: [
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "The Farmer",
         locationId: "shop",
         drives: { thrift: 0.2, appetite: 0.5, greed: 0.2, piety: 0.1 },
@@ -277,6 +307,7 @@ function economyPack(): ContentPack {
       },
       {
         id: "zeus",
+        sprite: "placeholder-zeus",
         name: "Zeus",
         locationId: "shop",
         deity: true,
@@ -537,10 +568,23 @@ function patronPack(): ContentPack {
   return {
     ...base,
     inhabitants: [
-      { id: "zeus", name: "Zeus", locationId: "grove", deity: true },
-      { id: "hera", name: "Hera", locationId: "grove", deity: true },
+      {
+        id: "zeus",
+        sprite: "placeholder-zeus",
+        name: "Zeus",
+        locationId: "grove",
+        deity: true,
+      },
+      {
+        id: "hera",
+        sprite: "placeholder-hera",
+        name: "Hera",
+        locationId: "grove",
+        deity: true,
+      },
       {
         id: "farmer",
+        sprite: "placeholder-farmer",
         name: "Farmer",
         locationId: "grove",
         devotion: { god: "hera", affinity: 3 },

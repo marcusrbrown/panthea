@@ -179,6 +179,8 @@ export interface ClientSurfaceProps {
   readonly onDismissCatchUp?: () => void;
   readonly dismissedSummary?: boolean;
   readonly receiptErrors?: readonly string[];
+  /** Canon art that could not be loaded; those actors draw as placeholders. */
+  readonly artProblems?: readonly string[];
   readonly settingsOpen?: boolean;
   readonly onOpenSettings?: () => void;
   readonly onCloseSettings?: () => void;
@@ -194,6 +196,7 @@ export function ClientSurface({
   onDismissCatchUp,
   dismissedSummary = false,
   receiptErrors = [],
+  artProblems = [],
   settingsOpen = false,
   onOpenSettings,
   onCloseSettings,
@@ -457,6 +460,11 @@ export function ClientSurface({
             {receiptErrors.length > 0 && (
               <p className="receipt-note" role="status">
                 Receipt unavailable: {receiptErrors[receiptErrors.length - 1]}
+              </p>
+            )}
+            {artProblems.length > 0 && (
+              <p className="receipt-note" role="status">
+                Canon art unavailable: {artProblems[artProblems.length - 1]}
               </p>
             )}
             <div className="detail-foot">

@@ -368,7 +368,7 @@ export function buildWorldNotes(record: EpisodeRecord): WorldNote[] {
       case "mortal-struck":
         note(
           e,
-          `${e.actor} struck ${e.entityId}${e.resource === undefined ? ", who carried nothing" : ` and took ${e.amount} ${e.resource}`} [${e.id}]`,
+          `${e.actor} struck ${e.entityId}${e.resource === undefined ? ", who carried nothing" : ` and took ${e.amount} ${e.resource}`}${e.petitionId === undefined ? "" : `, answering the prayer [${e.petitionId}]`} [${e.id}]`,
         );
         break;
       case "petition-refused":
@@ -744,13 +744,27 @@ function renderModelRun(record: EpisodeRecord): string {
   ].join("\n");
 }
 
-const RUBRIC = [
+/** The acceptance rubric (docs/product/acceptance.md): what the owner scores an episode on. */
+export const RUBRIC = [
   "Novelty",
   "Causality",
   "Recognizable identity",
   "Pacing",
   "Inspectability",
 ];
+
+/** How a dimension is scored; the tool scores nothing. */
+export const RUBRIC_SCALE =
+  "Score each 0, 1, or 2: 0 = replan pressure, 1 = needs tuning, 2 = good enough to continue. The owner scores; nothing above is a score.";
+
+/** The empty score table, one row per dimension. */
+export function rubricTable(): string[] {
+  return [
+    "| Dimension | Score (0/1/2) | Notes |",
+    "| --- | --- | --- |",
+    ...RUBRIC.map((dimension) => `| ${dimension} |  |  |`),
+  ];
+}
 
 /** Where the model ran: local Ollama at its 4K context, a local or hosted OpenAI-compatible endpoint (never named). */
 function modelLine(settings: {
@@ -841,11 +855,9 @@ export function renderTranscript(record: EpisodeRecord): string {
     "",
     "## Owner rubric",
     "",
-    "Score each 0, 1, or 2: 0 = replan pressure, 1 = needs tuning, 2 = good enough to continue. The owner scores; nothing above is a score.",
+    RUBRIC_SCALE,
     "",
-    "| Dimension | Score (0/1/2) | Notes |",
-    "| --- | --- | --- |",
-    ...RUBRIC.map((dimension) => `| ${dimension} |  |  |`),
+    ...rubricTable(),
     "",
     "Decision: continue / tune / replan: ",
     "",
@@ -867,7 +879,7 @@ export interface SummarySettings {
 }
 
 /** The p95 queue wait ADR-0005 allows a god on one model, in seconds (a tick is a second of world time). */
-export const QUEUE_WAIT_P95_TARGET_SECONDS = 90;
+export const QUEUE_WAIT_P95_TARGET_SECONDS = 105;
 
 export function renderSummary(
   records: readonly EpisodeRecord[],

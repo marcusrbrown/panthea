@@ -18,5 +18,8 @@
     "@panthea/contracts": "workspace:*",
     "@panthea/world": "workspace:*",
     "ai": "7.0.127"
+  },
+  "devDependencies": {
+    "@panthea/testkit": "workspace:*"
   }
 }

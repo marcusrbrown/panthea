@@ -256,7 +256,38 @@ describe("openStore", () => {
     expect(readdirSync(dir).sort()).toEqual(filesBefore);
   });
 
-  test("this build stamps schema version 6", () => {
+  test("an existing version 6 store is refused and left untouched: same bytes, no new files, no reset, and nothing decoded", () => {
+    const v6 = new Database(dbPath, { create: true });
+    v6.exec("PRAGMA journal_mode = WAL");
+    v6.exec(
+      "CREATE TABLE world (id INTEGER PRIMARY KEY CHECK (id = 1), world_id TEXT NOT NULL) STRICT",
+    );
+    v6.run("INSERT INTO world (id, world_id) VALUES (1, 'world-from-v6')");
+    v6.exec("PRAGMA user_version = 6");
+    v6.close();
+    const bytesBefore = readFileSync(dbPath);
+    const filesBefore = readdirSync(dir).sort();
+
+    // The reducer's codec is never reached: a decode of an actor without a sprite would throw something else.
+    const decoded: unknown[] = [];
+    const watching = {
+      ...countReducer,
+      codec: {
+        encode: countReducer.codec.encode,
+        decode: (value: unknown) => {
+          decoded.push(value);
+          return countReducer.codec.decode(value);
+        },
+      },
+    };
+    expect(() => openStore(dbPath, watching)).toThrow(/schema version 6/);
+    expect(decoded).toEqual([]);
+
+    expect(readFileSync(dbPath).equals(bytesBefore)).toBe(true);
+    expect(readdirSync(dir).sort()).toEqual(filesBefore);
+  });
+
+  test("this build stamps schema version 7", () => {
     const store = openStore(dbPath, countReducer);
     expect(
       (
@@ -264,7 +295,7 @@ describe("openStore", () => {
           user_version: number;
         }
       ).user_version,
-    ).toBe(6);
+    ).toBe(7);
     closeStore(store);
   });
 

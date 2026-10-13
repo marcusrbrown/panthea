@@ -123,6 +123,12 @@ export interface CatchUpOptions {
     readonly appliedMs: number;
     readonly ticksRemaining: number;
   }) => boolean;
+  /**
+   * This pass follows the previous catch-up with no live tick between: the
+   * wall time that pass took read as a gap. Its summary adds to the previous
+   * one's instead of replacing it (`closeCatchUpBacklog`).
+   */
+  readonly continuesPrevious?: boolean;
 }
 
 /** What a backlog applied, skipped, and found notable, before it has an identity or an ending sequence (those come when it is persisted). */
@@ -223,6 +229,8 @@ export async function runCatchUp(
   const tickMs = DEFAULT_TICK_ELAPSED_MS;
   const totalTicks = Math.floor(totalAppliedMs / tickMs);
 
+  const closing = { continuesPrevious: options.continuesPrevious === true };
+
   // What ended backlog this run closed, once it has: set by the ending
   // commit's callback, so it is only meaningful after that commit succeeded.
   let closed: ClosedBacklog | undefined;
@@ -250,7 +258,7 @@ export async function runCatchUp(
       },
       [],
       (db) => {
-        closed = closeCatchUpBacklog(db);
+        closed = closeCatchUpBacklog(db, closing);
       },
     );
     if (!finish.ok) {
@@ -446,7 +454,7 @@ export async function runCatchUp(
             discardedMs: discardedMs + (totalTicks - ticksDone) * tickMs,
             startSequence,
           });
-          closed = closeCatchUpBacklog(db);
+          closed = closeCatchUpBacklog(db, closing);
         },
       );
       if (!pauseCommit.ok) {
@@ -484,7 +492,7 @@ export async function runCatchUp(
       },
       [],
       (db) => {
-        closed = closeCatchUpBacklog(db);
+        closed = closeCatchUpBacklog(db, closing);
       },
     );
     if (!adjust.ok) {

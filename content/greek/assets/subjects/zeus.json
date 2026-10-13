@@ -2,5 +2,21 @@
   "schemaVersion": 1,
   "godId": "zeus",
   "paletteFamily": "olympus",
-  "iconography": ["thunderbolt", "storm sky", "cloud seat"]
+  "iconography": ["thunderbolt"],
+  "portrait": "zeus-portrait",
+  "asymmetry": { "feature": "bolt hand" },
+  "render": {
+    "profile": "zeus",
+    "matrix": {
+      "cellClass": "god-tall",
+      "directions": ["south", "north", "east", "west"],
+      "required": [
+        { "state": "idle" },
+        { "state": "walk" },
+        { "state": "seated" },
+        { "state": "act", "ability": "thunderbolt" }
+      ],
+      "deferred": [{ "state": "act", "ability": "pronouncement" }]
+    }
+  }
 }

@@ -257,8 +257,32 @@ pub async fn resume(port: u16, token: &str) -> Result<(), String> {
     post_empty(port, token, "/resume").await
 }
 
+/// What a receipt is refused with when the session it was drawn under is not
+/// the sidecar's current one. The webview matches this exact string.
+pub const STALE_SESSION: &str = "stale-session";
+
+/// Relays a presentation receipt for `event_id`, attributed to the session the
+/// webview drew it under (`presented_session`), only while that is the
+/// sidecar's current session (`current_session`, the last frame's). A receipt
+/// held across a sidecar restart is refused, never relayed: stamping it with
+/// the new session would record a presentation under a session that never
+/// drew the event. With no frame yet there is no session to check against.
+pub(crate) async fn relay_receipt(
+    port: u16,
+    token: &str,
+    current_session: Option<&str>,
+    presented_session: &str,
+    event_id: &str,
+) -> Result<(), String> {
+    match current_session {
+        None => Err("no frame received yet".to_string()),
+        Some(current) if current != presented_session => Err(STALE_SESSION.to_string()),
+        Some(_) => present_event(port, token, presented_session, event_id).await,
+    }
+}
+
 /// Relays a presentation receipt: the event the operator has just seen
-/// rendered, attributed to the current session.
+/// rendered, attributed to `session_id`.
 pub async fn present_event(
     port: u16,
     token: &str,
@@ -282,10 +306,112 @@ pub async fn present_event(
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
     use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::state::begin_spawn;
+
+    /// A loopback HTTP server that answers every request 200 and records each
+    /// request body, so a test can tell whether a receipt was relayed at all.
+    fn receipt_server() -> (u16, Arc<Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let port = listener.local_addr().expect("local addr").port();
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&bodies);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                let body = loop {
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    if read == 0 {
+                        break String::new();
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&request).to_string();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= length {
+                            break body.to_string();
+                        }
+                    }
+                };
+                recorded.lock().expect("bodies mutex").push(body);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":true}",
+                );
+            }
+        });
+        (port, bodies)
+    }
+
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime")
+            .block_on(future)
+    }
+
+    #[test]
+    fn a_receipt_for_an_old_session_is_refused_as_stale_and_never_relayed() {
+        let (port, bodies) = receipt_server();
+
+        let result = block_on(relay_receipt(
+            port,
+            "a-token",
+            Some("session-2"),
+            "session-1",
+            "evt-1-1",
+        ));
+
+        assert_eq!(result, Err(STALE_SESSION.to_string()));
+        assert!(
+            bodies.lock().expect("bodies mutex").is_empty(),
+            "a stale receipt must not reach the service"
+        );
+    }
+
+    #[test]
+    fn a_receipt_for_the_current_session_is_relayed_with_that_session() {
+        let (port, bodies) = receipt_server();
+
+        let result = block_on(relay_receipt(
+            port,
+            "a-token",
+            Some("session-2"),
+            "session-2",
+            "evt-2-1",
+        ));
+
+        assert_eq!(result, Ok(()));
+        let bodies = bodies.lock().expect("bodies mutex");
+        assert_eq!(bodies.len(), 1);
+        let sent: Value = serde_json::from_str(&bodies[0]).expect("a JSON body");
+        assert_eq!(
+            sent,
+            serde_json::json!({ "eventId": "evt-2-1", "sessionId": "session-2" })
+        );
+    }
+
+    #[test]
+    fn a_receipt_before_any_frame_is_refused_without_a_relay() {
+        let (port, bodies) = receipt_server();
+
+        let result = block_on(relay_receipt(port, "a-token", None, "session-1", "evt-1-1"));
+
+        assert_eq!(result, Err("no frame received yet".to_string()));
+        assert!(bodies.lock().expect("bodies mutex").is_empty());
+    }
 
     fn sample_frame() -> Value {
         serde_json::json!({

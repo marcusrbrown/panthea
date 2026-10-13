@@ -38,7 +38,6 @@ import {
   type PracticeThread,
   petitionBalanceOf,
   practiceBalanceOf,
-  routeLength,
   termObstacle,
   termTuple,
   validatePractice,
@@ -77,6 +76,15 @@ export const CONTESTS_HEADING = "Contests for a place's people:";
  */
 export const CONTESTS_BUDGET_CHARS = 600;
 
+/**
+ * Tokens a god's whole request (instructions and prompt, with room for a retry's feedback) may take. Chosen
+ * for latency (owner, 2026-10-08): on granite3.3-8b-4k a request took about 8.5 s under 3,000 tokens and 16.4 s
+ * above 3,500. Ollama silently drops the start of a prompt past about 4,090 tokens at a 4K context, so the cap
+ * leaves some 1,090 under that point. Counted with the smallest characters-per-token ratio on the role's route
+ * (`prompt-cap.ts`), measured on local Ollama. The sections above keep their own budgets; this bounds the sum.
+ */
+export const PROMPT_TOKEN_CAP = 3000;
+
 /** The answers a thread can take from the god. A demand opens one and is not an answer. */
 export type AnswerMove = "accept" | "counter" | "refuse" | "withdraw";
 
@@ -106,15 +114,12 @@ export interface OwedBoon {
     | {
         readonly kind: "strike";
         readonly intent: Readonly<Record<string, unknown>>;
-      }
-    | {
-        readonly kind: "travel";
-        readonly intent: Readonly<Record<string, unknown>>;
       };
   readonly blocked?: string;
   /**
-   * For a punish prayer, whose boon is a strike: the building the next step is about and where it stands. The
-   * step is a strike when the god is there, else the hop toward it.
+   * For a punish prayer, whose boon is a strike: the building the next step strikes and where it stands. Absent when
+   * the step strikes the wrongdoer itself (no listed building can be struck). Either is struck from wherever the god
+   * stands, so no way there is shown.
    */
   readonly building?: {
     readonly id: EntityId;
@@ -493,37 +498,20 @@ function owedBoonOf(
   if (!blessability(state, thread.petition, actorId).ok) {
     return { ...base, blocked: "its prayer is no longer open to an answer" };
   }
-  if (god.locationId === petitioner.locationId) {
-    const cost = petitionBalanceOf(state.rules, "blessDivinityCost");
-    if ((god.inventory.get("divinity") ?? 0) < cost) {
-      return {
-        ...base,
-        blocked: `a bless costs ${cost} divinity and you hold less`,
-      };
-    }
+  // A blessing answers the prayer from wherever the god stands, so it is the step whenever the prayer is open to it and
+  // the god can pay; `blessability` is the action's own predicate above.
+  const cost = petitionBalanceOf(state.rules, "blessDivinityCost");
+  if ((god.inventory.get("divinity") ?? 0) < cost) {
     return {
       ...base,
-      next: {
-        kind: "bless",
-        intent: { action: "bless", petition: thread.petition },
-      },
+      blocked: `a bless costs ${cost} divinity and you hold less`,
     };
-  }
-  if (
-    routeLength(
-      state,
-      god.locationId,
-      petitioner.locationId,
-      god.capabilities,
-    ) === undefined
-  ) {
-    return { ...base, blocked: "there is no way from where you stand to them" };
   }
   return {
     ...base,
     next: {
-      kind: "travel",
-      intent: { action: "travel", to: petitioner.locationId },
+      kind: "bless",
+      intent: { action: "bless", petition: thread.petition },
     },
   };
 }
@@ -553,10 +541,12 @@ export function withStrikeLegality(
 }
 
 /**
- * The boon owed on a punish prayer, which the world counts as a strike by this god on a building the prayer names
- * (`judgeAnswers`): the strike when the god stands where such a building does, else the hop toward the nearest one
- * it can reach. A strike is shown at power 1, the least the world takes; whether the god's own ability allows it is
- * settled where the prompt is built, which holds the profile. Otherwise the reason, and no object.
+ * The boon owed on a punish prayer, which the world counts as a strike by this god on a building the prayer names, or on
+ * the wrongdoer itself (`judgeAnswers`): the strike on the first listed building that can be struck, or, when none can
+ * (the prayer lists none, or each is burning or destroyed), on the wrongdoer if it is a living mortal. A strike has no
+ * location check, so the god strikes from where it stands. A strike is shown at power 1, the least the world takes;
+ * whether the god's own ability allows it is settled where the prompt is built, which holds the profile. Otherwise
+ * the reason, and no object.
  */
 function owedStrikeOf(
   state: WorldState,
@@ -571,67 +561,50 @@ function owedStrikeOf(
   ) {
     return { ...base, blocked: "its prayer is no longer open to an answer" };
   }
-  const named = petition.request.buildings.flatMap((buildingId) => {
+  const request = petition.request;
+  const named = request.buildings.flatMap((buildingId) => {
     const building = state.buildings.get(buildingId);
     return building === undefined ? [] : [building];
   });
   const strikable = named.filter(
     (building) => building.status === "operational",
   );
-  if (strikable.length === 0) {
+  const offender = getActor(state, request.offender);
+  const strikeOffender = offender?.alive === true && offender.isDeity !== true;
+  if (strikable.length === 0 && !strikeOffender) {
     return {
       ...base,
-      blocked: `none of the buildings it names (${named.map((b) => b.id).join(", ")}) can be struck now`,
+      blocked:
+        named.length === 0
+          ? "the wrongdoer cannot be struck"
+          : `none of the buildings it names (${named.map((b) => b.id).join(", ")}) can be struck now, and the wrongdoer cannot be`,
     };
   }
   if ((god.inventory.get("divinity") ?? 0) < 1) {
     return { ...base, blocked: "a strike costs divinity and you hold none" };
   }
-  const where = (building: (typeof named)[number]) => ({
-    id: building.id,
-    name: building.name,
-    place: building.locationId,
-    placeName:
-      state.locations.get(building.locationId)?.name ?? building.locationId,
-  });
-  const here = strikable.find(
-    (building) => building.locationId === god.locationId,
-  );
-  if (here !== undefined) {
+  const first = strikable[0];
+  if (first !== undefined) {
     return {
       ...base,
-      building: where(here),
+      building: {
+        id: first.id,
+        name: first.name,
+        place: first.locationId,
+        placeName:
+          state.locations.get(first.locationId)?.name ?? first.locationId,
+      },
       next: {
         kind: "strike",
-        intent: { action: "strike", target: here.id, power: 1 },
+        intent: { action: "strike", target: first.id, power: 1 },
       },
-    };
-  }
-  const nearest = strikable
-    .flatMap((building) => {
-      const length = routeLength(
-        state,
-        god.locationId,
-        building.locationId,
-        god.capabilities,
-      );
-      return length === undefined ? [] : [{ building, length }];
-    })
-    .sort(
-      (a, b) => a.length - b.length || (a.building.id < b.building.id ? -1 : 1),
-    )[0];
-  if (nearest === undefined) {
-    return {
-      ...base,
-      blocked: "there is no way from where you stand to a building it names",
     };
   }
   return {
     ...base,
-    building: where(nearest.building),
     next: {
-      kind: "travel",
-      intent: { action: "travel", to: nearest.building.locationId },
+      kind: "strike",
+      intent: { action: "strike", target: request.offender, power: 1 },
     },
   };
 }
@@ -1352,9 +1325,42 @@ const ticksLeft = (deadline: number, now: number) =>
 
 const json = (value: unknown) => JSON.stringify(value);
 
+/**
+ * Whether a thread offers the god an answer: accept, counter, or refuse. Withdrawing is the god's to do on a
+ * thread of its own and answers nothing, so a thread with no other move is not one the god can answer. The one
+ * rule for the answer guidance and for how a thread's row is written (`isWaiting`).
+ */
+export function offersAnswer(view: Pick<ThreadView, "moves">): boolean {
+  return view.moves.some((move) => move !== "withdraw");
+}
+
+/**
+ * A thread the god only waits on: its own offer or demand, not yet accepted, with withdrawal the only move
+ * it has. Its row is one line (`compactRow`), the form every squeezed row already takes, since the other
+ * party's answer is the only thing it waits for and there is nothing to choose.
+ */
+function isWaiting(view: ThreadView): boolean {
+  return (
+    view.standing === "other" &&
+    view.status !== "accepted" &&
+    view.moves.length > 0 &&
+    !offersAnswer(view)
+  );
+}
+
 /** The withdrawal of a thread, as the object to send. */
+function withdrawIntent(view: ThreadView): Record<string, unknown> {
+  return (
+    view.intents.withdraw ?? {
+      action: "practice",
+      move: "withdraw",
+      thread: view.id,
+    }
+  );
+}
+
 function withdrawLine(view: ThreadView): string {
-  return `  You may withdraw it: ${json(view.intents.withdraw ?? { action: "practice", move: "withdraw", thread: view.id })}`;
+  return `  You may withdraw it: ${json(withdrawIntent(view))}`;
 }
 
 /**
@@ -1391,19 +1397,15 @@ function owedBoonRows(view: ThreadView, owed: OwedBoon, by: string): string[] {
   const building = owed.building;
   if (owed.next?.kind === "bless") {
     lines.push(
-      `  ${owed.petitioner} is here: give it now with ${json(owed.next.intent)}`,
+      `  ${owed.petitioner}'s prayer is open to you from where you stand: give it now with ${json(owed.next.intent)}`,
     );
   } else if (owed.next?.kind === "strike" && building !== undefined) {
     lines.push(
-      `  ${building.name} [${building.id}] is here: strike it now with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
+      `  ${building.name} [${building.id}] stands at ${building.placeName} [${building.place}]: strike it now, from where you stand, with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
     );
-  } else if (owed.next?.kind === "travel" && building !== undefined) {
+  } else if (owed.next?.kind === "strike") {
     lines.push(
-      `  ${building.name} [${building.id}] stands at ${building.placeName} [${building.place}]: your next step is ${json(owed.next.intent)}; the world walks you there, and once you are there, strike it.`,
-    );
-  } else if (owed.next?.kind === "travel") {
-    lines.push(
-      `  ${owed.petitioner} is not here (they are at ${owed.placeName} [${owed.place}]): your next step is ${json(owed.next.intent)}; the world walks you there, and once you are with them, bless them naming the prayer.`,
+      `  The wrongdoer may be struck wherever it is: give it now, from where you stand, with ${json(owed.next.intent)} (a power from 1 to your limit; 1 is shown).`,
     );
   } else if (owed.blocked !== undefined) {
     lines.push(`  You cannot give it now: ${owed.blocked}.`);
@@ -1444,6 +1446,10 @@ function fullRow(view: ThreadView): string[] {
       );
       break;
     case "other":
+      if (isWaiting(view)) {
+        lines.push(compactRow(view));
+        break;
+      }
       if (view.supplication !== undefined) {
         const { petition, boonGiven, offeringMade } = view.supplication;
         if (view.status === "accepted") {
@@ -1498,10 +1504,16 @@ function compactRow(view: ThreadView): string {
         : `- [${view.id}] YOU OWE ${view.other}: ${term}, ${by}.${view.unperformable === undefined ? "" : " UNPERFORMABLE now."}`;
     case "awaiting":
       return `- [${view.id}] AWAITING YOUR ANSWER: ${term}, ${by}. Answer by tick ${view.negotiationDeadline} with ${view.moves.map((move) => json(view.intents[move] ?? { action: "practice", move, thread: view.id })).join(" or ")}.`;
-    case "other":
-      return view.supplication !== undefined
-        ? `- [${view.id}] ${view.status === "accepted" ? `${view.other} ACCEPTED your terms` : `OPEN, terms offered to ${view.other}`}: ${term}, ${by}.`
-        : `- [${view.id}] OPEN with ${view.other}: ${term}, ${by}.`;
+    case "other": {
+      const row =
+        view.supplication !== undefined
+          ? `- [${view.id}] ${view.status === "accepted" ? `${view.other} ACCEPTED your terms` : `OPEN, terms offered to ${view.other}`}: ${term}, ${by}.`
+          : `- [${view.id}] OPEN with ${view.other}: ${term}, ${by}.`;
+      // The one move a waiting thread has stays written out to copy: squeezing the row may not take the way to withdraw.
+      return isWaiting(view)
+        ? `${row} Withdraw with ${json(withdrawIntent(view))}.`
+        : row;
+    }
   }
 }
 
@@ -1522,6 +1534,8 @@ export function describeDigest(
   refusal?: PracticeRefusalView,
   openings: readonly Opening[] = [],
   budget = DIGEST_BUDGET_CHARS,
+  /** The prayers whose own line in the prompt already writes the offer out whole: an offer opening on one points to it instead of repeating the object, so the copyable object appears once. */
+  offeredAbove: ReadonlySet<string> = new Set(),
 ): string[] {
   // A refusal bound to an open thread is said on that thread's row; any other is a line of its own.
   const onRow =
@@ -1536,9 +1550,11 @@ export function describeDigest(
       ? []
       : [
           "- You may begin a bargain if you wish (nothing requires it); each of these is legal as written:",
-          ...openings.map(
-            (opening) =>
-              `  ${opening.label}: ${JSON.stringify(opening.intent)}`,
+          ...openings.map((opening) =>
+            opening.kind === "offer" &&
+            offeredAbove.has(String(opening.intent.prayer))
+              ? `  ${opening.label}: the "set terms" choice written out under that prayer`
+              : `  ${opening.label}: ${JSON.stringify(opening.intent)}`,
           ),
         ];
   if (
@@ -1585,7 +1601,7 @@ export function describePracticeInstructions(
   threads: readonly ThreadView[],
   options: PracticeOptions,
 ): string[] {
-  const canAnswer = threads.some((view) => view.moves.length > 0);
+  const canAnswer = threads.some(offersAnswer);
   const canDemand = options.causes.length > 0 && options.gods.length > 0;
   const canOffer = options.offerable.length > 0;
   const canContest = options.contests.length > 0;

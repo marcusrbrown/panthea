@@ -1,6 +1,7 @@
 ---
 title: A headless scenario against the compiled binary needs a positive control per negative claim
 date: 2026-09-28
+last_updated: 2026-10-09
 category: best-practices
 module: workspace
 problem_type: best_practice
@@ -63,6 +64,8 @@ archive:  FAIL invariant violated: importing the corrupted copy is rejected -- s
 ## Examples
 
 The same principle in another domain: [Proving "offline mode sends nothing" needs a self-owned, falsifiable packet capture](../test-failures/tcpdump-sudo-pid-resolution-offline-proof-2026-09-27.md). A capture with 0 packets means nothing until a live request under the same filter shows the capture can see traffic. Here, a scenario that exits 0 means nothing until each control makes it exit 1.
+
+The same gap in the packaged studio window: helper unit tests passed while the window's real pack arguments failed against the SDK on a fresh store. `apps/studio/src/workflow/pack-session.test.ts` feeds those arguments to an in-process `StudioSession` on the real Greek content, the positive control the unit tests lacked.
 
 ## Related
 

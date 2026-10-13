@@ -11,7 +11,10 @@ import {
   createObserver,
   type ObserverTarget,
 } from "@panthea/client/src/observer";
-import { createReceiptEmitter } from "@panthea/client/src/receipts";
+import {
+  createReceiptEmitter,
+  StaleSessionError,
+} from "@panthea/client/src/receipts";
 import {
   drawableEvents,
   receiptDrawnEvents,
@@ -87,10 +90,13 @@ export function createHeadlessClient(
       timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
       void poll();
     },
-    async presentEvent(eventId) {
-      const sessionId = latestSessionId;
-      if (sessionId === undefined) {
+    async presentEvent(eventId, sessionId) {
+      // The shell's rule: a receipt is relayed only under the session in force.
+      if (latestSessionId === undefined) {
         throw new Error("no frame received yet");
+      }
+      if (sessionId !== latestSessionId) {
+        throw new StaleSessionError();
       }
       const response = await target.request("POST", "/receipts", {
         eventId,
@@ -132,8 +138,22 @@ export function createHeadlessClient(
     }
   }
 
+  // The emitter paces receipts and drains a burst on its own schedule, so a
+  // receipt may go out long after the draw that presented it: it is recorded
+  // when the relay succeeds, with the session and realm of that draw.
+  const drawnAt = new Map<string, { sessionId: string; realm: Realm }>();
   const emitter = createReceiptEmitter({
-    presentEvent: (eventId) => transport.presentEvent(eventId),
+    presentEvent: async (eventId, sessionId) => {
+      await transport.presentEvent(eventId, sessionId);
+      const at = drawnAt.get(eventId);
+      if (at === undefined) return;
+      presented.push({
+        eventId,
+        kind: kindsById.get(eventId) ?? "unknown",
+        sessionId: at.sessionId,
+        realm: at.realm,
+      });
+    },
     onError: (error) =>
       errors.push(`receipt ${error.eventId}: ${error.message}`),
   });
@@ -153,23 +173,20 @@ export function createHeadlessClient(
       kindsById.set(event.id, event.kind);
     }
     void receiptDrawnEvents(view.sessionId, events, {
-      async present(sessionId, eventId) {
-        const result = await emitter.present(sessionId, eventId);
-        if (result === "sent") {
-          presented.push({
-            eventId,
-            kind: kindsById.get(eventId) ?? "unknown",
-            sessionId,
-            realm,
-          });
-        }
-        return result;
+      present(sessionId, eventId) {
+        drawnAt.set(eventId, { sessionId, realm });
+        return emitter.present(sessionId, eventId);
       },
+      dispose: () => emitter.dispose(),
+      observeSession: (sessionId) => emitter.observeSession(sessionId),
     });
   });
 
   void subscribe(
-    ({ frame, state }) => store.apply(frame, state),
+    ({ frame, state }) => {
+      emitter.observeSession(frame.sessionId);
+      store.apply(frame, state);
+    },
     (error) => errors.push(`${error.kind}: ${error.message}`),
     transport,
   );

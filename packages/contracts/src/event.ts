@@ -102,18 +102,23 @@ export interface ResourceConsumedEvent extends EventEnvelope {
   readonly amount: number;
 }
 
-/** A deity's strike damaged a building that did not catch fire. `actor` is the deity, so what witnesses remember can name who did it. */
+/**
+ * A deity's strike damaged a building that did not catch fire. `actor` is the deity, so what witnesses remember can name who did it.
+ * `petitionId` is the punish prayer the strike answers, checked by the world; absent when it answers none.
+ */
 export interface BuildingDamagedEvent extends EventEnvelope {
   readonly kind: "building-damaged";
   readonly entityId: EntityId;
   readonly amount: number;
   readonly actor: EntityId;
+  readonly petitionId?: EventId;
 }
 
 /**
  * A deity's strike fell on a mortal: the world took `amount` of the mortal's `resource`, its most valuable carried
  * good up to the strike cap, and credited the harm to `actor`. A mortal carrying nothing is still struck, with no
- * `resource` and an `amount` of 0. The loss is taken, never given to anyone.
+ * `resource` and an `amount` of 0. The loss is taken, never given to anyone. `petitionId` is the punish prayer the strike
+ * answers, checked by the world; absent when it answers none.
  */
 export interface MortalStruckEvent extends EventEnvelope {
   readonly kind: "mortal-struck";
@@ -123,6 +128,7 @@ export interface MortalStruckEvent extends EventEnvelope {
   readonly actor: EntityId;
   readonly resource?: string;
   readonly amount: number;
+  readonly petitionId?: EventId;
 }
 
 /**
@@ -130,9 +136,14 @@ export interface MortalStruckEvent extends EventEnvelope {
  * out later. A strike is a root: the proposal that committed it is its cause.
  * A spread names the source building's own ignition event, and carries the
  * actor forward from it, so a chain of fires still answers who began it.
+ * A strike that answers a punish prayer names it in `petitionId`.
  */
 export type FireCause =
-  | { readonly kind: "strike"; readonly actor: EntityId }
+  | {
+      readonly kind: "strike";
+      readonly actor: EntityId;
+      readonly petitionId?: EventId;
+    }
   /** The quiet-world director started it: no god's act, so no actor, and nothing for any god to be blamed for. */
   | { readonly kind: "director" }
   | {
@@ -1157,8 +1168,9 @@ export function eventSubjects(event: WorldEvent): readonly EntityId[] {
  * follows the ignition that started the fire; a spread follows the source
  * building's ignition; a memory follows the event it rests on; a report
  * follows the event it cites; a relationship change follows the memory that
- * caused it; a goal's end follows the goal it ends. A strike ignition, or any event a proposal committed with nothing
- * cited, is a root: its own proposal is its cause, and the trace holds that.
+ * caused it; a goal's end follows the goal it ends; a strike follows the prayer it answers, when it names one. A strike
+ * that answers no prayer, or any event a proposal committed with nothing cited, is a root: its own proposal is its
+ * cause, and the trace holds that.
  */
 export function eventCause(event: WorldEvent): EventId | undefined {
   switch (event.kind) {
@@ -1166,7 +1178,14 @@ export function eventCause(event: WorldEvent): EventId | undefined {
     case "building-destroyed":
       return event.cause;
     case "building-ignited":
-      return event.cause.kind === "spread" ? event.cause.from : undefined;
+      return event.cause.kind === "spread"
+        ? event.cause.from
+        : event.cause.kind === "strike"
+          ? event.cause.petitionId
+          : undefined;
+    case "mortal-struck":
+    case "building-damaged":
+      return event.petitionId;
     case "memory-recorded":
       return event.sourceEventId;
     case "report-told":
@@ -1268,7 +1287,18 @@ function parseFireCause(value: unknown, path: string): ParseResult<FireCause> {
   if (value.kind === "strike") {
     if (actor.value === undefined)
       return fail(`${path}.actor`, "a strike names who struck");
-    return ok({ kind: "strike", actor: actor.value });
+    const petitionId = parseOptionalEventId(
+      value.petitionId,
+      `${path}.petitionId`,
+    );
+    if (!petitionId.ok) return petitionId;
+    return ok({
+      kind: "strike",
+      actor: actor.value,
+      ...(petitionId.value === undefined
+        ? {}
+        : { petitionId: petitionId.value }),
+    });
   }
   if (value.kind === "spread") {
     const from = parseEventId(value.from, `${path}.from`);
@@ -1742,12 +1772,17 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
       if (!amount.ok) return amount;
       const actor = parseEntityId(input.actor, "actor");
       if (!actor.ok) return actor;
+      const petitionId = parseOptionalEventId(input.petitionId, "petitionId");
+      if (!petitionId.ok) return petitionId;
       return ok({
         ...envelope,
         kind: "building-damaged",
         entityId: entityId.value,
         amount: amount.value,
         actor: actor.value,
+        ...(petitionId.value === undefined
+          ? {}
+          : { petitionId: petitionId.value }),
       });
     }
     case "mortal-struck": {
@@ -1762,6 +1797,8 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
           ? ok<string | undefined>(undefined)
           : parseString(input.resource, "resource");
       if (!resource.ok) return resource;
+      const petitionId = parseOptionalEventId(input.petitionId, "petitionId");
+      if (!petitionId.ok) return petitionId;
       if ((resource.value === undefined) !== (amount.value === 0)) {
         return fail(
           "resource",
@@ -1775,6 +1812,9 @@ export function parseEvent(input: unknown): ParseResult<WorldEvent> {
         actor: actor.value,
         amount: amount.value,
         ...(resource.value === undefined ? {} : { resource: resource.value }),
+        ...(petitionId.value === undefined
+          ? {}
+          : { petitionId: petitionId.value }),
       });
     }
     case "building-ignited": {

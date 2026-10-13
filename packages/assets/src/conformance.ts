@@ -38,6 +38,11 @@ export interface ConformanceInput extends RgbaImage {
   readonly cell: { readonly w: number; readonly h: number };
   readonly pivot?: { readonly x: number; readonly y: number };
   readonly paletteRgb: readonly Rgb[];
+  /**
+   * The most colours the asset's palette allows this kind to keep. Absent
+   * means the legacy limit of the kind (16 per sprite, 32 per portrait).
+   */
+  readonly colourLimit?: number;
   /** Emissive accents declared by an effect; at most 4, effects only. */
   readonly accents?: readonly Rgb[];
   readonly background: BackgroundSpec;
@@ -228,6 +233,15 @@ function validate(input: ConformanceInput): InvalidInput | undefined {
     (!isInt(input.pivot.x) || !isInt(input.pivot.y))
   ) {
     return { field: "pivot", message: "pivot must be integer coordinates" };
+  }
+  if (
+    input.colourLimit !== undefined &&
+    (!isInt(input.colourLimit) || input.colourLimit < 1)
+  ) {
+    return {
+      field: "colourLimit",
+      message: "the colour limit is a positive integer",
+    };
   }
   if (!Array.isArray(input.paletteRgb) || input.paletteRgb.length === 0) {
     return {
@@ -629,10 +643,20 @@ const SPRITE_COLOURS = 16;
 const PORTRAIT_COLOURS = 32;
 const KMEANS_PASSES = 32;
 
-/** Most colours a kind may keep, or null when only the palette limits it. */
-function colourBudget(kind: ConformanceKind): number | null {
-  if (kind === "sprite") return SPRITE_COLOURS;
-  return kind === "portrait" ? PORTRAIT_COLOURS : null;
+/**
+ * Most colours an asset may keep: the limit its palette declares, else the
+ * legacy limit of its kind; null when only the palette limits it (effects).
+ */
+function colourBudget(input: {
+  readonly kind: ConformanceKind;
+  readonly colourLimit?: number;
+}): number | null {
+  if (input.kind === "sprite" || input.kind === "portrait")
+    return (
+      input.colourLimit ??
+      (input.kind === "sprite" ? SPRITE_COLOURS : PORTRAIT_COLOURS)
+    );
+  return null;
 }
 
 /**
@@ -903,7 +927,7 @@ function buildChecks(
     ),
   );
 
-  const budget = colourBudget(kind);
+  const budget = colourBudget(input);
   if (budget !== null) {
     checks.push(
       verdict(
@@ -1066,7 +1090,7 @@ export function conformImage(input: ConformanceInput): ConformanceResult {
   );
   const counts = histogram(prepared.rgba);
   const palette = [...input.paletteRgb, ...(input.accents ?? [])];
-  const reduction = reduceToPalette(counts, colourBudget(input.kind), palette);
+  const reduction = reduceToPalette(counts, colourBudget(input), palette);
   const final = Uint8Array.from(prepared.rgba);
   for (let at = 0; at < final.length; at += 4) {
     if (final[at + 3] === 0) continue;

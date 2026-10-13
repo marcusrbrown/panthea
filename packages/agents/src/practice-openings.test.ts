@@ -26,7 +26,7 @@ import {
   rememberedBy,
 } from "./context";
 import { buildModelProposal } from "./observation";
-import { PRACTICES_HEADING } from "./practices";
+import { describeDigest, PRACTICES_HEADING } from "./practices";
 import {
   actorAt,
   godProfile,
@@ -226,18 +226,19 @@ test("an offerable prayer shows the god its choices: help freely, set terms in f
   legalAsWritten(run, "zeus", terms as Record<string, unknown>);
 });
 
-test("from afar the travel hint belongs to the choice of helping, said as a condition; the terms path is the same either way", () => {
+test("from afar the blessing is a direct choice, with no travel step; the terms path is the same either way", () => {
   const run = new Run();
   const petition = run.prays();
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
-  // Travelling to the petitioner is still listed, and the help path says it is for one who chooses to help.
-  expect(prayers).toContain('"action":"travel"');
-  expect(prayers).toMatch(/help freely: .*if you choose this/);
+  // The petitioner is away, and the blessing is written out whole beside the terms: a help prayer shows both.
   expect(prayers).toContain(
-    `bless them {"action":"bless","petition":"${petition}"}`,
+    `help freely, from where you stand: {"action":"bless","petition":"${petition}"}`,
   );
+  expect(prayers).toContain("set terms");
+  expect(prayers).not.toContain("travel");
   expect(prayers).not.toContain("bless them now");
   expect(prayers).not.toContain("keep going each turn");
+  // The terms are the one practice object, as before; the blessing is its own action beside it.
   expect(intentsIn(prayersOf(run.view("zeus").context.prompt))).toHaveLength(1);
 });
 
@@ -489,7 +490,7 @@ test("with a thread that needs the god, the openings yield to the digest rows; a
     term: tell("zeus"),
   });
   const hera = digestOf(waiting.view("hera").context.prompt);
-  expect(hera.join("\n")).toContain("OPEN, waiting on zeus");
+  expect(hera.join("\n")).toContain("OPEN with zeus");
   expect(hera.join("\n")).toContain("You may begin a bargain");
   expect(second).toBeDefined();
 });
@@ -626,13 +627,81 @@ test("where mortals are with the god, the demand asks the other god to tell a le
   ).toBe(120);
 });
 
+test("the digest does not repeat the offer a prayer's own line writes out: the offer appears whole once, under the prayer, and the opening points to it", () => {
+  const run = new Run();
+  run.state = actorAt(run.state, "zeus", "altar");
+  const petition = run.prays("farmer", "zeus");
+  const { context, remembered, schema } = run.view("zeus");
+  const [opening] = remembered.practice.openings;
+  expect(opening).toMatchObject({
+    kind: "offer",
+    intent: { prayer: petition },
+  });
+  const json = JSON.stringify(opening?.intent);
+  // Copyable whole, once: in the prayer's choices.
+  expect(context.prompt.split(json)).toHaveLength(2);
+  expect(prayersOf(context.prompt).join("\n")).toContain(json);
+  const digest = digestOf(context.prompt).join("\n");
+  expect(digest).not.toContain(json);
+  expect(digest).not.toContain('"move":"offer"');
+  // The opening is still there, and says where its object is.
+  expect(digest).toContain("You may begin a bargain");
+  expect(digest).toContain(`set terms on farmer's prayer [${petition}]`);
+  expect(digest).toContain("under that prayer");
+  // W04: the object the prayer line writes out parses against the god's own schema and builds into a proposal.
+  const [offered] = intentsIn(prayersOf(context.prompt));
+  expect(offered).toEqual(opening?.intent);
+  legalAsWritten(run, "zeus", offered as Record<string, unknown>);
+  expect(schema.parse(offered).ok).toBe(true);
+});
+
+test("a demand opening is still written out whole in the digest: nothing else shows it, and an offer beside it points to its prayer", () => {
+  const run = new Run();
+  run.state = actorAt(run.state, "zeus", "altar");
+  const petition = run.prays("farmer", "zeus");
+  const cause = run.accused("zeus", "hera", { agent: "zeus", target: "hera" });
+  const { context, remembered } = run.view("zeus");
+  const [demand, offer] = remembered.practice.openings;
+  expect(demand).toMatchObject({ kind: "demand", intent: { cause } });
+  expect(offer).toMatchObject({ kind: "offer", intent: { prayer: petition } });
+  const digest = digestOf(context.prompt).join("\n");
+  expect(digest).toContain(JSON.stringify(demand?.intent));
+  expect(digest).not.toContain(JSON.stringify(offer?.intent));
+  const [opening] = intentsIn(digestOf(context.prompt));
+  legalAsWritten(run, "zeus", opening as Record<string, unknown>);
+});
+
+test("an offer whose prayer the prompt does not write out is still written out whole in the digest", () => {
+  const openings = [
+    {
+      kind: "offer" as const,
+      label: "set terms on farmer's prayer [evt-1-1]",
+      intent: { action: "practice", move: "offer", prayer: "evt-1-1" },
+    },
+  ];
+  const alone = describeDigest([], undefined, openings).join("\n");
+  expect(alone).toContain(
+    '{"action":"practice","move":"offer","prayer":"evt-1-1"}',
+  );
+  const pointed = describeDigest(
+    [],
+    undefined,
+    openings,
+    undefined,
+    new Set(["evt-1-1"]),
+  ).join("\n");
+  expect(pointed).not.toContain('"move":"offer"');
+  expect(pointed).toContain("set terms on farmer's prayer [evt-1-1]");
+});
+
 test("a prayer's terms are an opening when the god has no grievance, and only the prayers it can hear: Hera is shown none of Zeus's", () => {
   const run = new Run();
   run.state = actorAt(run.state, "zeus", "altar");
   const petition = run.prays("farmer", "zeus");
   const zeus = digestOf(run.view("zeus").context.prompt);
   expect(zeus.join("\n")).toContain(`farmer's prayer [${petition}]`);
-  const [opening] = intentsIn(zeus);
+  // The prayer's own line writes the terms out; the opening points to them.
+  const [opening] = intentsIn(prayersOf(run.view("zeus").context.prompt));
   expect(opening).toMatchObject({ move: "offer", prayer: petition });
   legalAsWritten(run, "zeus", opening as Record<string, unknown>);
   const hera = run.view("hera");

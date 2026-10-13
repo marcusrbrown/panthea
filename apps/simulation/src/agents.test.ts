@@ -36,6 +36,7 @@ import {
   createPrng,
   getActor,
   type PrngState,
+  planDirectorStep,
   runTick,
   submitProposal,
   toEntityId,
@@ -232,10 +233,23 @@ interface World {
 
 const worlds: World[] = [];
 
-/** The Greek world with Zeus placed at `zeusAt`. */
-function newWorld(zeusAt = "great-hall"): World {
+/** The Greek world with Zeus placed at `zeusAt`, and, when asked, the director firing every `directorInterval` ticks. */
+function newWorld(zeusAt = "great-hall", directorInterval?: number): World {
   const dir = mkdtempSync(join(tmpdir(), "panthea-sim-agents-"));
-  const greek = loadGreekWorldState();
+  const authored = loadGreekWorldState();
+  const greek =
+    directorInterval === undefined
+      ? authored
+      : {
+          ...authored,
+          rules: {
+            ...authored.rules,
+            petitionBalance: {
+              ...authored.rules.petitionBalance,
+              directorIntervalTicks: directorInterval,
+            },
+          },
+        };
   const zeus = getActor(greek, id("zeus"));
   if (!zeus) throw new Error("no zeus");
   const state = withActor(greek, { ...zeus, locationId: id(zeusAt) });
@@ -1890,6 +1904,152 @@ describe("an outage", () => {
   });
 });
 
+// --- The director across an outage (M2 Unit 12) ---------------------------------------------------------
+//
+// The director is a step of the world's tick: it reads committed state and the persisted generator, and nothing
+// the gods or their providers do reaches it except through the world they changed. So with the providers down, or
+// answering, its fires are the fires of a world with no gods at all. Everything below is real ticks over a real
+// store; the provider is the scripted loopback endpoint, and a turn is awaited, not timed.
+
+/** A director event in the journal, reduced to what must match: when, what, to whom, and the attribution it carries. */
+interface DirectorFire {
+  readonly tick: number;
+  readonly kind: string;
+  readonly entity: string;
+  readonly victim: string | undefined;
+  readonly resource: string | undefined;
+  readonly amount: number | undefined;
+  readonly cause: "director";
+}
+
+const directorFires = (world: World): DirectorFire[] =>
+  listEvents(world.store.db).flatMap((event): DirectorFire[] => {
+    if (
+      (event.kind === "theft" || event.kind === "stock-spoiled") &&
+      event.cause === "director"
+    ) {
+      return [
+        {
+          tick: event.tick,
+          kind: event.kind,
+          entity: String(event.entityId),
+          victim: event.kind === "theft" ? String(event.victim) : undefined,
+          resource: event.resource,
+          amount: event.amount,
+          cause: "director",
+        },
+      ];
+    }
+    if (event.kind === "building-ignited" && event.cause.kind === "director") {
+      return [
+        {
+          tick: event.tick,
+          kind: event.kind,
+          entity: String(event.entityId),
+          victim: undefined,
+          resource: undefined,
+          amount: undefined,
+          cause: "director",
+        },
+      ];
+    }
+    return [];
+  });
+
+/** The journal with each routine proposal's observation id (random per run) blanked in the ids that carry it. */
+const withoutObservationIds = (events: readonly WorldEvent[]): WorldEvent[] =>
+  events.map((event) => ({
+    ...event,
+    correlationId: String(event.correlationId).startsWith("obs-")
+      ? "obs"
+      : event.correlationId,
+    causationId: String(event.causationId).startsWith("obs-")
+      ? "obs"
+      : event.causationId,
+  })) as WorldEvent[];
+
+/** Runs `ticks` ticks of `world`, a god's turn after each when `provider` is given (awaited to its end). */
+async function runWithGods(
+  world: World,
+  ticks: number,
+  provider?: Provider,
+): Promise<void> {
+  const runner =
+    provider === undefined
+      ? undefined
+      : runnerFor(world, provider, ["zeus", "hera", "athena", "hermes"]);
+  for (let index = 0; index < ticks; index += 1) {
+    if (runner !== undefined) {
+      runner.dispatch();
+      await runner.idle();
+    }
+    tick(world);
+  }
+}
+
+describe("the director across an outage", () => {
+  const TICKS = 60;
+  const INTERVAL = 10;
+
+  test("with every provider failing, the director's fires, their ticks and attribution, its clock, and the persisted generator are those of a world with no gods", async () => {
+    const bare = newWorld("great-hall", INTERVAL);
+    await runWithGods(bare, TICKS);
+
+    const down = newWorld("great-hall", INTERVAL);
+    const provider = startProvider(() => 500);
+    await runWithGods(down, TICKS, provider);
+    // The gods did try, and every turn failed: no proposal reached the world.
+    expect(provider.requests.length).toBeGreaterThan(0);
+    expect(listExternalProposals(down.store.db)).toEqual([]);
+
+    const fires = directorFires(bare);
+    expect(fires.length).toBe(TICKS / INTERVAL);
+    expect(fires.map((fire) => fire.tick)).toEqual([10, 20, 30, 40, 50, 60]);
+    expect(directorFires(down)).toEqual(fires);
+    expect(down.state.director).toEqual(bare.state.director);
+    expect(down.state.director.lastFireTick).toBe(60);
+    // The generator is the same: neither the outage nor the turns that failed drew from it.
+    expect(down.prng).toEqual(bare.prng);
+    // And nothing else differed either: the two journals are one journal, but for the random observation ids a
+    // routine's proposal is stamped with.
+    expect(withoutObservationIds(listEvents(down.store.db))).toEqual(
+      withoutObservationIds(listEvents(bare.store.db)),
+    );
+  });
+
+  test("with the providers answering, the director's fires and the persisted generator are the same: the gods act on the world, they do not draw from its generator", async () => {
+    const bare = newWorld("great-hall", INTERVAL);
+    await runWithGods(bare, TICKS);
+
+    // Legends change what mortals believe, never what they hold or whose place has something open, so the world the
+    // director reads is the bare world's; the fires must then be the bare world's too.
+    const answering = newWorld("great-hall", INTERVAL);
+    const provider = startProvider((god) => LEGEND(god));
+    await runWithGods(answering, TICKS, provider);
+    const committed = listEvents(answering.store.db).filter(
+      (event) => event.kind === "legend-recorded",
+    );
+    expect(committed.length).toBeGreaterThan(0);
+
+    expect(directorFires(answering)).toEqual(directorFires(bare));
+    expect(answering.state.director).toEqual(bare.state.director);
+    expect(answering.prng).toEqual(bare.prng);
+  });
+
+  test("the director's own decision ignores provider status, given the same state: a world marked model-degraded and one not plan the same step from the same generator", async () => {
+    const world = newWorld("great-hall", INTERVAL);
+    for (let index = 0; index < 9; index += 1) tick(world);
+    // Tick 10 is the director's: plan it twice from this very state and generator, with the service's status flipped between.
+    const before = { ...world.state, tick: world.state.tick + 1 };
+    world.statusRef.modelDegraded = false;
+    const healthy = planDirectorStep(before, world.prng);
+    world.statusRef.modelDegraded = true;
+    const degraded = planDirectorStep(before, world.prng);
+    expect(degraded).toEqual(healthy);
+    expect(healthy.events).toHaveLength(1);
+  });
+});
+
 // --- The service ----------------------------------------------------------------------------------------
 //
 // In-process on a fast tick timer; only the stdin protocol is spawned.
@@ -2323,5 +2483,105 @@ describe("a god's refused practice moves", () => {
     expect(
       readLatestPracticeRefusal(world.store.db, id("zeus"), last()),
     ).toBeUndefined();
+  });
+});
+
+// --- The cap on the whole prompt ---------------------------------------------------------------
+
+describe("the prompt cap", () => {
+  const CAP_COLUMNS =
+    "SELECT outcome, exhausted_reason, estimated_tokens, token_ratio, shed_events, shed_actions, shed_memories, shed_prayers FROM trace_model_requests";
+
+  /** Zeus's persona is part of the protected floor: a lore line this long leaves nothing the cap may shed to fit. */
+  function heavyRunner(world: World, provider: Provider): GodTurnRunner {
+    const base = deps(provider, ["zeus"]);
+    return createGodTurnRunner({
+      ...base,
+      profiles: new Map(
+        [...base.profiles].map(([god, profile]) => [
+          god,
+          {
+            ...profile,
+            lore: [
+              ...profile.lore,
+              { id: "heavy", statement: "x".repeat(9_000), cites: [] },
+            ],
+          },
+        ]),
+      ),
+      store: world.store,
+      getState: () => world.state,
+      lifecycle: world.lifecycle,
+      statusRef: world.statusRef,
+    });
+  }
+
+  test("an under-cap turn's trace row carries the estimate, the ratio and zero sheds", async () => {
+    const world = newWorld();
+    const provider = startProvider(() => '{"action":"wait"}');
+    const runner = runnerFor(world, provider, ["zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+
+    const [row] = world.store.db.query(CAP_COLUMNS).all() as Record<
+      string,
+      unknown
+    >[];
+    expect(row).toMatchObject({
+      outcome: "intent",
+      exhausted_reason: null,
+      token_ratio: 2.8,
+      shed_events: 0,
+      shed_actions: 0,
+      shed_memories: 0,
+      shed_prayers: 0,
+    });
+    expect(row?.estimated_tokens).toBeGreaterThan(0);
+    expect(row?.estimated_tokens).toBeLessThanOrEqual(3_000);
+  });
+
+  test("a turn over the cap at the protected floor sends nothing, is recorded exhausted for prompt-over-cap, and leaves the model status and every endpoint as they were", async () => {
+    const world = newWorld();
+    world.statusRef.modelEndpoints = [{ endpoint: "local", state: "ok" }];
+    const provider = startProvider(() => '{"action":"wait"}');
+    const runner = heavyRunner(world, provider);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+
+    expect(provider.requests).toEqual([]);
+    expect(listExternalProposals(world.store.db)).toEqual([]);
+    const rows = world.store.db.query(CAP_COLUMNS).all() as Record<
+      string,
+      unknown
+    >[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      outcome: "exhausted",
+      exhausted_reason: "prompt-over-cap",
+      token_ratio: 2.8,
+    });
+    expect(rows[0]?.estimated_tokens).toBeGreaterThan(3_000);
+    // No provider failed: the model is not degraded and no endpoint changed.
+    expect(world.statusRef.modelDegraded).toBeUndefined();
+    expect(world.statusRef.modelEndpoints).toEqual([
+      { endpoint: "local", state: "ok" },
+    ]);
+
+    // The store reopens with the new columns.
+    restart(world);
+    expect(world.store.db.query(CAP_COLUMNS).all()).toHaveLength(1);
+  });
+
+  test("an ordinary exhausted chain still marks the model degraded", async () => {
+    const world = newWorld();
+    const provider = startProvider(() => 500);
+    const runner = runnerFor(world, provider, ["zeus"]);
+    expect(runner.dispatch()).toBe(true);
+    await runner.idle();
+
+    expect(world.statusRef.modelDegraded).toBe(true);
+    expect(world.store.db.query(CAP_COLUMNS).all()).toMatchObject([
+      { outcome: "exhausted", exhausted_reason: null },
+    ]);
   });
 });

@@ -63,6 +63,7 @@ test("a committed frame produces the expected view model", () => {
       id: "woodcutter",
       locationId: "town-square",
       alive: true,
+      sprite: "placeholder-woodcutter",
       isDeity: false,
       inventory: [
         { resource: "currency", amount: 5 },

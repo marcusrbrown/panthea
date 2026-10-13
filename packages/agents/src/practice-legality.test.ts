@@ -7,6 +7,7 @@
 
 import { expect, test } from "bun:test";
 import type { EventId, WorldEvent } from "@panthea/contracts";
+import { testActor } from "@panthea/testkit/world";
 import {
   applyEvent,
   createPrng,
@@ -366,15 +367,18 @@ test("Hera's own alliance demand, and a counter, fill in the recipient too; a gi
   }
   // With a third god in the world an offering could go to either, so it is not guessed.
   const crowded = new Run();
-  crowded.state = withActor(crowded.state, {
-    id: id("athena"),
-    locationId: id("great-hall"),
-    alive: true,
-    isDeity: true,
-    capabilities: ["divine"],
-    inventory: new Map([["divinity", 10]]),
-    revision: 0,
-  });
+  crowded.state = withActor(
+    crowded.state,
+    testActor({
+      id: id("athena"),
+      locationId: id("great-hall"),
+      alive: true,
+      isDeity: true,
+      capabilities: ["divine"],
+      inventory: new Map([["divinity", 10]]),
+      revision: 0,
+    }),
+  );
   const c = crowded.accused("zeus", "hera", { agent: "zeus", target: "hera" });
   const offering = {
     action: "practice",
@@ -860,31 +864,34 @@ test("a travel that names a building and no destination, as the gate's Zeus sent
   }
 });
 
-test("the way to the petitioner is an object to copy, in the form the parser takes: the owed boon's travel in the digest, and a bless once the petitioner is here", () => {
+test("the owed boon's step is an object to copy, in the form the parser takes: the bless itself in the digest, from where the god stands, whether or not the petitioner is here", () => {
   const { run } = boonOwed();
   const owed = digestOf(run.view("zeus").context.prompt).join("\n");
-  expect(owed).toContain('{"action":"travel","to":"altar"}');
-  // Not a bless object until the god is with the mortal: the parser would refuse it.
-  expect(owed).not.toContain('"action":"bless"');
-  expect(parses(run, "zeus", { action: "travel", to: "altar" })).toMatchObject({
-    ok: true,
-  });
-  // With the petitioner here, the bless is the object shown and it parses.
+  expect(owed).toContain('"action":"bless"');
+  expect(owed).not.toContain("travel");
+  expect(owed).not.toContain('"action":"travel"');
+  const shown = /\{"action":"bless","petition":"([^"]+)"\}/.exec(owed);
+  expect(shown).not.toBeNull();
+  expect(
+    parses(run, "zeus", { action: "bless", petition: shown?.[1] }),
+  ).toMatchObject({ ok: true });
+  // With the petitioner here, the bless is the object shown and it parses, as before.
   const here = new Run();
   here.state = actorAt(here.state, "zeus", "altar");
   const p = here.prays("woodcutter", "zeus");
   here.state = actorAt(here.state, "woodcutter", "altar");
-  const shown = prayersOf(here.view("zeus").context.prompt).join("\n");
-  expect(shown).toContain(`{"action":"bless","petition":"${p}"}`);
+  const seen = prayersOf(here.view("zeus").context.prompt).join("\n");
+  expect(seen).toContain(`{"action":"bless","petition":"${p}"}`);
   expect(parses(here, "zeus", { action: "bless", petition: p }).ok).toBe(true);
 });
 
-test("a prayer's way is one travel to where the petitioner is, from across a realm as from beside it", () => {
+test("a prayer is answered by one bless, from across a realm as from beside it: no way to the petitioner is shown", () => {
   const run = new Run();
   run.state = actorAt(run.state, "zeus", "olympus-gate");
-  run.prays("farmer", "zeus");
+  const petition = run.prays("farmer", "zeus");
   const prayers = prayersOf(run.view("zeus").context.prompt).join("\n");
-  expect(prayers).toContain('{"action":"travel","to":"town-square"}');
+  expect(prayers).toContain(`{"action":"bless","petition":"${petition}"}`);
+  expect(prayers).not.toContain("travel");
   expect(prayers).not.toContain("realm-transition");
 });
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import canonPortrait from "../../../content/greek/assets/registry/manifests/7cbaf7aa67a604b70b9c721dd0b31123d984c1e3034f10cba70c84e277c09c2d.json";
 import vocabularyJson from "../../../content/greek/assets/vocabulary.json";
 import {
   type AssetVocabulary,
@@ -32,27 +33,95 @@ const request = {
   batch: 4,
 };
 
-function generated() {
+const narrowed = {
+  schemaVersion: 1,
+  subject: "zeus",
+  kind: "sprite",
+  slots: [{ state: "idle", direction: "south" }],
+  batch: 1,
+  seed: 20261003,
+};
+
+function generation() {
   return {
-    method: "generated",
     jobId: "job-1",
-    request,
+    request: JSON.parse(JSON.stringify(narrowed)),
     runtime: { name: "stable-diffusion.cpp", version: "master-929-3f8527a" },
     model: { id: "z-image-turbo", sha256: H("a") },
     loras: [{ id: "pixel-lora", sha256: H("b") }],
+    encoder: { id: "qwen3-4b", sha256: H("1") },
+    vae: { id: "z-image-ae", sha256: H("2") },
     seed: 20261003,
     settings: { sample_method: "euler", sample_steps: 8, guidance: 1 },
-    resultHashes: [H("c")],
+    used: [H("c")],
+  };
+}
+
+function generated() {
+  return {
+    method: "generated",
+    generations: [generation()],
     licences: [
+      { subject: "stable-diffusion.cpp", role: "runtime", licence: "MIT" },
       { subject: "z-image-turbo", role: "model", licence: "Apache-2.0" },
       { subject: "pixel-lora", role: "lora", licence: "Apache-2.0" },
+      { subject: "qwen3-4b", role: "encoder", licence: "Apache-2.0" },
+      { subject: "z-image-ae", role: "vae", licence: "Apache-2.0" },
     ],
     relatedJobs: [
-      { jobId: "job-1", status: "succeeded", outputs: [H("c")] },
+      { jobId: "job-1", status: "succeeded", outputs: [H("c"), H("8")] },
       { jobId: "job-0", status: "cancelled" },
     ],
     handEdits: [],
     sourceAssets: [],
+  };
+}
+
+function realmVariant() {
+  return {
+    paletteFamily: "underworld",
+    paletteId: "provisional",
+    atlas: { blob: H("9"), width: 256, height: 160 },
+    map: [
+      {
+        source: { ramp: "marble", index: 0 },
+        target: { ramp: "ash", index: 0 },
+      },
+      {
+        source: { ramp: "marble", index: 1 },
+        target: { ramp: "ash", index: 1 },
+      },
+    ],
+  };
+}
+
+function derivedStep(outputSlot: string, resultHash = H("f")) {
+  return {
+    recipe: "mirror",
+    version: 1,
+    params: { from: "east", to: "west" },
+    source: {
+      assetId: "placeholder-zeus",
+      revision: H("e"),
+      slotKey: outputSlot.replace("west", "east"),
+      slotHash: H("a"),
+    },
+    outputSlot,
+    resultHash,
+  };
+}
+
+function derived(steps: unknown[] = [derivedStep("idle/south")]) {
+  return {
+    method: "derived",
+    operation: "mirror",
+    runtime: { name: "panthea-derive", version: "mirror@1+png@1" },
+    steps,
+    sourceAssets: [{ assetId: "placeholder-zeus", revision: H("e") }],
+    resultHashes: [H("f")],
+    licences: [{ subject: "studio", role: "original-work", licence: "MIT" }],
+    relatedJobs: [],
+    handEdits: [],
   };
 }
 
@@ -70,7 +139,7 @@ function sprite() {
     pivot: { x: 32, y: 80 },
     footprint: { w: 1, h: 1 },
     directions: ["south"],
-    realmVariants: [{ paletteFamily: "underworld", paletteId: "provisional" }],
+    realmVariants: [realmVariant()],
     animations: [
       { state: "idle", direction: "south", frames: frames(4, 64, 80, 167) },
       { state: "seated", direction: "south", frames: frames(2, 64, 80, 200) },
@@ -349,6 +418,25 @@ describe("asset manifests: sprites", () => {
     },
     /durationMs/,
   );
+  it("takes a held idle at 3-6 fps: 333/167/333/167 ms parses, 165 and 335 ms do not", () => {
+    const timed = (durations: number[]) => {
+      const value = sprite();
+      durations.forEach((ms, index) => {
+        value.animations[0].frames[index].durationMs = ms;
+      });
+      return parseAssetManifest(value, vocab);
+    };
+    expect(timed([333, 167, 333, 167]).ok).toBe(true);
+    expect(timed([166, 334, 166, 334]).ok).toBe(true);
+    for (const bad of [165, 335]) {
+      const result = timed([333, bad, 333, 167]);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.path).toContain("animations[0].frames[1].durationMs");
+        expect(result.message).toContain("expected 166-334 ms");
+      }
+    }
+  });
   rejects(
     "a frame outside the atlas",
     sprite,
@@ -372,6 +460,7 @@ describe("asset manifests: sprites", () => {
       v.cell = { w: 64, h: 64 };
       v.pivot = { x: 32, y: 64 };
       v.atlas.height = 64;
+      v.realmVariants[0].atlas.height = 64;
       for (const a of v.animations) for (const f of a.frames) f.rect.h = 64;
     },
     /seated/,
@@ -407,6 +496,51 @@ describe("asset manifests: sprites", () => {
       v.realmVariants[0].paletteFamily = "elysium";
     },
     /realmVariants\[0\]/,
+  );
+  for (const [label, key] of [
+    ["an atlas", "atlas"],
+    ["a colour map", "map"],
+  ] as const) {
+    rejects(
+      `a realm variant without ${label}`,
+      sprite,
+      (v) => {
+        delete v.realmVariants[0][key];
+      },
+      new RegExp(`realmVariants\\[0\\]\\.${key}`),
+    );
+  }
+  rejects(
+    "a realm variant atlas of another size",
+    sprite,
+    (v) => {
+      v.realmVariants[0].atlas.width = 128;
+    },
+    /realmVariants\[0\]\.atlas/,
+  );
+  rejects(
+    "an empty realm colour map",
+    sprite,
+    (v) => {
+      v.realmVariants[0].map = [];
+    },
+    /realmVariants\[0\]\.map/,
+  );
+  rejects(
+    "a realm colour map that maps one source colour twice",
+    sprite,
+    (v) => {
+      v.realmVariants[0].map.push({ ...v.realmVariants[0].map[0] });
+    },
+    /realmVariants\[0\]\.map\[2\]/,
+  );
+  rejects(
+    "a realm colour map entry with a negative index",
+    sprite,
+    (v) => {
+      v.realmVariants[0].map[0].target.index = -1;
+    },
+    /realmVariants\[0\]\.map\[0\]\.target\.index/,
   );
   rejects(
     "a duplicate realm variant",
@@ -542,6 +676,286 @@ describe("asset manifests: portraits and effects", () => {
   });
 });
 
+describe("derived manifests", () => {
+  const withProvenance = (provenance: unknown) => ({
+    ...sprite(),
+    realmVariants: [],
+    provenance,
+  });
+
+  it("parses a derived manifest with two steps", () => {
+    const value = withProvenance(
+      derived([
+        derivedStep("idle/south", H("f")),
+        derivedStep("seated/south", H("c")),
+      ]),
+    );
+    const parsed = parseAssetManifest(value, vocab);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.value.provenance.method !== "derived") return;
+    expect(parsed.value.provenance.steps.map((s) => s.outputSlot)).toEqual([
+      "idle/south",
+      "seated/south",
+    ]);
+    const text = canonicalManifestText(parsed.value);
+    const again = parseAssetManifest(JSON.parse(text), vocab);
+    expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+  });
+
+  it("parses a derived manifest whose other slots are carried, with a per-ability step", () => {
+    const one = parseAssetManifest(withProvenance(derived()), vocab);
+    expect(one.ok).toBe(true);
+    const act = parseAssetManifest(
+      withProvenance(derived([derivedStep("act/south/thunderbolt")])),
+      vocab,
+    );
+    expect(act.ok).toBe(true);
+  });
+
+  it("parses a derived portrait and a derived effect by their slot names", () => {
+    const portraitValue = {
+      ...portrait(),
+      provenance: derived([derivedStep("awed")]),
+    };
+    expect(parseAssetManifest(portraitValue, vocab).ok).toBe(true);
+    const effectValue = {
+      ...effect(),
+      provenance: derived([derivedStep("strike")]),
+    };
+    expect(parseAssetManifest(effectValue, vocab).ok).toBe(true);
+  });
+
+  const derivedRejects = (
+    label: string,
+    mutate: (provenance: Mutable) => void,
+    path: RegExp,
+  ) =>
+    rejects(
+      label,
+      () => withProvenance(derived()),
+      (v) => mutate(v.provenance),
+      path,
+    );
+
+  derivedRejects(
+    "a step whose output slot is not in the manifest's animations",
+    (p) => {
+      p.steps[0].outputSlot = "walk/south";
+    },
+    /provenance\.steps\[0\]\.outputSlot/,
+  );
+  derivedRejects(
+    "empty steps",
+    (p) => {
+      p.steps = [];
+    },
+    /provenance\.steps/,
+  );
+  derivedRejects(
+    "missing steps",
+    (p) => {
+      delete p.steps;
+    },
+    /provenance\.steps/,
+  );
+  derivedRejects(
+    "a malformed source slot hash",
+    (p) => {
+      p.steps[0].source.slotHash = "abc";
+    },
+    /steps\[0\]\.source\.slotHash/,
+  );
+  derivedRejects(
+    "a malformed source revision",
+    (p) => {
+      p.steps[0].source.revision = "XYZ";
+    },
+    /steps\[0\]\.source\.revision/,
+  );
+  derivedRejects(
+    "a malformed result hash",
+    (p) => {
+      p.steps[0].resultHash = H("G");
+    },
+    /steps\[0\]\.resultHash/,
+  );
+  derivedRejects(
+    "a step with no recipe",
+    (p) => {
+      p.steps[0].recipe = "";
+    },
+    /steps\[0\]\.recipe/,
+  );
+  derivedRejects(
+    "a step version that is not a positive integer",
+    (p) => {
+      p.steps[0].version = 0;
+    },
+    /steps\[0\]\.version/,
+  );
+  derivedRejects(
+    "fractional params",
+    (p) => {
+      p.steps[0].params = { dy: 0.5 };
+    },
+    /steps\[0\]\.params\.dy/,
+  );
+  derivedRejects(
+    "an unknown key inside a step",
+    (p) => {
+      p.steps[0].note = "x";
+    },
+    /steps\[0\]\.note/,
+  );
+  derivedRejects(
+    "two steps that output one slot",
+    (p) => {
+      p.steps.push(derivedStep("idle/south", H("c")));
+    },
+    /steps\[1\]/,
+  );
+  const swapStep = (family: string, slot = "idle/south") => ({
+    recipe: "palette-swap",
+    version: 1,
+    params: { sourceFamily: "olympus", targetFamily: family, ramps: [] },
+    source: {
+      assetId: "placeholder-zeus",
+      revision: H("e"),
+      slotKey: slot,
+      slotHash: H("a"),
+    },
+    outputSlot: slot,
+    resultHash: H("b"),
+  });
+  it("lets a palette swap step share its slot with another recipe's step and with swaps into other realms", () => {
+    const provenance = derived([
+      derivedStep("idle/south"),
+      swapStep("underworld"),
+      swapStep("town"),
+    ]);
+
+    expect(parseAssetManifest(withProvenance(provenance), vocab).ok).toBe(true);
+  });
+  derivedRejects(
+    "two palette swap steps for one realm and one slot",
+    (p) => {
+      p.steps.push(swapStep("underworld"), swapStep("underworld"));
+    },
+    /steps\[2\]/,
+  );
+  describe("a generated manifest that carries derived cells", () => {
+    const carrying = (steps: unknown[] = [derivedStep("idle/south")]) => ({
+      ...generated(),
+      steps,
+      sourceAssets: [{ assetId: "placeholder-zeus", revision: H("e") }],
+    });
+    const carriedRejects = (
+      label: string,
+      mutate: (provenance: Mutable) => void,
+      path: RegExp,
+    ) =>
+      rejects(
+        label,
+        () => withProvenance(carrying()),
+        (v) => mutate(v.provenance),
+        path,
+      );
+
+    it("parses with steps, keeps method generated, and round-trips canonically", () => {
+      const parsed = parseAssetManifest(withProvenance(carrying()), vocab);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok || parsed.value.provenance.method !== "generated") return;
+      expect(parsed.value.provenance.steps?.map((s) => s.outputSlot)).toEqual([
+        "idle/south",
+      ]);
+      const text = canonicalManifestText(parsed.value);
+      const again = parseAssetManifest(JSON.parse(text), vocab);
+      expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+    });
+
+    it("parses without steps exactly as before, and writes no steps key", () => {
+      const parsed = parseAssetManifest(withProvenance(generated()), vocab);
+      expect(parsed.ok).toBe(true);
+      if (!parsed.ok) return;
+      expect(canonicalManifestText(parsed.value)).not.toContain('"steps"');
+    });
+
+    carriedRejects(
+      "an empty steps list",
+      (p) => {
+        p.steps = [];
+      },
+      /steps/,
+    );
+    carriedRejects(
+      "two steps for one slot",
+      (p) => {
+        p.steps.push(derivedStep("idle/south", H("c")));
+      },
+      /steps\[1\]/,
+    );
+    carriedRejects(
+      "a step whose source is not among the source assets",
+      (p) => {
+        p.steps[0].source.revision = H("d");
+      },
+      /steps\[0\]\.source/,
+    );
+    carriedRejects(
+      "a __proto__ key in a step's params",
+      (p) => {
+        p.steps[0].params = JSON.parse('{"__proto__": {"dy": 1}}');
+      },
+      /steps\[0\]\.params\.__proto__/,
+    );
+    carriedRejects(
+      "a step for a slot the manifest does not hold",
+      (p) => {
+        p.steps = [derivedStep("walk/south")];
+      },
+      /steps\[0\]\.outputSlot/,
+    );
+  });
+
+  derivedRejects(
+    "a source asset that is absent",
+    (p) => {
+      p.sourceAssets = [];
+    },
+    /sourceAssets/,
+  );
+  derivedRejects(
+    "a step whose source revision is not among the source assets",
+    (p) => {
+      p.steps[0].source.revision = H("d");
+    },
+    /steps\[0\]\.source/,
+  );
+  derivedRejects(
+    "a step whose source asset is not among the source assets",
+    (p) => {
+      p.steps[0].source.assetId = "placeholder-hera";
+    },
+    /steps\[0\]\.source/,
+  );
+  derivedRejects(
+    "a __proto__ key in a step's params",
+    (p) => {
+      p.steps[0].params = JSON.parse(
+        '{"__proto__": {"dy": 1}, "from": "east"}',
+      );
+    },
+    /steps\[0\]\.params\.__proto__/,
+  );
+  derivedRejects(
+    "a __proto__ key nested in a step's params",
+    (p) => {
+      p.steps[0].params = JSON.parse('{"ramps": [{"__proto__": {"x": 1}}]}');
+    },
+    /steps\[0\]\.params\.ramps\[0\]\.__proto__/,
+  );
+});
+
 describe("provenance", () => {
   const provenanceRejects = (
     label: string,
@@ -569,6 +983,7 @@ describe("provenance", () => {
         method: "derived",
         operation: "mirror",
         runtime: { name: "panthea", version: "1" },
+        steps: [derivedStep("idle/south")],
         sourceAssets: [{ assetId: "placeholder-zeus", revision: H("e") }],
         resultHashes: [H("f")],
         licences: [
@@ -579,6 +994,56 @@ describe("provenance", () => {
       }).ok,
     ).toBe(true);
   });
+
+  it("takes a hand step, a script step and the canon portrait's old-form steps", () => {
+    const withSteps = (handEdits: unknown[]) => ({ ...generated(), handEdits });
+    const hash = H("e");
+    const parsed = parseProvenance(
+      withSteps([
+        { description: "hand edit e1", hash },
+        {
+          description:
+            "scripted outline recolour (tools/probes/art-edit/sprite_cleanup_c2c.py)",
+          method: "script",
+          hash,
+        },
+        { description: "redrew the hands", method: "hand" },
+      ]),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.handEdits.map((s) => s.method)).toEqual([
+      undefined,
+      "script",
+      "hand",
+    ]);
+    expect("method" in (parsed.value.handEdits[0] ?? {})).toBe(false);
+
+    const canon = parseAssetManifest(canonPortrait, vocab);
+    expect(canon.ok).toBe(true);
+    if (!canon.ok) return;
+    expect(canon.value.provenance.handEdits.length).toBeGreaterThan(0);
+    expect(canon.value.provenance.handEdits.some((s) => "method" in s)).toBe(
+      false,
+    );
+  });
+
+  for (const [label, step, path] of [
+    [
+      "an empty description",
+      { description: "", method: "script" },
+      /description/,
+    ],
+    ["a missing description", { method: "script" }, /description/],
+    ["an unknown method", { description: "x", method: "magic" }, /method/],
+    ["a non-string method", { description: "x", method: 1 }, /method/],
+  ] as const) {
+    it(`rejects a hand-edit step with ${label}`, () => {
+      const result = parseProvenance({ ...generated(), handEdits: [step] });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(`${result.path} ${result.message}`).toMatch(path);
+    });
+  }
 
   provenanceRejects(
     "an unknown method",
@@ -606,45 +1071,181 @@ describe("provenance", () => {
     /licences/,
   );
   provenanceRejects(
-    "a model with no licence record",
+    "no generations",
     generated,
     (v) => {
-      v.licences = [v.licences[1]];
+      v.generations = [];
     },
-    /licences.*z-image-turbo/,
+    /generations/,
   );
   provenanceRejects(
-    "a LoRA with no licence record",
+    "the old single-job fields",
     generated,
     (v) => {
-      v.licences = [v.licences[0]];
-    },
-    /licences.*pixel-lora/,
-  );
-  provenanceRejects(
-    "a source job missing from the job refs",
-    generated,
-    (v) => {
-      v.jobId = "job-9";
+      v.jobId = "job-1";
     },
     /jobId/,
   );
   provenanceRejects(
-    "a cancelled source job",
+    "old result hashes beside generations",
     generated,
     (v) => {
-      v.jobId = "job-0";
-    },
-    /jobId/,
-  );
-  provenanceRejects(
-    "result hashes that differ from the job outputs",
-    generated,
-    (v) => {
-      v.resultHashes = [H("9")];
+      v.resultHashes = [H("c")];
     },
     /resultHashes/,
   );
+  provenanceRejects(
+    "a duplicate generation job id",
+    generated,
+    (v) => {
+      v.generations.push(JSON.parse(JSON.stringify(v.generations[0])));
+    },
+    /generations\[1\].*duplicate/,
+  );
+  provenanceRejects(
+    "a generation whose job is missing from the job refs",
+    generated,
+    (v) => {
+      v.generations[0].jobId = "job-9";
+    },
+    /generations\[0\]\.jobId/,
+  );
+  provenanceRejects(
+    "a generation whose job was cancelled",
+    generated,
+    (v) => {
+      v.generations[0].jobId = "job-0";
+    },
+    /generations\[0\]\.jobId/,
+  );
+  provenanceRejects(
+    "a generation that uses no outputs",
+    generated,
+    (v) => {
+      v.generations[0].used = [];
+    },
+    /generations\[0\]\.used/,
+  );
+  provenanceRejects(
+    "a generation that lists a used hash twice",
+    generated,
+    (v) => {
+      v.generations[0].used = [H("c"), H("c")];
+    },
+    /generations\[0\]\.used/,
+  );
+  provenanceRejects(
+    "a used hash the job never output",
+    generated,
+    (v) => {
+      v.generations[0].used = [H("9")];
+    },
+    /generations\[0\]\.used/,
+  );
+  provenanceRejects(
+    "a request with two slots",
+    generated,
+    (v) => {
+      v.generations[0].request.slots.push({
+        state: "idle",
+        direction: "north",
+      });
+    },
+    /generations\[0\]\.request/,
+  );
+  provenanceRejects(
+    "a request that asks for a batch",
+    generated,
+    (v) => {
+      v.generations[0].request.batch = 4;
+    },
+    /generations\[0\]\.request/,
+  );
+  provenanceRejects(
+    "a request without a seed",
+    generated,
+    (v) => {
+      delete v.generations[0].request.seed;
+    },
+    /generations\[0\]\.request/,
+  );
+  provenanceRejects(
+    "a seed that is not the request's seed",
+    generated,
+    (v) => {
+      v.generations[0].seed = 1;
+    },
+    /generations\[0\]\.seed/,
+  );
+  for (const [label, role, subject, change] of [
+    ["the runtime", "runtime", "stable-diffusion.cpp", undefined],
+    ["the model", "model", "z-image-turbo", undefined],
+    ["a LoRA", "lora", "pixel-lora", undefined],
+    ["the text encoder", "encoder", "qwen3-4b", undefined],
+    ["the VAE", "vae", "z-image-ae", undefined],
+  ] as const) {
+    void change;
+    provenanceRejects(
+      `${label} with no licence record`,
+      generated,
+      (v) => {
+        v.licences = v.licences.filter(
+          (licence: { subject: string }) => licence.subject !== subject,
+        );
+      },
+      new RegExp(`licences.*${subject.replace(".", "\\.")}`),
+    );
+    provenanceRejects(
+      `${label} licensed under the wrong role`,
+      generated,
+      (v) => {
+        for (const licence of v.licences)
+          if (licence.subject === subject)
+            licence.role = role === "runtime" ? "model" : "runtime";
+      },
+      new RegExp(
+        `licences.*${role} licence record for "${subject.replace(".", "\\.")}"`,
+      ),
+    );
+  }
+  provenanceRejects(
+    "a runtime licensed by its version instead of its name",
+    generated,
+    (v) => {
+      v.licences[0].subject = "master-929-3f8527a";
+    },
+    /licences.*stable-diffusion\.cpp/,
+  );
+
+  it("accepts a generation without an encoder or a VAE, and several generations", () => {
+    const bare = generated();
+    bare.generations[0].encoder = null as never;
+    bare.generations[0].vae = null as never;
+    bare.licences = bare.licences.filter(
+      (l) => l.role !== "encoder" && l.role !== "vae",
+    );
+    expect(parseProvenance(bare).ok).toBe(true);
+
+    const two = generated();
+    const second = generation();
+    second.jobId = "job-2";
+    second.request = { ...narrowed, seed: 20261004 };
+    second.seed = 20261004;
+    second.used = [H("d")];
+    two.generations.push(second);
+    two.relatedJobs.push({
+      jobId: "job-2",
+      status: "succeeded",
+      outputs: [H("d")],
+    });
+    const parsed = parseProvenance(two);
+    expect(
+      parsed.ok &&
+        parsed.value.method === "generated" &&
+        parsed.value.generations.map((g) => g.jobId),
+    ).toEqual(["job-1", "job-2"]);
+  });
+
   provenanceRejects(
     "a cancelled job that carries outputs",
     generated,
@@ -681,25 +1282,25 @@ describe("provenance", () => {
     "a credential-looking setting key",
     generated,
     (v) => {
-      v.settings.apiKey = "abc";
+      v.generations[0].settings.apiKey = "abc";
     },
-    /settings\.apiKey/,
+    /generations\[0\]\.settings\.apiKey/,
   );
   provenanceRejects(
     "an endpoint in a setting value",
     generated,
     (v) => {
-      v.settings.server = "http://127.0.0.1:8080";
+      v.generations[0].settings.server = "http://127.0.0.1:8080";
     },
-    /settings\.server/,
+    /generations\[0\]\.settings\.server/,
   );
   provenanceRejects(
     "a non-scalar setting",
     generated,
     (v) => {
-      v.settings.nested = { a: 1 };
+      v.generations[0].settings.nested = { a: 1 };
     },
-    /settings\.nested/,
+    /generations\[0\]\.settings\.nested/,
   );
   provenanceRejects(
     "a hand record without edit steps",
@@ -715,6 +1316,7 @@ describe("provenance", () => {
       method: "derived",
       operation: "mirror",
       runtime: { name: "p", version: "1" },
+      steps: [derivedStep("idle/south")],
       sourceAssets: [],
       resultHashes: [H("f")],
       licences: [{ subject: "studio", role: "original-work", licence: "MIT" }],
@@ -791,5 +1393,700 @@ describe("generation requests", () => {
         v.schemaVersion = 3;
       }),
     ).toBe(false);
+  });
+
+  describe("a published edit base", () => {
+    const published = {
+      kind: "published",
+      assetId: "zeus-sprite",
+      revision: H("1"),
+      slotKey: "idle/south",
+      frameIndex: 2,
+      frameHash: H("2"),
+    };
+    const withBase = (base: unknown) =>
+      parseGenerationRequest({
+        ...request,
+        edit: { base, mask: H("3"), strength: 0.5, cue: "turn east" },
+      });
+
+    it("parses and keeps every field", () => {
+      const parsed = withBase(published);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok)
+        expect(parsed.value.edit?.base).toEqual(published as never);
+    });
+
+    for (const [label, change, path] of [
+      ["a malformed frame hash", { frameHash: "abc" }, /base\.frameHash/],
+      ["a malformed revision", { revision: H("Z") }, /base\.revision/],
+      ["a negative frame index", { frameIndex: -1 }, /base\.frameIndex/],
+      ["a fractional frame index", { frameIndex: 1.5 }, /base\.frameIndex/],
+      ["an invalid asset id", { assetId: "Zeus Sprite" }, /base\.assetId/],
+      ["an empty slot key", { slotKey: "" }, /base\.slotKey/],
+      ["an unknown key", { extra: 1 }, /extra/],
+    ] as const) {
+      it(`rejects ${label}`, () => {
+        const result = withBase({ ...published, ...change });
+        expect(result.ok).toBe(false);
+        if (!result.ok)
+          expect(`${result.path} ${result.message}`).toMatch(path);
+      });
+    }
+
+    it("rejects a published base with a field missing", () => {
+      const { frameHash: _frameHash, ...rest } = published;
+      expect(withBase(rest).ok).toBe(false);
+    });
+  });
+});
+
+// --- Retro: god-tall cell, recipe requests, rendered provenance ---------------------
+
+const hashOf = (n: number) => n.toString(16).padStart(64, "0");
+
+function handProvenance() {
+  return {
+    method: "hand",
+    handEdits: [{ description: "drawn in the editor" }],
+    licences: [{ subject: "studio", role: "original-work", licence: "MIT" }],
+    relatedJobs: [],
+    sourceAssets: [],
+  };
+}
+
+const FACINGS = ["south", "north", "east", "west"] as const;
+
+function godTallSprite(
+  animations: Mutable[] = [
+    { state: "walk", direction: "south", frames: frames(16, 112, 96, 50) },
+  ],
+) {
+  return {
+    schemaVersion: 1,
+    kind: "sprite",
+    id: "zeus-retro",
+    cell: { w: 112, h: 96 },
+    pixelScale: 1,
+    paletteFamily: "olympus",
+    paletteId: "greek-retro",
+    styleTag: "retro",
+    atlas: { blob: H("d"), width: 112 * 16, height: 96 },
+    pivot: { x: 56, y: 78 },
+    footprint: { w: 1, h: 1 },
+    directions: ["south", "north", "east", "west"],
+    realmVariants: [],
+    animations,
+    provenance: handProvenance(),
+  };
+}
+
+const parsesAs = (value: Mutable) => parseAssetManifest(value, vocab);
+
+describe("asset manifests: the god-tall cell", () => {
+  it("parses a 112x96 manifest with pivot (56,78) and a 16-frame walk at 50 ms per frame", () => {
+    const parsed = parsesAs(godTallSprite());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.kind === "sprite" && parsed.value.pivot).toEqual({
+      x: 56,
+      y: 78,
+    });
+    const text = canonicalManifestText(parsed.value);
+    const again = parseAssetManifest(JSON.parse(text), vocab);
+    expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+  });
+
+  it("refuses a god-tall walk that is the legacy 6 frames, or 51 ms, or 15 frames", () => {
+    for (const [label, count, ms] of [
+      ["6 frames", 6, 50],
+      ["15 frames", 15, 50],
+      ["51 ms", 16, 51],
+      ["49 ms", 16, 49],
+    ] as const) {
+      const result = parsesAs(
+        godTallSprite([
+          {
+            state: "walk",
+            direction: "south",
+            frames: frames(count, 112, 96, ms),
+          },
+        ]),
+      );
+      expect(result.ok, label).toBe(false);
+      if (!result.ok) expect(result.path, label).toMatch(/animations\[0\]/);
+    }
+  });
+
+  it("keeps the legacy god walk: 6 frames at 10 fps applies to 64x80, and a 16-frame walk on god is refused", () => {
+    const godWalk = (count: number, ms: number) => {
+      const value = sprite();
+      value.animations = [
+        {
+          state: "walk",
+          direction: "south",
+          frames: frames(count, 64, 80, ms),
+        },
+      ];
+      value.atlas = { blob: H("d"), width: 64 * 16, height: 80 };
+      value.realmVariants[0].atlas = {
+        blob: H("9"),
+        width: 64 * 16,
+        height: 80,
+      };
+      return value;
+    };
+    expect(parsesAs(godWalk(6, 100)).ok).toBe(true);
+    const sixteen = parsesAs(godWalk(16, 50));
+    expect(sixteen.ok).toBe(false);
+    if (!sixteen.ok) expect(sixteen.path).toMatch(/animations\[0\]\.frames/);
+    // The legacy rule is not loosened to the retro timing either.
+    expect(parsesAs(godWalk(6, 50)).ok).toBe(false);
+  });
+
+  it("takes seated on god-tall and still refuses it on mortal", () => {
+    const seated = godTallSprite([
+      { state: "seated", direction: "south", frames: frames(8, 112, 96, 100) },
+    ]);
+    expect(parsesAs(seated).ok).toBe(true);
+    const mortal = sprite();
+    mortal.cell = { w: 64, h: 64 };
+    mortal.pivot = { x: 32, y: 64 };
+    mortal.atlas.height = 64;
+    mortal.realmVariants[0].atlas.height = 64;
+    for (const a of mortal.animations) for (const f of a.frames) f.rect.h = 64;
+    const refused = parsesAs(mortal);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(`${refused.path} ${refused.message}`).toMatch(/seated/);
+  });
+
+  it("takes idle and act (per ability) on god-tall within the retro ranges", () => {
+    const value = godTallSprite([
+      { state: "idle", direction: "south", frames: frames(8, 112, 96, 167) },
+      {
+        state: "act",
+        direction: "south",
+        ability: "thunderbolt",
+        frames: frames(12, 112, 96, 60),
+      },
+    ]);
+    expect(parsesAs(value).ok).toBe(true);
+    const noAbility = godTallSprite([
+      { state: "act", direction: "south", frames: frames(12, 112, 96, 60) },
+    ]);
+    expect(parsesAs(noAbility).ok).toBe(false);
+  });
+
+  it("refuses a state god-tall has no rule for", () => {
+    const hurt = godTallSprite([
+      { state: "hurt", direction: "south", frames: frames(2, 112, 96, 100) },
+    ]);
+    const result = parsesAs(hurt);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toMatch(/animations\[0\]\.state/);
+  });
+
+  it("keeps a pivot inside the 112x96 cell", () => {
+    for (const [pivot, accepted] of [
+      [{ x: 56, y: 78 }, true],
+      [{ x: 112, y: 96 }, true],
+      [{ x: 113, y: 78 }, false],
+      [{ x: 56, y: 97 }, false],
+      [{ x: -1, y: 78 }, false],
+    ] as const) {
+      const value = godTallSprite();
+      value.pivot = pivot;
+      const result = parsesAs(value);
+      expect(result.ok, JSON.stringify(pivot)).toBe(accepted);
+      if (!result.ok) expect(result.path).toMatch(/pivot/);
+    }
+  });
+
+  it("refuses frames that are the god cell size on a god-tall manifest", () => {
+    const value = godTallSprite([
+      { state: "walk", direction: "south", frames: frames(16, 64, 80, 50) },
+    ]);
+    expect(parsesAs(value).ok).toBe(false);
+  });
+});
+
+describe("recipe requests", () => {
+  const recipe = {
+    schemaVersion: 1,
+    subject: "zeus",
+    kind: "sprite",
+    slots: [{ state: "walk", direction: "south" }],
+    recipe: {
+      profile: "zeus",
+      palette: "greek-retro",
+      pivot: { x: 56, y: 78 },
+    },
+  };
+  const parseWith = (mutate: (v: Mutable) => void) => {
+    const value = JSON.parse(JSON.stringify(recipe)) as Mutable;
+    mutate(value);
+    return parseGenerationRequest(value);
+  };
+
+  it("parses, storing batch 1 and seed 0 and no camera", () => {
+    const parsed = parseGenerationRequest(recipe);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.batch).toBe(1);
+    expect(parsed.value.seed).toBe(0);
+    expect(parsed.value.recipe).toEqual({
+      profile: "zeus",
+      palette: "greek-retro",
+      pivot: { x: 56, y: 78 },
+    });
+    expect(JSON.stringify(parsed.value)).not.toContain("camera");
+    // The stored form parses again unchanged.
+    expect(
+      parseGenerationRequest(JSON.parse(JSON.stringify(parsed.value))),
+    ).toEqual(parsed);
+  });
+
+  it("refuses a seed other than 0 and a batch above 1 (positive control: seed 0 and batch 1 parse)", () => {
+    expect(
+      parseWith((v) => {
+        v.seed = 0;
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseWith((v) => {
+        v.batch = 1;
+      }).ok,
+    ).toBe(true);
+    for (const [label, mutate] of [
+      [
+        "seed 1",
+        (v: Mutable) => {
+          v.seed = 1;
+        },
+      ],
+      [
+        "seed 20261003",
+        (v: Mutable) => {
+          v.seed = 20261003;
+        },
+      ],
+      [
+        "batch 2",
+        (v: Mutable) => {
+          v.batch = 2;
+        },
+      ],
+      [
+        "batch 4",
+        (v: Mutable) => {
+          v.batch = 4;
+        },
+      ],
+    ] as const) {
+      const result = parseWith(mutate);
+      expect(result.ok, label).toBe(false);
+      if (!result.ok) expect(result.path, label).toMatch(/seed|batch/);
+    }
+  });
+
+  it("refuses a style note, an edit, a camera id, a portrait and a malformed recipe", () => {
+    for (const [label, mutate] of [
+      [
+        "styleNote",
+        (v: Mutable) => {
+          v.styleNote = "dusk";
+        },
+      ],
+      [
+        "edit",
+        (v: Mutable) => {
+          v.edit = {
+            base: { kind: "hand", image: H("1"), description: "x" },
+            mask: H("2"),
+            strength: 0.5,
+            cue: "turn",
+          };
+        },
+      ],
+      [
+        "camera",
+        (v: Mutable) => {
+          v.recipe.camera = "iso-2-1";
+        },
+      ],
+      [
+        "portrait kind",
+        (v: Mutable) => {
+          v.kind = "portrait";
+          v.slots = [{ expression: "neutral" }];
+        },
+      ],
+      [
+        "empty profile",
+        (v: Mutable) => {
+          v.recipe.profile = "";
+        },
+      ],
+      [
+        "missing palette",
+        (v: Mutable) => {
+          delete v.recipe.palette;
+        },
+      ],
+      [
+        "fractional pivot",
+        (v: Mutable) => {
+          v.recipe.pivot = { x: 56.5, y: 78 };
+        },
+      ],
+      [
+        "negative pivot",
+        (v: Mutable) => {
+          v.recipe.pivot = { x: -1, y: 78 };
+        },
+      ],
+      [
+        "missing pivot",
+        (v: Mutable) => {
+          delete v.recipe.pivot;
+        },
+      ],
+    ] as const) {
+      expect(parseWith(mutate).ok, label).toBe(false);
+    }
+  });
+
+  it("leaves image requests as they were: batch is required and a seed is free", () => {
+    expect(parseGenerationRequest(request).ok).toBe(true);
+    const { batch: _batch, ...noBatch } = request;
+    expect(parseGenerationRequest(noBatch).ok).toBe(false);
+    expect(parseGenerationRequest({ ...request, seed: 7 }).ok).toBe(true);
+  });
+});
+
+describe("rendered provenance", () => {
+  const revisionHash = hashOf(0xaaa);
+
+  function pin() {
+    return { version: "5.2.2", build: "d13f752e3b9c", sha256: H("a") };
+  }
+
+  function revisionRecipe() {
+    return {
+      hash: revisionHash,
+      profile: { id: "zeus", hash: H("1") },
+      camera: H("2"),
+      palette: { id: "greek-retro", digest: H("3") },
+      pivot: { x: 56, y: 78 },
+      script: H("4"),
+      postStep: 1,
+      blender: pin(),
+      kit: H("5"),
+      stamps: H("6"),
+    };
+  }
+
+  function renderedSlot(
+    state: string,
+    facing: string,
+    frameCount: number,
+    ability?: string,
+    at = 0,
+  ) {
+    const roleHashes = (role: number) =>
+      Array.from({ length: frameCount }, (_, i) =>
+        hashOf(role * 1000 + at * 100 + i + 1),
+      );
+    return {
+      slotKey: [state, facing, ability]
+        .filter((p) => p !== undefined)
+        .join("/"),
+      recipeHash: hashOf(0xb00 + at),
+      revisionRecipeHash: revisionHash,
+      state,
+      clip: state === "act" ? "Spell_Simple_Shoot" : "Walking_A",
+      facing,
+      ...(ability === undefined ? {} : { ability }),
+      seed: 0,
+      frameCount,
+      raw: { colour: roleHashes(1), id: roleHashes(2), depth: roleHashes(3) },
+    };
+  }
+
+  function rendered(
+    slots: Mutable[] = [renderedSlot("walk", "south", 16)],
+  ): Mutable {
+    return {
+      method: "rendered",
+      revisionRecipe: revisionRecipe(),
+      slots,
+      licences: [
+        { subject: "quaternius-kit", role: "input", licence: "CC0-1.0" },
+        { subject: "blender", role: "runtime", licence: "GPL-3.0-or-later" },
+      ],
+      relatedJobs: [
+        { jobId: "zeus-retro-0000", status: "succeeded", outputs: [H("7")] },
+      ],
+      handEdits: [],
+      sourceAssets: [],
+    };
+  }
+
+  const renderedManifest = (provenance: Mutable = rendered()) => ({
+    ...godTallSprite(),
+    provenance,
+  });
+
+  it("round-trips through the provenance parser and the manifest, canonically", () => {
+    const parsed = parseProvenance(rendered());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.method).toBe("rendered");
+    const again = parseProvenance(JSON.parse(JSON.stringify(parsed.value)));
+    expect(again).toEqual(parsed);
+    const manifest = parsesAs(renderedManifest());
+    expect(manifest.ok).toBe(true);
+    if (!manifest.ok) return;
+    const text = canonicalManifestText(manifest.value);
+    const reparsed = parseAssetManifest(JSON.parse(text), vocab);
+    expect(reparsed.ok && canonicalManifestText(reparsed.value)).toBe(text);
+  });
+
+  it("keeps every recorded field", () => {
+    const parsed = parseProvenance(rendered());
+    if (!parsed.ok || parsed.value.method !== "rendered")
+      throw new Error("expected rendered provenance");
+    expect(parsed.value.revisionRecipe).toEqual(revisionRecipe() as never);
+    expect(parsed.value.slots[0]).toEqual(
+      renderedSlot("walk", "south", 16) as never,
+    );
+  });
+
+  it("covers an ability slot and all four facings", () => {
+    const slots = FACINGS.map((facing, at) =>
+      renderedSlot("act", facing, 12, "thunderbolt", at),
+    );
+    expect(parseProvenance(rendered(slots)).ok).toBe(true);
+  });
+
+  const missing = (label: string, mutate: (v: Mutable) => void, path: RegExp) =>
+    it(`refuses ${label}`, () => {
+      const value = rendered();
+      mutate(value);
+      const result = parseProvenance(value);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(`${result.path} ${result.message}`).toMatch(path);
+    });
+
+  for (const field of ["version", "build", "sha256"] as const) {
+    missing(
+      `a Blender pin with no ${field}`,
+      (v) => {
+        delete v.revisionRecipe.blender[field];
+      },
+      new RegExp(`blender\\.${field}`),
+    );
+  }
+  for (const field of [
+    "hash",
+    "profile",
+    "camera",
+    "palette",
+    "pivot",
+    "script",
+    "postStep",
+    "blender",
+    "kit",
+    "stamps",
+  ] as const) {
+    missing(
+      `a revision recipe with no ${field}`,
+      (v) => {
+        delete v.revisionRecipe[field];
+      },
+      new RegExp(`revisionRecipe\\.${field}`),
+    );
+  }
+  missing(
+    "a profile with no hash",
+    (v) => {
+      delete v.revisionRecipe.profile.hash;
+    },
+    /profile\.hash/,
+  );
+  missing(
+    "a palette with no digest",
+    (v) => {
+      delete v.revisionRecipe.palette.digest;
+    },
+    /palette\.digest/,
+  );
+  missing(
+    "a malformed pin hash",
+    (v) => {
+      v.revisionRecipe.blender.sha256 = "abc";
+    },
+    /blender\.sha256/,
+  );
+  missing(
+    "a non-hex Blender build",
+    (v) => {
+      v.revisionRecipe.blender.build = "not a hash";
+    },
+    /blender\.build/,
+  );
+  missing(
+    "a camera id on the recipe",
+    (v) => {
+      v.revisionRecipe.cameraId = "iso";
+    },
+    /cameraId/,
+  );
+  missing(
+    "no slots",
+    (v) => {
+      v.slots = [];
+    },
+    /slots/,
+  );
+  missing(
+    "a slot with a seed other than 0",
+    (v) => {
+      v.slots[0].seed = 1;
+    },
+    /slots\[0\]\.seed/,
+  );
+  missing(
+    "a slot whose key is not state/facing",
+    (v) => {
+      v.slots[0].slotKey = "walk/north";
+    },
+    /slots\[0\]\.slotKey/,
+  );
+  missing(
+    "a slot with no recipe hash",
+    (v) => {
+      delete v.slots[0].recipeHash;
+    },
+    /slots\[0\]\.recipeHash/,
+  );
+  missing(
+    "a slot with no clip",
+    (v) => {
+      delete v.slots[0].clip;
+    },
+    /slots\[0\]\.clip/,
+  );
+  missing(
+    "a slot with no raw depth hashes",
+    (v) => {
+      delete v.slots[0].raw.depth;
+    },
+    /raw\.depth/,
+  );
+  missing(
+    "raw hashes that disagree with the frame count",
+    (v) => {
+      v.slots[0].raw.id.pop();
+    },
+    /raw\.id/,
+  );
+  missing(
+    "a zero frame count",
+    (v) => {
+      v.slots[0].frameCount = 0;
+      v.slots[0].raw = { colour: [], id: [], depth: [] };
+    },
+    /frameCount/,
+  );
+  missing(
+    "a duplicate slot key",
+    (v) => {
+      v.slots.push({ ...v.slots[0] });
+    },
+    /slots\[1\]/,
+  );
+  missing(
+    "a slot rendered under another revision recipe hash",
+    (v) => {
+      v.slots[0].revisionRecipeHash = hashOf(0xccc);
+    },
+    /slots\[0\]\.revisionRecipeHash/,
+  );
+  missing(
+    "no licence record",
+    (v) => {
+      v.licences = [];
+    },
+    /licences/,
+  );
+  missing(
+    "an unknown key",
+    (v) => {
+      v.generations = [];
+    },
+    /generations/,
+  );
+
+  it("refuses slots that differ in revision recipe hash, whichever slot differs", () => {
+    const slots = [
+      renderedSlot("walk", "south", 16, undefined, 0),
+      renderedSlot("walk", "north", 16, undefined, 1),
+    ];
+    expect(parseProvenance(rendered(slots)).ok).toBe(true);
+    const odd = JSON.parse(JSON.stringify(slots)) as Mutable[];
+    (odd[1] as Mutable).revisionRecipeHash = hashOf(0xddd);
+    const result = parseProvenance(rendered(odd));
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.path).toMatch(/slots\[1\]\.revisionRecipeHash/);
+  });
+
+  it("refuses a rendered slot absent from the manifest, a different frame count, and a different pivot", () => {
+    expect(parsesAs(renderedManifest()).ok).toBe(true);
+    const absent = parsesAs(
+      renderedManifest(rendered([renderedSlot("walk", "north", 16)])),
+    );
+    expect(absent.ok).toBe(false);
+    if (!absent.ok) expect(absent.path).toMatch(/provenance\.slots\[0\]/);
+    const shorter = parsesAs(
+      renderedManifest(rendered([renderedSlot("walk", "south", 15)])),
+    );
+    expect(shorter.ok).toBe(false);
+    if (!shorter.ok)
+      expect(shorter.path).toMatch(/provenance\.slots\[0\]\.frameCount/);
+    const provenance = rendered();
+    provenance.revisionRecipe.pivot = { x: 50, y: 78 };
+    const moved = parsesAs(renderedManifest(provenance));
+    expect(moved.ok).toBe(false);
+    if (!moved.ok) expect(moved.path).toMatch(/revisionRecipe\.pivot/);
+  });
+
+  it("is a sprite method: a portrait or an effect cannot be rendered", () => {
+    const asPortrait = { ...portrait(), provenance: rendered() };
+    expect(parsesAs(asPortrait).ok).toBe(false);
+    const asEffect = { ...effect(), provenance: rendered() };
+    expect(parsesAs(asEffect).ok).toBe(false);
+  });
+
+  it("keeps GenerationRef.model non-null, and a generation never records a recipe request", () => {
+    expect(parseProvenance(generated()).ok).toBe(true);
+    const noModel: Mutable = generated();
+    noModel.generations[0].model = null;
+    const refusedModel = parseProvenance(noModel);
+    expect(refusedModel.ok).toBe(false);
+    if (!refusedModel.ok)
+      expect(refusedModel.path).toMatch(/generations\[0\]\.model/);
+    const recipeRef: Mutable = generated();
+    recipeRef.generations[0].request.recipe = {
+      profile: "zeus",
+      palette: "greek-retro",
+      pivot: { x: 56, y: 78 },
+    };
+    const refusedRecipe = parseProvenance(recipeRef);
+    expect(refusedRecipe.ok).toBe(false);
+    if (!refusedRecipe.ok)
+      expect(refusedRecipe.path).toMatch(/generations\[0\]\.request/);
   });
 });

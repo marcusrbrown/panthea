@@ -1,0 +1,331 @@
+import type {
+  CandidateRecord,
+  EditRecord,
+  JobRecord,
+  RequestRecord,
+  StudioAssetRecord,
+  StudioStatus,
+  WorkingSetRecord,
+} from "@panthea/assets/studio";
+
+export type Json =
+  | null
+  | boolean
+  | number
+  | string
+  | Json[]
+  | { [key: string]: Json };
+
+export interface Failure {
+  readonly code: string;
+  readonly message: string;
+  readonly [key: string]: Json;
+}
+
+export type Outcome =
+  | { readonly ok: true; readonly result: Json }
+  | { readonly ok: false; readonly error: Failure };
+
+const USAGE_CODES: readonly string[] = [
+  "invalid-arguments",
+  "unknown-op",
+  "invalid-request",
+  "missing-config",
+  "invalid-config",
+  "invalid-content",
+];
+
+/** 0 success, 64 usage or config problems, 1 every other refusal or failure. */
+export const exitOf = (outcome: Outcome): 0 | 1 | 64 =>
+  outcome.ok ? 0 : USAGE_CODES.includes(outcome.error.code) ? 64 : 1;
+
+export const done = (result: Json): Outcome => ({ ok: true, result });
+
+export const refuse = (
+  code: string,
+  message: string,
+  extra: Record<string, Json> = {},
+): Outcome => ({ ok: false, error: { ...extra, code, message } });
+
+const MAX_MESSAGE = 200;
+
+/** A message safe to print: its first line, without a captured output tail, bounded. */
+export function safeMessage(text: string): string {
+  const head = (text.split("\n")[0] ?? "").split(" Output:")[0] ?? "";
+  const trimmed = head.trim();
+  return trimmed.length <= MAX_MESSAGE
+    ? trimmed
+    : `${trimmed.slice(0, MAX_MESSAGE - 1)}…`;
+}
+
+/** The candidate record a job has, if any: a candidate's id is its job's id. */
+export type CandidateKinds = ReadonlyMap<string, "done" | "needs-scale">;
+
+/**
+ * `candidates`, when given, adds `candidate` to a succeeded job: `"done"`,
+ * `"needs-scale"`, or null when it has not been conformed. Without it the
+ * summary is what it always was.
+ */
+export function jobSummary(
+  record: JobRecord,
+  candidates?: CandidateKinds,
+): Json {
+  const { job, source } = record;
+  const base = {
+    id: job.id,
+    status: job.status,
+    requestId: source.requestId,
+    slotKey: source.slotKey,
+    ordinal: source.ordinal,
+    seed: job.request.seed ?? null,
+  };
+  switch (job.status) {
+    case "succeeded":
+      return {
+        ...base,
+        ...(candidates === undefined
+          ? {}
+          : { candidate: candidates.get(job.id) ?? null }),
+        outputs: job.outputs.map(
+          (o): Json =>
+            o.medium === "image"
+              ? { hash: o.hash, width: o.width, height: o.height }
+              : { hash: o.hash },
+        ),
+      };
+    case "failed":
+      return { ...base, error: safeMessage(job.error) };
+    case "unavailable":
+      return {
+        ...base,
+        reason: safeMessage(job.reason),
+        staging: safeMessage(job.staging),
+      };
+    case "cancelled":
+      return { ...base, cancelledBy: job.cancelledBy };
+    default:
+      return base;
+  }
+}
+
+export function requestSummary(record: RequestRecord): Json {
+  const { request } = record;
+  return {
+    id: record.id,
+    subject: request.subject,
+    kind: request.kind,
+    slots: request.slots.map((s) =>
+      [s.state, s.direction, s.ability, s.expression]
+        .filter((p) => p !== undefined)
+        .join("/"),
+    ),
+    batch: request.batch,
+    seed: request.seed ?? null,
+    nextOrdinal: record.nextOrdinal,
+  };
+}
+
+export function candidateSummary(record: CandidateRecord): Json {
+  const { result } = record;
+  const base = {
+    id: record.id,
+    requestId: record.source.requestId,
+    slotKey: record.source.slotKey,
+    ordinal: record.source.ordinal,
+    input: {
+      hash: record.input.hash,
+      width: record.input.width,
+      height: record.input.height,
+    },
+  };
+  if (result.status === "needs-scale")
+    return {
+      ...base,
+      status: "needs-scale",
+      message: safeMessage(result.message),
+      report: null,
+      scale: null,
+      coloursMerged: null,
+      pixelsChanged: null,
+    };
+  return {
+    ...base,
+    status: "done",
+    imageHash: result.imageHash,
+    proposalHash: result.proposalHash,
+    report: {
+      status: result.report.status,
+      failedChecks: result.report.checks
+        .filter((c) => c.status === "fail")
+        .map((c) => c.check),
+    },
+    scale: result.metrics.resize.factor,
+    coloursMerged: result.metrics.coloursMerged,
+    pixelsChanged: result.metrics.pixelsChanged,
+  };
+}
+
+export function setSummary(record: WorkingSetRecord): Json {
+  return {
+    id: record.id,
+    subject: record.subject,
+    kind: record.kind,
+    sheetRequestId: record.sheetRequestId,
+    status: record.status,
+    required: [...record.required],
+    picks: Object.fromEntries(
+      Object.entries(record.picks).map(([slot, pick]) => [
+        slot,
+        pick.candidateId,
+      ]),
+    ),
+    authored: Object.fromEntries(
+      Object.entries(record.frames).map(([slot, frames]) => [
+        slot,
+        { editId: frames.editId, frames: frames.frames.length },
+      ]),
+    ),
+    // Slots recomputed from a published revision: what made each, and from what.
+    derived: Object.fromEntries(
+      Object.entries(record.derived ?? {}).map(([slot, entry]) => [
+        slot,
+        {
+          recipe: entry.step.recipe,
+          version: entry.step.version,
+          from: `${entry.step.source.assetId} ${entry.step.source.slotKey}`,
+          revision: entry.step.source.revision,
+          frames: entry.frames.length,
+        },
+      ]),
+    ),
+    // Realm variants this set adds at pack, by palette family.
+    variants: Object.keys(record.variants ?? {}).sort(),
+  };
+}
+
+export function editSummary(record: EditRecord): Json {
+  return {
+    id: record.id,
+    workingSetId: record.workingSetId,
+    slots: [...record.slots],
+    status: record.status,
+    previewSheetHash: record.preview?.sheetHash ?? null,
+  };
+}
+
+type Manifest = StudioAssetRecord["record"]["manifest"];
+
+/** A manifest's slot keys: `state/direction[/ability]`, an expression, or an effect animation's name. */
+function slotsOf(manifest: Manifest): string[] {
+  switch (manifest.kind) {
+    case "sprite":
+      return manifest.animations.map(
+        (a) =>
+          `${a.state}/${a.direction}${a.ability === undefined ? "" : `/${a.ability}`}`,
+      );
+    case "portrait":
+      return manifest.expressions.map((e) => e.expression);
+    case "effect":
+      return manifest.animations.map((a) => a.name);
+  }
+}
+
+export function assetSummary(record: StudioAssetRecord): Json {
+  const state = record.record;
+  const report =
+    state.state === "candidate" || state.state === "draft"
+      ? state.report
+      : undefined;
+  const provenanceSteps =
+    state.manifest.provenance.method === "derived"
+      ? state.manifest.provenance.steps.map((step) => ({
+          recipe: step.recipe,
+          source: {
+            assetId: step.source.assetId,
+            revision: step.source.revision,
+            slotKey: step.source.slotKey,
+          },
+          outputSlot: step.outputSlot,
+          ...(step.recipe === "palette-swap" &&
+          typeof step.params.targetFamily === "string"
+            ? { targetFamily: step.params.targetFamily }
+            : {}),
+        }))
+      : undefined;
+  return {
+    id: record.id,
+    workingSetId: record.workingSetId,
+    assetId: record.assetId,
+    state: state.state,
+    manifestRevision: record.manifestRevision,
+    prior: record.prior,
+    published: record.published?.revision ?? null,
+    kind: state.manifest.kind,
+    method: state.manifest.provenance.method,
+    ...(provenanceSteps === undefined ? {} : { provenanceSteps }),
+    // The slots the manifest holds, and the realm palettes it already has a variant for.
+    slots: slotsOf(state.manifest),
+    realms:
+      state.manifest.kind === "sprite"
+        ? state.manifest.realmVariants.map((v) => v.paletteFamily)
+        : [],
+    paletteFamily: state.manifest.paletteFamily,
+    report:
+      report === undefined
+        ? null
+        : {
+            status: report.status,
+            failedChecks: report.checks
+              .filter((c) => c.status === "fail")
+              .map((c) => c.check),
+          },
+    licences: record.licenceReview.entries.map((e) => ({
+      subject: e.subject,
+      role: e.role,
+      status: e.status,
+    })),
+  };
+}
+
+/**
+ * `open` means the session was not ended and its owner process is still alive;
+ * a session whose owner died without ending it is not open.
+ */
+export function statusSummary(
+  status: StudioStatus,
+  isAlive: (pid: number) => boolean,
+): Json {
+  const jobs: Record<string, number> = {};
+  for (const { job } of status.jobs)
+    jobs[job.status] = (jobs[job.status] ?? 0) + 1;
+  return {
+    owner:
+      status.session === undefined
+        ? null
+        : {
+            pid: status.session.pid,
+            startedAt: status.session.startedAt,
+            open:
+              status.session.endedAt === undefined &&
+              isAlive(status.session.pid),
+          },
+    counts: {
+      requests: status.requests.length,
+      jobs: status.jobs.length,
+      candidates: status.candidates.length,
+      workingSets: status.workingSets.length,
+      edits: status.edits.length,
+      assets: status.assets.length,
+    },
+    jobs,
+    // An editor save imported by the session's watcher changes no count, only
+    // this: a host that polls `status` sees the save by comparing it.
+    openEdits: status.edits
+      .filter((edit) => edit.status === "open")
+      .map((edit) => ({
+        id: edit.id,
+        previewSheetHash: edit.preview?.sheetHash ?? null,
+      })),
+    invalid: status.invalid.map((p) => ({ file: p.file })),
+  };
+}

@@ -65,7 +65,7 @@ D23 authorizes the detailed defaults in [defaults.md](defaults.md).
 | ID | Requirement and user value | Source | Acceptance evidence |
 | --- | --- | --- | --- |
 | X01 | Open with a live attract loop and short orientation | R1 | A prepared world runs beneath the title; a user can observe or enter and complete core orientation within ten minutes |
-| X02 | Provide polished isometric pixel art and expressive portraits | R5 | Art review confirms a consistent original visual system, sprite scale, lighting, portrait states, and readable dialogue |
+| X02 | Provide polished isometric pixel art and expressive portraits | R5 | Art review confirms a consistent original visual system, sprite scale, lighting, portrait states, and readable dialogue; for retro assets the standard is [ADR-0012](../decisions/0012-pre-rendered-retro-art-direction.md) (2026-10-12), and the art guide's hand-pixel rules stay for legacy assets |
 | X03 | Show effects and skippable cutscenes without stopping simulation | Opening, R5 | Skip a strike scene; committed consequences still occur once; reduced-effects mode communicates the same event |
 | X04 | Support unobtrusive observation and deeper inspection | R1, R5 | Follow/switch gods, read speech, open recent activity and imperatives; inspection does not inform characters by default |
 | X05 | Provide sound effects and selective ambient music | R5 | Event sounds correspond to committed events; separate volume/mute controls work; music is not forced continuously |

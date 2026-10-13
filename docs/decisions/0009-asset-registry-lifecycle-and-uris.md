@@ -30,7 +30,7 @@ A delegated implementation decision under D26 and the approved [asset studio pla
 
 **Placeholder.** The M0 renderer moved from `tools/probes/art-local` to `@panthea/assets`. Its PNG bytes, dimensions and hashes are unchanged (characterized before the move); only the URI scheme changed to `panthea-asset://placeholder/<sha256>`. The PNG encoder uses `node:zlib` and the hash helper `node:crypto`: the package is for Node and Bun, not the browser.
 
-**Visual profiles.** `GodVisualProfile` (`content/greek/assets/subjects/<god>.json`) holds palette family, iconography and an optional portrait id, joined to the god profile by god id. `GodProfile` and the god JSON files are unchanged.
+**Visual profiles.** `GodVisualProfile` (`content/greek/assets/subjects/<god>.json`) holds palette family, iconography and an optional portrait id, joined to the god profile by god id. Iconography lists only what the god carries or wears, never scenery: studio prompts add it to every portrait and sprite, which use a flat background. `GodProfile` and the god JSON files are unchanged.
 
 **Validator.** `bun run --cwd tools/content validate:assets` checks the vocabulary, matching GPL/HEX palette entries, realm ramps, approval digest, god sprite ids, visual profiles and the registry (index, canonical manifests and revisions, blob hashes and PNG sizes, ability references against the owning god, kind and character references, provenance consistency). Canon entries must reference the approved palette; this metadata check does not verify atlas pixel colours. Exit 0 is valid, 1 invalid with `<file>: <message>` lines, 64 usage. A partial canon is valid, and an empty registry may use a draft palette.
 

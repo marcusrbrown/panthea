@@ -1,0 +1,30 @@
+{
+  "store": {
+    "state": "captured",
+    "bytes": 253505536,
+    "walBytes": 0
+  },
+  "archive": {
+    "state": "captured",
+    "bytes": 96894976,
+    "eventSequence": 202162
+  },
+  "rebuild": {
+    "state": "captured",
+    "ms": 496.3,
+    "events": 202162,
+    "equal": true,
+    "liveDigest": "fc626881ef3c5132f4f98b09081be324cfd7f74496171b0ad522d28da2d1cdc7",
+    "rebuiltDigest": "fc626881ef3c5132f4f98b09081be324cfd7f74496171b0ad522d28da2d1cdc7",
+    "projectionBytes": 1070914,
+    "integrity": "ok",
+    "process": "separate",
+    "childPid": 18596
+  },
+  "importProof": {
+    "state": "captured",
+    "ok": true,
+    "events": 202162,
+    "slotCreated": true
+  }
+}

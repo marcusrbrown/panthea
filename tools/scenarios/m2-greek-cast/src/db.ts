@@ -156,7 +156,7 @@ export function readRealRequests(path: string): RealRequest[] {
     (
       db
         .query(
-          "SELECT proposal_id, role, outcome, steps, elapsed_ms, prompt_payload, recorded_at FROM trace_model_requests ORDER BY recorded_at ASC",
+          "SELECT proposal_id, role, outcome, steps, elapsed_ms, prompt_payload, recorded_at, exhausted_reason FROM trace_model_requests ORDER BY recorded_at ASC",
         )
         .all() as {
         proposal_id: string | null;
@@ -166,6 +166,7 @@ export function readRealRequests(path: string): RealRequest[] {
         elapsed_ms: number;
         prompt_payload: string | null;
         recorded_at: number;
+        exhausted_reason: string | null;
       }[]
     ).map((row) => ({
       proposalId: row.proposal_id ?? undefined,
@@ -175,6 +176,9 @@ export function readRealRequests(path: string): RealRequest[] {
       promptPayload: row.prompt_payload ?? undefined,
       steps: JSON.parse(row.steps) as RealRequest["steps"],
       recordedAt: row.recorded_at,
+      ...(row.exhausted_reason === null
+        ? {}
+        : { exhaustedReason: row.exhausted_reason }),
     })),
   );
 }
@@ -220,5 +224,25 @@ export function readSampleRows(path: string): SampleRow[] {
       steps: JSON.parse(row.steps) as SampleRow["steps"],
       elapsedMs: row.elapsed_ms,
     })),
+  );
+}
+
+/**
+ * The milliseconds of wall time the world has discarded as over the catch-up cap, summed over the operator observations
+ * the catch-up journals (`operator:catch-up-discard:<ms>`). The persisted catch-up summary is overwritten by a later
+ * pass; these observations are not.
+ */
+export function readCatchUpDiscardedMs(path: string): number {
+  return withWorldDb(path, (db) =>
+    (
+      db
+        .query(
+          "SELECT json_extract(payload, '$.factsRead[0]') AS fact FROM trace_observations WHERE source = 'operator'",
+        )
+        .all() as { fact: string | null }[]
+    ).reduce((total, { fact }) => {
+      const match = /^operator:catch-up-discard:(\d+)$/.exec(fact ?? "");
+      return match === null ? total : total + Number(match[1]);
+    }, 0),
   );
 }

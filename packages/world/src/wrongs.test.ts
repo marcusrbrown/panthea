@@ -43,6 +43,7 @@ function content(options: {
 }): ContentPack {
   const god = (name: string) => ({
     id: name,
+    sprite: `placeholder-${name}`,
     name,
     locationId: "hall",
     deity: true as const,
@@ -80,6 +81,7 @@ function content(options: {
       god("hermes"),
       ...options.mortals.map((m) => ({
         id: m.name,
+        sprite: `placeholder-${m.name}`,
         name: m.name,
         locationId: m.location ?? "square",
         drives: { thrift: 0, appetite: 0, greed: 0, piety: 0 },

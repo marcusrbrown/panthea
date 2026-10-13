@@ -173,6 +173,101 @@ describe("closeCatchUpBacklog", () => {
   });
 });
 
+describe("closeCatchUpBacklog: a follow-up pass of the same absence", () => {
+  /** A closed first backlog (60 ticks applied, 30 skipped) and an open follow-up that starts where it ended. */
+  function afterMainPass() {
+    writeCatchUpProgress(
+      store.db,
+      backlog({ appliedMs: 60 * TICK, discardedMs: 30 * TICK }),
+    );
+    const main = closeCatchUpBacklog(store.db)?.delivered;
+    writeCatchUpProgress(
+      store.db,
+      backlog({ appliedMs: 5 * TICK, startSequence: main?.atSequence ?? 0 }),
+    );
+    return main;
+  }
+
+  test("a follow-up pass that continues the one before it adds to that summary instead of replacing it: the totals are the whole absence, under a new id", () => {
+    const main = afterMainPass();
+
+    const closed = closeCatchUpBacklog(store.db, { continuesPrevious: true });
+
+    expect(closed?.delivered).toMatchObject({
+      appliedMs: 65 * TICK,
+      skippedMs: 30 * TICK,
+      atSequence: main?.atSequence,
+    });
+    // The content changed, so a client that dismissed the first is shown this one.
+    expect(closed?.delivered?.id).not.toBe(main?.id);
+    expect(readCatchUpSummary(store.db)).toEqual(closed?.delivered);
+    // What the pass itself did is still its own account.
+    expect(closed?.account).toMatchObject({
+      appliedMs: 5 * TICK,
+      skippedMs: 0,
+    });
+    expect(readCatchUpProgress(store.db)).toBeUndefined();
+  });
+
+  test("control: the same follow-up pass that does not say it continues replaces the summary, as every later backlog does", () => {
+    const main = afterMainPass();
+
+    const closed = closeCatchUpBacklog(store.db);
+
+    expect(closed?.delivered).toMatchObject({
+      appliedMs: 5 * TICK,
+      skippedMs: 0,
+    });
+    expect(closed?.delivered?.id).not.toBe(main?.id);
+  });
+
+  test("a pass that says it continues but does not start where the summary ended is a backlog of its own", () => {
+    const main = afterMainPass();
+    writeCatchUpProgress(
+      store.db,
+      backlog({
+        appliedMs: 5 * TICK,
+        startSequence: (main?.atSequence ?? 0) + 7,
+      }),
+    );
+
+    const closed = closeCatchUpBacklog(store.db, { continuesPrevious: true });
+
+    expect(closed?.delivered).toMatchObject({
+      appliedMs: 5 * TICK,
+      skippedMs: 0,
+    });
+  });
+
+  test("a continuing pass that amounts to nothing leaves the summary, and its id, alone", () => {
+    const main = afterMainPass();
+    writeCatchUpProgress(
+      store.db,
+      backlog({
+        appliedMs: 0,
+        discardedMs: 0,
+        startSequence: main?.atSequence ?? 0,
+      }),
+    );
+
+    const closed = closeCatchUpBacklog(store.db, { continuesPrevious: true });
+
+    expect(closed?.delivered).toBeUndefined();
+    expect(readCatchUpSummary(store.db)).toEqual(main);
+  });
+
+  test("a continuing pass with no summary before it is just its own summary", () => {
+    writeCatchUpProgress(store.db, backlog({ appliedMs: 5 * TICK }));
+
+    const closed = closeCatchUpBacklog(store.db, { continuesPrevious: true });
+
+    expect(closed?.delivered).toMatchObject({
+      appliedMs: 5 * TICK,
+      skippedMs: 0,
+    });
+  });
+});
+
 describe("recordPartialSummary: a degraded catch-up keeps its backlog open", () => {
   test("it persists what the backlog committed and keeps the progress", () => {
     writeCatchUpProgress(store.db, backlog({ appliedMs: 60 * TICK }));

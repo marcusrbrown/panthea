@@ -71,6 +71,11 @@ export interface ActorState {
   readonly id: EntityId;
   readonly locationId: EntityId;
   readonly alive: boolean;
+  /**
+   * The sprite id the client draws this actor with: a stable asset id, set at genesis (a deity's from its god
+   * profile, a mortal's from its content) and carried in every frame. Presentation data -- no world rule reads it.
+   */
+  readonly sprite: string;
   /** Whether this actor is an authored deity, authorized to be worshipped and to strike. Absent means it is not. */
   readonly isDeity?: boolean;
   /** How this mortal is disposed to wrong others, from its authored temperament. Absent means honest. */
@@ -696,10 +701,18 @@ export function createInitialWorldState(pack: ContentPack): WorldState {
   const actors = new Map<EntityId, ActorState>();
   for (const inhabitant of pack.inhabitants) {
     const id = toEntityId(inhabitant.id);
+    // A deity's sprite is its god profile's, folded into the pack at assembly (`withGodSprites`): an inhabitant
+    // that reaches genesis without one is an unfolded pack, which stops here rather than drawing as a guess.
+    if (inhabitant.sprite === undefined) {
+      throw new Error(
+        `inhabitant ${inhabitant.id} has no sprite id: a mortal authors one, and a deity's comes from its god profile folded into the pack`,
+      );
+    }
     actors.set(id, {
       id,
       locationId: toEntityId(inhabitant.locationId),
       alive: true,
+      sprite: inhabitant.sprite,
       ...(inhabitant.deity ? { isDeity: true } : {}),
       ...(inhabitant.temperament === undefined
         ? {}

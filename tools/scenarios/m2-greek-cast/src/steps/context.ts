@@ -21,7 +21,9 @@ export type ControlName =
   | "strike-chain"
   | "refusal-revenge"
   | "no-answerer"
-  | "director-off";
+  | "director-off"
+  | "remote-bless"
+  | "remote-strike";
 
 export const CONTROL_NAMES: readonly ControlName[] = [
   "chain",
@@ -32,10 +34,20 @@ export const CONTROL_NAMES: readonly ControlName[] = [
   "refusal-revenge",
   "no-answerer",
   "director-off",
+  "remote-bless",
+  "remote-strike",
 ];
 
 /** The steps that start a world of their own and so may run alone. */
-export const STAGED_STEPS = ["S21", "S22", "S23", "S24", "S25"] as const;
+export const STAGED_STEPS = [
+  "S21",
+  "S22",
+  "S23",
+  "S24",
+  "S25",
+  "S26",
+  "S27",
+] as const;
 export type StagedStep = (typeof STAGED_STEPS)[number];
 
 /** The one step a staged-world control runs; the other controls run the story. */
@@ -45,6 +57,8 @@ export const CONTROL_STEP: Readonly<Partial<Record<ControlName, StagedStep>>> =
     "refusal-revenge": "S22",
     "no-answerer": "S24",
     "director-off": "S25",
+    "remote-bless": "S26",
+    "remote-strike": "S27",
   };
 
 /** What the in-process world controls are: each breaks the evidence its step collected, and the step's own check must fail on it. */

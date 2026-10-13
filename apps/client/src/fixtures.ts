@@ -75,6 +75,7 @@ function actorOf(
     id: toEntityId(id),
     locationId: toEntityId(locationId),
     alive: true,
+    sprite: `placeholder-${id}`,
     capabilities: [],
     inventory: inventory(stock),
     revision: 0,

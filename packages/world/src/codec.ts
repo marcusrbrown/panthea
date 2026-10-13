@@ -416,6 +416,8 @@ function parseActorState(
   }
   const alive = parseBoolean(value.alive, `${path}.alive`);
   if (!alive.ok) return alive;
+  const sprite = parseString(value.sprite, `${path}.sprite`);
+  if (!sprite.ok) return sprite;
   const isDeity = parseOptionalBoolean(value.isDeity, `${path}.isDeity`);
   if (!isDeity.ok) return isDeity;
   const temperament =
@@ -459,6 +461,7 @@ function parseActorState(
     id: id.value,
     locationId: locationId.value,
     alive: alive.value,
+    sprite: sprite.value,
     ...(isDeity.value === undefined ? {} : { isDeity: isDeity.value }),
     ...(temperament.value === undefined
       ? {}

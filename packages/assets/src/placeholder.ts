@@ -13,189 +13,15 @@
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import { placeholderUri, type Sha256 } from "@panthea/contracts";
+import {
+  type PlaceholderInput,
+  renderPlaceholderPixels,
+} from "./placeholder-pixels";
 import { crc32 } from "./png";
 
-const SIZE = 16;
+export type { PlaceholderInput, PlaceholderParts } from "./placeholder-pixels";
+
 const CHANNELS = 4; // RGBA
-
-/** 16x16 boolean masks, one row per string, `#` = filled, any other char = empty. */
-type Shape = readonly string[];
-
-const BODY_SHAPES: Readonly<Record<string, Shape>> = {
-  humanoid: [
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "....########....",
-    "....########....",
-    "....########....",
-    "....########....",
-    "....########....",
-    "....##....##....",
-    "....##....##....",
-    "....##....##....",
-  ],
-  round: [
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "...##########...",
-    "..############..",
-    "..############..",
-    "..############..",
-    "...##########...",
-    "....########....",
-    "................",
-    "................",
-  ],
-  tall: [
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    ".....######.....",
-    ".....######.....",
-    ".....######.....",
-    ".....######.....",
-    ".....######.....",
-    ".....######.....",
-    ".....######.....",
-    ".....##..##.....",
-    ".....##..##.....",
-    ".....##..##.....",
-  ],
-};
-
-const HEAD_SHAPES: Readonly<Record<string, Shape>> = {
-  round: [
-    "................",
-    "................",
-    ".....######.....",
-    "....########....",
-    "....########....",
-    "....########....",
-    "....########....",
-    ".....######.....",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-  ],
-  crowned: [
-    "....#.##.#......",
-    "....########....",
-    "....########....",
-    "....########....",
-    "....########....",
-    "....########....",
-    "....########....",
-    ".....######.....",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-  ],
-  hooded: [
-    "................",
-    ".....######.....",
-    "....########....",
-    "...##########...",
-    "...##......##...",
-    "...##......##...",
-    "....########....",
-    ".....######.....",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-  ],
-};
-
-const PROP_SHAPES: Readonly<Record<string, Shape>> = {
-  staff: [
-    "..............#.",
-    "..............#.",
-    "............#...",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-    "..............#.",
-  ],
-  sword: [
-    "................",
-    "................",
-    "................",
-    "................",
-    "..............#.",
-    ".............#..",
-    "............#...",
-    "...........#....",
-    "..........#.....",
-    ".........#......",
-    "........#.......",
-    "................",
-    "................",
-    "................",
-    "................",
-    "................",
-  ],
-  none: Array.from({ length: SIZE }, () => ".".repeat(SIZE)),
-};
-
-const DEFAULT_BODY_SHAPE = "humanoid";
-const DEFAULT_HEAD_SHAPE = "round";
-const DEFAULT_PROP_SHAPE = "staff";
-const DEFAULT_PALETTE: readonly string[] = [
-  "#8b5e34",
-  "#c9a35c",
-  "#4a6fa5",
-  "#b23a48",
-  "#e8e0d5",
-];
-
-export interface PlaceholderParts {
-  readonly body?: string;
-  readonly head?: string;
-  readonly prop?: string;
-}
-
-export interface PlaceholderInput {
-  readonly palette: readonly string[];
-  readonly parts: PlaceholderParts;
-}
 
 export interface PlaceholderAsset {
   /** Stable content-addressed logical URI: `panthea-asset://placeholder/<sha256-hex>`. */
@@ -204,65 +30,6 @@ export interface PlaceholderAsset {
   readonly bytes: Uint8Array;
   readonly width: number;
   readonly height: number;
-}
-
-/** Looks up a named shape, falling back to `fallbackName`'s shape (never throws, never undefined). */
-function resolveShape(
-  registry: Readonly<Record<string, Shape>>,
-  requested: string | undefined,
-  fallbackName: string,
-): Shape {
-  const name = requested && registry[requested] ? requested : fallbackName;
-  return registry[name] ?? registry[fallbackName]!;
-}
-
-/** FNV-1a over a UTF-8 string; used only to pick deterministic palette indices, not for crypto. */
-function fnv1a(text: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
-function pickColor(
-  palette: readonly string[],
-  seed: string,
-): readonly [number, number, number] {
-  const safePalette = palette.length > 0 ? palette : DEFAULT_PALETTE;
-  const index = fnv1a(seed) % safePalette.length;
-  const hex = safePalette[index]!.replace("#", "");
-  const normalized =
-    hex.length === 3
-      ? hex
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : hex.padEnd(6, "0").slice(0, 6);
-  const r = Number.parseInt(normalized.slice(0, 2), 16) || 0;
-  const g = Number.parseInt(normalized.slice(2, 4), 16) || 0;
-  const b = Number.parseInt(normalized.slice(4, 6), 16) || 0;
-  return [r, g, b];
-}
-
-function paintLayer(
-  buffer: Uint8Array,
-  shape: Shape,
-  color: readonly [number, number, number],
-): void {
-  for (let y = 0; y < SIZE; y += 1) {
-    const row = shape[y] ?? "";
-    for (let x = 0; x < SIZE; x += 1) {
-      if (row[x] === "#") {
-        const offset = (y * SIZE + x) * CHANNELS;
-        buffer[offset] = color[0];
-        buffer[offset + 1] = color[1];
-        buffer[offset + 2] = color[2];
-        buffer[offset + 3] = 255;
-      }
-    }
-  }
 }
 
 // --- Minimal PNG encoder (8-bit RGBA, no interlacing, filter type 0) ---
@@ -344,36 +111,18 @@ export function encodeRgbaPng(
  * named body/head/prop parts. Never throws: an unrecognized part name
  * silently falls back to that slot's default shape. Same input always
  * yields byte-identical PNG output and the same content-addressed URI.
+ * The pixels come from `renderPlaceholderPixels`; this adds the PNG
+ * encoding and the sha256 URI.
  */
 export function renderPlaceholder(input: PlaceholderInput): PlaceholderAsset {
-  const bodyShape = resolveShape(
-    BODY_SHAPES,
-    input.parts.body,
-    DEFAULT_BODY_SHAPE,
-  );
-  const headShape = resolveShape(
-    HEAD_SHAPES,
-    input.parts.head,
-    DEFAULT_HEAD_SHAPE,
-  );
-  const propShape = resolveShape(
-    PROP_SHAPES,
-    input.parts.prop,
-    DEFAULT_PROP_SHAPE,
-  );
-
-  const buffer = new Uint8Array(SIZE * SIZE * CHANNELS);
-  paintLayer(buffer, bodyShape, pickColor(input.palette, "body"));
-  paintLayer(buffer, headShape, pickColor(input.palette, "head"));
-  paintLayer(buffer, propShape, pickColor(input.palette, "prop"));
-
-  const bytes = encodeRgbaPng(buffer, SIZE, SIZE);
+  const { width, height, rgba } = renderPlaceholderPixels(input);
+  const bytes = encodeRgbaPng(rgba, width, height);
   const hash = createHash("sha256").update(bytes).digest("hex");
 
   return {
     uri: placeholderUri(hash as Sha256),
     bytes,
-    width: SIZE,
-    height: SIZE,
+    width,
+    height,
   };
 }

@@ -38,8 +38,9 @@ function town(ticks: number, seed: number, options: { fed?: boolean } = {}) {
     .map((actor) => actor.id);
   const events: WorldEvent[] = [];
   for (let n = 0; n < ticks; n += 1) {
+    const claims = new Map();
     const proposals = mortals.flatMap((mortal) => {
-      const decision = decideRoutineProposal(state, mortal);
+      const decision = decideRoutineProposal(state, mortal, claims);
       return decision ? [decision.proposal] : [];
     });
     const ran = runTick(state, prng, proposals);

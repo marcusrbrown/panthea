@@ -5,11 +5,16 @@ import type { ParseResult } from "@panthea/contracts";
 import type { Rgb } from "./conformance";
 import { committedVocabulary } from "./fixtures";
 import { PALETTE_20 } from "./fixtures/conformance/images";
+import { sha256Hex } from "./hash";
 import {
+  colourLimit,
+  MASTER_PALETTE_ID,
   type Palette,
   type PaletteSource,
   paletteDigest,
+  paletteSubdirectory,
   parsePalette,
+  shadeBounds,
 } from "./palette";
 
 const FAMILIES = ["town", "olympus", "underworld"];
@@ -454,5 +459,261 @@ describe("the committed master palette", () => {
     const ramps = palette.families.flatMap((f) => f.ramps);
     expect(ramps).toHaveLength(12);
     expect(ramps.every((r) => r.shades.length === 4)).toBe(true);
+  });
+});
+
+describe("limits a palette declares", () => {
+  const withLimits = (limits: unknown, shades = 6): Json => {
+    const json = jsonFor(MASTER);
+    json.limits = limits;
+    json.families[2].ramps[0].shades = MASTER.slice(0, shades).map(hash);
+    return json;
+  };
+  const RETRO = { shades: { min: 4, max: 6 }, colours: { sprite: 48 } };
+
+  it("falls back to the legacy rules when none are declared: 4-5 shades, 16 per sprite, 32 per portrait", () => {
+    const palette = must(parse(source()));
+    expect(palette.limits).toBeUndefined();
+    expect(shadeBounds(palette)).toEqual({ min: 4, max: 5 });
+    expect(colourLimit(palette, "sprite")).toBe(16);
+    expect(colourLimit(palette, "portrait")).toBe(32);
+  });
+
+  it("passes a 6-shade ramp under declared 4-6 shades and fails the same ramp without them", () => {
+    const declared = must(parse(source(MASTER, withLimits(RETRO))));
+    expect(declared.families[2]?.ramps[0]?.shades).toHaveLength(6);
+    expect(shadeBounds(declared)).toEqual({ min: 4, max: 6 });
+    failsAt(
+      parse(source(MASTER, withLimits(undefined))),
+      "families[2].ramps[0].shades",
+      "5",
+    );
+  });
+
+  it("holds the declared bounds on both sides", () => {
+    failsAt(
+      parse(source(MASTER, withLimits(RETRO, 7))),
+      "families[2].ramps[0].shades",
+      "6",
+    );
+    failsAt(
+      parse(source(MASTER, withLimits(RETRO, 3))),
+      "families[2].ramps[0].shades",
+      "4",
+    );
+    // A declared bound is the palette's own: 4-5 declared refuses a sixth shade.
+    const narrow = { ...RETRO, shades: { min: 4, max: 5 } };
+    failsAt(
+      parse(source(MASTER, withLimits(narrow, 6))),
+      "families[2].ramps[0].shades",
+      "5",
+    );
+  });
+
+  it("reads the per-sprite colour budget, and the portrait budget when declared", () => {
+    const palette = must(parse(source(MASTER, withLimits(RETRO))));
+    expect(colourLimit(palette, "sprite")).toBe(48);
+    expect(colourLimit(palette, "portrait")).toBe(32);
+    const portrait = must(
+      parse(
+        source(
+          MASTER,
+          withLimits({ ...RETRO, colours: { sprite: 48, portrait: 40 } }),
+        ),
+      ),
+    );
+    expect(colourLimit(portrait, "portrait")).toBe(40);
+  });
+
+  it("refuses malformed limits with a path", () => {
+    const cases: [string, unknown, string][] = [
+      ["unknown key", { ...RETRO, extra: 1 }, "limits.extra"],
+      ["no shades", { colours: RETRO.colours }, "limits.shades"],
+      ["no colours", { shades: RETRO.shades }, "limits.colours"],
+      [
+        "inverted shades",
+        { ...RETRO, shades: { min: 6, max: 4 } },
+        "limits.shades",
+      ],
+      [
+        "fewer than two shades",
+        { ...RETRO, shades: { min: 1, max: 6 } },
+        "limits.shades.min",
+      ],
+      [
+        "more than eight shades",
+        { ...RETRO, shades: { min: 4, max: 9 } },
+        "limits.shades.max",
+      ],
+      [
+        "a sprite budget over the 64-colour master cap",
+        { ...RETRO, colours: { sprite: 65 } },
+        "limits.colours.sprite",
+      ],
+      [
+        "a zero sprite budget",
+        { ...RETRO, colours: { sprite: 0 } },
+        "limits.colours.sprite",
+      ],
+      [
+        "a fractional budget",
+        { ...RETRO, colours: { sprite: 4.5 } },
+        "limits.colours.sprite",
+      ],
+      [
+        "an unknown colours key",
+        { ...RETRO, colours: { sprite: 48, tile: 8 } },
+        "limits.colours.tile",
+      ],
+      ["limits that are not an object", 48, "limits"],
+    ];
+    for (const [label, limits, path] of cases) {
+      const result = parse(source(MASTER, withLimits(limits, 4)));
+      expect(result.ok, label).toBe(false);
+      if (!result.ok) expect(result.path, label).toContain(path);
+    }
+    expect(parse(source(MASTER, withLimits(RETRO, 4))).ok).toBe(true);
+  });
+
+  it("makes the limits part of the digest, and leaves the digest of a palette without them as it was", () => {
+    const plain = must(parse(source(MASTER, withLimits(undefined, 4))));
+    const declared = must(parse(source(MASTER, withLimits(RETRO, 4))));
+    const widened = must(
+      parse(
+        source(MASTER, withLimits({ ...RETRO, colours: { sprite: 49 } }, 4)),
+      ),
+    );
+    const wider = must(
+      parse(
+        source(MASTER, withLimits({ ...RETRO, shades: { min: 4, max: 5 } }, 4)),
+      ),
+    );
+    const digests = [plain, declared, widened, wider].map(paletteDigest);
+    expect(new Set(digests).size).toBe(4);
+    // Same colours, ramps and id: only the declared limits differ.
+    expect(declared.colours).toEqual(plain.colours);
+  });
+
+  it("refuses an approved palette whose limits were edited after approval", () => {
+    const palette = must(parse(source(MASTER, withLimits(RETRO, 4))));
+    const approvedJson = (limits: unknown): Json => ({
+      ...withLimits(limits, 4),
+      approval: { status: "approved", digest: paletteDigest(palette) },
+    });
+    expect(parse(source(MASTER, approvedJson(RETRO))).ok).toBe(true);
+    failsAt(
+      parse(
+        source(MASTER, approvedJson({ ...RETRO, colours: { sprite: 64 } })),
+      ),
+      "approval.digest",
+    );
+    // Declaring limits on a palette approved without them changes its digest too.
+    failsAt(parse(source(MASTER, approvedJson(undefined))), "approval.digest");
+  });
+});
+
+describe("where a palette lives", () => {
+  it("maps greek-master to the palette root and any other id to a subdirectory", () => {
+    expect(MASTER_PALETTE_ID).toBe("greek-master");
+    expect(paletteSubdirectory("greek-master")).toBe("");
+    expect(paletteSubdirectory("greek-retro")).toBe("greek-retro");
+  });
+});
+
+describe("the committed palettes", () => {
+  const root = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "content",
+    "greek",
+    "palette",
+  );
+  const read = (dir: string, name: string) =>
+    readFileSync(join(root, dir, name), "utf8");
+  const load = (dir: string) =>
+    must(
+      parsePalette(
+        {
+          json: JSON.parse(read(dir, "palette.json")),
+          gpl: read(dir, "master.gpl"),
+          hex: read(dir, "master.hex"),
+        },
+        committedVocabulary().paletteFamilies,
+      ),
+    );
+
+  it("leaves greek-master's three files and its approved digest exactly as they were on main", () => {
+    const sha = (name: string): string =>
+      sha256Hex(new TextEncoder().encode(read("", name)));
+    expect(sha("palette.json")).toBe(
+      "6229c87590e46c65895d7f1c3bac730bb649c40961446831aa0db3368ba0b496",
+    );
+    expect(sha("master.gpl")).toBe(
+      "0fa8f49ca1b2ede23034e54f8d1748f993c9a1bf27819adb0d74e5eb767dc238",
+    );
+    expect(sha("master.hex")).toBe(
+      "e0bcae8baa24a6e68074ca1dcb84b4f08284920dcbb2a8961edf847b4723996a",
+    );
+    const master = load("");
+    expect(master.limits).toBeUndefined();
+    expect(String(paletteDigest(master))).toBe(
+      "faa637b2ce7bd3493f20a7a1b191554640b9a801a6e8fc42f8a985bb07073209",
+    );
+    expect(master.approval).toEqual({
+      status: "approved",
+      digest:
+        "faa637b2ce7bd3493f20a7a1b191554640b9a801a6e8fc42f8a985bb07073209",
+    } as never);
+  });
+
+  describe("greek-retro", () => {
+    const retro = load("greek-retro");
+
+    it("is a draft with its own id and the declared 4-6 shade, 48-colour limits", () => {
+      expect(retro.id).toBe("greek-retro");
+      expect(retro.approval).toEqual({ status: "draft" });
+      expect(retro.limits).toEqual({
+        shades: { min: 4, max: 6 },
+        colours: { sprite: 48 },
+      });
+      expect(colourLimit(retro, "sprite")).toBe(48);
+      expect(retro.colours.length).toBeLessThanOrEqual(64);
+    });
+
+    it("keeps the vocabulary's three families, every ramp a 4-6 shade ramp of the master list", () => {
+      expect(retro.families.map((f) => f.id)).toEqual([
+        "town",
+        "olympus",
+        "underworld",
+      ]);
+      for (const ramp of retro.families.flatMap((f) => f.ramps))
+        expect(ramp.shades.length).toBeGreaterThanOrEqual(4);
+    });
+
+    it("holds every ramp Zeus draws inside olympus", () => {
+      const olympus = retro.families.find((f) => f.id === "olympus");
+      const ramps = new Map(olympus?.ramps.map((r) => [r.id, r.shades]));
+      // The probe's Zeus: skin and trim and bolt in pale-gold, robe and beard in cloud, hair and brow in marble, eyes in lapis.
+      for (const id of ["pale-gold", "cloud", "marble", "lapis"])
+        expect(ramps.has(id), id).toBe(true);
+      const olympusColours = new Set(
+        (olympus?.ramps ?? []).flatMap((r) => r.shades.map(hash)),
+      );
+      // The bolt stamp's dark, mid and light (tools/probes/blender-sprite/stamps/bolt-stamps.json).
+      for (const stamp of ["#76572f", "#ddbf70", "#f4e4ae"])
+        expect(olympusColours.has(stamp), stamp).toBe(true);
+      // Outline: the darkest shade of each Zeus ramp.
+      for (const id of ["pale-gold", "cloud", "marble", "lapis"])
+        expect(olympusColours.has(hash(ramps.get(id)?.[0] as Rgb)), id).toBe(
+          true,
+        );
+    });
+
+    it("computes a stable digest of its own data", () => {
+      expect(paletteDigest(retro)).toMatch(/^[0-9a-f]{64}$/);
+      expect(paletteDigest(retro)).not.toBe(paletteDigest(load("")));
+    });
   });
 });

@@ -1,0 +1,22 @@
+{
+  "name": "@panthea/testkit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    "./world": "./src/world.ts",
+    "./renderer": "./src/renderer.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@panthea/renderer": "workspace:*",
+    "@panthea/world": "workspace:*",
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.185.4"
+  }
+}
