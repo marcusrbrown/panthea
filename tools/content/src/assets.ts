@@ -4,7 +4,10 @@
 //   <root>/gods/*.json                     core god profiles (read only)
 //   <root>/world/inhabitants.json          inhabitants' sprite ids (read only)
 //   <root>/assets/vocabulary.json          versioned vocabulary
-//   <root>/assets/subjects/*.json          visual profiles, joined by god id
+//   <root>/assets/subjects/*.json          visual profiles, joined by god id; a subject's render
+//                                          matrix is checked against the vocabulary, and a god whose
+//                                          sprite is an asset on the matrix's cell class must hold
+//                                          every slot the matrix requires
 //   <root>/assets/registry/                index.json, manifests/, blobs/
 //   <root>/palette/                        palette.json, master.gpl, master.hex
 //
@@ -32,12 +35,16 @@ import {
   type GodVisualProfile,
   parseGodProfile,
   parseGodVisualProfiles,
+  type RenderMatrix,
+  requiredRenderSlotKeys,
 } from "@panthea/content";
 import {
   type AssetVocabulary,
   type ParseFailure,
   parseAssetId,
   parseAssetVocabulary,
+  slotKeys,
+  stateRuleFor,
 } from "@panthea/contracts";
 import { readPalette } from "./palette";
 
@@ -152,6 +159,47 @@ function isRecordWithArray(
   if (typeof value !== "object" || value === null) return undefined;
   const found = (value as Record<string, unknown>)[key];
   return Array.isArray(found) ? found : undefined;
+}
+
+/** The matrix's cell class, states, abilities and facings are ones the vocabulary honours. */
+function validateRenderMatrix(
+  matrix: RenderMatrix,
+  vocabulary: AssetVocabulary,
+  report: (message: string) => void,
+): void {
+  const cell = vocabulary.cells.find((c) => c.id === matrix.cellClass);
+  if (cell === undefined) {
+    report(`render.matrix.cellClass: unknown cell class "${matrix.cellClass}"`);
+    return;
+  }
+  if (!cell.kinds.includes("sprite")) {
+    report(
+      `render.matrix.cellClass: cell class "${cell.id}" does not hold sprites`,
+    );
+    return;
+  }
+  for (const direction of matrix.directions) {
+    if (!vocabulary.directions.includes(direction))
+      report(`render.matrix.directions: unknown direction "${direction}"`);
+  }
+  for (const group of ["required", "deferred"] as const) {
+    for (const slot of matrix[group]) {
+      const rule = stateRuleFor(vocabulary, slot.state, cell.id);
+      if (rule === undefined) {
+        report(
+          `render.matrix.${group}: state "${slot.state}" has no rule on cell class "${cell.id}"`,
+        );
+      } else if (rule.perAbility && slot.ability === undefined) {
+        report(
+          `render.matrix.${group}: state "${slot.state}" is bound to an ability, and the slot names none`,
+        );
+      } else if (!rule.perAbility && slot.ability !== undefined) {
+        report(
+          `render.matrix.${group}: state "${slot.state}" takes no ability, and the slot names "${slot.ability}"`,
+        );
+      }
+    }
+  }
 }
 
 export interface AssetValidationOptions {
@@ -281,6 +329,49 @@ export function validateAssets(
   }
 
   validateInhabitantSprites(contentRoot, registry.snapshot.entries, report);
+
+  // Render matrices: honoured by the vocabulary, and filled by the asset a god's profile points at.
+  const subjectFiles = new Map(
+    subjectInputs.flatMap((input) =>
+      typeof input.value === "object" &&
+      input.value !== null &&
+      typeof (input.value as { godId?: unknown }).godId === "string"
+        ? [[(input.value as { godId: string }).godId, input.label] as const]
+        : [],
+    ),
+  );
+  for (const visual of visuals) {
+    if (visual.render === undefined) continue;
+    const { matrix } = visual.render;
+    const subjectFile = subjectFiles.get(visual.godId) ?? "assets/subjects";
+    let honoured = true;
+    validateRenderMatrix(matrix, vocabulary, (message) => {
+      honoured = false;
+      report(subjectFile, message);
+    });
+    const god = gods.find((g) => g.id === visual.godId);
+    const cell = vocabulary.cells.find((c) => c.id === matrix.cellClass);
+    const entry = god && registry.snapshot.entries.get(god.sprite);
+    if (!honoured || god === undefined || cell === undefined) continue;
+    // The matrix binds the assets on its own cell class; a god's legacy sprite on another class is not under it.
+    if (
+      entry === undefined ||
+      entry.manifest.kind !== "sprite" ||
+      entry.manifest.cell.w !== cell.w ||
+      entry.manifest.cell.h !== cell.h
+    )
+      continue;
+    const held = new Set(slotKeys(entry.manifest));
+    const missing = requiredRenderSlotKeys(matrix).filter(
+      (key) => !held.has(key),
+    );
+    if (missing.length > 0) {
+      report(
+        spriteOwners.get(god.sprite)?.file ?? `gods/${god.id}.json`,
+        `sprite "${god.sprite}" is on the ${cell.id} cell, so it must hold every slot ${visual.godId}'s render matrix requires; missing ${missing.join(", ")}`,
+      );
+    }
+  }
 
   const godById = new Map(gods.map((god) => [god.id, god]));
   const portraitOwners = new Map(

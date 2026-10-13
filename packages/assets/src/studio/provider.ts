@@ -12,6 +12,18 @@ export const PROVIDER = {
   hosting: "local",
 } as const satisfies ProviderDescriptor;
 
+/**
+ * The render engine's descriptor, which render jobs name. The engine itself (a
+ * pinned Blender run by the runtime) arrives with the runtime unit; its cell
+ * sizes are declared by that engine and passed to the request builder, not
+ * fixed here.
+ */
+export const RENDER_PROVIDER = {
+  id: "blender-eevee",
+  medium: "image",
+  hosting: "local",
+} as const satisfies ProviderDescriptor;
+
 interface Artifact {
   readonly sizeBytes: number;
   readonly sha256: string;

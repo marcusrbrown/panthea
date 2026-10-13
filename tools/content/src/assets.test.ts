@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { resolveAsset, sha256Hex } from "@panthea/assets";
+import { encodeRgbaPng, resolveAsset, sha256Hex } from "@panthea/assets";
 import {
   committedVocabulary,
   type FixtureAsset,
@@ -29,6 +29,8 @@ import {
   canonicalJson,
   canonicalManifestText,
   newCandidate,
+  parseAssetManifest,
+  type Sha256,
   transitionAsset,
 } from "@panthea/contracts";
 import { validateAssets } from "./assets";
@@ -884,5 +886,232 @@ describe("render kits and the licence boundary", () => {
     expect(
       validateAssets(contentRoot(), { repoRoot, kitProfiles: [] }).diagnostics,
     ).toEqual([]);
+  });
+});
+
+describe("the retro matrix completeness rule", () => {
+  const FACINGS = ["south", "north", "east", "west"] as const;
+  const COUNTS = { idle: 4, walk: 16, seated: 2, act: 4 } as const;
+  const MS = { idle: 167, walk: 50, seated: 200, act: 60 } as const;
+  const godFile = (root: string) => join(root, "gods", "zeus.json");
+  const pointGodAt = (root: string, sprite: string) => {
+    const god = JSON.parse(readFileSync(godFile(root), "utf8"));
+    writeFileSync(godFile(root), JSON.stringify({ ...god, sprite }));
+  };
+
+  /** Every required slot of the Zeus matrix, as the slot keys a god-tall asset holds. */
+  const allSlots = (): string[] =>
+    FACINGS.flatMap((facing) => [
+      `idle/${facing}`,
+      `walk/${facing}`,
+      `seated/${facing}`,
+      `act/${facing}/thunderbolt`,
+    ]);
+
+  /** A 112x96 sprite holding exactly `slots`, built explicitly through the real manifest parser. */
+  function godTallAsset(id: string, slots: readonly string[]): FixtureAsset {
+    const width = 112 * 16;
+    const rgba = new Uint8Array(width * 96 * 4);
+    for (let i = 0; i < rgba.length; i += 4) {
+      rgba[i] = 90;
+      rgba[i + 1] = 80;
+      rgba[i + 2] = 160;
+      rgba[i + 3] = 255;
+    }
+    const bytes = encodeRgbaPng(rgba, width, 96);
+    const blob = sha256Hex(bytes);
+    const animations = slots.map((key) => {
+      const [state, direction, ability] = key.split("/") as [
+        keyof typeof COUNTS,
+        string,
+        string | undefined,
+      ];
+      return {
+        state,
+        direction,
+        ...(ability === undefined ? {} : { ability }),
+        frames: Array.from({ length: COUNTS[state] }, (_, i) => ({
+          rect: { x: i * 112, y: 0, w: 112, h: 96 },
+          durationMs: MS[state],
+        })),
+      };
+    });
+    const parsed = parseAssetManifest(
+      {
+        schemaVersion: 1,
+        kind: "sprite",
+        id,
+        cell: { w: 112, h: 96 },
+        pixelScale: 1,
+        paletteFamily: "olympus",
+        paletteId: "fixture-master",
+        styleTag: "fixture",
+        atlas: { blob, width, height: 96 },
+        pivot: { x: 56, y: 78 },
+        footprint: { w: 1, h: 1 },
+        directions: [...FACINGS],
+        realmVariants: [],
+        animations,
+        provenance: {
+          method: "hand",
+          handEdits: [{ description: "drawn by hand for a test fixture" }],
+          licences: [
+            { subject: "test-fixture", role: "original-work", licence: "MIT" },
+          ],
+          relatedJobs: [],
+          sourceAssets: [],
+        },
+      },
+      vocabulary,
+    );
+    if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
+    return {
+      manifest: parsed.value,
+      blobs: new Map([[blob as Sha256, bytes]]),
+    };
+  }
+
+  it("passes a god profile pointing at an asset that holds every required slot", () => {
+    const root = contentRoot();
+    publish(root, godTallAsset("zeus-retro", allSlots()));
+    pointGodAt(root, "zeus-retro");
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("fails a god profile pointing at an asset missing one walk facing, naming the slot (positive control above)", () => {
+    const root = contentRoot();
+    publish(
+      root,
+      godTallAsset(
+        "zeus-retro",
+        allSlots().filter((key) => key !== "walk/west"),
+      ),
+    );
+    pointGodAt(root, "zeus-retro");
+    expect(diagnosticsOf(root)).toEqual([
+      { file: "gods/zeus.json", message: expect.stringContaining("walk/west") },
+    ]);
+    expect(diagnosticsOf(root)[0]?.message).toContain("zeus-retro");
+    expect(validateAssets(root).ok).toBe(false);
+  });
+
+  it("fails for a missing idle, seated and act slot too, and lists every missing slot", () => {
+    for (const missing of [
+      "idle/south",
+      "seated/east",
+      "act/north/thunderbolt",
+    ]) {
+      const root = contentRoot();
+      publish(
+        root,
+        godTallAsset(
+          "zeus-retro",
+          allSlots().filter((key) => key !== missing),
+        ),
+      );
+      pointGodAt(root, "zeus-retro");
+      const found = diagnosticsOf(root);
+      expect(found, missing).toHaveLength(1);
+      expect(found[0]?.message, missing).toContain(missing);
+    }
+    const root = contentRoot();
+    publish(
+      root,
+      godTallAsset(
+        "zeus-retro",
+        allSlots().filter((key) => !key.startsWith("act/")),
+      ),
+    );
+    pointGodAt(root, "zeus-retro");
+    const message = diagnosticsOf(root)[0]?.message ?? "";
+    for (const facing of FACINGS)
+      expect(message).toContain(`act/${facing}/thunderbolt`);
+  });
+
+  it("does not require the deferred pronouncement slot", () => {
+    const root = contentRoot();
+    publish(root, godTallAsset("zeus-retro", allSlots()));
+    pointGodAt(root, "zeus-retro");
+    expect(allSlots().some((key) => key.includes("pronouncement"))).toBe(false);
+    expect(validateAssets(root).ok).toBe(true);
+  });
+
+  it("leaves the legacy 64x80 zeus-sprite out of the rule: a god cell is not the matrix's god-tall cell", () => {
+    const root = contentRoot();
+    // The Zeus subject declares the matrix; the legacy sprite holds only idle/south.
+    expect(
+      JSON.parse(
+        readFileSync(join(root, "assets", "subjects", "zeus.json"), "utf8"),
+      ).render.matrix.cellClass,
+    ).toBe("god-tall");
+    publish(root, spriteFixture("zeus-sprite"));
+    pointGodAt(root, "zeus-sprite");
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("validates the committed legacy zeus-sprite against the committed subject", () => {
+    const god = JSON.parse(
+      readFileSync(join(COMMITTED, "gods", "zeus.json"), "utf8"),
+    );
+    expect(god.sprite).toBe("zeus-sprite");
+    expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  it("applies to no god whose subject declares no matrix", () => {
+    const root = contentRoot();
+    const subject = join(root, "assets", "subjects", "zeus.json");
+    const { render: _render, ...rest } = JSON.parse(
+      readFileSync(subject, "utf8"),
+    );
+    writeFileSync(subject, JSON.stringify(rest));
+    publish(root, godTallAsset("zeus-retro", ["walk/south"]));
+    pointGodAt(root, "zeus-retro");
+    expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
+  });
+
+  describe("a matrix the vocabulary cannot honour", () => {
+    const subjectFile = (root: string) =>
+      join(root, "assets", "subjects", "zeus.json");
+    const changeMatrix = (root: string, change: Record<string, unknown>) => {
+      const subject = JSON.parse(readFileSync(subjectFile(root), "utf8"));
+      subject.render.matrix = { ...subject.render.matrix, ...change };
+      writeFileSync(subjectFile(root), JSON.stringify(subject));
+    };
+
+    it("accepts the committed matrix (positive control)", () => {
+      expect(validateAssets(contentRoot())).toEqual({
+        ok: true,
+        diagnostics: [],
+      });
+    });
+
+    for (const [label, change, text] of [
+      ["an unknown cell class", { cellClass: "giant" }, "giant"],
+      ["a portrait cell class", { cellClass: "portrait" }, "portrait"],
+      [
+        "a state the class has no rule for",
+        { required: [{ state: "hurt" }] },
+        "hurt",
+      ],
+      [
+        "a per-ability state with no ability",
+        { required: [{ state: "act" }] },
+        "act",
+      ],
+      [
+        "an ability on a state that takes none",
+        { required: [{ state: "idle", ability: "thunderbolt" }] },
+        "idle",
+      ],
+      ["an unknown direction", { directions: ["up"] }, "up"],
+    ] as const) {
+      it(`reports ${label} against the subject file`, () => {
+        const root = contentRoot();
+        changeMatrix(root, change);
+        const found = diagnosticsOf(root);
+        expect(found.map((d) => d.file)).toEqual(["assets/subjects/zeus.json"]);
+        expect(found[0]?.message).toContain(text);
+      });
+    }
   });
 });

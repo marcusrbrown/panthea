@@ -13,7 +13,12 @@ import type {
   DerivedStep,
   Sha256,
 } from "@panthea/contracts";
-import { canonicalJson, parseAssetId, parseSlug } from "@panthea/contracts";
+import {
+  canonicalJson,
+  parseAssetId,
+  parseSlug,
+  stateRuleFor,
+} from "@panthea/contracts";
 import type { RgbaImage } from "../conformance";
 import { sha256Hex } from "../hash";
 import { type Palette, type PaletteRamp, paletteDigest } from "../palette";
@@ -34,7 +39,7 @@ import {
 } from "./derive";
 import type { EditHost } from "./edit-session";
 import { decodePng } from "./png/decode";
-import { newRequestRecord, type StudioContent } from "./request";
+import { newRequestRecord, SD_ENGINE, type StudioContent } from "./request";
 import type { Store } from "./store";
 import {
   type DerivedEntry,
@@ -258,9 +263,9 @@ export function readBobParams(
   };
 }
 
-/** The frame count and duration bounds of the vocabulary's idle state. */
+/** The frame count and duration bounds of the vocabulary's idle state on the image engine's sprite cell. */
 function idleLimits(vocabulary: AssetVocabulary) {
-  const rule = vocabulary.states.find((s) => s.id === "idle");
+  const rule = stateRuleFor(vocabulary, "idle", SD_ENGINE.spriteCellClass);
   if (rule === undefined || rule.fps === undefined) return undefined;
   return {
     frames: rule.frames,

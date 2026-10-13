@@ -11,6 +11,7 @@ import {
   parseSlug,
   parseStrictRecord,
   type Sha256,
+  stateRuleFor,
 } from "@panthea/contracts";
 import {
   conformImage,
@@ -27,7 +28,7 @@ import {
   parseTargetPalette,
 } from "./candidates";
 import { decodePng } from "./png/decode";
-import type { StudioContent } from "./request";
+import { SD_ENGINE, type StudioContent } from "./request";
 import {
   type AuthoredFrames,
   type DerivedEntry,
@@ -479,8 +480,9 @@ export function placeholderMs(
   content: StudioContent,
   kind: "sprite" | "portrait",
   slot: string,
+  cellClassId = SD_ENGINE.spriteCellClass,
 ): number {
-  return timingBounds(content, kind, slot)?.max ?? 100;
+  return timingBounds(content, kind, slot, cellClassId)?.max ?? 100;
 }
 
 /** Per-frame milliseconds the vocabulary's rate range allows; null where it names none. */
@@ -488,10 +490,14 @@ export function timingBounds(
   content: StudioContent,
   kind: "sprite" | "portrait",
   slot: string,
+  /** The cell class the slot is drawn on; the image engine's by default. */
+  cellClassId = SD_ENGINE.spriteCellClass,
 ): { min: number; max: number } | null {
   if (kind === "portrait") return null;
-  const rule = content.vocabulary.states.find(
-    (state) => state.id === slot.split("/")[0],
+  const rule = stateRuleFor(
+    content.vocabulary,
+    slot.split("/")[0] ?? "",
+    cellClassId,
   );
   if (rule?.fps === undefined) return null;
   return {

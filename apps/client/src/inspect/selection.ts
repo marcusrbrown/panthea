@@ -4,7 +4,7 @@
 // that no asset publishes, which draws the placeholder.
 
 import type { RegistrySnapshot, ResolveQuery } from "@panthea/assets/browser";
-import type { AssetVocabulary } from "@panthea/contracts";
+import { type AssetVocabulary, stateIds } from "@panthea/contracts";
 
 import { selectionKey } from "./reference";
 
@@ -56,9 +56,12 @@ export function optionsOf(
     return { states: [], directions: [], expressions: [] };
   }
   return {
-    states: vocabulary.states.map((state) => ({
-      id: state.id,
-      perAbility: state.perAbility === true,
+    // A state id may carry a rule per cell class; the picker offers each id once.
+    states: stateIds(vocabulary).map((id) => ({
+      id,
+      perAbility: vocabulary.states.some(
+        (state) => state.id === id && state.perAbility === true,
+      ),
     })),
     directions: vocabulary.directions,
     expressions: vocabulary.expressions,

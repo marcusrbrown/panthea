@@ -10,6 +10,8 @@ import {
   parseSha256,
   placeholderUri,
   type Sha256,
+  stateIds,
+  stateRuleFor,
 } from "./assets";
 
 const SHA = "a".repeat(64);
@@ -85,17 +87,144 @@ describe("asset vocabulary", () => {
       ["mortal", 64, 64],
       ["god", 64, 80],
       ["large", 128, 128],
+      ["god-tall", 112, 96],
       ["portrait", 96, 96],
     ]);
-    const act = parsed.value.states.find((s) => s.id === "act");
+    expect(parsed.value.cells.find((c) => c.id === "god-tall")?.kinds).toEqual([
+      "sprite",
+    ]);
+    const act = stateRuleFor(parsed.value, "act", "god");
     expect(act).toMatchObject({
       frames: { min: 4, max: 6 },
       fps: { min: 10, max: 12 },
       perAbility: true,
     });
-    expect(parsed.value.states.find((s) => s.id === "idle")?.perAbility).toBe(
-      false,
-    );
+    expect(stateRuleFor(parsed.value, "idle", "god")?.perAbility).toBe(false);
+  });
+
+  describe("state rules keyed by cell class", () => {
+    const committed = () => {
+      const parsed = parseAssetVocabulary(vocabularyJson);
+      if (!parsed.ok) throw new Error(parsed.message);
+      return parsed.value;
+    };
+
+    it("looks a state up by (state, cell class)", () => {
+      const vocabulary = committed();
+      // The legacy rules are unchanged for every legacy sprite class.
+      for (const cell of ["mortal", "god", "large"]) {
+        expect(stateRuleFor(vocabulary, "walk", cell)).toMatchObject({
+          frames: { min: 6, max: 6 },
+          fps: { min: 10, max: 10 },
+        });
+        expect(stateRuleFor(vocabulary, "idle", cell)).toMatchObject({
+          frames: { min: 4, max: 4 },
+          fps: { min: 3, max: 6 },
+        });
+        expect(stateRuleFor(vocabulary, "hurt", cell)?.frames).toEqual({
+          min: 2,
+          max: 2,
+        });
+        expect(stateRuleFor(vocabulary, "down", cell)?.frames).toEqual({
+          min: 1,
+          max: 1,
+        });
+      }
+      expect(stateRuleFor(vocabulary, "seated", "god")?.frames).toEqual({
+        min: 2,
+        max: 2,
+      });
+      expect(stateRuleFor(vocabulary, "act", "mortal")).toMatchObject({
+        frames: { min: 4, max: 6 },
+        fps: { min: 10, max: 12 },
+        perAbility: true,
+      });
+      // god-tall carries its own rules for the four retro states.
+      expect(stateRuleFor(vocabulary, "walk", "god-tall")).toMatchObject({
+        frames: { min: 16, max: 16 },
+        fps: { min: 20, max: 20 },
+      });
+      expect(stateRuleFor(vocabulary, "seated", "god-tall")?.frames.max).toBe(
+        16,
+      );
+      expect(stateRuleFor(vocabulary, "idle", "god-tall")?.frames.max).toBe(16);
+      expect(stateRuleFor(vocabulary, "act", "god-tall")?.perAbility).toBe(
+        true,
+      );
+    });
+
+    it("finds nothing where a class does not draw the state, or the state is unknown", () => {
+      const vocabulary = committed();
+      expect(stateRuleFor(vocabulary, "seated", "mortal")).toBeUndefined();
+      expect(stateRuleFor(vocabulary, "seated", "large")).toBeUndefined();
+      expect(stateRuleFor(vocabulary, "hurt", "god-tall")).toBeUndefined();
+      expect(stateRuleFor(vocabulary, "fly", "god")).toBeUndefined();
+      expect(stateRuleFor(vocabulary, "idle", undefined)).toBeUndefined();
+    });
+
+    it("lists each state id once, in first-named order", () => {
+      expect(stateIds(committed())).toEqual([
+        "idle",
+        "seated",
+        "act",
+        "walk",
+        "hurt",
+        "down",
+      ]);
+    });
+
+    // biome-ignore lint/suspicious/noExplicitAny: mutation helper edits arbitrary depths
+    const parseWith = (mutate: (v: any) => void) => {
+      const value = clone(vocabularyJson);
+      mutate(value);
+      return parseAssetVocabulary(value);
+    };
+    const indexOfRule = (
+      // biome-ignore lint/suspicious/noExplicitAny: mutation helper edits arbitrary depths
+      v: any,
+      id: string,
+      cell: string,
+    ): number =>
+      v.states.findIndex(
+        // biome-ignore lint/suspicious/noExplicitAny: mutation helper edits arbitrary depths
+        (s: any) => s.id === id && s.cellClasses?.includes(cell),
+      );
+
+    it("parses one state id under different cell classes (positive control for the refusals below)", () => {
+      expect(parseWith(() => {}).ok).toBe(true);
+    });
+
+    it("refuses a duplicate (state, cell class)", () => {
+      const result = parseWith((v) => {
+        const at = indexOfRule(v, "walk", "god-tall");
+        v.states[at].cellClasses = ["god-tall", "god"];
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.path).toMatch(/states\[\d+\]/);
+        expect(result.message).toContain('"god"');
+      }
+    });
+
+    it("refuses a rule that names no class beside another rule of its state, in either order", () => {
+      const unrestricted = parseWith((v) => {
+        const at = indexOfRule(v, "walk", "god");
+        delete v.states[at].cellClasses;
+      });
+      expect(unrestricted.ok).toBe(false);
+      const after = parseWith((v) => {
+        const at = indexOfRule(v, "walk", "god-tall");
+        delete v.states[at].cellClasses;
+      });
+      expect(after.ok).toBe(false);
+    });
+
+    it("refuses a state id repeated for the same class by a plain duplicate", () => {
+      const result = parseWith((v) => {
+        v.states.push({ ...v.states[0] });
+      });
+      expect(result.ok).toBe(false);
+    });
   });
 
   it("rejects unknown keys, unsupported versions and malformed data with a path", () => {
@@ -193,11 +322,12 @@ describe("asset vocabulary", () => {
         /states\[1\]\.cellClasses/,
       ],
       [
-        "duplicate state id",
+        "duplicate state id on the same cell class",
         (v) => {
-          v.states[1].id = "idle";
+          v.states[2].id = "idle";
+          v.states[2].cellClasses = ["god"];
         },
-        /states\[1\]/,
+        /states\[2\]/,
       ],
       [
         "state key typo",

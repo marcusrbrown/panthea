@@ -12,11 +12,17 @@ import {
   type GenerationJob,
   type GenerationRequest,
   type GenerationSlot,
+  isRecipeRequest,
+  type Point,
+  type ProviderDescriptor,
   parseGenerationRequest,
   parseSlug,
+  RECIPE_SEED,
+  stateIds,
+  stateRuleFor,
 } from "@panthea/contracts";
 import type { Palette, PaletteRamp } from "../palette";
-import { PROVIDER, SELECTED_PROFILE } from "./provider";
+import { PROVIDER, RENDER_PROVIDER, SELECTED_PROFILE } from "./provider";
 import { MAX_SEED } from "./seed";
 import type { JobSource, RequestRecord } from "./store";
 
@@ -32,10 +38,34 @@ const EDIT_NEGATIVE_PROMPT =
 const KINDS = ["sprite", "portrait"] as const;
 type StudioKind = (typeof KINDS)[number];
 
-// docs/product/art-guide.md: gods use the god cell; world sprites use at most
-// 16 colours including outline, portraits at most 32.
-const GOD_CELL_CLASS = "god";
+// docs/product/art-guide.md: world sprites use at most 16 colours including
+// outline, portraits at most 32.
 const MAX_COLOURS: Record<StudioKind, number> = { sprite: 16, portrait: 32 };
+
+/**
+ * An engine as the size gate sees it: the provider its jobs name, the sizes it
+ * has been measured to produce, and the scale from a cell to a generated size.
+ * Each engine declares its own; nothing here assumes one.
+ */
+export interface EngineCells {
+  readonly provider: ProviderDescriptor;
+  readonly measuredCells: readonly { readonly w: number; readonly h: number }[];
+  readonly generationScale: number;
+  /**
+   * The cell class this engine draws sprites on when the request does not carry
+   * a recipe. A recipe request takes its cell class from the subject's render
+   * matrix instead.
+   */
+  readonly spriteCellClass?: string;
+}
+
+/** The image engine: the probe-selected sd profile, drawing gods on the god cell. */
+export const SD_ENGINE: EngineCells = {
+  provider: PROVIDER,
+  measuredCells: SELECTED_PROFILE.measuredCells,
+  generationScale: SELECTED_PROFILE.generationScale,
+  spriteCellClass: "god",
+};
 
 export interface StudioContent {
   readonly vocabulary: AssetVocabulary;
@@ -52,6 +82,12 @@ export interface RequestInput {
   readonly seed?: number;
   readonly styleNote?: string;
   readonly edit?: GenerationEdit;
+  /**
+   * Makes this a recipe request for a render engine: the palette and the
+   * declared pivot. The render profile and cell class come from the subject, and
+   * batch, seed, style note and edit are not taken.
+   */
+  readonly render?: { readonly palette: string; readonly pivot: Point };
 }
 
 export type RequestError =
@@ -111,10 +147,16 @@ export type RequestError =
       readonly measured: readonly { readonly w: number; readonly h: number }[];
     }
   | {
+      readonly kind: "unknown-palette";
+      readonly palette: string;
+      readonly valid: readonly string[];
+    }
+  | {
       readonly kind: "seed-overflow";
       readonly baseSeed: number;
       readonly lastOrdinal: number;
-    };
+    }
+  | { readonly kind: "reroll-refused"; readonly message: string };
 
 export type RequestResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -213,6 +255,7 @@ function checkSlot(
   vocabulary: AssetVocabulary,
   god: GodProfile,
   cellId: string,
+  deferred: readonly { state: string; ability?: string }[],
 ): RequestResult<SlotCheck> {
   if (kind === "portrait") {
     if (
@@ -235,12 +278,11 @@ function checkSlot(
     return invalidSlot(slot, "a sprite slot takes no expression");
   if (slot.state === undefined || slot.direction === undefined)
     return invalidSlot(slot, "a sprite slot needs a state and a direction");
-  const rule = vocabulary.states.find((state) => state.id === slot.state);
-  if (rule === undefined)
+  if (!vocabulary.states.some((state) => state.id === slot.state))
     return bad({
       kind: "unknown-state",
       state: slot.state,
-      valid: vocabulary.states.map((state) => state.id),
+      valid: stateIds(vocabulary),
     });
   const { direction } = slot;
   if (!isDirection(direction) || !vocabulary.directions.includes(direction))
@@ -250,10 +292,18 @@ function checkSlot(
       valid: vocabulary.directions.filter(isDirection),
     });
   const view = DIRECTION_VIEW[direction];
-  if (rule.cellClasses !== undefined && !rule.cellClasses.includes(cellId))
+  const rule = stateRuleFor(vocabulary, slot.state, cellId);
+  if (rule === undefined)
     return invalidSlot(
       slot,
       `${slot.state} is not drawn on the ${cellId} cell`,
+    );
+  if (
+    deferred.some((d) => d.state === slot.state && d.ability === slot.ability)
+  )
+    return invalidSlot(
+      slot,
+      `${slotKey(slot)} is deferred in the subject's render matrix`,
     );
   if (!rule.perAbility) {
     return slot.ability === undefined
@@ -292,10 +342,29 @@ function promptFor(
   return `pixel art, ${subject}, full body, ${view}, ${slot.state} pose${ability}, plain flat background, limited colour palette${style}`;
 }
 
-/** Joins the content for a root request; unknown or mismatched values are typed errors. */
+/**
+ * The cell class a stored request draws on: a recipe request's from the
+ * subject's render matrix, any other sprite request's from the image engine.
+ */
+export function spriteCellClassOf(
+  content: StudioContent,
+  request: GenerationRequest,
+): string | undefined {
+  if (request.recipe === undefined) return SD_ENGINE.spriteCellClass;
+  return content.visuals.find((v) => v.godId === request.subject)?.render
+    ?.matrix.cellClass;
+}
+
+/**
+ * Joins the content for a root request; unknown or mismatched values are typed
+ * errors. `engine` declares the sizes the size gate checks against; it defaults
+ * to the image engine and is required for a recipe request, which no default
+ * engine can serve.
+ */
 export function buildSpec(
   content: StudioContent,
   request: GenerationRequest,
+  engine?: EngineCells,
 ): RequestResult<GenerationSpec> {
   const { vocabulary } = content;
   const kind = KINDS.find((k) => k === request.kind);
@@ -314,9 +383,34 @@ export function buildSpec(
       valid: content.visuals.map((v) => v.godId),
     });
 
+  const { recipe } = request;
+  if (recipe !== undefined && engine === undefined)
+    return bad({
+      kind: "invalid-request",
+      path: "engine",
+      message: "a recipe request needs the render engine's declared cells",
+    });
+  const { measuredCells, generationScale, spriteCellClass } =
+    engine ?? SD_ENGINE;
+  let spriteCell = spriteCellClass;
+  if (recipe !== undefined) {
+    if (visual.render === undefined)
+      return bad({
+        kind: "invalid-request",
+        path: "recipe",
+        message: `${request.subject} names no render profile`,
+      });
+    if (visual.render.profile !== recipe.profile)
+      return bad({
+        kind: "invalid-request",
+        path: "request.recipe.profile",
+        message: `${request.subject}'s render profile is ${visual.render.profile}, not ${recipe.profile}`,
+      });
+    spriteCell = visual.render.matrix.cellClass;
+  }
   const cell = vocabulary.cells.find((c) =>
     kind === "sprite"
-      ? c.id === GOD_CELL_CLASS && c.kinds.includes("sprite")
+      ? c.id === spriteCell && c.kinds.includes("sprite")
       : c.kinds.includes("portrait"),
   );
   if (cell === undefined)
@@ -325,7 +419,20 @@ export function buildSpec(
       path: "vocabulary.cells",
       message: `no cell for ${kind}`,
     });
-  const { generationScale, measuredCells } = SELECTED_PROFILE;
+  if (recipe !== undefined) {
+    if (recipe.palette !== content.palette.id)
+      return bad({
+        kind: "unknown-palette",
+        palette: recipe.palette,
+        valid: [content.palette.id],
+      });
+    if (recipe.pivot.x > cell.w || recipe.pivot.y > cell.h)
+      return bad({
+        kind: "invalid-request",
+        path: "request.recipe.pivot",
+        message: `pivot lies outside the ${cell.w}x${cell.h} cell`,
+      });
+  }
   const generated = measuredCells.find(
     (m) => m.w === cell.w * generationScale && m.h === cell.h * generationScale,
   );
@@ -347,7 +454,14 @@ export function buildSpec(
 
   const slots: SlotSpec[] = [];
   for (const slot of request.slots) {
-    const checked = checkSlot(slot, kind, vocabulary, god, cell.id);
+    const checked = checkSlot(
+      slot,
+      kind,
+      vocabulary,
+      god,
+      cell.id,
+      recipe === undefined ? [] : (visual.render?.matrix.deferred ?? []),
+    );
     if (!checked.ok) return checked;
     slots.push({
       key: slotKey(slot),
@@ -376,7 +490,7 @@ export function buildSpec(
     generated: { w: generated.w, h: generated.h },
     ...(request.edit === undefined ? {} : { edit: request.edit }),
     ...(kind === "sprite"
-      ? { pivot: { x: Math.floor(cell.w / 2), y: cell.h } }
+      ? { pivot: recipe?.pivot ?? { x: Math.floor(cell.w / 2), y: cell.h } }
       : {}),
     palette: {
       id: content.palette.id,
@@ -392,22 +506,43 @@ export function buildSpec(
 /**
  * Builds the durable root request. A supplied seed is the base seed; otherwise
  * `drawSeed` is called once, after the request is known valid. Jobs are not
- * expanded here: the record starts at ordinal 0.
+ * expanded here: the record starts at ordinal 0. A recipe request takes its
+ * render profile from the subject, is stored with batch 1 and seed 0, and
+ * never draws a seed; `engine` declares the cells it is checked against.
  */
 export function newRequestRecord(
   content: StudioContent,
   input: RequestInput & { readonly id: string },
   drawSeed: () => number,
+  engine?: EngineCells,
 ): RequestResult<{ record: RequestRecord; spec: GenerationSpec }> {
   const id = parseSlug(input.id, "id");
   if (!id.ok)
     return bad({ kind: "invalid-request", path: id.path, message: id.message });
-  const { id: _id, ...fields } = input;
-  const parsed = parseGenerationRequest({
-    schemaVersion: 1,
-    ...fields,
-    batch: input.batch ?? DEFAULT_BATCH,
-  });
+  const { id: _id, render, ...fields } = input;
+  let stored: Record<string, unknown>;
+  if (render === undefined) {
+    stored = { ...fields, batch: input.batch ?? DEFAULT_BATCH };
+  } else {
+    const visual = content.visuals.find((v) => v.godId === input.subject);
+    if (visual === undefined)
+      return bad({
+        kind: "unknown-subject",
+        subject: input.subject,
+        valid: content.visuals.map((v) => v.godId),
+      });
+    if (visual.render === undefined)
+      return bad({
+        kind: "invalid-request",
+        path: "recipe",
+        message: `${input.subject} names no render profile`,
+      });
+    stored = {
+      ...fields,
+      recipe: { profile: visual.render.profile, ...render },
+    };
+  }
+  const parsed = parseGenerationRequest({ schemaVersion: 1, ...stored });
   if (!parsed.ok)
     return bad({
       kind: "invalid-request",
@@ -423,7 +558,7 @@ export function newRequestRecord(
       path: "request.seed",
       message: "expected a safe integer",
     });
-  const spec = buildSpec(content, parsed.value);
+  const spec = buildSpec(content, parsed.value, engine);
   if (!spec.ok) return spec;
 
   const seed = parsed.value.seed ?? drawSeed();
@@ -463,6 +598,13 @@ export function planJobs(
       message: "expected a positive integer",
     });
   const { request } = record;
+  const recipe = request.recipe;
+  if (recipe !== undefined && (perSlot !== 1 || record.nextOrdinal !== 0))
+    return bad({
+      kind: "reroll-refused",
+      message:
+        "a recipe request renders each slot once, at seed 0: there is nothing to reroll",
+    });
   const baseSeed = request.seed;
   if (baseSeed === undefined)
     return bad({
@@ -500,13 +642,14 @@ export function planJobs(
           kind: request.kind,
           slots: [slot],
           batch: 1,
-          seed: baseSeed + ordinal,
+          seed: recipe === undefined ? baseSeed + ordinal : RECIPE_SEED,
           ...(request.styleNote === undefined
             ? {}
             : { styleNote: request.styleNote }),
           ...(request.edit === undefined ? {} : { edit: request.edit }),
+          ...(recipe === undefined ? {} : { recipe }),
         },
-        provider: PROVIDER,
+        provider: isRecipeRequest(request) ? RENDER_PROVIDER : PROVIDER,
         status: "queued",
       },
     });

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": 1,
+  "version": 2,
   "directions": ["south", "north", "east", "west"],
   "expressions": [
     "neutral",
@@ -16,13 +16,21 @@
     { "id": "mortal", "w": 64, "h": 64, "kinds": ["sprite"] },
     { "id": "god", "w": 64, "h": 80, "kinds": ["sprite"] },
     { "id": "large", "w": 128, "h": 128, "kinds": ["sprite"] },
+    { "id": "god-tall", "w": 112, "h": 96, "kinds": ["sprite"] },
     { "id": "portrait", "w": 96, "h": 96, "kinds": ["portrait"] }
   ],
   "states": [
     {
       "id": "idle",
       "frames": { "min": 4, "max": 4 },
-      "fps": { "min": 3, "max": 6 }
+      "fps": { "min": 3, "max": 6 },
+      "cellClasses": ["mortal", "god", "large"]
+    },
+    {
+      "id": "idle",
+      "frames": { "min": 4, "max": 16 },
+      "fps": { "min": 3, "max": 20 },
+      "cellClasses": ["god-tall"]
     },
     {
       "id": "seated",
@@ -30,18 +38,47 @@
       "cellClasses": ["god"]
     },
     {
+      "id": "seated",
+      "frames": { "min": 2, "max": 16 },
+      "fps": { "min": 3, "max": 20 },
+      "cellClasses": ["god-tall"]
+    },
+    {
       "id": "act",
       "frames": { "min": 4, "max": 6 },
       "fps": { "min": 10, "max": 12 },
+      "cellClasses": ["mortal", "god", "large"],
+      "perAbility": true
+    },
+    {
+      "id": "act",
+      "frames": { "min": 4, "max": 16 },
+      "fps": { "min": 10, "max": 20 },
+      "cellClasses": ["god-tall"],
       "perAbility": true
     },
     {
       "id": "walk",
       "frames": { "min": 6, "max": 6 },
-      "fps": { "min": 10, "max": 10 }
+      "fps": { "min": 10, "max": 10 },
+      "cellClasses": ["mortal", "god", "large"]
     },
-    { "id": "hurt", "frames": { "min": 2, "max": 2 } },
-    { "id": "down", "frames": { "min": 1, "max": 1 } }
+    {
+      "id": "walk",
+      "frames": { "min": 16, "max": 16 },
+      "fps": { "min": 20, "max": 20 },
+      "cellClasses": ["god-tall"]
+    },
+    {
+      "id": "hurt",
+      "frames": { "min": 2, "max": 2 },
+      "cellClasses": ["mortal", "god", "large"]
+    },
+    {
+      "id": "down",
+      "frames": { "min": 1, "max": 1 },
+      "cellClasses": ["mortal", "god", "large"]
+    }
   ],
   "effect": { "maxEmissiveAccents": 4, "tierOneMaxMs": 300 }
 }

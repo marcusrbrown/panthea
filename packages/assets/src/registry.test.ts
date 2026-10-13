@@ -1104,3 +1104,34 @@ describe("the blob gate is exported for read-only callers", () => {
     expect(parsed.ok).toBe(true);
   });
 });
+
+describe("the published legacy manifests", () => {
+  const manifests = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "..",
+    "content",
+    "greek",
+    "assets",
+    "registry",
+    "manifests",
+  );
+
+  it("each parses against the committed vocabulary and re-serialises byte for byte", () => {
+    const names = readdirSync(manifests).filter((name) =>
+      name.endsWith(".json"),
+    );
+    expect(names.length).toBeGreaterThanOrEqual(3);
+    for (const name of names) {
+      const text = readFileSync(join(manifests, name), "utf8");
+      const parsed = parseAssetManifest(
+        JSON.parse(text),
+        committedVocabulary(),
+      );
+      if (!parsed.ok)
+        throw new Error(`${name}: ${parsed.path}: ${parsed.message}`);
+      expect(canonicalManifestText(parsed.value), name).toBe(text);
+    }
+  });
+});

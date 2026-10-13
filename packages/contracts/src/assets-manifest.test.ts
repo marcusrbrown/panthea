@@ -1440,3 +1440,653 @@ describe("generation requests", () => {
     });
   });
 });
+
+// --- Retro: god-tall cell, recipe requests, rendered provenance ---------------------
+
+const hashOf = (n: number) => n.toString(16).padStart(64, "0");
+
+function handProvenance() {
+  return {
+    method: "hand",
+    handEdits: [{ description: "drawn in the editor" }],
+    licences: [{ subject: "studio", role: "original-work", licence: "MIT" }],
+    relatedJobs: [],
+    sourceAssets: [],
+  };
+}
+
+const FACINGS = ["south", "north", "east", "west"] as const;
+
+function godTallSprite(
+  animations: Mutable[] = [
+    { state: "walk", direction: "south", frames: frames(16, 112, 96, 50) },
+  ],
+) {
+  return {
+    schemaVersion: 1,
+    kind: "sprite",
+    id: "zeus-retro",
+    cell: { w: 112, h: 96 },
+    pixelScale: 1,
+    paletteFamily: "olympus",
+    paletteId: "greek-retro",
+    styleTag: "retro",
+    atlas: { blob: H("d"), width: 112 * 16, height: 96 },
+    pivot: { x: 56, y: 78 },
+    footprint: { w: 1, h: 1 },
+    directions: ["south", "north", "east", "west"],
+    realmVariants: [],
+    animations,
+    provenance: handProvenance(),
+  };
+}
+
+const parsesAs = (value: Mutable) => parseAssetManifest(value, vocab);
+
+describe("asset manifests: the god-tall cell", () => {
+  it("parses a 112x96 manifest with pivot (56,78) and a 16-frame walk at 50 ms per frame", () => {
+    const parsed = parsesAs(godTallSprite());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.kind === "sprite" && parsed.value.pivot).toEqual({
+      x: 56,
+      y: 78,
+    });
+    const text = canonicalManifestText(parsed.value);
+    const again = parseAssetManifest(JSON.parse(text), vocab);
+    expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+  });
+
+  it("refuses a god-tall walk that is the legacy 6 frames, or 51 ms, or 15 frames", () => {
+    for (const [label, count, ms] of [
+      ["6 frames", 6, 50],
+      ["15 frames", 15, 50],
+      ["51 ms", 16, 51],
+      ["49 ms", 16, 49],
+    ] as const) {
+      const result = parsesAs(
+        godTallSprite([
+          {
+            state: "walk",
+            direction: "south",
+            frames: frames(count, 112, 96, ms),
+          },
+        ]),
+      );
+      expect(result.ok, label).toBe(false);
+      if (!result.ok) expect(result.path, label).toMatch(/animations\[0\]/);
+    }
+  });
+
+  it("keeps the legacy god walk: 6 frames at 10 fps applies to 64x80, and a 16-frame walk on god is refused", () => {
+    const godWalk = (count: number, ms: number) => {
+      const value = sprite();
+      value.animations = [
+        {
+          state: "walk",
+          direction: "south",
+          frames: frames(count, 64, 80, ms),
+        },
+      ];
+      value.atlas = { blob: H("d"), width: 64 * 16, height: 80 };
+      value.realmVariants[0].atlas = {
+        blob: H("9"),
+        width: 64 * 16,
+        height: 80,
+      };
+      return value;
+    };
+    expect(parsesAs(godWalk(6, 100)).ok).toBe(true);
+    const sixteen = parsesAs(godWalk(16, 50));
+    expect(sixteen.ok).toBe(false);
+    if (!sixteen.ok) expect(sixteen.path).toMatch(/animations\[0\]\.frames/);
+    // The legacy rule is not loosened to the retro timing either.
+    expect(parsesAs(godWalk(6, 50)).ok).toBe(false);
+  });
+
+  it("takes seated on god-tall and still refuses it on mortal", () => {
+    const seated = godTallSprite([
+      { state: "seated", direction: "south", frames: frames(8, 112, 96, 100) },
+    ]);
+    expect(parsesAs(seated).ok).toBe(true);
+    const mortal = sprite();
+    mortal.cell = { w: 64, h: 64 };
+    mortal.pivot = { x: 32, y: 64 };
+    mortal.atlas.height = 64;
+    mortal.realmVariants[0].atlas.height = 64;
+    for (const a of mortal.animations) for (const f of a.frames) f.rect.h = 64;
+    const refused = parsesAs(mortal);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok)
+      expect(`${refused.path} ${refused.message}`).toMatch(/seated/);
+  });
+
+  it("takes idle and act (per ability) on god-tall within the retro ranges", () => {
+    const value = godTallSprite([
+      { state: "idle", direction: "south", frames: frames(8, 112, 96, 167) },
+      {
+        state: "act",
+        direction: "south",
+        ability: "thunderbolt",
+        frames: frames(12, 112, 96, 60),
+      },
+    ]);
+    expect(parsesAs(value).ok).toBe(true);
+    const noAbility = godTallSprite([
+      { state: "act", direction: "south", frames: frames(12, 112, 96, 60) },
+    ]);
+    expect(parsesAs(noAbility).ok).toBe(false);
+  });
+
+  it("refuses a state god-tall has no rule for", () => {
+    const hurt = godTallSprite([
+      { state: "hurt", direction: "south", frames: frames(2, 112, 96, 100) },
+    ]);
+    const result = parsesAs(hurt);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toMatch(/animations\[0\]\.state/);
+  });
+
+  it("keeps a pivot inside the 112x96 cell", () => {
+    for (const [pivot, accepted] of [
+      [{ x: 56, y: 78 }, true],
+      [{ x: 112, y: 96 }, true],
+      [{ x: 113, y: 78 }, false],
+      [{ x: 56, y: 97 }, false],
+      [{ x: -1, y: 78 }, false],
+    ] as const) {
+      const value = godTallSprite();
+      value.pivot = pivot;
+      const result = parsesAs(value);
+      expect(result.ok, JSON.stringify(pivot)).toBe(accepted);
+      if (!result.ok) expect(result.path).toMatch(/pivot/);
+    }
+  });
+
+  it("refuses frames that are the god cell size on a god-tall manifest", () => {
+    const value = godTallSprite([
+      { state: "walk", direction: "south", frames: frames(16, 64, 80, 50) },
+    ]);
+    expect(parsesAs(value).ok).toBe(false);
+  });
+});
+
+describe("recipe requests", () => {
+  const recipe = {
+    schemaVersion: 1,
+    subject: "zeus",
+    kind: "sprite",
+    slots: [{ state: "walk", direction: "south" }],
+    recipe: {
+      profile: "zeus",
+      palette: "greek-retro",
+      pivot: { x: 56, y: 78 },
+    },
+  };
+  const parseWith = (mutate: (v: Mutable) => void) => {
+    const value = JSON.parse(JSON.stringify(recipe)) as Mutable;
+    mutate(value);
+    return parseGenerationRequest(value);
+  };
+
+  it("parses, storing batch 1 and seed 0 and no camera", () => {
+    const parsed = parseGenerationRequest(recipe);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.batch).toBe(1);
+    expect(parsed.value.seed).toBe(0);
+    expect(parsed.value.recipe).toEqual({
+      profile: "zeus",
+      palette: "greek-retro",
+      pivot: { x: 56, y: 78 },
+    });
+    expect(JSON.stringify(parsed.value)).not.toContain("camera");
+    // The stored form parses again unchanged.
+    expect(
+      parseGenerationRequest(JSON.parse(JSON.stringify(parsed.value))),
+    ).toEqual(parsed);
+  });
+
+  it("refuses a seed other than 0 and a batch above 1 (positive control: seed 0 and batch 1 parse)", () => {
+    expect(
+      parseWith((v) => {
+        v.seed = 0;
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseWith((v) => {
+        v.batch = 1;
+      }).ok,
+    ).toBe(true);
+    for (const [label, mutate] of [
+      [
+        "seed 1",
+        (v: Mutable) => {
+          v.seed = 1;
+        },
+      ],
+      [
+        "seed 20261003",
+        (v: Mutable) => {
+          v.seed = 20261003;
+        },
+      ],
+      [
+        "batch 2",
+        (v: Mutable) => {
+          v.batch = 2;
+        },
+      ],
+      [
+        "batch 4",
+        (v: Mutable) => {
+          v.batch = 4;
+        },
+      ],
+    ] as const) {
+      const result = parseWith(mutate);
+      expect(result.ok, label).toBe(false);
+      if (!result.ok) expect(result.path, label).toMatch(/seed|batch/);
+    }
+  });
+
+  it("refuses a style note, an edit, a camera id, a portrait and a malformed recipe", () => {
+    for (const [label, mutate] of [
+      [
+        "styleNote",
+        (v: Mutable) => {
+          v.styleNote = "dusk";
+        },
+      ],
+      [
+        "edit",
+        (v: Mutable) => {
+          v.edit = {
+            base: { kind: "hand", image: H("1"), description: "x" },
+            mask: H("2"),
+            strength: 0.5,
+            cue: "turn",
+          };
+        },
+      ],
+      [
+        "camera",
+        (v: Mutable) => {
+          v.recipe.camera = "iso-2-1";
+        },
+      ],
+      [
+        "portrait kind",
+        (v: Mutable) => {
+          v.kind = "portrait";
+          v.slots = [{ expression: "neutral" }];
+        },
+      ],
+      [
+        "empty profile",
+        (v: Mutable) => {
+          v.recipe.profile = "";
+        },
+      ],
+      [
+        "missing palette",
+        (v: Mutable) => {
+          delete v.recipe.palette;
+        },
+      ],
+      [
+        "fractional pivot",
+        (v: Mutable) => {
+          v.recipe.pivot = { x: 56.5, y: 78 };
+        },
+      ],
+      [
+        "negative pivot",
+        (v: Mutable) => {
+          v.recipe.pivot = { x: -1, y: 78 };
+        },
+      ],
+      [
+        "missing pivot",
+        (v: Mutable) => {
+          delete v.recipe.pivot;
+        },
+      ],
+    ] as const) {
+      expect(parseWith(mutate).ok, label).toBe(false);
+    }
+  });
+
+  it("leaves image requests as they were: batch is required and a seed is free", () => {
+    expect(parseGenerationRequest(request).ok).toBe(true);
+    const { batch: _batch, ...noBatch } = request;
+    expect(parseGenerationRequest(noBatch).ok).toBe(false);
+    expect(parseGenerationRequest({ ...request, seed: 7 }).ok).toBe(true);
+  });
+});
+
+describe("rendered provenance", () => {
+  const revisionHash = hashOf(0xaaa);
+
+  function pin() {
+    return { version: "5.2.2", build: "d13f752e3b9c", sha256: H("a") };
+  }
+
+  function revisionRecipe() {
+    return {
+      hash: revisionHash,
+      profile: { id: "zeus", hash: H("1") },
+      camera: H("2"),
+      palette: { id: "greek-retro", digest: H("3") },
+      pivot: { x: 56, y: 78 },
+      script: H("4"),
+      postStep: 1,
+      blender: pin(),
+      kit: H("5"),
+      stamps: H("6"),
+    };
+  }
+
+  function renderedSlot(
+    state: string,
+    facing: string,
+    frameCount: number,
+    ability?: string,
+    at = 0,
+  ) {
+    const roleHashes = (role: number) =>
+      Array.from({ length: frameCount }, (_, i) =>
+        hashOf(role * 1000 + at * 100 + i + 1),
+      );
+    return {
+      slotKey: [state, facing, ability]
+        .filter((p) => p !== undefined)
+        .join("/"),
+      recipeHash: hashOf(0xb00 + at),
+      revisionRecipeHash: revisionHash,
+      state,
+      clip: state === "act" ? "Spell_Simple_Shoot" : "Walking_A",
+      facing,
+      ...(ability === undefined ? {} : { ability }),
+      seed: 0,
+      frameCount,
+      raw: { colour: roleHashes(1), id: roleHashes(2), depth: roleHashes(3) },
+    };
+  }
+
+  function rendered(
+    slots: Mutable[] = [renderedSlot("walk", "south", 16)],
+  ): Mutable {
+    return {
+      method: "rendered",
+      revisionRecipe: revisionRecipe(),
+      slots,
+      licences: [
+        { subject: "quaternius-kit", role: "input", licence: "CC0-1.0" },
+        { subject: "blender", role: "runtime", licence: "GPL-3.0-or-later" },
+      ],
+      relatedJobs: [
+        { jobId: "zeus-retro-0000", status: "succeeded", outputs: [H("7")] },
+      ],
+      handEdits: [],
+      sourceAssets: [],
+    };
+  }
+
+  const renderedManifest = (provenance: Mutable = rendered()) => ({
+    ...godTallSprite(),
+    provenance,
+  });
+
+  it("round-trips through the provenance parser and the manifest, canonically", () => {
+    const parsed = parseProvenance(rendered());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.method).toBe("rendered");
+    const again = parseProvenance(JSON.parse(JSON.stringify(parsed.value)));
+    expect(again).toEqual(parsed);
+    const manifest = parsesAs(renderedManifest());
+    expect(manifest.ok).toBe(true);
+    if (!manifest.ok) return;
+    const text = canonicalManifestText(manifest.value);
+    const reparsed = parseAssetManifest(JSON.parse(text), vocab);
+    expect(reparsed.ok && canonicalManifestText(reparsed.value)).toBe(text);
+  });
+
+  it("keeps every recorded field", () => {
+    const parsed = parseProvenance(rendered());
+    if (!parsed.ok || parsed.value.method !== "rendered")
+      throw new Error("expected rendered provenance");
+    expect(parsed.value.revisionRecipe).toEqual(revisionRecipe() as never);
+    expect(parsed.value.slots[0]).toEqual(
+      renderedSlot("walk", "south", 16) as never,
+    );
+  });
+
+  it("covers an ability slot and all four facings", () => {
+    const slots = FACINGS.map((facing, at) =>
+      renderedSlot("act", facing, 12, "thunderbolt", at),
+    );
+    expect(parseProvenance(rendered(slots)).ok).toBe(true);
+  });
+
+  const missing = (label: string, mutate: (v: Mutable) => void, path: RegExp) =>
+    it(`refuses ${label}`, () => {
+      const value = rendered();
+      mutate(value);
+      const result = parseProvenance(value);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(`${result.path} ${result.message}`).toMatch(path);
+    });
+
+  for (const field of ["version", "build", "sha256"] as const) {
+    missing(
+      `a Blender pin with no ${field}`,
+      (v) => {
+        delete v.revisionRecipe.blender[field];
+      },
+      new RegExp(`blender\\.${field}`),
+    );
+  }
+  for (const field of [
+    "hash",
+    "profile",
+    "camera",
+    "palette",
+    "pivot",
+    "script",
+    "postStep",
+    "blender",
+    "kit",
+    "stamps",
+  ] as const) {
+    missing(
+      `a revision recipe with no ${field}`,
+      (v) => {
+        delete v.revisionRecipe[field];
+      },
+      new RegExp(`revisionRecipe\\.${field}`),
+    );
+  }
+  missing(
+    "a profile with no hash",
+    (v) => {
+      delete v.revisionRecipe.profile.hash;
+    },
+    /profile\.hash/,
+  );
+  missing(
+    "a palette with no digest",
+    (v) => {
+      delete v.revisionRecipe.palette.digest;
+    },
+    /palette\.digest/,
+  );
+  missing(
+    "a malformed pin hash",
+    (v) => {
+      v.revisionRecipe.blender.sha256 = "abc";
+    },
+    /blender\.sha256/,
+  );
+  missing(
+    "a non-hex Blender build",
+    (v) => {
+      v.revisionRecipe.blender.build = "not a hash";
+    },
+    /blender\.build/,
+  );
+  missing(
+    "a camera id on the recipe",
+    (v) => {
+      v.revisionRecipe.cameraId = "iso";
+    },
+    /cameraId/,
+  );
+  missing(
+    "no slots",
+    (v) => {
+      v.slots = [];
+    },
+    /slots/,
+  );
+  missing(
+    "a slot with a seed other than 0",
+    (v) => {
+      v.slots[0].seed = 1;
+    },
+    /slots\[0\]\.seed/,
+  );
+  missing(
+    "a slot whose key is not state/facing",
+    (v) => {
+      v.slots[0].slotKey = "walk/north";
+    },
+    /slots\[0\]\.slotKey/,
+  );
+  missing(
+    "a slot with no recipe hash",
+    (v) => {
+      delete v.slots[0].recipeHash;
+    },
+    /slots\[0\]\.recipeHash/,
+  );
+  missing(
+    "a slot with no clip",
+    (v) => {
+      delete v.slots[0].clip;
+    },
+    /slots\[0\]\.clip/,
+  );
+  missing(
+    "a slot with no raw depth hashes",
+    (v) => {
+      delete v.slots[0].raw.depth;
+    },
+    /raw\.depth/,
+  );
+  missing(
+    "raw hashes that disagree with the frame count",
+    (v) => {
+      v.slots[0].raw.id.pop();
+    },
+    /raw\.id/,
+  );
+  missing(
+    "a zero frame count",
+    (v) => {
+      v.slots[0].frameCount = 0;
+      v.slots[0].raw = { colour: [], id: [], depth: [] };
+    },
+    /frameCount/,
+  );
+  missing(
+    "a duplicate slot key",
+    (v) => {
+      v.slots.push({ ...v.slots[0] });
+    },
+    /slots\[1\]/,
+  );
+  missing(
+    "a slot rendered under another revision recipe hash",
+    (v) => {
+      v.slots[0].revisionRecipeHash = hashOf(0xccc);
+    },
+    /slots\[0\]\.revisionRecipeHash/,
+  );
+  missing(
+    "no licence record",
+    (v) => {
+      v.licences = [];
+    },
+    /licences/,
+  );
+  missing(
+    "an unknown key",
+    (v) => {
+      v.generations = [];
+    },
+    /generations/,
+  );
+
+  it("refuses slots that differ in revision recipe hash, whichever slot differs", () => {
+    const slots = [
+      renderedSlot("walk", "south", 16, undefined, 0),
+      renderedSlot("walk", "north", 16, undefined, 1),
+    ];
+    expect(parseProvenance(rendered(slots)).ok).toBe(true);
+    const odd = JSON.parse(JSON.stringify(slots)) as Mutable[];
+    (odd[1] as Mutable).revisionRecipeHash = hashOf(0xddd);
+    const result = parseProvenance(rendered(odd));
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.path).toMatch(/slots\[1\]\.revisionRecipeHash/);
+  });
+
+  it("refuses a rendered slot absent from the manifest, a different frame count, and a different pivot", () => {
+    expect(parsesAs(renderedManifest()).ok).toBe(true);
+    const absent = parsesAs(
+      renderedManifest(rendered([renderedSlot("walk", "north", 16)])),
+    );
+    expect(absent.ok).toBe(false);
+    if (!absent.ok) expect(absent.path).toMatch(/provenance\.slots\[0\]/);
+    const shorter = parsesAs(
+      renderedManifest(rendered([renderedSlot("walk", "south", 15)])),
+    );
+    expect(shorter.ok).toBe(false);
+    if (!shorter.ok)
+      expect(shorter.path).toMatch(/provenance\.slots\[0\]\.frameCount/);
+    const provenance = rendered();
+    provenance.revisionRecipe.pivot = { x: 50, y: 78 };
+    const moved = parsesAs(renderedManifest(provenance));
+    expect(moved.ok).toBe(false);
+    if (!moved.ok) expect(moved.path).toMatch(/revisionRecipe\.pivot/);
+  });
+
+  it("is a sprite method: a portrait or an effect cannot be rendered", () => {
+    const asPortrait = { ...portrait(), provenance: rendered() };
+    expect(parsesAs(asPortrait).ok).toBe(false);
+    const asEffect = { ...effect(), provenance: rendered() };
+    expect(parsesAs(asEffect).ok).toBe(false);
+  });
+
+  it("keeps GenerationRef.model non-null, and a generation never records a recipe request", () => {
+    expect(parseProvenance(generated()).ok).toBe(true);
+    const noModel: Mutable = generated();
+    noModel.generations[0].model = null;
+    const refusedModel = parseProvenance(noModel);
+    expect(refusedModel.ok).toBe(false);
+    if (!refusedModel.ok)
+      expect(refusedModel.path).toMatch(/generations\[0\]\.model/);
+    const recipeRef: Mutable = generated();
+    recipeRef.generations[0].request.recipe = {
+      profile: "zeus",
+      palette: "greek-retro",
+      pivot: { x: 56, y: 78 },
+    };
+    const refusedRecipe = parseProvenance(recipeRef);
+    expect(refusedRecipe.ok).toBe(false);
+    if (!refusedRecipe.ok)
+      expect(refusedRecipe.path).toMatch(/generations\[0\]\.request/);
+  });
+});

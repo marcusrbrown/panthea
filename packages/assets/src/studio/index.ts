@@ -104,6 +104,7 @@ export {
   adapterInput,
   buildSpec,
   DEFAULT_BATCH,
+  type EngineCells,
   type GenerationSpec,
   newRequestRecord,
   type PlannedJob,
