@@ -29,6 +29,7 @@ import {
 import {
   checkKits,
   checkLicenceBoundary,
+  checkStamps,
   type ProfileKitRefs,
 } from "@panthea/assets/render";
 import {
@@ -217,6 +218,10 @@ function validateRender(
   report: (file: string, message: string) => void,
 ): void {
   for (const problem of checkKits(join(repoRoot, "tools", "render"), profiles)
+    .problems) {
+    report(`tools/render/${problem.file}`, problem.message);
+  }
+  for (const problem of checkStamps(join(repoRoot, "tools", "render"))
     .problems) {
     report(`tools/render/${problem.file}`, problem.message);
   }

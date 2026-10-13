@@ -931,10 +931,26 @@ function renderRepo(
       ],
     }),
   );
+  mkdirSync(join(root, "tools", "render", "stamps"), { recursive: true });
+  writeFileSync(
+    join(root, "tools", "render", "stamps", "stamps.json"),
+    JSON.stringify({ schemaVersion: 1, sets: [] }),
+  );
   for (const [name, text] of Object.entries(options.python ?? {})) {
     mkdirSync(dirname(join(root, name)), { recursive: true });
     writeFileSync(join(root, name), text);
   }
+  return root;
+}
+
+/** A render repository holding a copy of the committed stamp set. */
+function stampRepo(): string {
+  const root = renderRepo();
+  const stamps = join(root, "tools", "render", "stamps");
+  rmSync(stamps, { recursive: true, force: true });
+  cpSync(join(REPO_ROOT, "tools", "render", "stamps"), stamps, {
+    recursive: true,
+  });
   return root;
 }
 
@@ -988,6 +1004,57 @@ describe("render kits and the licence boundary", () => {
       kitProfiles: [FIXTURE_PROFILE],
     });
     expect(assessed.diagnostics).toEqual([]);
+  });
+
+  it("refuses a missing stamp file and a stamp whose hash differs, and passes the unbroken stamp set", () => {
+    const intact = stampRepo();
+    expect(
+      validateAssets(contentRoot(), { repoRoot: intact, kitProfiles: [] })
+        .diagnostics,
+    ).toEqual([]);
+
+    const missing = stampRepo();
+    rmSync(join(missing, "tools", "render", "stamps", "zeus", "bolt-045.png"));
+    const refusedMissing = validateAssets(contentRoot(), {
+      repoRoot: missing,
+      kitProfiles: [],
+    });
+    expect(refusedMissing.ok).toBe(false);
+    expect(refusedMissing.diagnostics).toEqual([
+      {
+        file: "tools/render/stamps/zeus/bolt-045.png",
+        message: expect.stringContaining("missing"),
+      },
+    ]);
+
+    const changed = stampRepo();
+    writeFileSync(
+      join(changed, "tools", "render", "stamps", "zeus", "face-east-near.png"),
+      "not the stamp",
+    );
+    const refusedHash = validateAssets(contentRoot(), {
+      repoRoot: changed,
+      kitProfiles: [],
+    });
+    expect(refusedHash.ok).toBe(false);
+    expect(refusedHash.diagnostics).toEqual([
+      {
+        file: "tools/render/stamps/zeus/face-east-near.png",
+        message: expect.stringContaining("sha256"),
+      },
+    ]);
+  });
+
+  it("refuses a render root without stamps.json", () => {
+    const repoRoot = renderRepo();
+    rmSync(join(repoRoot, "tools", "render", "stamps"), { recursive: true });
+    const result = validateAssets(contentRoot(), { repoRoot, kitProfiles: [] });
+    expect(result.diagnostics).toEqual([
+      {
+        file: "tools/render/stamps/stamps.json",
+        message: expect.stringContaining("missing"),
+      },
+    ]);
   });
 
   it("refuses a Python file that imports a Blender module without the GPL header", () => {

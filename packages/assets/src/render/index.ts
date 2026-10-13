@@ -17,3 +17,45 @@ export {
   checkPythonSource,
   GPL_HEADER,
 } from "./licence-boundary";
+export { addOutline, measureImage } from "./outline";
+export { applyOverlapLines, candidateLines } from "./overlap";
+export {
+  decodePartId,
+  depthTable,
+  idByte,
+  PART_IDS,
+  SUPERSAMPLE,
+} from "./parts";
+export {
+  type CellFacts,
+  cellPixelHash,
+  type Envelope,
+  type Facing,
+  POST_STEP_VERSION,
+  type PostCell,
+  type PostStepFailure,
+  type PostStepInput,
+  type PostStepResult,
+  type PostStepSettings,
+  postProcessSlot,
+  type RawFrame,
+  type StampLocators,
+  type StampRecord,
+} from "./post";
+export {
+  type PostPalette,
+  postPaletteFrom,
+  postPaletteOf,
+} from "./post-palette";
+export {
+  BOLT_ANGLES,
+  checkStamps,
+  FACE_SLOTS,
+  type LoadedStampSet,
+  loadStampSet,
+  parseStampManifest,
+  type StampCheck,
+  type StampManifest,
+  type StampProblem,
+  type StampSet,
+} from "./stamps";

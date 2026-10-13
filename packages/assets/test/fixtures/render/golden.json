@@ -1,0 +1,43 @@
+{
+  "postStepVersion": 1,
+  "cells": [
+    {
+      "name": "cast_west_00",
+      "pixelHash": "35961752528aab2a2766ce56983fff28d58df743338935b1808fe8e8590e7450"
+    },
+    {
+      "name": "cast_west_01",
+      "pixelHash": "754c5a48ad1dafb3c3563a29a7097529a4fbaa4ff9b5722eb57b1b9fc8a59906"
+    },
+    {
+      "name": "cast_west_02",
+      "pixelHash": "62e94f12475c87dee3fb296c563a220d2424a3605075b8abaef1e4f334138992"
+    },
+    {
+      "name": "cast_west_03",
+      "pixelHash": "7cb439dc15654e201083ec00965d4fed6cf0322bbfe66e05baa4726429f66d1c"
+    },
+    {
+      "name": "cast_west_04",
+      "pixelHash": "87da0ab3b5a2f6d73c502bbfaae99d50c6ef21e002da9fdee7f9689b00e85d1a"
+    },
+    {
+      "name": "cast_west_05",
+      "pixelHash": "35961752528aab2a2766ce56983fff28d58df743338935b1808fe8e8590e7450"
+    }
+  ],
+  "envelope": {
+    "left": 40,
+    "right": 33,
+    "up": 68,
+    "down": 8,
+    "margin": {
+      "left": 16,
+      "right": 23,
+      "top": 10,
+      "bottom": 10
+    },
+    "minMargin": 10,
+    "clipped": false
+  }
+}

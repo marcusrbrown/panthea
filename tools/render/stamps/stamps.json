@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "sets": [
+    {
+      "id": "zeus",
+      "palette": "greek-retro",
+      "bolt": {
+        "outline": "#76572f",
+        "variants": [
+          {
+            "angle": 0,
+            "file": "zeus/bolt-000.png",
+            "sha256": "354a820a2d85a64ccaa2b6b06d51af992489584d868508ff59278fab86f0f5ba",
+            "size": [17, 12],
+            "anchor": [2, 7]
+          },
+          {
+            "angle": 45,
+            "file": "zeus/bolt-045.png",
+            "sha256": "f77df4df01d07ee7b0a6c61456dbd8692fff729a5d43d9abc8310a2e61486d62",
+            "size": [10, 17],
+            "anchor": [2, 15]
+          },
+          {
+            "angle": 90,
+            "file": "zeus/bolt-090.png",
+            "sha256": "0c84a837134d1f254be776c657fc7895d585f42c0fb351cf1391b1973657e33d",
+            "size": [12, 17],
+            "anchor": [7, 15]
+          },
+          {
+            "angle": 135,
+            "file": "zeus/bolt-135.png",
+            "sha256": "841530a9165d6818adc219f87c02d015edd98162cdf02106601a2c094a6f1aba",
+            "size": [17, 10],
+            "anchor": [15, 8]
+          },
+          {
+            "angle": 180,
+            "file": "zeus/bolt-180.png",
+            "sha256": "2ad222cb9390e7e1b9458debad88314e4f98b9435b9762a55e217ad3bcfb4b3e",
+            "size": [17, 12],
+            "anchor": [15, 5]
+          },
+          {
+            "angle": 225,
+            "file": "zeus/bolt-225.png",
+            "sha256": "e47e1581df8ad7125a6062f64ef8633abb94575e77f58003ad428c138b3371a3",
+            "size": [10, 17],
+            "anchor": [8, 2]
+          },
+          {
+            "angle": 270,
+            "file": "zeus/bolt-270.png",
+            "sha256": "2941af1fe6869471621ac0424c5cb796150255371de721888edfbb035897da92",
+            "size": [12, 17],
+            "anchor": [5, 2]
+          },
+          {
+            "angle": 315,
+            "file": "zeus/bolt-315.png",
+            "sha256": "22c0a5886fd504cedd5d117582e61992f5a91ee235f2c908ee9e74adc6e45869",
+            "size": [17, 10],
+            "anchor": [2, 2]
+          }
+        ]
+      },
+      "face": {
+        "variants": [
+          {
+            "facing": "south",
+            "slot": "l",
+            "file": "zeus/face-south-l.png",
+            "sha256": "0e218cc14ec81e79dfd9ad2391d486e7c0c5cb1ecb15ccbbaba38a4f18068c7a",
+            "size": [2, 2],
+            "anchor": [0, 1]
+          },
+          {
+            "facing": "south",
+            "slot": "r",
+            "file": "zeus/face-south-r.png",
+            "sha256": "10a4cb4728ebc51ca014a0852954c1a95a621c7b6dcd1fea3c3e0b11e0ad1a8c",
+            "size": [2, 2],
+            "anchor": [1, 1]
+          },
+          {
+            "facing": "east",
+            "slot": "near",
+            "file": "zeus/face-east-near.png",
+            "sha256": "0e218cc14ec81e79dfd9ad2391d486e7c0c5cb1ecb15ccbbaba38a4f18068c7a",
+            "size": [2, 2],
+            "anchor": [0, 1]
+          },
+          {
+            "facing": "west",
+            "slot": "near",
+            "file": "zeus/face-west-near.png",
+            "sha256": "10a4cb4728ebc51ca014a0852954c1a95a621c7b6dcd1fea3c3e0b11e0ad1a8c",
+            "size": [2, 2],
+            "anchor": [1, 1]
+          }
+        ]
+      }
+    }
+  ]
+}
