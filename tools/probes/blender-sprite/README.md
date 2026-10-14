@@ -8,7 +8,7 @@ Status: probe, 2026-10-11 and 2026-10-12, three rounds; [Round 2: Zeus proxy](#r
 
 - **Proven:** the pipeline mechanics. Output is deterministic (decoded pixels identical across runs), a frame renders in about 50 ms, the anchor is fixed at (32, 74) in every cell, selective overlap outlines work from part-ID and depth passes, and an authored stamp composites cleanly against the render's occlusion.
 - **Not met:** against hand-pixel canon, rendered motion shows up as frame-to-frame churn. Idle flash pixels run 6–7× canon's rate (about 80–94 per frame against 13), and the idle silhouette-stable change rate is 7–25% against canon's 3.0% (limit 6%).
-- **Next step (owner):** a style-target probe for a pre-rendered retro look, with relaxed palette and outline rules and chunkier proportions, built from kitbashed CC0 kits.
+- **Followed by:** the [retro-render probe](../retro-render/README.md), accepted as [ADR-0012](../../../docs/decisions/0012-pre-rendered-retro-art-direction.md).
 - **This probe stays** as a pose and silhouette reference.
 - **Requirement:** [X02](../../../docs/product/requirements.md) (art quality). The route fails X02's bar as it stands; X02's acceptance status is unchanged (planned) and the probe is recorded as 2026-10-11 evidence in [traceability.md](../../../docs/product/traceability.md).
 

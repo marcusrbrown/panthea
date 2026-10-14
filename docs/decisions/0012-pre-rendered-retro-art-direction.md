@@ -119,6 +119,8 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 
 Frames and timing are also per state now: the model profile declares each state's frame count and per-frame durations, and the engine, the role manifest and the packed manifest use them (idle 10 × 250 ms, seated 8 frames of 208–209 ms, walk 16 × 50 ms, all looping). Those are proposals for the owner to critique from the animated preview. The vocabulary's frame and rate rules still bound them.
 
+**2026-10-13.** The owner approved retro Zeus at the visual gate, which used timed playback. `zeus-retro` is published and is Zeus's sprite. Packaged check: [evidence](../evidence/asset-studio/retro-zeus/README.md).
+
 ## Evidence/links
 
 [tools/probes/retro-render/README.md](../../tools/probes/retro-render/README.md) (PR #214; three rounds, the owner's acceptance, the resample check, envelope and pivot numbers, provenance), [tools/probes/blender-sprite/README.md](../../tools/probes/blender-sprite/README.md) (PR #213; the NO-GO and the preregistered criteria), [art guide](../product/art-guide.md), [decisions D14, D15, D19, D23, D26](../product/decisions.md), [ADR-0009](0009-asset-registry-lifecycle-and-uris.md) (registry revisions), [ADR-0011](0011-game-canon-art-loading.md) (game canon loading), [content-direction.md](../product/content-direction.md).
