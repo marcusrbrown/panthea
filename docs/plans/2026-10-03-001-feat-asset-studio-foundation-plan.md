@@ -299,15 +299,8 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 - **Verification:** Remaining Zeus idle directions are approved with provenance; no new core facing driver is introduced.
 
 ### Unit 10. Structures and effects
-- [ ] Complete visual reference scene.
-- (2026-10-11) This unit also owns the damage/fire overlay derivation op and its vocabulary, moved from Unit 9. T2 completion also waits on Zeus's north, east and west idle art, deferred from Unit 9 to the sprite-pipeline research.
-- **Requirements:** R20, R21; AE7; X02, X03.
-- **Dependencies:** Unit 9.
-- **Files:** Add tree/building/lightning manifests and bytes under `content/greek/assets/`; create `packages/assets/src/overlays.test.ts`, `effects.test.ts`; extend studio preview fixtures/tests and scenario evidence; update traceability.
-- **Approach:** One tree and intact building; damage/fire overlay the same silhouette. Lightning has three tiers; tier one is under 300 ms without full-screen flash/shake. Reduced-effects selects tier one, not a different world outcome. Validate up to four declared emissive exceptions and blending rules.
-- **Patterns:** Guide effect/structure rules and existing committed-event presentation.
-- **Test scenarios:** Overlays preserve footprint/silhouette; all tiers exist with legal timing/colours; reduced-effects strike uses tier one while fixture building remains burning; missing effect falls back without creating events; idle directions and portrait expressions remain consistent.
-- **Verification:** Owner reviews complete visual scene at 1×/integer zoom and reduced effects. T2 completes without tiles or sound.
+- [ ] Complete visual reference scene: a tree, a building with intact, damaged and ruin states, a fire loop and a lightning strike, in the studio and the packaged game.
+- **Plan:** `docs/plans/2026-10-13-001-feat-structures-effects-plan.md`.
 
 ### Tier 3: World tiles and sound
 
