@@ -14,8 +14,6 @@ export interface RgbaImage {
   readonly height: number;
 }
 
-const MAX_ACCENTS = 4;
-
 export type ConformanceKind = "sprite" | "portrait" | "effect";
 
 /** How the background is removed: by existing alpha, or by an explicit key colour. */
@@ -43,8 +41,8 @@ export interface ConformanceInput extends RgbaImage {
    * means the legacy limit of the kind (16 per sprite, 32 per portrait).
    */
   readonly colourLimit?: number;
-  /** Emissive accents declared by an effect; at most 4, effects only. */
-  readonly accents?: readonly Rgb[];
+  /** Colours outside the palette that an effect declares it uses; effects only. */
+  readonly glow?: readonly Rgb[];
   readonly background: BackgroundSpec;
   /** Alpha below this becomes 0, at or above becomes 255. */
   readonly alphaCutoff: number;
@@ -256,24 +254,18 @@ function validate(input: ConformanceInput): InvalidInput | undefined {
       message: "a palette entry is three integers from 0 to 255",
     };
   }
-  if (input.accents !== undefined) {
+  if (input.glow !== undefined) {
     if (input.kind !== "effect") {
       return {
-        field: "accents",
-        message: "only effects declare emissive accents",
+        field: "glow",
+        message: "only effects declare glow colours",
       };
     }
-    if (input.accents.length > MAX_ACCENTS) {
+    const badGlow = input.glow.findIndex((entry) => !isRgb(entry));
+    if (badGlow >= 0) {
       return {
-        field: "accents",
-        message: `an effect declares at most ${MAX_ACCENTS} accents; got ${input.accents.length}`,
-      };
-    }
-    const badAccent = input.accents.findIndex((entry) => !isRgb(entry));
-    if (badAccent >= 0) {
-      return {
-        field: `accents[${badAccent}]`,
-        message: "an accent is three integers from 0 to 255",
+        field: `glow[${badGlow}]`,
+        message: "a glow colour is three integers from 0 to 255",
       };
     }
   }
@@ -859,7 +851,7 @@ function buildChecks(
   evaluated: RgbaImage,
 ): Check[] {
   const { cell, kind } = input;
-  const palette = [...input.paletteRgb, ...(input.accents ?? [])];
+  const palette = [...input.paletteRgb, ...(input.glow ?? [])];
   const paletteSet = new Set(palette.map(packRgb));
   const checks: Check[] = [];
 
@@ -916,7 +908,7 @@ function buildChecks(
     .sort((a, b) => a - b);
   const scope =
     kind === "effect"
-      ? "palette entries or declared accents"
+      ? "palette entries or declared glow colours"
       : "palette entries";
   checks.push(
     verdict(
@@ -1019,17 +1011,6 @@ function buildChecks(
     }
   }
 
-  if (kind === "effect") {
-    const n = input.accents?.length ?? 0;
-    checks.push(
-      verdict(
-        "accents",
-        n <= MAX_ACCENTS,
-        `${n} declared accent${n === 1 ? "" : "s"} of ${MAX_ACCENTS} allowed`,
-        `${n} accents declared; ${MAX_ACCENTS} allowed`,
-      ),
-    );
-  }
   return checks;
 }
 
@@ -1089,7 +1070,7 @@ export function conformImage(input: ConformanceInput): ConformanceResult {
     input.alphaCutoff,
   );
   const counts = histogram(prepared.rgba);
-  const palette = [...input.paletteRgb, ...(input.accents ?? [])];
+  const palette = [...input.paletteRgb, ...(input.glow ?? [])];
   const reduction = reduceToPalette(counts, colourBudget(input), palette);
   const final = Uint8Array.from(prepared.rgba);
   for (let at = 0; at < final.length; at += 4) {

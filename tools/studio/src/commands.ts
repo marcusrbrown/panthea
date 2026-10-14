@@ -13,6 +13,7 @@ import {
   candidateFrames,
   type EditRecord,
   type EditResult,
+  type EffectInput,
   editReport,
   type FinishStep,
   isPreviewSlug,
@@ -1410,6 +1411,47 @@ const OPS: Record<string, OpDef> = {
         };
       }
       const result = session.pack(input, content, palettes, registry);
+      return result.ok
+        ? done(assetSummary(result.asset))
+        : refuse(result.reason, safeMessage(result.message));
+    },
+  },
+  effect: {
+    spec: {
+      ...str("id", true),
+      ...str("assetId", true),
+      ...str("effect", true),
+      seed: { t: "int", req: true },
+      ...str("palette", true),
+      ...str("styleTag", true),
+      params: { t: "json" },
+    },
+    run: async (studio, a) => {
+      const session = await studio.owner();
+      if (isOutcome(session)) return session;
+      const content = studio.loadedContent();
+      if (isOutcome(content)) return content;
+      const palettes = studio.freshPalettes();
+      if (isOutcome(palettes)) return palettes;
+      if (
+        a.params !== undefined &&
+        (typeof a.params !== "object" ||
+          a.params === null ||
+          Array.isArray(a.params))
+      )
+        return refuse("invalid-arguments", "params must be an object");
+      const input: EffectInput = {
+        id: a.id as string,
+        assetId: a.assetId as string,
+        effect: a.effect as EffectInput["effect"],
+        seed: a.seed as number,
+        palette: a.palette as string,
+        styleTag: a.styleTag as string,
+        ...(a.params === undefined
+          ? {}
+          : { params: a.params as NonNullable<EffectInput["params"]> }),
+      };
+      const result = session.effect(input, content, palettes);
       return result.ok
         ? done(assetSummary(result.asset))
         : refuse(result.reason, safeMessage(result.message));

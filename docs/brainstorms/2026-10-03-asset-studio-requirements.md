@@ -116,8 +116,7 @@ Tiers: **T1** Zeus on screen (success criterion 1); **T2** visual reference scen
 - R12. [T1] Hand edits are recorded as provenance steps and never changed by an automatic step without the owner's confirmation; the headless CLI fails rather than confirm on the owner's behalf.
 
 **Derivation**
-- R13. [T2] From an approved set the studio derives deterministically where the guide allows: mirrored east/west directions, idle bob, realm palette swaps, and damage or fire overlays for structures. Walk and act cycles are not derived.
-  - Note (2026-10-11, owner): derivation reads published revisions only, so `approved` no longer feeds it. A derived draft is packed, approved and published like any other. The text above stays as written.
+- R13. [T2] From a published revision the studio derives deterministically where the guide allows: mirrored east/west directions, idle bob and realm palette swaps. Walk and act cycles are not derived. Damage is a rendered state of a structure, and burning is the fire effect drawn over the damaged state; no overlay asset is derived. A derived draft is packed, approved and published like any other.
 - R14. [T2] Frames derivation cannot produce are hand-drawn via F2 or requested as reference-conditioned generation plus inpaint repair; such frames enter the same contact-sheet review as F1.
 - R15. [T2] A derived batch is reproducible from its manifest alone; regenerating with the same inputs yields byte-identical derived frames; output encoders are pinned for determinism.
 
@@ -128,8 +127,8 @@ Tiers: **T1** Zeus on screen (success criterion 1); **T2** visual reference scen
 
 **World tiles and effects**
 - R19. [T3] Autotile sets are produced by procedural stamping from seamless base textures with isometric diamond masks (dual-grid first), exported as Tiled tilesets with Wang metadata, and render edge-consistent and depth-sorted in the studio preview.
-- R20. [T1→T3] The Zeus reference scene asset set is the first target. T1: Zeus `idle` south, `seated` (on a cloud, body partly obscured), one `act` (strike) sequence, and the six-expression portrait. T2: one tree, one building in `intact`, `damaged`, and `burning` states, lightning effect frames at three tiers, and the remaining idle directions. T3: the `thunder-strike` sound (R22), alongside world tiles (R19). Walk cycles and facing-driven states wait for actor position and facing in the contracts, owned by the core lane.
-- R21. [T2] Effects ship in three intensity tiers, tier one lowest; reduced-effects mode presents the same event with tier one (X03).
+- R20. [T1→T3] The Zeus reference scene asset set is the first target. T1: Zeus `idle` south, `seated` (on a cloud, body partly obscured), one `act` (strike) sequence, and the six-expression portrait. T2: one tree, one building in `intact`, `damaged`, and `burning` states, the lightning strike with a full and a calm version, and the remaining idle directions. T3: the `thunder-strike` sound (R22), alongside world tiles (R19). Walk cycles and facing-driven states wait for actor position and facing in the contracts, owned by the core lane.
+- R21. [T2] Effects have a full and a calm version. With the effects setting on calm, the same event shows the calm version (X03). Neither version has a full-screen flash or repeated pulses.
 
 **Sound**
 - R22. [T3] Procedural sound effects are authored as synth parameter sets from presets, mutation, and an editable parameter panel; a configured local LLM endpoint may propose variations but is optional; parameters are the committed source and the rendered compressed file is derived.
@@ -148,7 +147,7 @@ Tiers: **T1** Zeus on screen (success criterion 1); **T2** visual reference scen
 - AE4. **Covers R13, R15.** Given an approved east-facing idle frame, when the owner requests west, the studio mirrors it according to the guide's asymmetry rules, and running the derivation twice produces identical bytes.
 - AE5. **Covers R5, R6.** Given no API key and no image weights present, when the owner generates any asset, the image provider reports unavailable with the staging step and nothing fails; given weights present, generation completes locally and provenance records model and LoRA licences; hosted providers list as unavailable.
 - AE6. **Covers R8.** Given three generation jobs queued, when the owner removes the second and aborts the first, the first is recorded as cancelled, the third starts after the generator restarts, and the UI stayed responsive throughout.
-- AE7. **Covers R21.** Given the lightning effect at three tiers, when reduced-effects mode is active in the preview, the strike shows tier one and the building still ends burning.
+- AE7. **Covers R21.** Given the lightning effect with its full and calm animations, when the effects setting is calm in the preview, the strike shows the calm animation and the building still ends burning.
 - AE8. **Covers R22.** Given committed synth parameters for `thunder-strike`, when the rendered file is deleted and the pipeline reruns, the regenerated file is byte-identical.
 - AE9. **Covers R18.** Given the same request and seed, when run through the CLI and through the app, the candidate bytes and conformance reports are identical.
 

@@ -683,7 +683,11 @@ function conformanceOf(
   | { ok: true; params: CandidateParams; palette: DerivedEntry["palette"] }
   | { ok: false; message: string } {
   for (const asset of store.status().assets) {
-    if (asset.assetId !== assetId || asset.published?.revision !== revision)
+    if (
+      asset.workingSetId === null ||
+      asset.assetId !== assetId ||
+      asset.published?.revision !== revision
+    )
       continue;
     const set = store.readWorkingSet(asset.workingSetId);
     if (set.kind === "invalid")

@@ -198,13 +198,8 @@ export interface AssetVocabulary {
   readonly directions: readonly string[];
   readonly expressions: readonly string[];
   readonly paletteFamilies: readonly string[];
-  readonly tiers: Range;
   readonly cells: readonly CellClass[];
   readonly states: readonly StateRule[];
-  readonly effect: {
-    readonly maxEmissiveAccents: number;
-    readonly tierOneMaxMs: number;
-  };
 }
 
 function parseRange(value: unknown, path: string): ParseResult<Range> {
@@ -368,10 +363,8 @@ export function parseAssetVocabulary(
       "directions",
       "expressions",
       "paletteFamilies",
-      "tiers",
       "cells",
       "states",
-      "effect",
     ],
     (record) => {
       const schemaVersion = parseSchemaVersion(
@@ -397,8 +390,6 @@ export function parseAssetVocabulary(
         `${path}.paletteFamilies`,
       );
       if (!paletteFamilies.ok) return paletteFamilies;
-      const tiers = parseRange(record.tiers, `${path}.tiers`);
-      if (!tiers.ok) return tiers;
       const cells = parseArray(record.cells, `${path}.cells`, parseCellClass);
       if (!cells.ok) return cells;
       if (cells.value.length === 0)
@@ -416,39 +407,14 @@ export function parseAssetVocabulary(
         return fail(`${path}.states`, "expected at least one state");
       const dupState = uniqueStateRules(states.value, `${path}.states`);
       if (dupState) return dupState;
-      const effect = parseStrictRecord(
-        record.effect,
-        `${path}.effect`,
-        ["maxEmissiveAccents", "tierOneMaxMs"],
-        (e) => {
-          const accents = parseIntegerAtLeast(
-            e.maxEmissiveAccents,
-            `${path}.effect.maxEmissiveAccents`,
-            0,
-          );
-          if (!accents.ok) return accents;
-          const tierOne = parsePositiveInteger(
-            e.tierOneMaxMs,
-            `${path}.effect.tierOneMaxMs`,
-          );
-          if (!tierOne.ok) return tierOne;
-          return ok({
-            maxEmissiveAccents: accents.value,
-            tierOneMaxMs: tierOne.value,
-          });
-        },
-      );
-      if (!effect.ok) return effect;
       return ok({
         schemaVersion: schemaVersion.value,
         version: version.value,
         directions: directions.value,
         expressions: expressions.value,
         paletteFamilies: paletteFamilies.value,
-        tiers: tiers.value,
         cells: cells.value,
         states: states.value,
-        effect: effect.value,
       });
     },
   );
@@ -751,11 +717,27 @@ export interface RenderedProvenance extends ProvenanceCommon {
   readonly slots: readonly RenderedSlot[];
 }
 
+/**
+ * An effect a pure, seeded generator made. Publish runs the generator again
+ * from this record and refuses when the bytes differ, so the record holds
+ * everything the output depends on.
+ */
+export interface ProceduralProvenance extends ProvenanceCommon {
+  readonly method: "procedural";
+  readonly generator: { readonly id: string; readonly version: number };
+  readonly seed: number;
+  readonly params: { readonly [key: string]: CanonicalJson };
+  readonly palette: { readonly id: string; readonly digest: Sha256 };
+  /** SHA-256 over each frame's RGBA, per animation name, in frame order. */
+  readonly frameHashes: { readonly [animation: string]: readonly Sha256[] };
+}
+
 export type Provenance =
   | GeneratedProvenance
   | HandProvenance
   | DerivedProvenance
-  | RenderedProvenance;
+  | RenderedProvenance
+  | ProceduralProvenance;
 
 export interface Rect {
   readonly x: number;
@@ -862,8 +844,8 @@ export interface EffectManifest extends ManifestCommon {
   readonly kind: "effect";
   readonly pivot: Point;
   readonly footprint: Footprint;
-  readonly tier: number;
-  readonly emissiveAccents: readonly string[];
+  /** Colours outside the palette the effect is declared to use, as lowercase #rrggbb. */
+  readonly glowColours: readonly string[];
   readonly animations: readonly EffectAnimation[];
 }
 
@@ -1468,6 +1450,7 @@ const PROVENANCE_METHODS = [
   "hand",
   "derived",
   "rendered",
+  "procedural",
 ] as const;
 
 /**
@@ -1728,6 +1711,65 @@ function parseRenderedSlots(
   return slots;
 }
 
+function parseProceduralRecipe(
+  input: Record<string, unknown>,
+  path: string,
+): ParseResult<Omit<ProceduralProvenance, keyof ProvenanceCommon | "method">> {
+  const generator = parseStrictRecord(
+    input.generator,
+    `${path}.generator`,
+    ["id", "version"],
+    (g) => {
+      const id = parseSlug(g.id, `${path}.generator.id`);
+      if (!id.ok) return id;
+      const version = parsePositiveInteger(
+        g.version,
+        `${path}.generator.version`,
+      );
+      if (!version.ok) return version;
+      return ok({ id: id.value, version: version.value });
+    },
+  );
+  if (!generator.ok) return generator;
+  const seed = parseIntegerAtLeast(input.seed, `${path}.seed`, 0);
+  if (!seed.ok) return seed;
+  const params = parseCanonicalParams(input.params, `${path}.params`);
+  if (!params.ok) return params;
+  const palette = parseStrictRecord(
+    input.palette,
+    `${path}.palette`,
+    ["id", "digest"],
+    (p) => {
+      const id = parseSlug(p.id, `${path}.palette.id`);
+      if (!id.ok) return id;
+      const digest = parseSha256(p.digest, `${path}.palette.digest`);
+      if (!digest.ok) return digest;
+      return ok({ id: id.value, digest: digest.value });
+    },
+  );
+  if (!palette.ok) return palette;
+  if (!isRecord(input.frameHashes))
+    return fail(`${path}.frameHashes`, "expected an object");
+  const frameHashes: { [animation: string]: readonly Sha256[] } = {};
+  for (const [name, list] of Object.entries(input.frameHashes)) {
+    const at = `${path}.frameHashes.${name}`;
+    if (!parseSlug(name, at).ok)
+      return fail(at, "expected a lowercase hyphenated animation name");
+    const hashes = parseSha256List(list, at);
+    if (!hashes.ok) return hashes;
+    frameHashes[name] = hashes.value;
+  }
+  if (Object.keys(frameHashes).length === 0)
+    return fail(`${path}.frameHashes`, "expected at least one animation");
+  return ok({
+    generator: generator.value,
+    seed: seed.value,
+    params: params.value,
+    palette: palette.value,
+    frameHashes,
+  });
+}
+
 export function parseProvenance(
   input: unknown,
   path = "provenance",
@@ -1740,6 +1782,7 @@ export function parseProvenance(
     hand: ["editor"],
     derived: ["operation", "runtime", "steps", "resultHashes"],
     rendered: ["revisionRecipe", "slots"],
+    procedural: ["generator", "seed", "params", "palette", "frameHashes"],
   }[method.value];
   const unknown = rejectUnknownKeys(
     input,
@@ -1831,6 +1874,12 @@ export function parseProvenance(
       slots: slots.value,
       ...common,
     });
+  }
+
+  if (method.value === "procedural") {
+    const procedural = parseProceduralRecipe(input, path);
+    if (!procedural.ok) return procedural;
+    return ok({ method: "procedural", ...procedural.value, ...common });
   }
 
   if (method.value === "derived") {
@@ -2501,7 +2550,6 @@ function parsePortraitBody(
 function parseEffectBody(
   record: Record<string, unknown>,
   path: string,
-  vocabulary: AssetVocabulary,
   cell: { w: number; h: number },
   context: FrameContext,
   common: ManifestCommon,
@@ -2510,33 +2558,21 @@ function parseEffectBody(
   if (!pivot.ok) return pivot;
   const footprint = parseFootprint(record.footprint, `${path}.footprint`);
   if (!footprint.ok) return footprint;
-  const tier = parseIntegerAtLeast(
-    record.tier,
-    `${path}.tier`,
-    vocabulary.tiers.min,
-  );
-  if (!tier.ok) return tier;
-  if (tier.value > vocabulary.tiers.max) {
-    return fail(
-      `${path}.tier`,
-      `expected a tier from ${vocabulary.tiers.min} to ${vocabulary.tiers.max}`,
-    );
-  }
-  const accents = parseArray(
-    record.emissiveAccents,
-    `${path}.emissiveAccents`,
+  const glowColours = parseArray(
+    record.glowColours,
+    `${path}.glowColours`,
     (value, itemPath) =>
       typeof value === "string" && HEX_COLOUR.test(value)
         ? ok(value)
         : fail(itemPath, "expected a lowercase #rrggbb colour"),
   );
-  if (!accents.ok) return accents;
-  if (accents.value.length > vocabulary.effect.maxEmissiveAccents) {
-    return fail(
-      `${path}.emissiveAccents`,
-      `at most ${vocabulary.effect.maxEmissiveAccents} emissive accents`,
-    );
-  }
+  if (!glowColours.ok) return glowColours;
+  const duplicateGlow = uniqueBy(
+    glowColours.value,
+    (colour) => colour,
+    `${path}.glowColours`,
+  );
+  if (duplicateGlow) return duplicateGlow;
   const animations = parseArray(
     record.animations,
     `${path}.animations`,
@@ -2579,27 +2615,12 @@ function parseEffectBody(
     `${path}.animations`,
   );
   if (duplicate) return duplicate;
-  if (tier.value === vocabulary.tiers.min) {
-    for (const animation of animations.value) {
-      const total = animation.frames.reduce(
-        (sum, frame) => sum + frame.durationMs,
-        0,
-      );
-      if (total >= vocabulary.effect.tierOneMaxMs) {
-        return fail(
-          `${path}.tier`,
-          `a tier ${tier.value} effect runs under ${vocabulary.effect.tierOneMaxMs} ms; "${animation.name}" takes ${total} ms`,
-        );
-      }
-    }
-  }
   return ok({
     ...common,
     kind: "effect",
     pivot: pivot.value,
     footprint: footprint.value,
-    tier: tier.value,
-    emissiveAccents: accents.value,
+    glowColours: glowColours.value,
     animations: animations.value,
   });
 }
@@ -2627,7 +2648,7 @@ const KIND_KEYS = {
     "animations",
   ],
   portrait: ["characterId", "expressions"],
-  effect: ["pivot", "footprint", "tier", "emissiveAccents", "animations"],
+  effect: ["pivot", "footprint", "glowColours", "animations"],
 } as const;
 
 type ManifestKind = keyof typeof KIND_KEYS;
@@ -2719,16 +2740,15 @@ export function parseAssetManifest(
       case "portrait":
         return parsePortraitBody(input, path, vocabulary, context, common);
       case "effect":
-        return parseEffectBody(
-          input,
-          path,
-          vocabulary,
-          cell.value,
-          context,
-          common,
-        );
+        return parseEffectBody(input, path, cell.value, context, common);
     }
   };
+  if (provenance.value.method === "procedural" && manifestKind !== "effect") {
+    return fail(
+      `${path}.provenance.method`,
+      `a ${manifestKind} is not procedural; only effects are`,
+    );
+  }
   if (provenance.value.method === "rendered" && manifestKind !== "sprite") {
     return fail(
       `${path}.provenance.method`,
@@ -2766,6 +2786,27 @@ export function parseAssetManifest(
           `the manifest's "${slot.slotKey}" has ${animation.frames.length} frames, the render ${slot.frameCount}`,
         );
       }
+    }
+  }
+  if (recorded.method === "procedural" && manifest.value.kind === "effect") {
+    const { animations } = manifest.value;
+    const at = `${path}.provenance.frameHashes`;
+    for (const name of Object.keys(recorded.frameHashes)) {
+      if (!animations.some((a) => a.name === name))
+        return fail(
+          `${at}.${name}`,
+          `"${name}" is not an animation of the effect`,
+        );
+    }
+    for (const animation of animations) {
+      const hashes = recorded.frameHashes[animation.name];
+      if (hashes === undefined)
+        return fail(at, `no frame hashes for animation "${animation.name}"`);
+      if (hashes.length !== animation.frames.length)
+        return fail(
+          `${at}.${animation.name}`,
+          `${hashes.length} hashes for ${animation.frames.length} frames`,
+        );
     }
   }
   const carried =

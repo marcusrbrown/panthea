@@ -96,6 +96,7 @@ export const COMMAND_TYPES = [
   "discard-edit",
   "derive",
   "pack",
+  "effect",
   "approve",
   "publish",
   "reject",

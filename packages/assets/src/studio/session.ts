@@ -28,6 +28,7 @@ import {
   type EditCommandResult,
   type EditResult,
 } from "./edit-session";
+import type { EffectInput } from "./effect";
 import type { FinishStep } from "./export-import";
 import type { PackInput } from "./packing";
 import {
@@ -151,6 +152,15 @@ export interface StudioSession {
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+  ): AssetOpResult;
+  /**
+   * Runs the effect generator into a draft effect asset record; never approves.
+   * Takes the palettes as they are on disk now, like `pack`.
+   */
+  effect(
+    input: EffectInput,
+    content: StudioContent,
+    palettes: PaletteSet,
   ): AssetOpResult;
   /** The separate, explicit approval of a draft's exact manifest and atlas. */
   approveAsset(
@@ -678,6 +688,7 @@ export function openStudioSession(root: string): StudioOpen {
         discardEdit: editOps.discardEdit,
         derive: deriveOps.derive,
         pack: assetOps.pack,
+        effect: assetOps.effect,
         approveAsset: assetOps.approveAsset,
         publishAsset: assetOps.publishAsset,
         rejectAsset: assetOps.rejectAsset,

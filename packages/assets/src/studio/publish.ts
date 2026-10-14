@@ -33,6 +33,7 @@ import { auditRendered, type RenderAuditConfig } from "../render/audit";
 import { checkAssessments, licenceBlock, reviewLicences } from "./approval";
 import { auditDerivation, type PublishedSource } from "./derivation";
 import type { EditFailure, EditHost } from "./edit-session";
+import { auditEffect, buildEffect, type EffectInput, recipeOf } from "./effect";
 import {
   logicalCells,
   type PackInput,
@@ -70,6 +71,15 @@ export interface AssetOps {
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+  ): AssetOpResult;
+  /**
+   * Runs the effect generator into a draft effect; never approves. The record has
+   * no working set: its recipe is its provenance. `palettes` is read the same way as for `pack`.
+   */
+  effect(
+    input: EffectInput,
+    content: StudioContent,
+    palettes: PaletteSet,
   ): AssetOpResult;
   approveAsset(
     id: string,
@@ -373,6 +383,73 @@ export function createAssetOps(host: EditHost): AssetOps {
     return written.ok ? { ok: true, asset } : written;
   }
 
+  function effect(
+    input: EffectInput,
+    content: StudioContent,
+    palettes: PaletteSet,
+  ): AssetOpResult {
+    if (host.isClosed()) return refused("closed", CLOSED);
+    if (!parseSlug(input.id, "id").ok)
+      return refused(
+        "invalid-params",
+        "an effect record id is a lowercase hyphenated name",
+      );
+    const assetId = parseAssetId(input.assetId, "assetId");
+    if (!assetId.ok)
+      return refused("invalid-params", `${assetId.path}: ${assetId.message}`);
+    if (store.readAsset(input.id).kind !== "missing")
+      return refused("wrong-state", `asset record ${input.id} already exists`);
+    const recipe = recipeOf(input);
+    if (!recipe.ok) return refused("invalid-params", recipe.message);
+    const palette = palettes.get(input.palette);
+    if (palette === undefined)
+      return refused(
+        "not-found",
+        `the palette "${input.palette}" is not among the palettes on disk`,
+      );
+    const built = buildEffect({
+      recipe: recipe.recipe,
+      palette,
+      assetId: assetId.value,
+      styleTag: input.styleTag,
+      licences: [
+        { subject: assetId.value, role: "original-work", licence: "MIT" },
+      ],
+      vocabulary: content.vocabulary,
+    });
+    if (!built.ok) return refused("invalid-params", built.message);
+    const { manifest, atlas, report } = built.value;
+    const picked = transitionAsset(newCandidate(manifest, report), {
+      type: "pick",
+    });
+    if (!picked.ok) return refused("wrong-state", picked.message);
+    const revision = revisionOf(manifest);
+    const asset: StudioAssetRecord = {
+      schemaVersion: 1,
+      id: input.id,
+      workingSetId: null,
+      assetId: assetId.value,
+      prior: null,
+      record: picked.value,
+      manifestRevision: revision,
+      reportBasis: {
+        atlasHash: manifest.atlas.blob,
+        paletteDigest: paletteDigest(palette),
+      },
+      licenceReview: reviewLicences(manifest.provenance.licences, [], revision),
+      licenceAssessments: [],
+      published: null,
+    };
+    const stored = host.write(() => {
+      store.putBlob(atlas);
+    });
+    if (!stored.ok) return stored;
+    const written = host.ledgered("effect", input.id, () =>
+      store.putAsset(asset),
+    );
+    return written.ok ? { ok: true, asset } : written;
+  }
+
   function approveAsset(
     id: string,
     options: ApproveOptions,
@@ -492,52 +569,70 @@ export function createAssetOps(host: EditHost): AssetOps {
       sources.push(read.value);
       byRevision.set(ref.revision, read.value);
     }
-    const set = store.readWorkingSet(asset.workingSetId);
-    if (set.kind !== "found")
-      return refused(
-        "wrong-state",
-        `working set ${asset.workingSetId} is not readable`,
-      );
-    // Everything derived is recomputed from its published source, through the
-    // pinned encoder, and must match what was approved: a step, a variant.
-    const derivedMismatch = auditDerivation({
-      manifest,
-      atlas,
-      variantAtlases,
-      sources: byRevision,
-      content,
-      subject: set.value.subject,
-    });
-    if (derivedMismatch !== undefined)
-      return refused("wrong-state", derivedMismatch);
-    // A rendered asset has no derived steps, so the derivation audit passed trivially: its own
-    // audit recomputes the recipe and the post step from the committed inputs and stored raw frames.
-    if (manifest.provenance.method === "rendered") {
-      if (render === undefined)
-        return refused(
-          "wrong-state",
-          "a rendered asset publishes only with the render root, which its render audit needs",
-        );
-      const rendered = auditRendered({
+    if (manifest.provenance.method === "procedural") {
+      // A generated effect has no working set, derivation or carried cell: the
+      // generator is run again and must make exactly these bytes.
+      const mismatch = auditEffect({
         manifest,
         atlas,
         palettes,
-        renderRoot: render.renderRoot,
-        ...(render.current === undefined ? {} : { current: render.current }),
-        readBlob: (hash) => store.readBlob(hash),
-        jobs: store.status().jobs,
-        handEdited: new Set(Object.keys(set.value.frames)),
+        vocabulary: content.vocabulary,
       });
-      if (rendered !== undefined)
-        return refused("wrong-state", `the render audit: ${rendered}`);
+      if (mismatch !== undefined)
+        return refused("wrong-state", `the recipe audit: ${mismatch}`);
+    } else {
+      if (asset.workingSetId === null)
+        return refused(
+          "wrong-state",
+          `asset ${id} has no working set, and only a generated effect has none`,
+        );
+      const set = store.readWorkingSet(asset.workingSetId);
+      if (set.kind !== "found")
+        return refused(
+          "wrong-state",
+          `working set ${asset.workingSetId} is not readable`,
+        );
+      // Everything derived is recomputed from its published source, through the
+      // pinned encoder, and must match what was approved: a step, a variant.
+      const derivedMismatch = auditDerivation({
+        manifest,
+        atlas,
+        variantAtlases,
+        sources: byRevision,
+        content,
+        subject: set.value.subject,
+      });
+      if (derivedMismatch !== undefined)
+        return refused("wrong-state", derivedMismatch);
+      // A rendered asset has no derived steps, so the derivation audit passed trivially: its own
+      // audit recomputes the recipe and the post step from the committed inputs and stored raw frames.
+      if (manifest.provenance.method === "rendered") {
+        if (render === undefined)
+          return refused(
+            "wrong-state",
+            "a rendered asset publishes only with the render root, which its render audit needs",
+          );
+        const rendered = auditRendered({
+          manifest,
+          atlas,
+          palettes,
+          renderRoot: render.renderRoot,
+          ...(render.current === undefined ? {} : { current: render.current }),
+          readBlob: (hash) => store.readBlob(hash),
+          jobs: store.status().jobs,
+          handEdited: new Set(Object.keys(set.value.frames)),
+        });
+        if (rendered !== undefined)
+          return refused("wrong-state", `the render audit: ${rendered}`);
+      }
+      const mismatch = carriedCellsMismatch({
+        manifest,
+        atlas,
+        replaced: set.value.required,
+        sources,
+      });
+      if (mismatch !== undefined) return refused("wrong-state", mismatch);
     }
-    const mismatch = carriedCellsMismatch({
-      manifest,
-      atlas,
-      replaced: set.value.required,
-      sources,
-    });
-    if (mismatch !== undefined) return refused("wrong-state", mismatch);
 
     const current = currentRevision(registryRoot, asset.assetId);
     if (!current.ok) return refused("wrong-state", current.message);
@@ -618,5 +713,5 @@ export function createAssetOps(host: EditHost): AssetOps {
     return written.ok ? { ok: true, asset: rejected } : written;
   }
 
-  return { pack, approveAsset, publishAsset, rejectAsset };
+  return { pack, effect, approveAsset, publishAsset, rejectAsset };
 }
