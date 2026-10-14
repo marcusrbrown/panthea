@@ -1,0 +1,156 @@
+// A structure through the render engine, against the scripted fake Blender: the frame is the
+// profile's own cell, no stamps and no shadow are involved, and the revision recipe is the same
+// shape as a figure's.
+
+import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { readLog as readBlenderLog } from "../../test/render/fake-blender";
+import {
+  closeRigs,
+  drain,
+  jobsById,
+  openRig,
+  RENDER_ROOT,
+  submitRender,
+} from "../../test/render/rig";
+import { decodePng } from "../studio/png/decode";
+import { cameraHash } from "./camera";
+import { RENDER_SCRIPT_LICENCE } from "./engine";
+import { loadRenderInputs } from "./load";
+import { cellPixelHash } from "./post";
+import { effectiveCamera, NO_STAMPS_HASH } from "./recipe";
+
+afterEach(closeRigs);
+
+const T = 90_000;
+const south = (state: string) => ({ state, direction: "south" });
+const HOUSE_PIVOT = { x: 88, y: 124 };
+
+const inputs = loadRenderInputs(RENDER_ROOT);
+const house = (() => {
+  const profile = inputs.profiles.find((p) => p.id === "greek-house");
+  if (profile?.kind !== "structure") throw new Error("no greek-house profile");
+  return profile;
+})();
+
+describe("a structure render job", () => {
+  test(
+    "draws on the profile's own cell, with no stamps and no shadow, under one revision",
+    async () => {
+      const rig = await openRig({ launches: [{}] });
+      const ids = submitRender(
+        rig,
+        "house-states",
+        [south("intact"), south("damaged"), south("ruin")],
+        { subject: "greek-house", pivot: HOUSE_PIVOT },
+      );
+      const result = await drain(rig);
+      expect(result.results.map((r) => r.outcome)).toEqual([
+        "rendered",
+        "rendered",
+        "rendered",
+      ]);
+
+      const manifests: Record<string, unknown>[] = [];
+      for (const id of ids) {
+        const record = jobsById(rig)[id];
+        if (record?.job.status !== "succeeded")
+          throw new Error(`${id} did not succeed`);
+        expect(record.job.outputs).toHaveLength(1);
+        const bytes = rig.session.store.readBlob(
+          record.engine?.settings.manifest as never,
+        );
+        if (bytes === undefined) throw new Error("manifest blob missing");
+        const manifest = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+          string,
+          unknown
+        >;
+        manifests.push(manifest);
+        const frames = manifest.frames as {
+          cell: string;
+          cellPixels: string;
+          locators: unknown;
+        }[];
+        const cell = decodePng(
+          rig.session.store.readBlob(frames[0]?.cell as never) as Uint8Array,
+        );
+        if (!cell.ok) throw new Error("cell does not decode");
+        expect([cell.image.width, cell.image.height]).toEqual([
+          house.cell.width,
+          house.cell.height,
+        ]);
+        expect(cellPixelHash(cell.image)).toBe(frames[0]?.cellPixels as never);
+        expect(frames[0]?.locators).toEqual({});
+        expect((manifest.slot as { loop: boolean }).loop).toBe(false);
+      }
+
+      const revision = manifests[0]?.revision as {
+        camera: string;
+        stamps: string;
+        kit: string;
+        postStep: { settings: { shadow: unknown } };
+      };
+      expect(manifests.map((m) => m.revisionRecipeHash)).toEqual([
+        manifests[0]?.revisionRecipeHash,
+        manifests[0]?.revisionRecipeHash,
+        manifests[0]?.revisionRecipeHash,
+      ]);
+      expect(revision.stamps).toBe(NO_STAMPS_HASH);
+      expect(revision.postStep.settings.shadow).toBeNull();
+      if (inputs.camera === undefined) throw new Error("no camera");
+      expect(revision.camera).toBe(
+        cameraHash(effectiveCamera(house, inputs.camera)),
+      );
+      expect(revision.camera).not.toBe(cameraHash(inputs.camera));
+    },
+    T,
+  );
+
+  test(
+    "stages no kit file for a house, but still gives the script a staging directory",
+    async () => {
+      const rig = await openRig({ launches: [{}] });
+      const [id] = submitRender(rig, "house-staging", [south("intact")], {
+        subject: "greek-house",
+        pivot: HOUSE_PIVOT,
+      });
+      const result = await drain(rig);
+      expect(result.results.map((r) => r.outcome)).toEqual(["rendered"]);
+      expect(jobsById(rig)[id as string]?.job.status).toBe("succeeded");
+      const staged = readBlenderLog(rig.fakeDir).find(
+        (e) => e.event === "staging",
+      );
+      expect(staged?.files).toEqual([]);
+    },
+    T,
+  );
+
+  test(
+    "records the render script's licence as an input, since the house is the script's geometry",
+    async () => {
+      const rig = await openRig({ launches: [{}] });
+      const [id] = submitRender(rig, "house-licence", [south("intact")], {
+        subject: "greek-house",
+        pivot: HOUSE_PIVOT,
+      });
+      await drain(rig);
+      const record = jobsById(rig)[id as string];
+      expect(record?.engine?.licences).toEqual([
+        {
+          subject: "render.py",
+          role: "input",
+          licence: RENDER_SCRIPT_LICENCE,
+        },
+      ]);
+      const script = readFileSync(
+        join(RENDER_ROOT, "blender", "render.py"),
+        "utf8",
+      );
+      expect(script.split("\n")[0]).toBe(
+        `# SPDX-License-Identifier: ${RENDER_SCRIPT_LICENCE}`,
+      );
+    },
+    T,
+  );
+});

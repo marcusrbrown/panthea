@@ -918,6 +918,17 @@ class Figure:
             raise InputError(f"the profile has no clip for state {state!r}")
         return clip
 
+    def sources(self, state: str, count: int) -> list:
+        """Source frames of the state's action, sampled `count` times."""
+        clip = self.clip(state)
+        action = bpy.data.actions.get(clip["action"])
+        if action is None:
+            raise InputError(f"the animation library has no action {clip['action']!r}")
+        return sample_frames(*action.frame_range, count, clip["loop"])
+
+    def prepare(self, state: str) -> None:
+        """A figure is built once; nothing changes with the state."""
+
     def fit_scale(self, target_px: float) -> None:
         """The same camera scale for everyone: only the model is enlarged, to the profile's standing height."""
         self.scale = 1.0
@@ -1099,6 +1110,389 @@ class Figure:
         return facts
 
 
+# --- structures: a building or a tree, one static scene ---------------------------------------------------------------
+
+
+def ground_basis(axes: Axes):
+    """World unit directions of the ground axes a 2:1 view draws as a diamond's edges: +X runs screen down-right, +Y down-left."""
+    m = np.array([[axes.right[0], axes.right[1]], [axes.up[0], axes.up[1]]])
+    ex = np.linalg.solve(m, np.array([1.0, -0.5]))
+    ey = np.linalg.solve(m, np.array([-1.0, -0.5]))
+    ex, ey = ex / np.linalg.norm(ex), ey / np.linalg.norm(ey)
+    return Vector((float(ex[0]), float(ex[1]), 0.0)), Vector((float(ey[0]), float(ey[1]), 0.0))
+
+
+def hash_unit(i: int) -> float:
+    """A fixed pseudo-random number in [0, 1) for index i, so a ruin breaks the same way on every render."""
+    return (math.sin(i * 12.9898 + 78.233) * 43758.5453) % 1.0
+
+
+class MeshBuilder:
+    """Faces added in groups, each with a material role and a part id; `finish` makes the object."""
+
+    def __init__(self):
+        self.bm = bmesh.new()
+        self.roles: list = []
+        self.parts: list = []
+
+    def add(self, faces, role: str, part: str) -> None:
+        if role not in self.roles:
+            self.roles.append(role)
+        slot = self.roles.index(role)
+        for face in faces:
+            face.material_index = slot
+            self.parts.append(part)
+
+    def box(self, centre, size, role: str, part: str, tilt=None):
+        cx, cy, cz = centre
+        sx, sy, sz = (s / 2 for s in size)
+        verts = [self.bm.verts.new((cx + dx * sx, cy + dy * sy, cz + dz * sz)) for dx in (-1, 1) for dy in (-1, 1) for dz in (-1, 1)]
+        if tilt is not None:  # (degrees, axis): turned about the box's own centre
+            rot = mathutils.Matrix.Rotation(math.radians(tilt[0]), 3, tilt[1])
+            for v in verts:
+                v.co = Vector(centre) + rot @ (v.co - Vector(centre))
+        faces = [self.bm.faces.new([verts[i] for i in idx]) for idx in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3))]
+        self.add(faces, role, part)
+
+    def column(self, centre, radius: float, height: float, role: str, part: str, taper: float = 1.0, segments: int = 10):
+        cx, cy, cz = centre
+        ring = lambda r, z: [self.bm.verts.new((cx + r * math.cos(2 * math.pi * i / segments), cy + r * math.sin(2 * math.pi * i / segments), z)) for i in range(segments)]  # noqa: E731
+        bottom, top = ring(radius, cz), ring(radius * taper, cz + height)
+        faces = [self.bm.faces.new((bottom[i], bottom[(i + 1) % segments], top[(i + 1) % segments], top[i])) for i in range(segments)]
+        faces.append(self.bm.faces.new(top[::-1]))
+        faces.append(self.bm.faces.new(bottom))
+        self.add(faces, role, part)
+
+    def gable(self, x0: float, x1: float, half_w: float, z0: float, rise: float, slope_role: str, end_role: str):
+        """Triangular prism, ridge along X: the two slopes take `slope_role` (part roof), the two ends `end_role` (part pediment)."""
+        a = [self.bm.verts.new((x0, -half_w, z0)), self.bm.verts.new((x0, half_w, z0)), self.bm.verts.new((x0, 0.0, z0 + rise))]
+        b = [self.bm.verts.new((x1, -half_w, z0)), self.bm.verts.new((x1, half_w, z0)), self.bm.verts.new((x1, 0.0, z0 + rise))]
+        self.add([self.bm.faces.new(a), self.bm.faces.new(b[::-1])], end_role, "pediment")
+        sides = [self.bm.faces.new((a[i], a[(i + 1) % 3], b[(i + 1) % 3], b[i])) for i in range(3)]
+        self.add(sides, slope_role, "roof")  # the first side is the base, hidden under the cornice
+
+    def finish(self, name: str, ex: Vector, ey: Vector):
+        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
+        mesh = bpy.data.meshes.new(name)
+        self.bm.to_mesh(mesh)
+        self.bm.free()
+        for poly in mesh.polygons:
+            poly.use_smooth = False
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        # Authored in house coordinates (+X along the ridge, +Y toward the front); laid onto the ground axes.
+        mesh.transform(mathutils.Matrix(((ex.x, ey.x, 0.0, 0.0), (ex.y, ey.y, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0))))
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+        set_ids(obj, self.parts)
+        return obj, self.roles
+
+
+class Structure:
+    """A tree or a building in one static scene: built for a state, posed by the wind (or not at all), never rigged."""
+
+    def __init__(self, profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook):
+        self.profile, self.camera, self.scene, self.axes, self.book = profile, camera, scene, axes, book
+        self.staging = staging
+        self.ppu = camera["pixelsPerUnit"]
+        self.ex, self.ey = ground_basis(axes)
+        self.objs: list = []
+        self.state = None
+
+    def clip(self, state: str) -> dict:
+        clip = self.profile["clips"].get(state)
+        if clip is None:
+            raise InputError(f"the profile has no clip for state {state!r}")
+        return clip
+
+    def sources(self, state: str, count: int) -> list:
+        """Source frames: the frame numbers of a wind loop, or the one frame of a still state."""
+        clip = self.clip(state)
+        if not clip["loop"]:
+            return [0.0] * count
+        return [float(i) for i in range(count)]
+
+    def look(self, clip: dict, role: str) -> str:
+        """The profile material this state draws a model role in."""
+        return clip["materials"].get(role, role)
+
+    def prepare(self, state: str) -> None:
+        """Builds the state's scene; the materials are bound by `book.use()` after this."""
+        if state == self.state:
+            return
+        for obj in self.objs:
+            bpy.data.objects.remove(obj, do_unlink=True)
+        self.objs = []
+        self.book.slots.clear()
+        self.state = state
+        self.build(state, self.clip(state))
+
+    def attach(self, builder: MeshBuilder, name: str, clip: dict) -> None:
+        obj, roles = builder.finish(name, self.ex, self.ey)
+        self.book.bind(obj, [self.look(clip, role) for role in roles])
+        self.objs.append(obj)
+
+    def build(self, state: str, clip: dict) -> None:
+        raise NotImplementedError
+
+    def pose(self, state: str, facing: str, frame: float) -> None:
+        bpy.context.view_layer.update()
+
+    def extent(self) -> dict:
+        pts = all_points(self.objs)
+        cell = self.camera["cell"]
+        ys = cell["pivot"][1] - pts @ np.array(self.axes.up) * self.ppu
+        xs = cell["pivot"][0] + pts @ np.array(self.axes.right) * self.ppu
+        return {"top": round(float(ys.min()), 3), "bottom": round(float(ys.max()), 3), "left": round(float(xs.min()), 3), "right": round(float(xs.max()), 3)}
+
+    def locator_facts(self, cam) -> dict:
+        return {"points": {}}
+
+
+class House(Structure):
+    """A Greek town house from script geometry: the ridge along +X, the door on the +Y front, a gable end on +X.
+
+    Damaged is this mesh with other materials and decals. The ruin breaks the walls and the roof."""
+
+    LENGTH, DEPTH = 4.0, 3.0  # footprint, metres
+    STEP, WALL, RISE, EAVE, WALL_T = 0.14, 2.3, 1.0, 0.2, 0.26
+    DOOR_X, DOOR_W, DOOR_H = 0.8, 0.9, 1.8
+
+    def build(self, state: str, clip: dict) -> None:
+        if clip["ruin"]:
+            self.build_ruin(clip)
+        else:
+            self.build_whole(clip)
+
+    def base(self, mb: MeshBuilder) -> None:
+        L, D, s = self.LENGTH, self.DEPTH, self.STEP
+        mb.box((0, 0, s / 2), (L + 0.4, D + 0.4, s), "base", "stylobate")
+
+    def whole_walls(self, mb: MeshBuilder) -> None:
+        L, D, s = self.LENGTH, self.DEPTH, self.STEP
+        mb.box((0, 0, s + self.WALL / 2), (L, D, self.WALL), "wall", "wall")
+        top = s + self.WALL
+        mb.box((0, 0, top + 0.07), (L + 0.16, D + 0.16, 0.14), "trim", "entablature")
+        # the door and its lintel on the front, a window each on the front and the gable end
+        mb.box((self.DOOR_X, D / 2 + 0.02, s + self.DOOR_H / 2), (self.DOOR_W, 0.06, self.DOOR_H), "door", "door")
+        mb.box((self.DOOR_X, D / 2 + 0.03, s + self.DOOR_H + 0.08), (self.DOOR_W + 0.3, 0.08, 0.16), "trim", "entablature")
+        mb.box((-0.9, D / 2 + 0.02, 1.55), (0.7, 0.06, 0.7), "door", "door")
+        mb.box((-0.9, D / 2 + 0.03, 1.55 + 0.4), (1.0, 0.08, 0.1), "trim", "entablature")
+        mb.box((L / 2 + 0.02, 0.0, 1.55), (0.06, 0.7, 0.7), "door", "door")
+        mb.box((L / 2 + 0.03, 0.0, 1.55 + 0.4), (0.08, 1.0, 0.1), "trim", "entablature")
+
+    def whole_roof(self, mb: MeshBuilder) -> None:
+        L, D, e = self.LENGTH, self.DEPTH, self.EAVE
+        z0 = self.STEP + self.WALL + 0.14
+        mb.gable(-(L / 2 + e), L / 2 + e, D / 2 + e, z0, self.RISE, "roof", "gable")
+
+    def build_whole(self, clip: dict) -> None:
+        mb = MeshBuilder()
+        self.base(mb)
+        self.whole_walls(mb)
+        self.whole_roof(mb)
+        self.attach(mb, "house", clip)
+        self.decals(clip)
+
+    def decals(self, clip: dict) -> None:
+        """Flat marks on the walls, set just proud of them and inside their edges: the silhouette is the whole house's."""
+        if not clip["decals"]:
+            return
+        mb = MeshBuilder()
+        L, D, s = self.LENGTH, self.DEPTH, self.STEP
+        thick = 0.024
+        for decal in clip["decals"]:
+            u, z = decal["at"]
+            w, h = decal["size"]
+            if decal["wall"] == "front":
+                mb.box((u - L / 2, D / 2 + thick / 2, z), (w, thick, h), decal["material"], "prop")
+            else:
+                mb.box((L / 2 + thick / 2, D / 2 - u, z), (thick, w, h), decal["material"], "prop")
+        obj, roles = mb.finish("decals", self.ex, self.ey)
+        self.book.bind(obj, roles)
+        self.objs.append(obj)
+
+    def build_ruin(self, clip: dict) -> None:
+        L, D, s, T = self.LENGTH, self.DEPTH, self.STEP, self.WALL_T
+        mb = MeshBuilder()
+        self.base(mb)
+        mb.box((0, 0, s + 0.03), (L - 0.1, D - 0.1, 0.06), "rubble", "ground")  # the floor
+        seg = 0.55
+        index = 0
+
+        def course(length: float, fixed: float, along: str, low: float, high: float, gap=None):
+            """A broken wall: slabs of fixed length whose heights fall between `low` and `high`."""
+            nonlocal index
+            count = max(1, round(length / seg))
+            width = length / count
+            for k in range(count):
+                centre = -length / 2 + width * (k + 0.5)
+                if gap is not None and gap[0] < centre < gap[1]:
+                    continue
+                index += 1
+                h = low + (high - low) * hash_unit(index)
+                pos = (centre, fixed, s + h / 2) if along == "x" else (fixed, centre, s + h / 2)
+                size = (width * 0.98, T, h) if along == "x" else (T, width * 0.98, h)
+                mb.box(pos, size, "wall", "wall")
+
+        course(L, -D / 2 + T / 2, "x", 1.5, 2.3)  # the far long wall stands highest
+        course(D, -L / 2 + T / 2, "y", 1.3, 2.2)  # the far gable wall
+        course(L, D / 2 - T / 2, "x", 0.3, 1.0, gap=(self.DOOR_X - self.DOOR_W / 2 - 0.05, self.DOOR_X + self.DOOR_W / 2 + 0.05))
+        course(D, L / 2 - T / 2, "y", 0.3, 1.1)
+        # a charred door post and a short run of the cornice still standing
+        mb.box((self.DOOR_X - self.DOOR_W / 2 - 0.12, D / 2, s + 0.8), (0.12, 0.14, 1.6), "door", "door")
+        mb.box((-L / 2 - 0.02, -D / 4, s + 2.2), (0.3, 0.9, 0.12), "trim", "entablature")
+        # roof timbers fallen into the house, and a slab of tiles on top of them
+        mb.box((-0.6, -0.5, s + 0.7), (0.14, 3.0, 0.14), "trim", "entablature", tilt=(34, "X"))
+        mb.box((0.6, 0.1, s + 0.45), (0.14, 2.6, 0.14), "trim", "entablature", tilt=(-26, "X"))
+        mb.box((-0.4, -0.2, s + 0.78), (1.5, 1.3, 0.1), "roof", "roof", tilt=(28, "X"))
+        mb.box((1.2, 0.6, s + 0.22), (1.1, 0.9, 0.1), "roof", "roof", tilt=(-14, "Y"))
+        # rubble inside and about the base
+        for k in range(16):
+            ux, uy = hash_unit(100 + k * 3), hash_unit(101 + k * 3)
+            size = 0.22 + 0.34 * hash_unit(102 + k * 3)
+            outside = k % 3 == 0
+            x = (ux - 0.5) * (L + 1.0 if outside else L - 0.7)
+            y = (uy - 0.5) * (D + 1.0 if outside else D - 0.7)
+            mb.box((x, y, s + size / 2 * 0.8), (size, size * (0.7 + hash_unit(k)), size * 0.8), "rubble", "prop", tilt=(hash_unit(k + 40) * 40 - 20, "Z"))
+        self.attach(mb, "ruin", clip)
+
+
+class Tree(Structure):
+    """One kit model standing on the ground, swaying in a seamless wind loop; its ruin is the trunk cut down to a stump.
+
+    Every state is built from the same model: damaged drops leaves and changes materials, the ruin keeps only the trunk's foot."""
+
+    STUMP = 0.9  # metres of trunk left standing in the ruin
+    PARTS = {"trunk": "trunk", "leaf": "foliage"}
+
+    def __init__(self, profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook):
+        super().__init__(profile, camera, staging, scene, axes, book)
+        build = profile["build"]
+        self.height = build["heightM"]
+        objs = import_gltf(staging.file(build["model"]["kit"], build["model"]["path"]))
+        mesh = next((o for o in objs if o.type == "MESH"), None)
+        if mesh is None:
+            raise InputError(f"{build['model']['path']} holds no mesh")
+        mesh.data.transform(mesh.matrix_world)
+        count = len(mesh.data.vertices)
+        co = np.empty(count * 3, dtype=np.float64)
+        mesh.data.vertices.foreach_get("co", co)
+        co = co.reshape(-1, 3)
+        co[:, 2] -= co[:, 2].min()  # standing on the ground
+        co *= self.height / co[:, 2].max()
+        foot = co[co[:, 2] < 0.08 * self.height]
+        co[:, :2] -= foot[:, :2].mean(axis=0)  # the trunk's foot on the world origin
+        names = [(m.name if m else "").lower() for m in mesh.data.materials]
+        roles = ["trunk" if ("wood" in names[min(p.material_index, len(names) - 1)] or "bark" in names[min(p.material_index, len(names) - 1)]) else "leaf" for p in mesh.data.polygons]
+        self.template = (co, [tuple(p.vertices) for p in mesh.data.polygons], roles)
+        for o in objs:
+            bpy.data.objects.remove(o, do_unlink=True)
+        right = _norm((axes.right[0], axes.right[1], 0.0))
+        back = _norm((axes.back[0], axes.back[1], 0.0))
+        self.sway_axes = (np.array(right), np.array(back))
+        self.rest = None
+        self.frames = 0
+        self.wind = profile.get("wind")
+
+    def build(self, state: str, clip: dict) -> None:
+        co, polys, roles = self.template
+        keep = clip.get("leaves", 1.0)
+        bm = bmesh.new()
+        verts = [bm.verts.new(tuple(c)) for c in co]
+        order = ["trunk", "leaf"]
+        shrink = math.sqrt(keep)
+        for poly, role in zip(polys, roles):
+            if role == "leaf" and keep < 1.0:
+                # A sparse crown: each leaf face shrinks about its own centre to `keep` of its area, so the foliage
+                # breaks into separate leaves and the trunk shows through.
+                corners = co[list(poly)]
+                centre = corners.mean(axis=0)
+                face = bm.faces.new([bm.verts.new(tuple(centre + (c - centre) * shrink)) for c in corners])
+            else:
+                face = bm.faces.new([verts[k] for k in poly])
+            face.material_index = order.index(role)
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+        if clip["ruin"]:
+            cut = self.STUMP
+            geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
+            result = bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-6, plane_co=(0.0, 0.0, cut), plane_no=(0.0, 0.0, 1.0), clear_outer=True)
+            edges = [g for g in result["geom_cut"] if isinstance(g, bmesh.types.BMEdge)]
+            filled = bmesh.ops.edgenet_fill(bm, edges=edges)
+            for face in filled["faces"]:
+                face.material_index = 0
+            top = [v for v in bm.verts if abs(v.co.z - cut) < 1e-4]
+            for k, v in enumerate(top):  # a broken top, the same on every render
+                v.co.z -= 0.2 * hash_unit(k + 31)
+            bmesh.ops.triangulate(bm, faces=list(bm.faces))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        slots = [role for role in order if any(order[f.material_index] == role for f in bm.faces)]
+        used = {order.index(role): i for i, role in enumerate(slots)}
+        for face in bm.faces:
+            face.material_index = used[face.material_index]
+        parts = [self.PARTS[slots[f.material_index]] for f in bm.faces]
+        mesh = bpy.data.meshes.new("tree")
+        bm.to_mesh(mesh)
+        bm.free()
+        for poly in mesh.polygons:
+            poly.use_smooth = False
+        obj = bpy.data.objects.new("tree", mesh)
+        bpy.context.scene.collection.objects.link(obj)
+        set_ids(obj, parts)
+        self.book.bind(obj, [self.look(clip, role) for role in slots])
+        self.objs.append(obj)
+        self.rest = None
+        if clip["loop"]:
+            n = len(mesh.vertices)
+            rest = np.empty(n * 3, dtype=np.float64)
+            mesh.vertices.foreach_get("co", rest)
+            self.rest = rest.reshape(-1, 3)
+            self.frames = clip["frames"]
+            self.check_loop()
+
+    def displaced(self, frame: float) -> np.ndarray:
+        """The rest vertices swayed to `frame` of the loop: the travelling wave of the probe's wind plan, along the screen's horizontal."""
+        wind = self.wind
+        x, y, z = self.rest[:, 0], self.rest[:, 1], self.rest[:, 2]
+        h = self.height
+        rel = z / h
+        weight = np.clip(rel, 0.0, 1.0) ** 2.0
+        phase = wind["cycles"] * 2.0 * math.pi * frame / self.frames - wind["lag"] * rel
+        along = wind["amplitudeM"] * weight * np.sin(phase)
+        across = wind["amplitudeM"] * weight * wind["swirl"] * np.sin(phase + math.pi / 2.0)
+        sink = np.where(z > 1e-6, -(along * along + across * across) / (2.0 * np.maximum(z, 1e-6)), 0.0)
+        right, back = self.sway_axes
+        out = self.rest.copy()
+        out[:, :2] += np.outer(along, right[:2]) + np.outer(across, back[:2])
+        out[:, 2] += sink
+        return out
+
+    def check_loop(self) -> None:
+        """The frame after the last is the first again: frame N must land exactly on frame 0."""
+        gap = float(np.abs(self.displaced(float(self.frames)) - self.displaced(0.0)).max())
+        if gap > 1e-9:
+            raise InputError(f"the wind loop does not close: frame {self.frames} differs from frame 0 by {gap}")
+
+    def pose(self, state: str, facing: str, frame: float) -> None:
+        if self.rest is not None:
+            mesh = self.objs[0].data
+            mesh.vertices.foreach_set("co", self.displaced(frame).reshape(-1))
+            mesh.update()
+        bpy.context.view_layer.update()
+
+
+def make_structure(profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook) -> Structure:
+    kind = profile["build"]["kind"]
+    if kind == "house":
+        return House(profile, camera, staging, scene, axes, book)
+    if kind == "tree":
+        return Tree(profile, camera, staging, scene, axes, book)
+    raise InputError(f"unknown structure build {kind!r}")
+
+
 # --- GPU probe, pin, parent guard -----------------------------------------------------------------------------------
 
 
@@ -1139,14 +1533,10 @@ def sha256_file(path: Path) -> str:
 # --- slots ------------------------------------------------------------------------------------------------------------------
 
 
-def render_slot(slot: dict, figure: Figure, book: MaterialBook, recipe: dict, id_mat, depth_mat) -> dict:
+def render_slot(slot: dict, figure, book: MaterialBook, recipe: dict, id_mat, depth_mat) -> dict:
     scene, camera = figure.scene, recipe["camera"]
     state, facing, count = slot["state"], slot["facing"], slot["frames"]
-    clip = figure.clip(state)
-    action = bpy.data.actions.get(clip["action"])
-    if action is None:
-        raise InputError(f"the animation library has no action {clip['action']!r}")
-    sources = sample_frames(*action.frame_range, count, clip["loop"])
+    sources = figure.sources(state, count)
     size = (camera["cell"]["width"] * camera["supersample"], camera["cell"]["height"] * camera["supersample"])
     out_dir = Path(slot["outDir"])
     partial = out_dir.with_name(out_dir.name + ".partial")
@@ -1155,6 +1545,7 @@ def render_slot(slot: dict, figure: Figure, book: MaterialBook, recipe: dict, id
     if partial.exists():
         shutil.rmtree(partial)
     partial.mkdir(parents=True)
+    figure.prepare(state)
     book.use()
     files = {role: [] for role in ROLES}
     extents, locators = [], []
@@ -1240,11 +1631,16 @@ def main() -> int:
         scene, axes = fresh_scene(camera)
         make_camera(scene, axes, camera)
         book = MaterialBook(profile, recipe["palette"], camera)
-        figure = Figure(profile, camera, staging, scene, axes, book)
+        if profile.get("kind") == "structure":
+            figure = make_structure(profile, camera, staging, scene, axes, book)
+            facts = {}
+        else:
+            figure = Figure(profile, camera, staging, scene, axes, book)
+            facts = {"scale": round(figure.scale, 5), "fit_extent_px_at_scale_1": round(figure.fit_extent_px, 3)}
         id_mat = id_override_material()
         depth_mat = depth_material(*camera["depthRange"])
         built = time.perf_counter()
-        print(f"RENDER scene {json.dumps({'build_ms': round((built - started) * 1000.0, 1), 'scale': round(figure.scale, 5), 'fit_extent_px_at_scale_1': round(figure.fit_extent_px, 3)})}", flush=True)
+        print(f"RENDER scene {json.dumps({'build_ms': round((built - started) * 1000.0, 1), **facts})}", flush=True)
         for slot in recipe["slots"]:
             print(f"RENDER slot {json.dumps(render_slot(slot, figure, book, recipe, id_mat, depth_mat))}", flush=True)
     except InputError as e:

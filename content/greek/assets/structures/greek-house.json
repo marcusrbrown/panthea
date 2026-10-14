@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "greek-house",
+  "name": "Greek house",
+  "paletteFamily": "town",
+  "render": {
+    "profile": "greek-house",
+    "matrix": {
+      "cellClass": "structure",
+      "directions": ["south"],
+      "required": [
+        { "state": "intact" },
+        { "state": "damaged" },
+        { "state": "ruin" }
+      ],
+      "deferred": []
+    }
+  }
+}

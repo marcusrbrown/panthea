@@ -17,8 +17,9 @@ import {
   type Sha256,
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
+import type { Camera, CameraCell } from "./camera";
 import type { PostStepSettings, StampLocators } from "./post";
-import type { KitFileRef } from "./profile";
+import type { KitFileRef, ModelProfile } from "./profile";
 import type { FrameLocators } from "./script-contract";
 import type { StampSet } from "./stamps";
 
@@ -48,14 +49,41 @@ export type PostFixedSettings = {
 
 /**
  * The fixed settings with the profile's shadow ramp resolved: the shadow is shade 0 of that ramp in
- * the asset's palette, so it is a colour of the asset's own family. This is what the revision
- * recipe records and the post step runs.
+ * the asset's palette, so it is a colour of the asset's own family. A profile with no shadow ramp
+ * (a structure) draws none. This is what the revision recipe records and the post step runs.
  */
-export function postSettingsFor(shadowRamp: string): PostFixedSettings {
+export function postSettingsFor(
+  shadowRamp: string | undefined,
+): PostFixedSettings {
   return {
     overlapThresholdM: POST_SETTINGS.overlapThresholdM,
-    shadow: { ...POST_SETTINGS.shadow, ramp: shadowRamp },
+    shadow:
+      shadowRamp === undefined
+        ? null
+        : { ...POST_SETTINGS.shadow, ramp: shadowRamp },
   };
+}
+
+/** The palette ramp a profile's contact shadow is taken from; a structure draws none. */
+export function shadowRampOf(profile: ModelProfile): string | undefined {
+  return profile.kind === "structure" ? undefined : profile.shadow.ramp;
+}
+
+/**
+ * The cell a profile is drawn in. A figure is drawn in the camera's cell; a structure carries
+ * its own, so render, post step and audit all read one frame.
+ */
+export function frameOf(profile: ModelProfile, camera: Camera): CameraCell {
+  return profile.kind === "structure" ? profile.cell : camera.cell;
+}
+
+/**
+ * The camera a profile renders and is audited with: the committed camera with the profile's
+ * frame. For a figure that is the committed camera itself.
+ */
+export function effectiveCamera(profile: ModelProfile, camera: Camera): Camera {
+  const cell = frameOf(profile, camera);
+  return cell === camera.cell ? camera : { ...camera, cell };
 }
 
 /**
@@ -201,6 +229,9 @@ export function kitHash(files: readonly KitFileRef[]): Sha256 {
     ),
   );
 }
+
+/** The stamp hash of a profile with no stamp set (a structure), so the revision recipe keeps its shape. */
+export const NO_STAMPS_HASH: Sha256 = sha256Hex(text({ stamps: null }));
 
 /** Hash of a stamp set: its manifest entry, which lists every variant file with its sha256 and anchor. */
 export function stampSetHash(set: StampSet): Sha256 {

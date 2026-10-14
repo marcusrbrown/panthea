@@ -27,7 +27,12 @@ afterEach(() => {
 function copyOfContent(): string {
   const dir = mkdtempSync(join(tmpdir(), "studio-content-"));
   roots.push(dir);
-  for (const part of ["gods", "assets/subjects", "palette"])
+  for (const part of [
+    "gods",
+    "assets/subjects",
+    "assets/structures",
+    "palette",
+  ])
     cpSync(join(REAL, part), join(dir, part), { recursive: true });
   mkdirSync(join(dir, "assets"), { recursive: true });
   cpSync(
@@ -227,6 +232,76 @@ describe("content that cannot load is refused with diagnostics, never an excepti
       expect(d.file).not.toContain(root);
       expect(d.message.length).toBeLessThanOrEqual(240);
     }
+  });
+});
+
+describe("structures", () => {
+  const house = {
+    schemaVersion: 1,
+    id: "greek-house",
+    name: "Greek house",
+    paletteFamily: "town",
+    render: {
+      profile: "greek-house",
+      matrix: {
+        cellClass: "structure",
+        directions: ["south"],
+        required: [{ state: "intact" }],
+      },
+    },
+  };
+  const addHouse = (root: string, value: unknown = house) => {
+    mkdirSync(join(root, "assets", "structures"), { recursive: true });
+    writeFileSync(
+      join(root, "assets", "structures", "greek-house.json"),
+      JSON.stringify(value),
+    );
+  };
+
+  test("a root with no structures directory loads with none", () => {
+    const root = copyOfContent();
+    rmSync(join(root, "assets", "structures"), {
+      recursive: true,
+      force: true,
+    });
+    const loaded = loadStudioContent(root);
+    expect(loaded.ok && loaded.content.structures).toEqual([]);
+  });
+
+  test("each file in the structures directory is parsed into the content", () => {
+    const root = copyOfContent();
+    addHouse(root);
+    const loaded = loadStudioContent(root);
+    expect(loaded.ok && loaded.content.structures.map((s) => s.id)).toContain(
+      "greek-house",
+    );
+  });
+
+  test("an invalid structure, one that names a god's id and one with an unknown family are reported against their file", () => {
+    const invalid = copyOfContent();
+    addHouse(invalid, { ...house, name: 4 });
+    expect(files(invalid)).toEqual(["assets/structures/greek-house.json"]);
+
+    const clash = copyOfContent();
+    addHouse(clash, { ...house, id: "zeus" });
+    expect(files(clash)).toEqual(["assets/structures/greek-house.json"]);
+
+    const family = copyOfContent();
+    addHouse(family, { ...house, paletteFamily: "atlantis" });
+    expect(files(family)).toEqual(["assets/structures/greek-house.json"]);
+
+    const malformed = copyOfContent();
+    mkdirSync(join(malformed, "assets", "structures"), { recursive: true });
+    writeFileSync(
+      join(malformed, "assets", "structures", "greek-house.json"),
+      "{",
+    );
+    expect(failures(malformed)).toEqual([
+      {
+        file: "assets/structures/greek-house.json",
+        message: "is not valid JSON",
+      },
+    ]);
   });
 });
 

@@ -5,7 +5,12 @@
 // Same spec and seed give the same adapter inputs; nothing here promises the
 // same output bytes from the model.
 
-import type { GodProfile, GodVisualProfile } from "@panthea/content";
+import type {
+  GodProfile,
+  GodVisualProfile,
+  RenderSubject,
+  StructureSubject,
+} from "@panthea/content";
 import {
   type AssetVocabulary,
   type GenerationEdit,
@@ -73,6 +78,8 @@ export interface StudioContent {
   readonly vocabulary: AssetVocabulary;
   readonly gods: readonly GodProfile[];
   readonly visuals: readonly GodVisualProfile[];
+  /** Trees and buildings the render engine draws; a god's id is never one of theirs. */
+  readonly structures: readonly StructureSubject[];
   /** Every palette of the content root by id; image requests use `greek-master`, a recipe request the palette it names. */
   readonly palettes: PaletteSet;
 }
@@ -246,6 +253,62 @@ const DIRECTION_VIEW: Record<Direction, string> = {
 const isDirection = (value: string): value is Direction =>
   DIRECTIONS.some((direction) => direction === value);
 
+/**
+ * What a request names, whether a god or a structure: the fields prompts, specs and the render
+ * matrix read. A god's come from its profile joined to its visual profile; a structure has no
+ * abilities, domains or iconography.
+ */
+export interface Subject {
+  readonly id: string;
+  readonly name: string;
+  readonly paletteFamily: string;
+  readonly structure: boolean;
+  readonly domains: readonly string[];
+  readonly iconography: readonly string[];
+  readonly abilities: GodProfile["abilities"];
+  readonly render?: RenderSubject;
+}
+
+/** The god joined to its visual profile, or the structure, with this id; undefined when it is neither. */
+export function subjectOf(
+  content: StudioContent,
+  id: string,
+): Subject | undefined {
+  const structure = content.structures.find((s) => s.id === id);
+  if (structure !== undefined)
+    return {
+      id: structure.id,
+      name: structure.name,
+      paletteFamily: structure.paletteFamily,
+      structure: true,
+      domains: [],
+      iconography: [],
+      abilities: [],
+      render: structure.render,
+    };
+  const visual = content.visuals.find((v) => v.godId === id);
+  const god = content.gods.find((g) => g.id === id);
+  if (visual === undefined || god === undefined) return undefined;
+  return {
+    id: god.id,
+    name: god.name,
+    paletteFamily: visual.paletteFamily,
+    structure: false,
+    domains: god.domains,
+    iconography: visual.iconography,
+    abilities: god.abilities,
+    ...(visual.render === undefined ? {} : { render: visual.render }),
+  };
+}
+
+/** The ids a request can name: the gods with a visual profile, then the structures. */
+export function subjectIdsOf(content: StudioContent): readonly string[] {
+  return [
+    ...content.visuals.map((v) => v.godId),
+    ...content.structures.map((s) => s.id),
+  ];
+}
+
 interface SlotCheck {
   readonly ability: GodProfile["abilities"][number] | undefined;
   /** The wording of a sprite slot's direction; portraits have none. */
@@ -256,7 +319,7 @@ function checkSlot(
   slot: GenerationSlot,
   kind: StudioKind,
   vocabulary: AssetVocabulary,
-  god: GodProfile,
+  abilities: GodProfile["abilities"],
   cellId: string,
   deferred: readonly { state: string; ability?: string }[],
 ): RequestResult<SlotCheck> {
@@ -315,12 +378,12 @@ function checkSlot(
   }
   if (slot.ability === undefined)
     return invalidSlot(slot, `${slot.state} needs an ability`);
-  const ability = god.abilities.find((a) => a.id === slot.ability);
+  const ability = abilities.find((a) => a.id === slot.ability);
   if (ability === undefined)
     return bad({
       kind: "unknown-ability",
       ability: slot.ability,
-      valid: god.abilities.map((a) => a.id),
+      valid: abilities.map((a) => a.id),
     });
   return good({ ability, view });
 }
@@ -354,8 +417,7 @@ export function spriteCellClassOf(
   request: GenerationRequest,
 ): string | undefined {
   if (request.recipe === undefined) return SD_ENGINE.spriteCellClass;
-  return content.visuals.find((v) => v.godId === request.subject)?.render
-    ?.matrix.cellClass;
+  return subjectOf(content, request.subject)?.render?.matrix.cellClass;
 }
 
 /**
@@ -378,33 +440,39 @@ export function buildSpec(
       requested: request.kind,
       valid: KINDS,
     });
-  const visual = content.visuals.find((v) => v.godId === request.subject);
-  const god = content.gods.find((g) => g.id === request.subject);
-  if (visual === undefined || god === undefined)
+  const subject = subjectOf(content, request.subject);
+  if (subject === undefined)
     return bad({
       kind: "unknown-subject",
       subject: request.subject,
-      valid: content.visuals.map((v) => v.godId),
+      valid: subjectIdsOf(content),
     });
 
   const { recipe } = request;
+  // The image engine draws gods; a tree or a building only exists as a render.
+  if (subject.structure && (recipe === undefined || kind !== "sprite"))
+    return bad({
+      kind: "invalid-request",
+      path: "recipe",
+      message: `${request.subject} is a structure, drawn only by the render engine as a sprite`,
+    });
   const { measuredCells, generationScale, spriteCellClass } =
     engine ?? SD_ENGINE;
   let spriteCell = spriteCellClass;
   if (recipe !== undefined) {
-    if (visual.render === undefined)
+    if (subject.render === undefined)
       return bad({
         kind: "invalid-request",
         path: "recipe",
         message: `${request.subject} names no render profile`,
       });
-    if (visual.render.profile !== recipe.profile)
+    if (subject.render.profile !== recipe.profile)
       return bad({
         kind: "invalid-request",
         path: "request.recipe.profile",
-        message: `${request.subject}'s render profile is ${visual.render.profile}, not ${recipe.profile}`,
+        message: `${request.subject}'s render profile is ${subject.render.profile}, not ${recipe.profile}`,
       });
-    spriteCell = visual.render.matrix.cellClass;
+    spriteCell = subject.render.matrix.cellClass;
   }
   const cell = vocabulary.cells.find((c) =>
     kind === "sprite"
@@ -448,11 +516,11 @@ export function buildSpec(
       palette: recipe?.palette ?? MASTER_PALETTE_ID,
       valid: [...content.palettes.keys()],
     });
-  const family = palette.families.find((f) => f.id === visual.paletteFamily);
+  const family = palette.families.find((f) => f.id === subject.paletteFamily);
   if (family === undefined)
     return bad({
       kind: "unknown-palette-family",
-      family: visual.paletteFamily,
+      family: subject.paletteFamily,
       valid: palette.families.map((f) => f.id),
     });
 
@@ -462,17 +530,29 @@ export function buildSpec(
       slot,
       kind,
       vocabulary,
-      god,
+      subject.abilities,
       cell.id,
-      recipe === undefined ? [] : (visual.render?.matrix.deferred ?? []),
+      recipe === undefined ? [] : (subject.render?.matrix.deferred ?? []),
     );
     if (!checked.ok) return checked;
+    // A static structure looks the same from any facing, so a facing its matrix does not name
+    // would only be a copy of the one it does.
+    const drawn = recipe === undefined ? undefined : subject.render?.matrix;
+    if (
+      drawn !== undefined &&
+      slot.direction !== undefined &&
+      !drawn.directions.includes(slot.direction)
+    )
+      return invalidSlot(
+        slot,
+        `${request.subject} is drawn facing ${drawn.directions.join(", ")}, not ${slot.direction}`,
+      );
     slots.push({
       key: slotKey(slot),
       slot,
       prompt: promptFor(
-        god.name,
-        visual.iconography,
+        subject.name,
+        subject.iconography,
         slot,
         kind,
         checked.value.ability?.name,
@@ -484,11 +564,11 @@ export function buildSpec(
   }
 
   return good({
-    subject: god.id,
-    name: god.name,
+    subject: subject.id,
+    name: subject.name,
     kind,
-    domains: god.domains,
-    iconography: visual.iconography,
+    domains: subject.domains,
+    iconography: subject.iconography,
     cell: { id: cell.id, w: cell.w, h: cell.h },
     native: { w: cell.w, h: cell.h },
     generated: { w: generated.w, h: generated.h },
@@ -534,14 +614,14 @@ export function newRequestRecord(
   if (render === undefined) {
     stored = { ...fields, batch: input.batch ?? DEFAULT_BATCH };
   } else {
-    const visual = content.visuals.find((v) => v.godId === input.subject);
-    if (visual === undefined)
+    const subject = subjectOf(content, input.subject);
+    if (subject === undefined)
       return bad({
         kind: "unknown-subject",
         subject: input.subject,
-        valid: content.visuals.map((v) => v.godId),
+        valid: subjectIdsOf(content),
       });
-    if (visual.render === undefined)
+    if (subject.render === undefined)
       return bad({
         kind: "invalid-request",
         path: "recipe",
@@ -549,7 +629,7 @@ export function newRequestRecord(
       });
     stored = {
       ...fields,
-      recipe: { profile: visual.render.profile, ...render },
+      recipe: { profile: subject.render.profile, ...render },
     };
   }
   const parsed = parseGenerationRequest({ schemaVersion: 1, ...stored });

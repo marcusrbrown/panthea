@@ -13,8 +13,8 @@ import {
   loadStudioContent,
   newRequestRecord,
   openStudioSession,
-  RENDER_ENGINE,
   readStudioStatus,
+  renderEngineFor,
   type StudioRuntime,
   type StudioSession,
   type StudioStatus,
@@ -1101,7 +1101,7 @@ describe("render jobs in the host", () => {
         render: { palette: "greek-retro", pivot: { x: 56, y: 78 } },
       },
       () => 0,
-      RENDER_ENGINE,
+      renderEngineFor(join(REAL_CONTENT, "..", "..", "tools", "render")),
     );
     if (!built.ok) throw new Error(JSON.stringify(built.error));
     return built.value.record;

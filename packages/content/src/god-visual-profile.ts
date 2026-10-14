@@ -106,7 +106,7 @@ function parseMatrixSlots(
   return slots;
 }
 
-function parseRenderSubject(
+export function parseRenderSubject(
   value: unknown,
   path: string,
 ): ParseResult<RenderSubject> {

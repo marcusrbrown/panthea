@@ -9,6 +9,7 @@ import {
 } from "@panthea/contracts";
 import { loadContent } from "../../test/studio/fixtures";
 import type { Palette } from "../palette";
+import { renderEngineFor } from "../render/engine";
 import { PROVIDER, RENDER_PROVIDER, SELECTED_PROFILE } from "./provider";
 import {
   adapterInput,
@@ -20,6 +21,8 @@ import {
   type RequestInput,
   type StudioContent,
   slotKey,
+  subjectIdsOf,
+  subjectOf,
 } from "./request";
 import { MAX_SEED } from "./seed";
 import { newWorkingSet } from "./working-set";
@@ -194,7 +197,7 @@ describe("spec derivation", () => {
       error: {
         kind: "unknown-subject",
         subject: "nobody",
-        valid: content.visuals.map((v) => v.godId),
+        valid: subjectIdsOf(content),
       },
     });
     expect(sprite({ state: "fly", direction: "south" })).toEqual({
@@ -746,6 +749,185 @@ describe("selected profile", () => {
   });
 });
 
+describe("subjectOf", () => {
+  const house = {
+    schemaVersion: 1,
+    id: "greek-house",
+    name: "Greek house",
+    paletteFamily: "town",
+    render: {
+      profile: "greek-house",
+      matrix: {
+        cellClass: "structure",
+        directions: ["south"],
+        required: [{ state: "intact" }],
+        deferred: [],
+      },
+    },
+  };
+  const withHouse: StudioContent = { ...content, structures: [house] };
+
+  test("a god is joined to its visual profile and keeps its abilities", () => {
+    const subject = subjectOf(withHouse, "zeus");
+    expect(subject).toMatchObject({
+      id: "zeus",
+      name: "Zeus",
+      paletteFamily: "olympus",
+      structure: false,
+    });
+    expect(subject?.abilities.map((a) => a.id)).toEqual(
+      zeus.abilities.map((a) => a.id),
+    );
+    expect(subject?.render?.profile).toBe("zeus");
+    expect(subject?.iconography.length).toBeGreaterThan(0);
+  });
+
+  test("a structure has a render subject, no abilities, no domains and no iconography", () => {
+    expect(subjectOf(withHouse, "greek-house")).toEqual({
+      id: "greek-house",
+      name: "Greek house",
+      paletteFamily: "town",
+      structure: true,
+      domains: [],
+      iconography: [],
+      abilities: [],
+      render: house.render,
+    });
+  });
+
+  test("an unknown id is undefined, and a god with no visual profile is not a subject", () => {
+    expect(subjectOf(withHouse, "nobody")).toBeUndefined();
+    expect(subjectOf({ ...withHouse, visuals: [] }, "zeus")).toBeUndefined();
+  });
+
+  test("the ids that can be requested are the gods' with a visual profile, then the structures'", () => {
+    expect(subjectIdsOf(withHouse)).toEqual([
+      ...content.visuals.map((v) => v.godId),
+      "greek-house",
+    ]);
+  });
+});
+
+describe("structure requests", () => {
+  const engine = renderEngineFor(join(repo, "tools", "render"));
+  const pivot = { x: 88, y: 124 };
+  const house = (over: Partial<RequestInput> = {}): RequestInput => ({
+    subject: "greek-house",
+    kind: "sprite",
+    slots: [{ state: "intact", direction: "south" }],
+    render: { palette: "greek-retro", pivot },
+    ...over,
+  });
+  const create = (input: RequestInput) =>
+    newRequestRecord(content, { id: "house", ...input }, neverDraw, engine);
+
+  test("the committed structures are subjects, the gods' ids first", () => {
+    expect(subjectIdsOf(content)).toEqual([
+      ...content.visuals.map((v) => v.godId),
+      ...content.structures.map((s) => s.id),
+    ]);
+    expect(content.structures.map((s) => s.id)).toContain("greek-house");
+  });
+
+  test("a house builds on the structure cell from its subject, with no god in the spec", () => {
+    const { record, spec } = ok(create(house()));
+    expect(spec).toMatchObject({
+      subject: "greek-house",
+      name: "Greek house",
+      kind: "sprite",
+      domains: [],
+      iconography: [],
+      cell: { id: "structure", w: 176, h: 168 },
+      generated: { w: 176, h: 168 },
+      pivot,
+      palette: { id: "greek-retro", family: "town" },
+    });
+    expect(record.request.recipe).toEqual({
+      profile: "greek-house",
+      palette: "greek-retro",
+      pivot,
+    });
+  });
+
+  test("the size gate is the committed profiles' frames: a cell no profile draws is unmeasured", () => {
+    const refused = newRequestRecord(
+      content,
+      { id: "house", ...house() },
+      neverDraw,
+      { ...engine, measuredCells: [{ w: 112, h: 96 }] },
+    );
+    expect(refused).toMatchObject({
+      ok: false,
+      error: { kind: "unmeasured-size", native: { w: 176, h: 168 } },
+    });
+  });
+
+  test("a structure is drawn by the render engine only: no image request, no portrait", () => {
+    // The image engine is the default one: a structure must not reach it.
+    expect(
+      newRequestRecord(
+        content,
+        {
+          id: "house",
+          subject: "greek-house",
+          kind: "sprite",
+          slots: house().slots,
+        },
+        () => 1,
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-request", path: "recipe" },
+    });
+    expect(
+      create({
+        subject: "greek-house",
+        kind: "portrait",
+        slots: [{ expression: "neutral" }],
+        render: { palette: "greek-retro", pivot },
+      }),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-request" } });
+  });
+
+  test("a slot is refused for a facing the subject's matrix does not draw, and for an ability", () => {
+    const west = create(
+      house({ slots: [{ state: "intact", direction: "west" }] }),
+    );
+    expect(west).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-slot", slotKey: "intact/west" },
+    });
+    expect(
+      create(
+        house({
+          slots: [{ state: "intact", direction: "south", ability: "bolt" }],
+        }),
+      ),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-slot" } });
+    // A figure's matrix names all four facings, so its requests are as they were.
+    expect(
+      newRequestRecord(
+        content,
+        {
+          id: "zeus-west",
+          subject: "zeus",
+          kind: "sprite",
+          slots: [{ state: "idle", direction: "west" }],
+          render: { palette: "greek-retro", pivot: { x: 56, y: 78 } },
+        },
+        neverDraw,
+        engine,
+      ).ok,
+    ).toBe(true);
+  });
+
+  test("a state the structure cell does not draw is refused", () => {
+    expect(
+      create(house({ slots: [{ state: "walk", direction: "south" }] })),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-slot" } });
+  });
+});
+
 describe("recipe requests for the render engine", () => {
   // The render engine declares its own cell sizes; its runtime arrives later, so the test passes them in.
   const renderEngine: EngineCells = {
@@ -1058,7 +1240,17 @@ describe("recipe requests for the render engine", () => {
       ok: false,
       error: {
         kind: "unknown-state",
-        valid: ["idle", "seated", "act", "walk", "hurt", "down"],
+        valid: [
+          "idle",
+          "seated",
+          "act",
+          "walk",
+          "intact",
+          "damaged",
+          "ruin",
+          "hurt",
+          "down",
+        ],
       },
     });
   });

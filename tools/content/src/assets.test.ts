@@ -1197,6 +1197,126 @@ describe("render kits and the licence boundary", () => {
 // biome-ignore lint/suspicious/noExplicitAny: the tests edit an untyped JSON document
 type Json = any;
 
+describe("structures", () => {
+  const renderCopy = (): string => {
+    const root = mkdtempSync(join(tmpdir(), "assets-structures-"));
+    dirs.push(root);
+    cpSync(join(REPO_ROOT, "tools", "render"), join(root, "tools", "render"), {
+      recursive: true,
+      filter: (source) => !source.includes(`${"/"}scratch`),
+    });
+    return root;
+  };
+  const editJson = (path: string, change: (json: Json) => void) => {
+    const json = JSON.parse(readFileSync(path, "utf8"));
+    change(json);
+    writeFileSync(path, JSON.stringify(json));
+  };
+  const subjectFile = (root: string) =>
+    join(root, "assets", "structures", "greek-house.json");
+  const profileFile = (root: string) =>
+    join(root, "tools", "render", "profiles", "greek-house.json");
+  const diagnostics = (content: string, repo?: string) =>
+    validateAssets(content, repo === undefined ? {} : { repoRoot: repo })
+      .diagnostics;
+
+  it("passes the committed structures with their profiles and the vocabulary", () => {
+    expect(diagnostics(contentRoot(), renderCopy())).toEqual([]);
+  });
+
+  it("refuses a subject whose id is a god's, and one in an unknown palette family", () => {
+    const clash = contentRoot();
+    editJson(subjectFile(clash), (s) => {
+      s.id = "zeus";
+    });
+    expect(diagnostics(clash).map((d) => d.file)).toEqual([
+      "assets/structures/greek-house.json",
+    ]);
+    const family = contentRoot();
+    editJson(subjectFile(family), (s) => {
+      s.paletteFamily = "atlantis";
+    });
+    expect(diagnostics(family).map((d) => d.file)).toEqual([
+      "assets/structures/greek-house.json",
+    ]);
+  });
+
+  it("refuses a matrix the vocabulary cannot honour", () => {
+    const root = contentRoot();
+    editJson(subjectFile(root), (s) => {
+      s.render.matrix.cellClass = "portrait";
+    });
+    const found = diagnostics(root);
+    expect(found.map((d) => d.file)).toEqual([
+      "assets/structures/greek-house.json",
+    ]);
+    expect(found[0]?.message).toContain("does not hold sprites");
+  });
+
+  it("refuses a profile that does not exist, and a figure profile", () => {
+    const missing = contentRoot();
+    editJson(subjectFile(missing), (s) => {
+      s.render.profile = "greek-barn";
+    });
+    const found = diagnostics(missing, renderCopy());
+    expect(found).toHaveLength(1);
+    expect(found[0]?.file).toBe("assets/structures/greek-house.json");
+    expect(found[0]?.message).toContain("greek-barn");
+
+    const figure = contentRoot();
+    editJson(subjectFile(figure), (s) => {
+      s.render.profile = "zeus";
+    });
+    const refused = diagnostics(figure, renderCopy());
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.message).toContain("not a structure");
+  });
+
+  it("refuses a profile whose cell is not the vocabulary's cell for the matrix's class", () => {
+    const repo = renderCopy();
+    editJson(profileFile(repo), (p) => {
+      p.cell.width = 168;
+      p.cell.pivot = [84, 124];
+    });
+    const found = diagnostics(contentRoot(), repo);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.file).toBe("tools/render/profiles/greek-house.json");
+    expect(found[0]?.message).toContain("cell");
+    expect(found[0]?.message).toContain("176x168");
+  });
+
+  it("refuses a profile with no clip for a state its subject requires, or with frames the vocabulary does not allow", () => {
+    const missing = renderCopy();
+    editJson(profileFile(missing), (p) => {
+      delete p.clips.ruin;
+    });
+    const gone = diagnostics(contentRoot(), missing);
+    expect(gone).toHaveLength(1);
+    expect(gone[0]?.message).toContain("ruin");
+
+    const many = renderCopy();
+    editJson(profileFile(many), (p) => {
+      p.clips.intact.loop = true;
+      p.clips.intact.frames = 17;
+      p.clips.intact.frameMs = 100;
+      p.wind = { amplitudeM: 0.1, lag: 1, cycles: 1, swirl: 0.4 };
+    });
+    const frames = diagnostics(contentRoot(), many);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.message).toContain("frames");
+  });
+
+  it("refuses a clip timing outside the vocabulary's frame rate", () => {
+    const repo = renderCopy();
+    editJson(profileFile(repo), (p) => {
+      p.clips.intact.frameMs = 10;
+    });
+    const found = diagnostics(contentRoot(), repo);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toContain("ms");
+  });
+});
+
 describe("render profiles and the camera", () => {
   /** A repository root holding a copy of the committed tools/render (kits, profiles, camera, script). */
   function renderCopy(): string {

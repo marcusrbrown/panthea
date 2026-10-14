@@ -19,16 +19,21 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Sha256 } from "@panthea/contracts";
 import { sha256Hex } from "../../src/hash";
+import { encodeRgbaPng } from "../../src/placeholder";
 import {
   type DoneSentinel,
   EXIT_CODES,
   FIRST_LINE_MARKER,
   type FrameLocators,
+  ID_BASE,
+  ID_STEP,
+  PART_IDS,
   RENDER_ROLES,
   renderDoneJson,
   SENTINEL_NAME,
@@ -138,6 +143,33 @@ function listFiles(dir: string): string[] {
   return found.sort();
 }
 
+/**
+ * A structure's raw pass as the script would draw a plain block: an opaque rectangle in the middle
+ * of the supersampled cell, a part-id byte of `wall` and a mid depth, empty elsewhere. The
+ * rectangle is `margin` cells in from every edge, so a frame is never clipped.
+ */
+function syntheticPass(
+  role: (typeof RENDER_ROLES)[number],
+  width: number,
+  height: number,
+  rectangle: { left: number; top: number; right: number; bottom: number },
+): Uint8Array {
+  const rgba = new Uint8Array(width * height * 4);
+  const wall = ID_BASE + ID_STEP * PART_IDS.indexOf("wall");
+  const value =
+    role === "id"
+      ? [wall, wall, wall]
+      : role === "depth"
+        ? [128, 128, 128]
+        : [200, 190, 160];
+  for (let y = rectangle.top; y < rectangle.bottom; y += 1)
+    for (let x = rectangle.left; x < rectangle.right; x += 1) {
+      const at = (y * width + x) * 4;
+      rgba.set([...value, 255], at);
+    }
+  return encodeRgbaPng(rgba, width, height);
+}
+
 const hang = (): never => {
   setInterval(() => {}, 1000);
   // Never returns; the process is ended by a signal.
@@ -212,8 +244,20 @@ function main(): void {
   const recipe = readJson<{
     blender: { version: string; buildHash: string };
     stagingRoot: string;
+    camera: { supersample: number; cell: { width: number; height: number } };
+    profile: { kind?: string };
     slots: { id: string; facing: string; frames: number; outDir: string }[];
   }>(recipePath);
+  // A structure's frames are drawn to the recipe's own cell; a figure's are the committed fixture's.
+  const structure = recipe.profile.kind === "structure";
+  const rawWidth = recipe.camera.cell.width * recipe.camera.supersample;
+  const rawHeight = recipe.camera.cell.height * recipe.camera.supersample;
+  const block = {
+    left: Math.floor(rawWidth * 0.25),
+    top: Math.floor(rawHeight * 0.25),
+    right: Math.floor(rawWidth * 0.75),
+    bottom: Math.floor(rawHeight * 0.75),
+  };
   if (
     recipe.blender.version !== installed.version ||
     recipe.blender.buildHash !== installed.buildHash
@@ -234,6 +278,16 @@ function main(): void {
   if (launch.scriptError) {
     console.error("Traceback: the fake was told to raise");
     process.exit(EXIT_CODES.scriptError);
+  }
+  // The script refuses a staging root that is not a directory, even when it has nothing to stage.
+  if (
+    !existsSync(recipe.stagingRoot) ||
+    !statSync(recipe.stagingRoot).isDirectory()
+  ) {
+    say(
+      `RENDER input error: staging root ${recipe.stagingRoot} is not a directory`,
+    );
+    process.exit(EXIT_CODES.inputError);
   }
   log("staging", {
     root: recipe.stagingRoot,
@@ -293,7 +347,12 @@ function main(): void {
           hang();
           return;
         }
-        copyFileSync(frameFile(role, index), join(partial, name));
+        if (structure)
+          writeFileSync(
+            join(partial, name),
+            syntheticPass(role, rawWidth, rawHeight, block),
+          );
+        else copyFileSync(frameFile(role, index), join(partial, name));
         written[role]?.push({ name, sha256: sha(join(partial, name)) });
       }
       log("frame", { slot: slot.id, index });
@@ -340,11 +399,13 @@ function main(): void {
         right: 72,
       })),
       locators: Array.from({ length: frames }, (_, i) =>
-        sentinelLocators(
-          fixture.frames[
-            i % fixture.frames.length
-          ] as FixtureFrames["frames"][number],
-        ),
+        structure
+          ? { points: {} }
+          : sentinelLocators(
+              fixture.frames[
+                i % fixture.frames.length
+              ] as FixtureFrames["frames"][number],
+            ),
       ),
     };
     const tmp = join(slot.outDir, `${SENTINEL_NAME}.tmp`);

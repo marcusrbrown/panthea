@@ -98,6 +98,28 @@
           "referencedBy": ["zeus"]
         }
       ]
+    },
+    {
+      "id": "kenney-nature-kit",
+      "title": "Nature Kit (Kenney)",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "licence": {
+        "spdx": "CC0-1.0"
+      },
+      "licenceFile": {
+        "path": "License.txt",
+        "sha256": "cb96b75e3560ac78d7a53ce6f083f4cdb5c53faea6141b62d63458dcfe1e4b9d"
+      },
+      "status": "used",
+      "textureSkip": [],
+      "files": [
+        {
+          "path": "tree_oak.glb",
+          "sha256": "d7fd8773674928c50c11b66d12c636d49bdcc15a8b1c7fbb98e6f63a3439a3f3",
+          "size": 14644,
+          "referencedBy": ["oak-tree"]
+        }
+      ]
     }
   ]
 }

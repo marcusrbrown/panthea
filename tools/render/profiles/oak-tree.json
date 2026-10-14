@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "kind": "structure",
+  "id": "oak-tree",
+  "kitFiles": [
+    {
+      "kit": "kenney-nature-kit",
+      "path": "tree_oak.glb",
+      "sha256": "d7fd8773674928c50c11b66d12c636d49bdcc15a8b1c7fbb98e6f63a3439a3f3"
+    }
+  ],
+  "build": {
+    "kind": "tree",
+    "model": { "kit": "kenney-nature-kit", "path": "tree_oak.glb" },
+    "heightM": 4.6
+  },
+  "cell": {
+    "id": "structure",
+    "width": 176,
+    "height": 168,
+    "pivot": [88, 124]
+  },
+  "materials": {
+    "trunk": { "ramp": "soil", "bias": -0.3 },
+    "leaf": { "ramp": "olive", "bias": -0.3 },
+    "trunk-burnt": {
+      "ramp": "soil",
+      "bias": -0.3,
+      "bandShades": [0, 0, 1, 1, 2]
+    },
+    "leaf-scorched": {
+      "ramp": "soil",
+      "bias": -0.2,
+      "bandShades": [1, 2, 2, 3, 3]
+    }
+  },
+  "wind": { "amplitudeM": 0.14, "lag": 1.2, "cycles": 1, "swirl": 0.45 },
+  "clips": {
+    "intact": {
+      "loop": true,
+      "frames": 12,
+      "frameMs": [166, 167, 167, 166, 167, 167, 166, 167, 167, 166, 167, 167],
+      "leaves": 1
+    },
+    "damaged": {
+      "loop": true,
+      "frames": 12,
+      "frameMs": [166, 167, 167, 166, 167, 167, 166, 167, 167, 166, 167, 167],
+      "materials": { "trunk": "trunk-burnt", "leaf": "leaf-scorched" },
+      "leaves": 0.6
+    },
+    "ruin": {
+      "loop": false,
+      "frames": 1,
+      "frameMs": 1000,
+      "ruin": true,
+      "materials": { "trunk": "trunk-burnt" }
+    }
+  }
+}

@@ -43,14 +43,21 @@ import { postPaletteFrom } from "./post-palette";
 import { profileHash } from "./profile";
 import {
   type BlenderBinaryPin,
+  effectiveCamera,
   kitHash,
+  NO_STAMPS_HASH,
   postSettingsFor,
   postStepSettings,
   revisionRecipe,
+  shadowRampOf,
   slotRecipeHash,
   stampSetHash,
 } from "./recipe";
-import { loadStampSet, parseStampManifest } from "./stamps";
+import {
+  type LoadedStampSet,
+  loadStampSet,
+  parseStampManifest,
+} from "./stamps";
 
 /** What the studio hands a publish so a rendered asset can be audited: where the committed render inputs are, and what this build pins. */
 export interface RenderAuditConfig {
@@ -158,7 +165,7 @@ export function auditRendered(audit: RenderAudit): string | undefined {
   if (profileProblems.length > 0)
     return `the render profile ${profile.id}: ${profileProblems.map((p) => p.message).join("; ")}`;
   if (inputs.camera === undefined) return "camera.json is missing or unusable";
-  const camera = inputs.camera;
+  const camera = effectiveCamera(profile, inputs.camera);
 
   for (const ref of profile.kitFiles) {
     let bytes: Uint8Array;
@@ -172,24 +179,31 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     if (sha256Hex(bytes) !== ref.sha256)
       return `the kit file ${ref.kit}/${ref.path} differs from its pinned hash`;
   }
-  let stampsJson: unknown;
-  try {
-    stampsJson = JSON.parse(
-      readFileSync(join(audit.renderRoot, "stamps", "stamps.json"), "utf8"),
+  // A figure's face stamps; a structure has none.
+  let stampsHash: Sha256 = NO_STAMPS_HASH;
+  let stamps: LoadedStampSet | undefined;
+  if (profile.kind !== "structure") {
+    let stampsJson: unknown;
+    try {
+      stampsJson = JSON.parse(
+        readFileSync(join(audit.renderRoot, "stamps", "stamps.json"), "utf8"),
+      );
+    } catch {
+      return "stamps.json is missing or not valid JSON";
+    }
+    const stampManifest = parseStampManifest(stampsJson);
+    if (!stampManifest.ok) return `stamps.json: ${stampManifest.message}`;
+    const stampSet = stampManifest.value.sets.find(
+      (s) => s.id === profile.stampSet,
     );
-  } catch {
-    return "stamps.json is missing or not valid JSON";
+    if (stampSet === undefined)
+      return `the stamp set "${profile.stampSet}" is not in stamps.json`;
+    const loadedStamps = loadStampSet(audit.renderRoot, profile.stampSet);
+    if (!loadedStamps.ok)
+      return `the stamp set ${profile.stampSet}: ${loadedStamps.problems.map((p) => `${p.file}: ${p.message}`).join("; ")}`;
+    stampsHash = stampSetHash(stampSet);
+    stamps = loadedStamps.set;
   }
-  const stampManifest = parseStampManifest(stampsJson);
-  if (!stampManifest.ok) return `stamps.json: ${stampManifest.message}`;
-  const stampSet = stampManifest.value.sets.find(
-    (s) => s.id === profile.stampSet,
-  );
-  if (stampSet === undefined)
-    return `the stamp set "${profile.stampSet}" is not in stamps.json`;
-  const stamps = loadStampSet(audit.renderRoot, profile.stampSet);
-  if (!stamps.ok)
-    return `the stamp set ${profile.stampSet}: ${stamps.problems.map((p) => `${p.file}: ${p.message}`).join("; ")}`;
   const palette = audit.palettes.get(recorded.palette.id);
   if (palette === undefined)
     return `the palette "${recorded.palette.id}" is not among the palettes on disk`;
@@ -199,7 +213,7 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     ["profile hash", profileHash(profile), recorded.profile.hash],
     ["camera hash", cameraHash(camera), recorded.camera],
     ["kit hash", kitHash(profile.kitFiles), recorded.kit],
-    ["stamp hash", stampSetHash(stampSet), recorded.stamps],
+    ["stamp hash", stampsHash, recorded.stamps],
     ["script hash", scriptNow, recorded.script],
     ["post-step version", postStepNow, recorded.postStep],
     ["Blender version", blenderNow.version, recorded.blender.version],
@@ -219,11 +233,11 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     script: scriptNow,
     postStep: {
       version: postStepNow,
-      settings: postSettingsFor(profile.shadow.ramp),
+      settings: postSettingsFor(shadowRampOf(profile)),
     },
     blender: blenderNow,
     kit: kitHash(profile.kitFiles),
-    stamps: stampSetHash(stampSet),
+    stamps: stampsHash,
   }).hash;
   if (recomputed !== recorded.hash)
     return `the revision recipe hash ${recorded.hash} is not the hash of the committed inputs (${recomputed})`;
@@ -239,7 +253,7 @@ export function auditRendered(audit: RenderAudit): string | undefined {
   const settings = postStepSettings(
     camera,
     recorded.pivot,
-    postSettingsFor(profile.shadow.ramp),
+    postSettingsFor(shadowRampOf(profile)),
   );
   const postPalette = postPaletteFrom(audit.palettes, recorded.palette.id);
   if (!postPalette.ok) return postPalette.message;
@@ -304,7 +318,7 @@ export function auditRendered(audit: RenderAudit): string | undefined {
       slot: slot.slotKey,
       settings,
       palette: postPalette.value,
-      stamps: stamps.set,
+      ...(stamps === undefined ? {} : { stamps }),
       frames,
     });
     if (!post.ok)

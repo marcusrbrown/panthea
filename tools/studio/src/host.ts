@@ -16,6 +16,7 @@ import {
   createEditorAdapter,
   createPreviewSource,
   type EditorAdapter,
+  type EngineCells,
   fsWatcher,
   type LoadedContent,
   type LoadedPalettes,
@@ -28,6 +29,7 @@ import {
   type PreviewWatcher,
   type RuntimeConfig,
   readStudioStatus,
+  renderEngineFor,
   type SelectedProfile,
   type StudioContent,
   type StudioOpen,
@@ -432,6 +434,15 @@ export class Studio {
       (contentRoot === undefined
         ? undefined
         : resolve(contentRoot, "..", "..", "tools", "render"))
+    );
+  }
+
+  /** The cells the render engine accepts: the frame of every committed profile, from `render.renderRoot` or its default beside the content root. */
+  renderCells(): EngineCells {
+    const { render, contentRoot } = this.config;
+    return renderEngineFor(
+      render?.renderRoot ??
+        resolve(contentRoot ?? "", "..", "..", "tools", "render"),
     );
   }
 

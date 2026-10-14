@@ -125,7 +125,10 @@ function parsePositive(value: unknown, path: string): ParseResult<number> {
   return number;
 }
 
-function parseCell(value: unknown, path: string): ParseResult<CameraCell> {
+export function parseCell(
+  value: unknown,
+  path: string,
+): ParseResult<CameraCell> {
   if (!isRecord(value)) return fail(path, "expected a cell record");
   const unknown = rejectUnknown(
     value,

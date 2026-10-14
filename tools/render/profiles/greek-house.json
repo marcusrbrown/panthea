@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "kind": "structure",
+  "id": "greek-house",
+  "kitFiles": [],
+  "build": { "kind": "house" },
+  "cell": {
+    "id": "structure",
+    "width": 176,
+    "height": 168,
+    "pivot": [88, 124]
+  },
+  "materials": {
+    "wall": { "ramp": "stone-sky", "bias": 0.0 },
+    "gable": { "ramp": "stone-sky", "bias": 0.05 },
+    "base": {
+      "ramp": "stone-sky",
+      "bias": -0.05,
+      "bandShades": [1, 1, 2, 3, 3]
+    },
+    "column": { "ramp": "stone-sky", "bias": 0.1 },
+    "roof": { "ramp": "terracotta", "bias": 0.0 },
+    "door": { "ramp": "soil", "bias": -0.1, "bandShades": [1, 1, 2, 2, 3] },
+    "trim": { "ramp": "soil", "bias": 0.0 },
+    "rubble": {
+      "ramp": "stone-sky",
+      "bias": -0.1,
+      "bandShades": [0, 1, 2, 2, 3]
+    },
+    "wall-burnt": {
+      "ramp": "soil",
+      "bias": -0.1,
+      "bandShades": [1, 2, 2, 3, 3]
+    },
+    "roof-burnt": {
+      "ramp": "terracotta",
+      "bias": -0.2,
+      "bandShades": [0, 1, 1, 2, 2]
+    },
+    "soot": { "ramp": "soil", "bias": -0.4, "bandShades": [0, 0, 0, 1, 1] }
+  },
+  "clips": {
+    "intact": { "loop": false, "frames": 1, "frameMs": 1000 },
+    "damaged": {
+      "loop": false,
+      "frames": 1,
+      "frameMs": 1000,
+      "materials": {
+        "wall": "wall-burnt",
+        "gable": "wall-burnt",
+        "roof": "roof-burnt",
+        "trim": "soot",
+        "door": "soot"
+      },
+      "decals": [
+        {
+          "wall": "front",
+          "at": [1.0, 1.55],
+          "size": [0.9, 1.1],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.6, 1.2],
+          "size": [0.55, 0.9],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.2, 1.7],
+          "size": [0.8, 1.0],
+          "material": "soot"
+        }
+      ]
+    },
+    "ruin": {
+      "loop": false,
+      "frames": 1,
+      "frameMs": 1000,
+      "ruin": true,
+      "materials": {
+        "wall": "wall-burnt",
+        "gable": "wall-burnt",
+        "roof": "roof-burnt",
+        "trim": "soot",
+        "door": "soot"
+      }
+    }
+  }
+}

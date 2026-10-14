@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { sha256Hex } from "../hash";
 import { checkKits, type KitManifest, parseKitManifest } from "./kits";
 import {
-  type ModelProfile,
+  type FigureProfile,
   parseProfile,
   posePolicy,
   profileHash,
@@ -48,9 +48,10 @@ function committedJson(): Record<string, unknown> {
   );
 }
 
-function parsed(value: unknown = committedJson()): ModelProfile {
+function parsed(value: unknown = committedJson()): FigureProfile {
   const result = parseProfile(value);
   if (!result.ok) throw new Error(`${result.path}: ${result.message}`);
+  if (result.value.kind !== undefined) throw new Error("not a figure");
   return result.value;
 }
 
