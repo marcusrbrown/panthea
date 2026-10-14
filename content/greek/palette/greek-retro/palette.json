@@ -2,7 +2,8 @@
   "schemaVersion": 1,
   "id": "greek-retro",
   "approval": {
-    "status": "draft"
+    "status": "approved",
+    "digest": "40f059ffae86409cd87d776492fd797f5efc6ad970114810fd97102e83e9c686"
   },
   "limits": {
     "shades": {

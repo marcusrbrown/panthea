@@ -191,9 +191,17 @@ export function rampIndex(palette: Palette): ReadonlyMap<string, PaletteRamp> {
 
 // --- Subject and recipe parameters -------------------------------------------------------
 
-/** The god whose stable sprite id is `asset`. */
+/**
+ * The god whose stable sprite id is `asset`, or whose subject lists it as a legacy sprite: a revision a
+ * promotion left published is still that god's drawing, so its asymmetry still binds a derivation from it.
+ */
 function subjectOf(content: StudioContent, asset: string) {
-  return content.gods.find((g) => g.sprite === asset);
+  const current = content.gods.find((g) => g.sprite === asset);
+  if (current !== undefined) return current;
+  const legacy = content.visuals.find((v) => v.legacySprites?.includes(asset));
+  return legacy === undefined
+    ? undefined
+    : content.gods.find((g) => g.id === legacy.godId);
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> =>

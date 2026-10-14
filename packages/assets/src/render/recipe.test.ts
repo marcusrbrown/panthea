@@ -29,7 +29,7 @@ import {
 const fixture = loadRenderFixture();
 const H = (c: string) => c.repeat(64) as Sha256;
 
-/** What render.py writes for a frame: bolt as is, eyes and brows as `points` keyed `<mesh>_<side>`. */
+/** What render.py writes for a frame: eyes and brows as `points` keyed `<mesh>_<side>`. */
 function sentinelLocators(locators: StampLocators | undefined): FrameLocators {
   const points: Record<string, { px: [number, number]; depth: number }> = {};
   for (const side of ["l", "r"] as const) {
@@ -46,19 +46,7 @@ function sentinelLocators(locators: StampLocators | undefined): FrameLocators {
       };
     }
   }
-  const bolt = locators?.bolt;
-  return {
-    ...(bolt === undefined
-      ? {}
-      : {
-          bolt: {
-            basePx: [bolt.basePx[0], bolt.basePx[1]],
-            tipPx: [bolt.tipPx[0], bolt.tipPx[1]],
-            baseDepth: bolt.baseDepth,
-          },
-        }),
-    points,
-  };
+  return { points };
 }
 
 function sentinelOf(locators: readonly FrameLocators[]): DoneSentinel {
@@ -81,7 +69,7 @@ function sentinelOf(locators: readonly FrameLocators[]): DoneSentinel {
 }
 
 describe("locator mapping (U6 done.json to U5 StampLocators)", () => {
-  it("maps a real sentinel's bolt and eye points to the post step's shape", () => {
+  it("maps a real sentinel's eye points to the post step's shape", () => {
     const locators = fixture.frames.map((f) => sentinelLocators(f.locators));
     // Through the real parser, with the JSON round trip the runner does.
     const parsed = parseDoneSentinel(
@@ -96,15 +84,21 @@ describe("locator mapping (U6 done.json to U5 StampLocators)", () => {
     });
   });
 
-  it("leaves the eyes out when the sentinel has none, and the bolt out when it has none", () => {
+  it("leaves the eyes out when the sentinel has none, and refuses a sentinel that carries a bolt locator", () => {
     expect(stampLocatorsFrom({ points: {} })).toEqual({});
-    const onlyBolt = stampLocatorsFrom({
-      points: {},
-      bolt: { basePx: [1, 2], tipPx: [3, 4], baseDepth: 19 },
+    const withBolt = sentinelOf([{ points: {} }]);
+    const bolted = {
+      ...withBolt,
+      locators: [
+        { bolt: { basePx: [1, 2], tipPx: [3, 4], baseDepth: 19 }, points: {} },
+      ],
+    };
+    const parsed = parseDoneSentinel(JSON.parse(JSON.stringify(bolted)), {
+      slot: "zeus-0000",
+      frames: 1,
     });
-    expect(onlyBolt).toEqual({
-      bolt: { basePx: [1, 2], tipPx: [3, 4], baseDepth: 19 },
-    });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.path).toContain("bolt");
     const oneEye = stampLocatorsFrom({
       points: { eyes_l: { px: [5, 6], depth: 18.5 } },
     });
@@ -147,8 +141,8 @@ const inputs = (over: Partial<RevisionInputs> = {}): RevisionInputs => ({
 });
 
 describe("the post step's fixed settings", () => {
-  it("is post step v2, with the contact shadow taken from the darkest shade of a ramp the profile names", () => {
-    expect(POST_STEP_VERSION).toBe(2);
+  it("is post step v3 (no prop stamps), with the contact shadow taken from the darkest shade of a ramp the profile names", () => {
+    expect(POST_STEP_VERSION).toBe(3);
     expect(POST_SETTINGS.shadow.shade).toBe(0);
     expect(postSettingsFor("lapis")).toEqual({
       overlapThresholdM: 0.05,

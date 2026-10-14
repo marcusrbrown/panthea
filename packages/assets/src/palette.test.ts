@@ -671,9 +671,17 @@ describe("the committed palettes", () => {
   describe("greek-retro", () => {
     const retro = load("greek-retro");
 
-    it("is a draft with its own id and the declared 4-6 shade, 48-colour limits", () => {
+    it("is approved against its own digest, with its own id and the declared 4-6 shade, 48-colour limits", () => {
       expect(retro.id).toBe("greek-retro");
-      expect(retro.approval).toEqual({ status: "draft" });
+      // Approved by the owner on 2026-10-12: the digest covers id, colours, ramps and limits.
+      expect(retro.approval).toEqual({
+        status: "approved",
+        digest:
+          "40f059ffae86409cd87d776492fd797f5efc6ad970114810fd97102e83e9c686",
+      } as never);
+      expect(String(paletteDigest(retro))).toBe(
+        "40f059ffae86409cd87d776492fd797f5efc6ad970114810fd97102e83e9c686",
+      );
       expect(retro.limits).toEqual({
         shades: { min: 4, max: 6 },
         colours: { sprite: 48 },

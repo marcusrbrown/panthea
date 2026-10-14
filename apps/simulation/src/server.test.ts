@@ -283,7 +283,7 @@ test("a frame from the real service decodes in the client store with a sprite id
       });
     }
     const byId = new Map(actors.map((actor) => [actor.id, actor.sprite]));
-    expect(byId.get("zeus")).toBe("zeus-sprite");
+    expect(byId.get("zeus")).toBe("zeus-retro");
     expect(byId.get("woodcutter")).toBe("placeholder-woodcutter");
   } finally {
     harness.stop();

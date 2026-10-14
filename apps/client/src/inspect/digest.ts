@@ -36,12 +36,13 @@ const FNV_OFFSET = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 
 export function fnv1a32(bytes: Uint8Array, seed = FNV_OFFSET): number {
-  let hash = seed >>> 0;
-  for (const byte of bytes) {
-    hash ^= byte;
-    hash = Math.imul(hash, FNV_PRIME) >>> 0;
+  // An indexed loop keeping the hash as a signed 32-bit word (the unsigned view is taken once at the end): the same
+  // digest as the one-byte-at-a-time definition, several times faster on the megabytes a 4x readback digests.
+  let hash = seed | 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    hash = Math.imul(hash ^ (bytes[index] as number), FNV_PRIME);
   }
-  return hash;
+  return hash >>> 0;
 }
 
 function littleEndian(value: number): Uint8Array {
@@ -95,13 +96,16 @@ export function upscale(image: Rgba, zoom: number): Rgba {
   const to = new Uint32Array(width * height);
   for (let row = 0; row < image.height; row += 1) {
     const first = row * zoom * width;
+    // One row of blocks, each pixel written `zoom` times in place (a call per pixel to `fill` costs more than the writes)...
+    let at = first;
     for (let column = 0; column < image.width; column += 1) {
-      to.fill(
-        from[row * image.width + column] ?? 0,
-        first + column * zoom,
-        first + (column + 1) * zoom,
-      );
+      const word = from[row * image.width + column] ?? 0;
+      for (let copy = 0; copy < zoom; copy += 1) {
+        to[at] = word;
+        at += 1;
+      }
     }
+    // ...then that row repeated for the rest of the block.
     for (let copy = 1; copy < zoom; copy += 1) {
       to.copyWithin(first + copy * width, first, first + width);
     }

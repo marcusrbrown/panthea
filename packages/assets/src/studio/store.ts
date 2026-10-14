@@ -121,6 +121,7 @@ export interface StudioStatus {
   readonly requests: readonly RequestRecord[];
   readonly jobs: readonly JobRecord[];
   readonly candidates: readonly CandidateRecord[];
+  readonly renderedCandidates: readonly RenderedCandidate[];
   readonly workingSets: readonly WorkingSetRecord[];
   readonly edits: readonly EditRecord[];
   readonly assets: readonly StudioAssetRecord[];
@@ -411,6 +412,11 @@ export function openStore(root: string): Store {
         requests: list(paths.requests, parseRequestRecord, invalid),
         jobs: list(paths.jobs, parseJobRecord, invalid),
         candidates: list(paths.candidates, parseCandidateRecord, invalid),
+        renderedCandidates: list(
+          paths.renderedCandidates,
+          parseRenderedCandidate,
+          invalid,
+        ),
         workingSets: list(paths.workingSets, parseWorkingSetRecord, invalid),
         edits: list(paths.edits, parseEditRecord, invalid),
         assets: list(paths.assets, parseStudioAssetRecord, invalid),

@@ -92,25 +92,11 @@ describe("post-step parity with the probe", () => {
         });
       });
 
-      it("records the probe's stamp counts", () => {
+      it("records the probe's stamp counts: the face stamps, and no bolt", () => {
         const stamps = (cell as NonNullable<typeof cell>).facts.stamps;
         expect(stamps.face).toEqual(expected.stamps.face);
-        const bolt = expected.stamps.bolt;
-        expect(stamps.bolt).toEqual(
-          bolt === undefined
-            ? undefined
-            : {
-                angle: bolt.angle,
-                drawn: bolt.drawn,
-                total: bolt.total,
-                coreDrawn: bolt.core_drawn,
-                coreTotal: bolt.core_total,
-                occluded: bolt.occluded,
-                protected: bolt.protected,
-                clipped: bolt.clipped,
-                outlineOnBody: bolt.outline_on_body,
-              },
-        );
+        expect(Object.keys(stamps)).toEqual(["face"]);
+        expect(Object.keys(expected.stamps)).toEqual(["face"]);
       });
     });
   }
@@ -128,12 +114,11 @@ describe("post-step parity with the probe", () => {
     });
   });
 
-  it("covers the stamp paths the slot exists for: face, bolt, depth occlusion and protected hand", () => {
+  it("covers the stamp path the slot exists for: a face stamp on every cell, and nothing else", () => {
     if (!result.ok) throw new Error(result.message);
-    const bolts = result.cells.map((c) => c.facts.stamps.bolt);
     expect(result.cells.every((c) => c.facts.stamps.face.drawn > 0)).toBe(true);
-    expect(bolts.some((b) => (b?.occluded ?? 0) > 0)).toBe(true);
-    expect(bolts.every((b) => (b?.protected ?? 0) > 0)).toBe(true);
-    expect(new Set(bolts.map((b) => b?.angle)).size).toBeGreaterThan(1);
+    expect(
+      result.cells.every((c) => Object.keys(c.facts.stamps).length === 1),
+    ).toBe(true);
   });
 });

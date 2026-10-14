@@ -107,6 +107,18 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 - **Image-to-3D generation.** Not evaluated: no licensed local model was tried, and generated meshes would still need rigging and topology cleanup before they could share the animation clips. Not pursued.
 - **Paper doll or sprite layering.** Cheap for variants, but it needs hand-drawn parts per direction and animation, so it repeats the hand-pixel cost and gives no new range of motion.
 
+## Dated notes
+
+**2026-10-12.** The client logical target is now 624×592 for `god-tall` cells, replacing the 576×592 in the Client target paragraph above (U9: width 2 × 305 = 610 rounded up to the 16 px grid; height unchanged). The inspection fixture's 1x target (`INSPECT_SIZE`) is now 576×432, up from 576×288, so a 16-frame 112×96 clip fits. The packaged-app check at zoom 1–4 is still owed (U10, with the real art).
+
+**2026-10-12 (retro Zeus makeover).** The owner rejected the first studio render of Zeus ("a step down in quality from the retro probes": noise on the lower face, a hidden right foot, a bolt not held upright). Three rules follow, and the text above is not rewritten:
+
+- **Retro Zeus is idle, walk and seated.** The required visual matrix is those three states by four facings, 12 slots. `act/thunderbolt` moves to `deferred` beside `pronouncement`. This changes the visual matrix only: the shared `act` state contract in the vocabulary and Zeus's gameplay thunderbolt are unchanged, and the Stamps paragraph's "signature prop (Zeus's bolt, eight orientations)" is withdrawn for now.
+- **No props on characters** until attachments and special moves are designed and built. A character's identity comes from costume and bearing (Zeus: a himation over the left shoulder, a regal stance), never from ability iconography. The bolt, its eight stamps, its locator and its post-step compositing are deleted; the post step is version 3. The stamp set holds face stamps only, and the part-ID slot the bolt used stays reserved so later IDs do not move.
+- **The asymmetry is the left-shoulder himation**, replacing "bolt hand". East and west are still rendered independently.
+
+Frames and timing are also per state now: the model profile declares each state's frame count and per-frame durations, and the engine, the role manifest and the packed manifest use them (idle 10 × 250 ms, seated 8 frames of 208–209 ms, walk 16 × 50 ms, all looping). Those are proposals for the owner to critique from the animated preview. The vocabulary's frame and rate rules still bound them.
+
 ## Evidence/links
 
 [tools/probes/retro-render/README.md](../../tools/probes/retro-render/README.md) (PR #214; three rounds, the owner's acceptance, the resample check, envelope and pivot numbers, provenance), [tools/probes/blender-sprite/README.md](../../tools/probes/blender-sprite/README.md) (PR #213; the NO-GO and the preregistered criteria), [art guide](../product/art-guide.md), [decisions D14, D15, D19, D23, D26](../product/decisions.md), [ADR-0009](0009-asset-registry-lifecycle-and-uris.md) (registry revisions), [ADR-0011](0011-game-canon-art-loading.md) (game canon loading), [content-direction.md](../product/content-direction.md).

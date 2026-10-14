@@ -27,6 +27,8 @@ import {
   type PreviewHost,
   type PreviewItem,
   type RenderBackend,
+  ZOOMS,
+  type Zoom,
 } from "./preview";
 
 const god = spriteFixture("placeholder-zeus");
@@ -84,6 +86,7 @@ interface Published {
   manifestKey: string;
   pivot?: { x: number; y: number };
   placeholder?: boolean;
+  asset?: Extract<SourceResolution, { kind: "frames" }>["asset"];
 }
 
 function published(overrides: Partial<Published> = {}): Published {
@@ -158,7 +161,7 @@ class FakeSource implements AssetSource {
       kind: "frames",
       selection,
       manifestKey: value.manifestKey,
-      asset: {
+      asset: value.asset ?? {
         ...asset,
         atlas: { ...asset.atlas, width: value.width, height: value.height },
         ...(value.pivot === undefined ? {} : { pivot: value.pivot }),
@@ -336,7 +339,7 @@ class Harness {
     },
   };
 
-  preview(overrides: { zoom?: 2 | 3 | 4 } = {}): Preview {
+  preview(overrides: { zoom?: Zoom } = {}): Preview {
     return createPreview({
       source: this.source,
       host: this.host,
@@ -373,6 +376,64 @@ const pixel0 = (texture: Texture | null) =>
   texture === null ? undefined : (texture.image as RawImage).data[0];
 
 describe("preview lifecycle", () => {
+  it("draws a packed rendered draft's 112x96 atlas cells at its manifest pivot", async () => {
+    const selection: Selection = {
+      source: "draft",
+      id: "record-retro-zeus-1",
+    };
+    const tallAsset: Extract<SourceResolution, { kind: "frames" }>["asset"] = {
+      kind: "sprite",
+      assetId: god.manifest.id,
+      revision: god.manifest.atlas.blob,
+      uri: "panthea-asset://asset/retro-zeus",
+      atlas: {
+        blob: god.manifest.atlas.blob,
+        width: 1792,
+        height: 96,
+      },
+      cell: { w: 112, h: 96 },
+      frames: Array.from({ length: 16 }, (_, index) => ({
+        rect: { x: index * 112, y: 0, w: 112, h: 96 },
+        durationMs: 50,
+      })),
+      loopStart: 0,
+      pivot: { x: 56, y: 78 },
+      // A manifest footprint is measured in tiles, not source pixels.
+      footprint: { w: 1, h: 1 },
+    };
+    const h = new Harness();
+    h.source.publish(
+      selection,
+      published({
+        width: 1792,
+        height: 96,
+        tag: 212,
+        asset: tallAsset,
+      }),
+    );
+    const preview = h.preview({ zoom: 2 });
+    await preview.setItems([
+      {
+        kind: "sprite",
+        id: "retro-zeus",
+        layer: "actor",
+        cell: { x: 2, y: 2, z: 0 },
+        request: { ...selection, state: "idle", direction: "south" },
+      },
+    ]);
+
+    const instance = preview.drawn.find((drawn) => drawn.id === "retro-zeus");
+    expect(h.source.resolves).toContain("draft:record-retro-zeus-1");
+    if (instance === undefined)
+      throw new Error("rendered sprite was not drawn");
+    expect(instance.art.source).toBe("canon");
+    expect([instance.w, instance.h]).toEqual([112, 96]);
+    expect([instance.x + 56, instance.y + 78]).toEqual([0, 95]);
+    expect(h.live.backend.layer.stats.sprites).toBe(1);
+    expect(pixel0(sprite(h.live, "retro-zeus").texture)).toBe(212);
+    preview.dispose();
+  });
+
   it("starts a backend on a fresh canvas sized exactly logical size x zoom, then reports started once", async () => {
     const h = new Harness();
     const preview = h.preview();
@@ -436,6 +497,26 @@ describe("preview lifecycle", () => {
       zoom: 4,
       backingWidth: 1920,
       backingHeight: 1080,
+    });
+    preview.dispose();
+  });
+
+  it("renders a 1x preview at native backing size", async () => {
+    expect(ZOOMS).toContain(1);
+    const h = new Harness();
+    h.source.publish(CANON, published());
+    const preview = h.preview({ zoom: 1 });
+    await preview.setItems([subject]);
+
+    expect(preview.state.zoom).toBe(1);
+    expect([h.live.canvas.width, h.live.canvas.height]).toEqual([
+      LOGICAL_WIDTH,
+      LOGICAL_HEIGHT,
+    ]);
+    expect(h.live.views.at(-1)).toMatchObject({
+      zoom: 1,
+      backingWidth: LOGICAL_WIDTH,
+      backingHeight: LOGICAL_HEIGHT,
     });
     preview.dispose();
   });

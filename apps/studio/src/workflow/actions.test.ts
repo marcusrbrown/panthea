@@ -158,6 +158,21 @@ describe("workflow host actions", () => {
     ).toBeUndefined();
   });
 
+  test("pack arguments reject tile footprints wider than the studio scene supports", () => {
+    expect(
+      buildPackArgs({
+        selectedSet: { id: "w", kind: "sprite", authored: {} },
+        assets: [],
+        assetId: "zeus",
+        styleTag: "retro",
+        footprintWidth: "112",
+        footprintHeight: "96",
+        originalWorkLicence: "",
+        originalWorkAttribution: "",
+      }),
+    ).toBeUndefined();
+  });
+
   test("pack arguments reject a generated record id beyond the record slug limit", () => {
     expect(
       buildPackArgs({

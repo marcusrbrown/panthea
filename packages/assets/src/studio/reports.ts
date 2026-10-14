@@ -7,6 +7,7 @@ import {
   type RgbaImage,
 } from "../conformance";
 import { sha256Hex } from "../hash";
+import type { RenderedCandidate } from "../render/candidate";
 import {
   type CandidateParams,
   type CandidateRecord,
@@ -21,6 +22,7 @@ import type { FrameRef, Keyframe, WorkingSetRecord } from "./working-set";
 export interface SheetSlot {
   readonly slotKey: string;
   readonly candidates: readonly CandidateRecord[];
+  readonly renderedCandidates: readonly RenderedCandidate[];
   readonly pick: Keyframe | undefined;
 }
 
@@ -37,6 +39,13 @@ export interface SheetSummary {
   readonly slots: readonly {
     readonly slotKey: string;
     readonly candidates: number;
+    readonly renderedCandidates: readonly {
+      readonly id: string;
+      readonly jobId: string;
+      readonly frameCount: number;
+      readonly revisionRecipeHash: Sha256;
+      readonly slotRecipeHash: Sha256;
+    }[];
     readonly done: number;
     readonly passing: number;
     readonly needsScale: number;
@@ -68,7 +77,10 @@ export const sortSheet = (
 
 /** The working set's slots with the current sheet's candidates; picks from earlier sheets stay visible. */
 export function sheet(
-  status: Pick<StudioStatus, "candidates" | "workingSets">,
+  status: Pick<
+    StudioStatus,
+    "candidates" | "renderedCandidates" | "workingSets"
+  >,
   workingSetId: string,
 ): SheetView | undefined {
   const workingSet = status.workingSets.find((w) => w.id === workingSetId);
@@ -84,6 +96,11 @@ export function sheet(
             c.source.slotKey === slotKey,
         ),
       ),
+      renderedCandidates: status.renderedCandidates.filter(
+        (candidate) =>
+          candidate.source.requestId === workingSet.sheetRequestId &&
+          candidate.slotKey === slotKey,
+      ),
       pick: workingSet.picks[slotKey],
     })),
   };
@@ -97,11 +114,25 @@ export function summarizeSheet(view: SheetView): SheetSummary {
     picked: view.slots.filter((slot) => slot.pick !== undefined).length,
     slots: view.slots.map((slot) => ({
       slotKey: slot.slotKey,
-      candidates: slot.candidates.length,
-      done: slot.candidates.filter((c) => c.result.status === "done").length,
-      passing: slot.candidates.filter(
-        (c) => c.result.status === "done" && c.result.report.status === "pass",
-      ).length,
+      candidates: slot.candidates.length + slot.renderedCandidates.length,
+      renderedCandidates: slot.renderedCandidates.map((candidate) => ({
+        id: candidate.id,
+        jobId: candidate.id,
+        frameCount: candidate.frames.length,
+        revisionRecipeHash: candidate.revisionRecipeHash,
+        slotRecipeHash: candidate.slotRecipeHash,
+      })),
+      done:
+        slot.candidates.filter((c) => c.result.status === "done").length +
+        slot.renderedCandidates.length,
+      passing:
+        slot.candidates.filter(
+          (c) =>
+            c.result.status === "done" && c.result.report.status === "pass",
+        ).length +
+        slot.renderedCandidates.filter((candidate) =>
+          candidate.frames.every((frame) => frame.report.status === "pass"),
+        ).length,
       needsScale: slot.candidates.filter(
         (c) => c.result.status === "needs-scale",
       ).length,
@@ -536,8 +567,45 @@ export function candidateFrames(
     return failure("not-found", `no candidate ${candidateId}`);
   const store = openStore(root);
   const found = store.readCandidate(candidateId);
-  if (found.kind === "missing")
-    return failure("not-found", `no candidate ${candidateId}`);
+  if (found.kind === "missing") {
+    const rendered = store.readRenderedCandidate(candidateId);
+    if (rendered.kind === "missing")
+      return failure("not-found", `no candidate ${candidateId}`);
+    if (rendered.kind === "invalid")
+      return failure(
+        "wrong-state",
+        `rendered candidate ${candidateId} is invalid: ${rendered.message}`,
+      );
+    const width = rendered.value.target.cell.w;
+    const height = rendered.value.target.cell.h;
+    const frames: CandidateFrame[] = [];
+    for (const [index, frame] of rendered.value.frames.entries()) {
+      const bytes = store.readBlob(frame.hash);
+      if (bytes === undefined || sha256Hex(bytes) !== frame.hash)
+        return failure(
+          "corrupt-blob",
+          `frame ${index} of rendered candidate ${candidateId} is missing or does not match its hash`,
+        );
+      const decoded = decodePng(bytes);
+      if (!decoded.ok)
+        return failure(
+          decoded.code,
+          `frame ${index} of rendered candidate ${candidateId} cannot be decoded`,
+        );
+      if (decoded.image.width !== width || decoded.image.height !== height)
+        return failure(
+          "corrupt-png",
+          `frame ${index} of rendered candidate ${candidateId} is not ${width}x${height}`,
+        );
+      frames.push({
+        index,
+        durationMs: frame.durationMs,
+        imageHash: frame.hash,
+        bytes,
+      });
+    }
+    return { ok: true, candidateId, width, height, frames };
+  }
   if (found.kind === "invalid")
     return failure(
       "wrong-state",

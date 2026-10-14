@@ -61,9 +61,9 @@ export function softBackend(options: {
 
   function composite(): Rgba {
     const data = new Uint8Array(width * height * 4);
-    for (let index = 0; index < data.length; index += 4) {
-      data.set([...INSPECT_BACKGROUND, 255], index);
-    }
+    // The clear colour as one 32-bit word (RGBA bytes, in memory order), written to every pixel at once.
+    const clear = new Uint8Array([...INSPECT_BACKGROUND, 255]);
+    new Uint32Array(data.buffer).fill(new Uint32Array(clear.buffer)[0] ?? 0);
     for (const id of ids) {
       const sprite = base.spriteFor(id);
       const frame = sprite?.frame;

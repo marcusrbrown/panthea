@@ -12,6 +12,7 @@ import {
   exitOf,
   jobSummary,
   refuse,
+  renderedCandidateSummary,
   safeMessage,
   statusSummary,
 } from "./format";
@@ -55,6 +56,33 @@ describe("exit codes", () => {
       "internal",
     ])
       expect(exitOf(refuse(code, "x")), code).toBe(1);
+  });
+});
+
+describe("rendered candidate listing", () => {
+  test("summarizes the job, slot, frame count and both recipe hashes without paths", () => {
+    const summary = renderedCandidateSummary({
+      id: "zeus-retro-idle-0000",
+      source: { requestId: "r1", slotKey: "idle/south", ordinal: 0 },
+      slotKey: "idle/south",
+      revisionRecipeHash: "a".repeat(64),
+      slotRecipeHash: "b".repeat(64),
+      frames: [
+        { report: { status: "pass", checks: [] }, durationMs: 100 },
+        { report: { status: "pass", checks: [] }, durationMs: 100 },
+      ],
+    } as never);
+
+    expect(summary).toMatchObject({
+      id: "zeus-retro-idle-0000",
+      jobId: "zeus-retro-idle-0000",
+      slotKey: "idle/south",
+      frameCount: 2,
+      rendered: true,
+      revisionRecipeHash: "a".repeat(64),
+      slotRecipeHash: "b".repeat(64),
+    });
+    expect(JSON.stringify(summary)).not.toMatch(/path|\/Users\//i);
   });
 });
 

@@ -6,17 +6,21 @@
 //
 // Logical size, by arithmetic (the layout test recomputes every extent):
 //   ring radius R = min(205, 110 + 14 * places), so R <= 205
-//   right  : 205 + the last actor slot (-28 + 6 * 12 = +44) + half a 64-wide cell (32) = 281
-//   left   : -(205 + the first actor slot (-28) + 32) = -265
+//   cell   : the largest actor cell is the 112x96 god-tall at pivot (56, 78), so a
+//            cell reaches 56 left and right of its foot, 78 above it and 18 below
+//   right  : 205 + the last actor slot (-28 + 6 * 12 = +44) + half a 112-wide cell (56) = 305
+//   left   : -(205 + the first actor slot (-28) + 56) = -289
 //   top    : 205 + a building row at +50, its flame centred 20 above and 15 across
-//            (50 + 20 + 15 = 85) = 290
-//   bottom : -(205 + the actor row at -48, a second row 15 lower) = -268
-// A centred camera needs half the width >= 281 and half the height >= 290,
-// so the target is 576 x 592 (halves 288 and 296): 7 and 6 px to spare. That
-// is sized for up to 3 buildings and 14 actors (two rows) per place and for
-// cells no larger than the 64x80 god cell. Authored worlds hold at most 2
-// buildings and 8 inhabitants in a place. Anything beyond clips at the target's
-// edge; U6 owns the final size.
+//            (50 + 20 + 15 = 85) = 290; the tallest actor is lower (205 - 48 + 78 = 235)
+//   bottom : -(205 + the actor row at -48, a second row 15 lower, 18 below the pivot) = -286
+// A centred camera needs half the width >= 305 and half the height >= 290, so
+// the width is 2 x 305 = 610 rounded up to the 16 px grid the height already
+// sits on: 624 (half 312, 7 to spare). The height is unchanged at 592 (half 296,
+// 6 to spare): the flame, not an actor, sets it. That is sized for up to 3
+// buildings and 14 actors (two rows) per place and for cells no larger than the
+// 112x96 god-tall cell (the legacy 64x80 god cell sits well inside). Authored
+// worlds hold at most 2 buildings and 8 inhabitants in a place. Anything beyond
+// clips at the target's edge; U6 owns the final size.
 
 import {
   type CanvasMetrics,
@@ -26,7 +30,7 @@ import {
 
 import type { ViewLocation } from "../store";
 
-export const LOGICAL_SIZE: LogicalSize = { width: 576, height: 592 };
+export const LOGICAL_SIZE: LogicalSize = { width: 624, height: 592 };
 
 /** Top-left of the viewport in the core's screen space (y down): the target centred on the origin. */
 export const CAMERA_ORIGIN = {
@@ -38,12 +42,12 @@ export const PLACE_RADIUS_MAX = 205;
 export const MAX_BUILDINGS_PER_PLACE = 3;
 export const MAX_ACTORS_PER_PLACE = 14;
 
-/** The largest cell the layout is sized for: the 64x80 god cell with its foot pivot. */
+/** The largest cell the layout is sized for: the 112x96 `god-tall` cell with its pivot (56, 78). */
 export const MAX_ACTOR_CELL = {
-  width: 64,
-  height: 80,
-  pivotX: 32,
-  pivotY: 80,
+  width: 112,
+  height: 96,
+  pivotX: 56,
+  pivotY: 78,
 } as const;
 
 export const BUILDING_SIZE = { width: 28, height: 22 } as const;

@@ -6,10 +6,13 @@ import {
   fakeSource,
   PORTRAIT_ATLAS_HASH,
   ZEUS_ATLAS_HASH,
-  ZEUS_CANON_ATLASES,
   zeusCanonPayload,
 } from "../../test/canon-fixture";
 import { type SoftBackend, softBackend } from "../../test/soft-backend";
+import {
+  COMMITTED_CANON_ATLASES,
+  committedCanonPayload,
+} from "../../test/zeus-retro-fixture";
 import {
   type CanonClient,
   type CanonProblem,
@@ -46,10 +49,10 @@ async function mount(
   const problems: CanonProblem[] = [];
   const source = fakeSource(
     options.payload ?? {
-      ...zeusCanonPayload(),
+      ...committedCanonPayload(),
       rootKind: options.rootKind ?? "bundled",
     },
-    options.atlases ?? ZEUS_CANON_ATLASES,
+    options.atlases ?? COMMITTED_CANON_ATLASES,
   );
   const canon: CanonClient = createCanonClient({
     source,
@@ -270,7 +273,8 @@ test("with the registry withheld every canon check fails, whatever the placehold
   const suite = await inspector.runAll();
 
   const canon = suite.results.filter((r) => r.id.startsWith("canon:"));
-  expect(canon).toHaveLength(112);
+  // 112 before promotion (zeus-sprite and the portrait); zeus-retro adds 12 selections and 136 frames.
+  expect(canon).toHaveLength(828);
   expect(canon.filter((r) => r.ok)).toEqual([]);
   expect(suite.results.find((r) => r.id === "root-kind")?.ok).toBe(false);
   expect(summarize(suite.results).ok).toBe(false);
@@ -340,6 +344,22 @@ test("the suite covers every committed selection and the unpublished control, an
       true,
     );
   }
+  // Every published zeus-retro slot is read back, walk and all four facings included, at every checked zoom.
+  for (const state of ["idle", "walk", "seated"]) {
+    for (const direction of ["south", "east", "north", "west"]) {
+      expect(ids.has(`canon:zeus-retro:${state}/${direction}:source`)).toBe(
+        true,
+      );
+    }
+  }
+  expect(
+    suite.results.filter((r) => r.id.startsWith("canon:zeus-retro:walk/west:")),
+  ).not.toHaveLength(0);
+  expect(
+    suite.results.filter(
+      (r) => r.id.startsWith("canon:") && r.id.includes("zeus-retro") && !r.ok,
+    ),
+  ).toEqual([]);
   expect(ids.has("canon:zeus-sprite:seated/south:source")).toBe(true);
   expect(ids.has("placeholder:zeus-sprite:seated/south:source")).toBe(false);
   expect(ids.has("placeholder:zeus-sprite:act/south:source")).toBe(true);
@@ -359,6 +379,7 @@ test("the listing offers the snapshot's assets, the vocabulary's options and the
 
   expect(listing.assets.map((a) => a.assetId)).toEqual([
     "zeus-portrait",
+    "zeus-retro",
     "zeus-sprite",
   ]);
   expect(listing.options.states.map((s) => s.id)).toContain("seated");
@@ -412,8 +433,34 @@ test("frames sit at whole pixels in a row, wrap before the edge, and one that ca
     expect(rect.x + rect.w).toBeLessThanOrEqual(INSPECT_SIZE.width);
     expect(rect.y + rect.h).toBeLessThanOrEqual(INSPECT_SIZE.height);
   }
+  // 112x96 god-tall frames: four to a row, and a 16-frame clip (the retro walk, or the longest
+  // idle, seated or act) takes four rows, the last ending at 16 + 4 * 96 + 3 * 8 = 424 <= 432.
+  const tall = placeFrames(
+    Array.from({ length: 16 }, () => ({ w: 112, h: 96 })),
+  );
+  expect(tall.map((r) => [r.x, r.y])).toEqual(
+    [16, 120, 224, 328].flatMap((y) => [16, 136, 256, 376].map((x) => [x, y])),
+  );
+  for (const rect of tall) {
+    expect(rect.x + rect.w).toBeLessThanOrEqual(INSPECT_SIZE.width);
+    expect(rect.y + rect.h).toBeLessThanOrEqual(INSPECT_SIZE.height);
+  }
+  expect(INSPECT_SIZE).toEqual({ width: 576, height: 432 });
+  expect(INSPECT_SIZE.height % 16).toBe(0);
+  // The 16-frame walk of zeus-retro: 4 frames to a row, 4 rows, inside the 576x432 target (the zoom is the canvas's, not the layout's).
+  const walk = placeFrames(
+    Array.from({ length: 16 }, () => ({ w: 112, h: 96 })),
+  );
+  expect(walk).toHaveLength(16);
+  for (const rect of walk) {
+    expect(rect.x + rect.w).toBeLessThanOrEqual(INSPECT_SIZE.width);
+    expect(rect.y + rect.h).toBeLessThanOrEqual(INSPECT_SIZE.height);
+  }
   expect(() => placeFrames([{ w: 600, h: 10 }])).toThrow(/does not fit/);
   expect(() =>
-    placeFrames(Array.from({ length: 9 }, () => ({ w: 128, h: 128 }))),
+    placeFrames(Array.from({ length: 13 }, () => ({ w: 128, h: 128 }))),
+  ).toThrow(/does not fit/);
+  expect(() =>
+    placeFrames(Array.from({ length: 17 }, () => ({ w: 112, h: 96 }))),
   ).toThrow(/does not fit/);
 });

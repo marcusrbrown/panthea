@@ -330,7 +330,7 @@ test("the Greek pack's deities take their sprite id from their god profile, and 
       inhabitant.sprite,
     ]),
   );
-  expect(sprites.get("zeus")).toBe("zeus-sprite");
+  expect(sprites.get("zeus")).toBe("zeus-retro");
   for (const god of profiles.value) {
     expect(sprites.get(god.id)).toBe(god.sprite);
   }

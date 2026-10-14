@@ -95,11 +95,6 @@ interface FixtureFrames {
   frames: {
     name: string;
     locators: {
-      bolt?: {
-        basePx: [number, number];
-        tipPx: [number, number];
-        baseDepth: number;
-      };
       eyes?: Record<"l" | "r", { px: [number, number]; depth: number }>;
     };
   }[];
@@ -111,7 +106,7 @@ function readJson<T>(path: string): T {
 
 const sha = (path: string) => sha256Hex(new Uint8Array(readFileSync(path)));
 
-/** The locators as render.py writes them: the bolt as is, eyes and brows among `points`. */
+/** The locators as render.py writes them: eyes and brows among `points`. */
 function sentinelLocators(
   frame: FixtureFrames["frames"][number],
 ): FrameLocators {
@@ -126,7 +121,6 @@ function sentinelLocators(
     };
   }
   return {
-    ...(frame.locators.bolt === undefined ? {} : { bolt: frame.locators.bolt }),
     points,
   };
 }

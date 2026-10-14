@@ -106,7 +106,6 @@ function sentinel(frames = 3): DoneSentinel {
       right: 72,
     })),
     locators: Array.from({ length: frames }, () => ({
-      bolt: { basePx: [60, 50], tipPx: [66, 30], baseDepth: 19.5 },
       points: { eyes_l: { px: [55, 20], depth: 19.2 } },
     })),
   };
@@ -186,10 +185,18 @@ describe("the part-ID table", () => {
   it("is the one render.py draws, in the same order", () => {
     const script = read("tools/render/blender/render.py");
     const block = /^PART_IDS = \(([\s\S]*?)^\)/m.exec(script)?.[1] ?? "";
-    expect([...block.matchAll(/"([a-z_]+)"/g)].map((m) => m[1])).toEqual([
+    expect([...block.matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1])).toEqual([
       ...PART_IDS,
     ]);
     expect(script).toContain(`ID_BASE, ID_STEP = ${ID_BASE}, ${ID_STEP}`);
+  });
+
+  it("keeps the retired prop slot reserved, so no later part id shifts (the himation takes a new slot at the end)", () => {
+    expect(PART_IDS.indexOf("reserved_15")).toBe(15);
+    expect(PART_IDS.indexOf("trunk")).toBe(16);
+    expect(PART_IDS.indexOf("animal")).toBe(28);
+    expect(PART_IDS.indexOf("himation")).toBe(29);
+    expect(PART_IDS as readonly string[]).not.toContain("bolt");
   });
 });
 

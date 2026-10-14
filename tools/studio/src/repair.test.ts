@@ -273,7 +273,7 @@ describe("deriving from Zeus on the command line", () => {
     );
 
     expect(code(outcome)).toBe("asymmetric");
-    expect(JSON.stringify(outcome)).toContain("bolt hand");
+    expect(JSON.stringify(outcome)).toContain("left-shoulder himation");
     expect(outcome.ok).toBe(false);
   });
 });

@@ -43,7 +43,20 @@ test("place points are whole pixels, and the ring radius is capped at 205", () =
   expect(only).toEqual([{ x: 0, y: 0 }]);
 });
 
-test("the logical size contains the whole layout at 1x for any number of places", () => {
+/** The cells the target must hold: the legacy 64x80 god and the 112x96 `god-tall`, each by its own pivot. */
+const LEGACY_CELL = { width: 64, height: 80, pivotX: 32, pivotY: 80 } as const;
+const GOD_TALL_CELL = {
+  width: 112,
+  height: 96,
+  pivotX: 56,
+  pivotY: 78,
+} as const;
+
+test("the largest actor cell is the 112x96 god-tall at pivot (56,78)", () => {
+  expect(MAX_ACTOR_CELL).toEqual(GOD_TALL_CELL);
+});
+
+test("the logical size contains every actor slot, building and flame at 1x for any number of places, for each actor cell", () => {
   // World coordinates, y up; the camera shows x in [-W/2, W/2] and y in [-H/2, H/2].
   const halfWidth = LOGICAL_SIZE.width / 2;
   const halfHeight = LOGICAL_SIZE.height / 2;
@@ -58,14 +71,16 @@ test("the logical size contains the whole layout at 1x for any number of places"
         top: number;
         bottom: number;
       }[] = [];
-      for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
-        const foot = actorFoot(point, index);
-        extents.push({
-          left: foot.x - MAX_ACTOR_CELL.pivotX,
-          right: foot.x + MAX_ACTOR_CELL.width - MAX_ACTOR_CELL.pivotX,
-          top: foot.y + MAX_ACTOR_CELL.pivotY,
-          bottom: foot.y,
-        });
+      for (const cell of [LEGACY_CELL, GOD_TALL_CELL, MAX_ACTOR_CELL]) {
+        for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
+          const foot = actorFoot(point, index);
+          extents.push({
+            left: foot.x - cell.pivotX,
+            right: foot.x + cell.width - cell.pivotX,
+            top: foot.y + cell.pivotY,
+            bottom: foot.y - (cell.height - cell.pivotY),
+          });
+        }
       }
       for (let index = 0; index < MAX_BUILDINGS_PER_PLACE; index += 1) {
         const center = buildingCenter(point, index);
@@ -95,14 +110,20 @@ test("the logical size contains the whole layout at 1x for any number of places"
       }
     }
   }
+  // The header's arithmetic: 205 + 44 + 56 = 305 on the right, a building flame at 290 on top.
+  expect(widest).toBe(305);
+  expect(tallest).toBe(290);
   // The size is not slack: the widest and tallest real extents sit within 8 px of the edge.
   expect(halfWidth - widest).toBeLessThan(8);
   expect(halfHeight - tallest).toBeLessThan(8);
 });
 
 test("the camera shows the logical size centred on the layout origin, in whole pixels", () => {
-  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 592 });
-  expect(CAMERA_ORIGIN).toEqual({ x: -288, y: -296 });
+  // 2 x 305 = 610, rounded up to the 16 px grid the height (37 x 16) already sits on.
+  expect(LOGICAL_SIZE).toEqual({ width: 624, height: 592 });
+  expect(LOGICAL_SIZE.width).toBeGreaterThanOrEqual(612);
+  expect(LOGICAL_SIZE.width % 16).toBe(0);
+  expect(CAMERA_ORIGIN).toEqual({ x: -312, y: -296 });
 });
 
 test("an actor's foot slot keeps the existing marker arithmetic", () => {
@@ -113,14 +134,16 @@ test("an actor's foot slot keeps the existing marker arithmetic", () => {
   expect(ACTOR_FOOT).toEqual({ x: -28, y: -48, columns: 7, dx: 12, dy: 15 });
 });
 
+const fit1280x720 = () => fitView({ width: 1280, height: 720 }, 1);
+
 test("zoom is the largest whole number that fits the canvas, never below 1", () => {
   const fit = (width: number, height: number, ratio = 1) =>
     fitView({ width, height }, ratio);
 
-  expect(fit(576, 592).zoom).toBe(1);
-  expect(fit(1151, 1183, 1).zoom).toBe(1);
-  expect(fit(1152, 1184, 1).zoom).toBe(2);
-  expect(fit(1152, 1183, 1).zoom).toBe(1);
+  expect(fit(624, 592).zoom).toBe(1);
+  expect(fit(1247, 1183, 1).zoom).toBe(1);
+  expect(fit(1248, 1184, 1).zoom).toBe(2);
+  expect(fit(1248, 1183, 1).zoom).toBe(1);
   expect(fit(5000, 1800, 1).zoom).toBe(3);
   expect(fit(10, 10).zoom).toBe(1);
   expect(fit(0, 0).zoom).toBe(1);
@@ -128,21 +151,29 @@ test("zoom is the largest whole number that fits the canvas, never below 1", () 
   expect(fit(900, 640, 2).zoom).toBe(2);
 });
 
+test("at the 1280x720 desktop window the zoom is 1: the height (592 x 2 = 1184) is the limit, not the width", () => {
+  // The window is the most the game's box can be; chrome only makes it smaller.
+  // Before the widening this was also 1 (1280 / 576 = 2.2 but 720 / 592 = 1.2).
+  expect(fit1280x720().zoom).toBe(1);
+  expect(720 / LOGICAL_SIZE.height).toBeLessThan(2);
+  expect(1280 / LOGICAL_SIZE.width).toBeGreaterThanOrEqual(2);
+});
+
 test("the backing store is exactly logical size x zoom and the CSS box is that over the pixel ratio", () => {
   const fitted = fitView({ width: 900, height: 640 }, 2);
 
   expect(fitted.metrics).toEqual(canvasMetrics(LOGICAL_SIZE, 2, 2));
-  expect(fitted.metrics.backingWidth).toBe(1152);
+  expect(fitted.metrics.backingWidth).toBe(1248);
   expect(fitted.metrics.backingHeight).toBe(1184);
-  expect(fitted.metrics.cssWidth).toBe(576);
+  expect(fitted.metrics.cssWidth).toBe(624);
   expect(fitted.metrics.cssHeight).toBe(592);
 });
 
 test("the canvas is centred on a whole device pixel", () => {
   const fitted = fitView({ width: 901, height: 641 }, 2);
 
-  // 1802x1282 device pixels hold 1152x1184: 325 and 49 spare on each side.
-  expect(fitted.left).toBe(325 / 2);
+  // 1802x1282 device pixels hold 1248x1184: 277 and 49 spare on each side.
+  expect(fitted.left).toBe(277 / 2);
   expect(fitted.top).toBe(49 / 2);
   expect(Number.isInteger(fitted.left * 2)).toBe(true);
   expect(Number.isInteger(fitted.top * 2)).toBe(true);

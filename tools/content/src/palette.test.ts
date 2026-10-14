@@ -179,7 +179,12 @@ describe("reading the palette set", () => {
     );
     const retro = read.palettes.get("greek-retro");
     expect(retro?.colours).toHaveLength(54);
-    expect(retro?.approval.status).toBe("draft");
+    // Approved on 2026-10-12 against the digest of its id, colours, ramps and limits.
+    expect(retro?.approval).toEqual({
+      status: "approved",
+      digest:
+        "40f059ffae86409cd87d776492fd797f5efc6ad970114810fd97102e83e9c686",
+    } as never);
   });
 
   it("loads a root with no subdirectory as a set of one", () => {
@@ -219,7 +224,16 @@ describe("reading the palette set", () => {
     const root = committedCopy();
     const file = join(root, "palette", "greek-retro", "palette.json");
     const json = JSON.parse(readFileSync(file, "utf8"));
-    writeFileSync(file, JSON.stringify({ ...json, id: "greek-other" }));
+    // The approved palette's digest covers its id, so the copy is an explicit draft: the id
+    // mismatch is then the only problem.
+    writeFileSync(
+      file,
+      JSON.stringify({
+        ...json,
+        id: "greek-other",
+        approval: { status: "draft" },
+      }),
+    );
     expect(setDiagnostics(root)).toEqual([
       {
         file: "palette/greek-retro/palette.json",

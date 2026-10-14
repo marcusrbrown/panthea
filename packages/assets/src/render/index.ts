@@ -74,7 +74,6 @@ export {
   renderRecipeJson,
 } from "./script-contract";
 export {
-  BOLT_ANGLES,
   checkStamps,
   FACE_SLOTS,
   type LoadedStampSet,

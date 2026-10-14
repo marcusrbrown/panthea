@@ -55,6 +55,12 @@ export interface GodVisualProfile {
    * subject is authoritative: derivation refuses to mirror while it is set.
    */
   readonly asymmetry?: { readonly feature: string };
+  /**
+   * Asset ids of sprites that were the god's stable sprite before a promotion and stay published
+   * and resolvable (an actor created before it keeps its sprite). They are not the god's current
+   * sprite, but their ability animations still name this god's abilities.
+   */
+  readonly legacySprites?: readonly string[];
   /** Present when the god is drawn by the render pipeline; absent for a hand-drawn god. */
   readonly render?: RenderSubject;
 }
@@ -168,6 +174,7 @@ export function parseGodVisualProfile(
       "iconography",
       "portrait",
       "asymmetry",
+      "legacySprites",
       "render",
     ],
     (record) => {
@@ -219,6 +226,24 @@ export function parseGodVisualProfile(
         if (!parsed.ok) return parsed;
         asymmetry = parsed.value;
       }
+      let legacySprites: readonly string[] | undefined;
+      if (record.legacySprites !== undefined) {
+        const parsed = parseArray(
+          record.legacySprites,
+          `${path}.legacySprites`,
+          parseAssetId,
+        );
+        if (!parsed.ok) return parsed;
+        if (parsed.value.length === 0)
+          return fail(`${path}.legacySprites`, "expected at least one entry");
+        const seenLegacy = new Set<string>();
+        for (const [index, id] of parsed.value.entries()) {
+          if (seenLegacy.has(id))
+            return fail(`${path}.legacySprites[${index}]`, `duplicate "${id}"`);
+          seenLegacy.add(id);
+        }
+        legacySprites = parsed.value;
+      }
       let render: RenderSubject | undefined;
       if (record.render !== undefined) {
         const parsed = parseRenderSubject(record.render, `${path}.render`);
@@ -232,6 +257,7 @@ export function parseGodVisualProfile(
         iconography: iconography.value,
         ...(portrait === undefined ? {} : { portrait }),
         ...(asymmetry === undefined ? {} : { asymmetry }),
+        ...(legacySprites === undefined ? {} : { legacySprites }),
         ...(render === undefined ? {} : { render }),
       });
     },
@@ -242,7 +268,8 @@ export function parseGodVisualProfile(
  * Parses a set of visual profiles against the god profiles and the
  * vocabulary's palette families: each belongs to a known god, at most once,
  * names a known family, names only abilities its god has in a render matrix,
- * and no two share a portrait id.
+ * no two share a portrait id, and no legacy sprite is a god's current sprite
+ * or listed twice.
  */
 export function parseGodVisualProfiles(
   inputs: readonly LabeledProfileInput[],
@@ -252,6 +279,8 @@ export function parseGodVisualProfiles(
   const godIds = new Set(gods.map((god) => god.id));
   const seenGods = new Set<string>();
   const seenPortraits = new Set<string>();
+  const seenLegacy = new Set<string>();
+  const currentSprites = new Set(gods.map((god) => god.sprite));
   const profiles: GodVisualProfile[] = [];
   for (const { label, value } of inputs) {
     const parsed = parseGodVisualProfile(value, label);
@@ -289,6 +318,21 @@ export function parseGodVisualProfiles(
           }
         }
       }
+    }
+    for (const [index, id] of (profile.legacySprites ?? []).entries()) {
+      if (currentSprites.has(id)) {
+        return fail(
+          `${label}.legacySprites[${index}]`,
+          `"${id}" is a god's current sprite, not a legacy one`,
+        );
+      }
+      if (seenLegacy.has(id)) {
+        return fail(
+          `${label}.legacySprites[${index}]`,
+          `"${id}" is already a legacy sprite of another god`,
+        );
+      }
+      seenLegacy.add(id);
     }
     if (profile.portrait !== undefined) {
       if (seenPortraits.has(profile.portrait)) {

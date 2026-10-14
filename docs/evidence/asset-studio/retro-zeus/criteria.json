@@ -1,0 +1,57 @@
+{
+  "id": "zeus-retro-u10",
+  "version": 2,
+  "supersedes": "version 1 draft (bolt, act/thunderbolt); never frozen",
+  "preregistration": {
+    "rule": "Owner approves these exact bytes; their SHA-256 is recorded before the final matrix render. Changed criteria need a new version and a new acceptance run.",
+    "calibration": "Makeover rounds r6-r9 are calibration evidence, not acceptance evidence."
+  },
+  "matrix": {
+    "asset": "zeus-retro",
+    "cellClass": "god-tall",
+    "cell": [112, 96],
+    "pivot": [56, 78],
+    "facings": ["south", "north", "east", "west"],
+    "required": ["idle", "walk", "seated"],
+    "deferred": ["act/thunderbolt", "act/pronouncement"],
+    "eastWest": "Both rendered; the left-shoulder himation is never mirrored.",
+    "props": "None. No held object, stamp or motif representing an ability."
+  },
+  "animation": {
+    "idle": { "frames": 10, "durationMs": 250, "loop": true, "loopStart": 0, "breath": "Visible chest rise of about 1 px; pelvis and feet fixed." },
+    "seated": { "frames": 8, "durationMs": [209, 208, 208, 209, 208, 208, 209, 208], "loop": true, "loopStart": 0 },
+    "walk": { "frames": 16, "durationMs": 50, "loop": true, "loopStart": 0 },
+    "seams": "No conspicuous snap at any loop seam."
+  },
+  "measured": {
+    "standingHeightPx": { "band": [60, 64], "scope": "Every idle frame and facing, figure plus exterior outline, contact shadow excluded." },
+    "walkExtentPx": "Reported, not gated (near-foot perspective reaches 65).",
+    "anchor": "Reference sole midpoint projects to (56,78) in every slot; no per-frame recentring.",
+    "grounding": "Idle soles level within 0.5 px; walk: lowest sole on the ground every frame; seated soles on the ground.",
+    "clipping": "Hard fail if any opaque pixel touches the cell edge.",
+    "marginPx": { "value": 6, "disposition": "Report-only; any side below 6 px is shown at the owner gate." },
+    "backViewSkinThrough": { "max": 1.0, "unit": "1x px per frame", "slots": ["idle/north", "walk/north", "seated/north"], "method": "skinclip probe over part-ID and depth passes" },
+    "walkResample": "8-frame walk equals 16-frame walk at matching times on all four facings: 32 of 32 pairs pixel-identical.",
+    "palette": "greek-retro at its approved digest; at most 48 opaque colours across the revision including outline and shadow; binary alpha; no off-palette colour."
+  },
+  "judged": {
+    "crossFamilyReviewer": [
+      "Measurement scopes, timing and resample evidence.",
+      "Robe and himation integrity: no leg, arm or skin breaking through cloth in any frame (front-facing arms resting over the cloak are allowed).",
+      "Face and beard read cleanly at 1x: no lower-face noise; beard hangs down, not forward.",
+      "Hair reads as hair, not headgear.",
+      "Seated reads as sitting: lap, two lower legs, visible feet, upright torso.",
+      "Loop seams and shading flicker."
+    ],
+    "owner": [
+      "Zeus identity through costume and bearing: regal, imposing, no props.",
+      "Proportions, seated posture and overall canon quality.",
+      "Motion pace at 1x and 3x timed playback.",
+      "Approve or reject the complete revision before promotion."
+    ],
+    "authority": "Independent review filters the submission; it does not replace owner approval."
+  },
+  "dropped": {
+    "seatedIdleHeightRatio": "Replaced by the judged seated rule; with an upright seated torso the south view measures about 0.91."
+  }
+}

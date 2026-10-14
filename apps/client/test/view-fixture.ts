@@ -9,11 +9,12 @@ import { toViewModel, type WorldViewModel } from "../src/store";
 
 export function viewWithZeus(
   options: Parameters<typeof framePayload>[1] = {},
+  sprite = "zeus-sprite",
 ): WorldViewModel {
   const base = baseState();
   const zeus = base.actors.get(toEntityId("zeus"));
   if (zeus === undefined) throw new Error("fixture has no Zeus");
-  const state = withActor(base, { ...zeus, sprite: "zeus-sprite" });
+  const state = withActor(base, { ...zeus, sprite });
   const parsed = parseSyncFrame(framePayload(state, options));
   if (!parsed.ok) throw new Error(parsed.message);
   return toViewModel(parsed.value, decode(parsed.value.state));

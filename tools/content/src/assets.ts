@@ -411,6 +411,14 @@ export function validateAssets(
   }
 
   const godById = new Map(gods.map((god) => [god.id, god]));
+  const legacyOwners = new Map<string, GodProfile>(
+    visuals.flatMap((v) => {
+      const god = godById.get(v.godId);
+      return god === undefined
+        ? []
+        : (v.legacySprites ?? []).map((id) => [id, god] as const);
+    }),
+  );
   const portraitOwners = new Map(
     visuals.flatMap((v) =>
       v.portrait === undefined ? [] : [[v.portrait, v.godId] as const],
@@ -469,19 +477,21 @@ export function validateAssets(
     if (manifest.kind === "sprite") {
       for (const animation of manifest.animations) {
         if (animation.ability === undefined) continue;
-        if (owner === undefined) {
+        // A sprite a god has since been promoted past stays published; its subject lists it as legacy.
+        const abilityGod = owner?.god ?? legacyOwners.get(entry.assetId);
+        if (abilityGod === undefined) {
           report(
             file,
-            `ability "${animation.ability}" on "${entry.assetId}", which is no god's stable sprite id`,
+            `ability "${animation.ability}" on "${entry.assetId}", which is no god's stable or legacy sprite id`,
           );
         } else if (
-          !owner.god.abilities.some(
+          !abilityGod.abilities.some(
             (ability) => ability.id === animation.ability,
           )
         ) {
           report(
             file,
-            `ability "${animation.ability}" is not an ability of ${owner.god.id}`,
+            `ability "${animation.ability}" is not an ability of ${abilityGod.id}`,
           );
         }
       }

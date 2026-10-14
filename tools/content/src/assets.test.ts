@@ -209,7 +209,7 @@ describe("committed content", () => {
         ? [[sprite, resolveAsset(snapshot, { spriteId: sprite })] as const]
         : [];
     });
-    expect(resolved.map(([sprite]) => sprite)).toEqual(["zeus-sprite"]);
+    expect(resolved.map(([sprite]) => sprite)).toEqual(["zeus-retro"]);
     for (const [, result] of resolved)
       expect(result).toMatchObject({ source: "canon", kind: "sprite" });
   });
@@ -249,7 +249,9 @@ describe("subject asymmetry", () => {
 
   it("is declared on the committed Zeus subject and validates", () => {
     const committed = JSON.parse(readFileSync(subjectFile(COMMITTED), "utf8"));
-    expect(committed.asymmetry).toEqual({ feature: "bolt hand" });
+    expect(committed.asymmetry).toEqual({
+      feature: "left-shoulder himation",
+    });
     expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
   });
 
@@ -833,7 +835,92 @@ describe("a blob that is only a PNG header", () => {
   });
 });
 
+describe("the promoted Zeus", () => {
+  const { snapshot } = loadRegistry(
+    join(COMMITTED, "assets", "registry"),
+    vocabulary,
+  );
+
+  it("points Zeus's stable sprite at the published rendered revision, 12 slots on the god-tall cell", () => {
+    const god = JSON.parse(
+      readFileSync(join(COMMITTED, "gods", "zeus.json"), "utf8"),
+    );
+    expect(god.sprite).toBe("zeus-retro");
+    const retro = snapshot.entries.get("zeus-retro");
+    expect(String(retro?.revision)).toBe(
+      "f254faa3c1fc6fe0ca2ac2b1f88d9556f9dfdd134b4ad9241f77a5fb37369fa6",
+    );
+    const manifest = retro?.manifest;
+    if (manifest === undefined || manifest.kind !== "sprite")
+      throw new Error("zeus-retro is not a published sprite");
+    expect(String(manifest.atlas.blob)).toBe(
+      "fe9fdb0846e8e25042f76ca67ba28650a0cf6141a0c6654e0946e4cb4f5c0cc4",
+    );
+    expect(manifest.cell).toEqual({ w: 112, h: 96 });
+    expect(manifest.pivot).toEqual({ x: 56, y: 78 });
+    expect(manifest.animations).toHaveLength(12);
+    expect(manifest.provenance.method).toBe("rendered");
+    if (manifest.provenance.method !== "rendered")
+      throw new Error("not rendered");
+    expect(manifest.provenance.slots).toHaveLength(12);
+    expect(manifest.asymmetry).toEqual({ feature: "left-shoulder himation" });
+  });
+
+  it("keeps zeus-sprite published and resolvable, so an actor created before promotion still draws it", () => {
+    const before = snapshot.entries.get("zeus-sprite");
+    expect(before?.manifest.kind).toBe("sprite");
+    expect(resolveAsset(snapshot, { spriteId: "zeus-sprite" })).toMatchObject({
+      source: "canon",
+      kind: "sprite",
+    });
+    expect(
+      resolveAsset(snapshot, {
+        spriteId: "zeus-retro",
+        state: "walk",
+        direction: "west",
+      }),
+    ).toMatchObject({ source: "canon", kind: "sprite" });
+    const subject = JSON.parse(
+      readFileSync(join(COMMITTED, "assets", "subjects", "zeus.json"), "utf8"),
+    );
+    expect(subject.legacySprites).toEqual(["zeus-sprite"]);
+  });
+});
+
 describe("cross references", () => {
+  it("accepts an ability on a sprite its god lists as legacy, and still refuses one that is not the god's", () => {
+    const root = contentRoot();
+    const subjectFile = join(root, "assets", "subjects", "zeus.json");
+    const subject = JSON.parse(readFileSync(subjectFile, "utf8"));
+    const legacy = (id: string) => {
+      const base = actSprite("thunderbolt");
+      return { ...base, manifest: { ...base.manifest, id: id as AssetId } };
+    };
+    // Positive control: unlisted, the ability on an ownerless sprite is refused.
+    publish(root, legacy("old-zeus-sprite"));
+    expect(diagnosticsOf(root)).toHaveLength(1);
+    // Listed as Zeus's legacy sprite, it validates.
+    writeFileSync(
+      subjectFile,
+      JSON.stringify({ ...subject, legacySprites: ["old-zeus-sprite"] }),
+    );
+    expect(diagnosticsOf(root)).toEqual([]);
+    // An ability Zeus does not have is still refused on a legacy sprite.
+    const other = contentRoot();
+    writeFileSync(
+      join(other, "assets", "subjects", "zeus.json"),
+      JSON.stringify({ ...subject, legacySprites: ["old-zeus-sprite"] }),
+    );
+    publish(other, {
+      ...legacy("old-zeus-sprite"),
+      manifest: {
+        ...actSprite("lightning").manifest,
+        id: "old-zeus-sprite" as AssetId,
+      },
+    });
+    expect(diagnosticsOf(other)).toHaveLength(1);
+  });
+
   it("reports an ability the owning god does not have", () => {
     const root = contentRoot();
     publish(root, actSprite("lightning"));
@@ -1016,7 +1103,9 @@ describe("render kits and the licence boundary", () => {
     ).toEqual([]);
 
     const missing = stampRepo();
-    rmSync(join(missing, "tools", "render", "stamps", "zeus", "bolt-045.png"));
+    rmSync(
+      join(missing, "tools", "render", "stamps", "zeus", "face-south-r.png"),
+    );
     const refusedMissing = validateAssets(contentRoot(), {
       repoRoot: missing,
       kitProfiles: [],
@@ -1024,8 +1113,24 @@ describe("render kits and the licence boundary", () => {
     expect(refusedMissing.ok).toBe(false);
     expect(refusedMissing.diagnostics).toEqual([
       {
-        file: "tools/render/stamps/zeus/bolt-045.png",
+        file: "tools/render/stamps/zeus/face-south-r.png",
         message: expect.stringContaining("missing"),
+      },
+    ]);
+
+    // No prop stamps: a bolt stamp file left on disk is refused as unlisted.
+    const stray = stampRepo();
+    writeFileSync(
+      join(stray, "tools", "render", "stamps", "zeus", "bolt-000.png"),
+      "a prop stamp",
+    );
+    expect(
+      validateAssets(contentRoot(), { repoRoot: stray, kitProfiles: [] })
+        .diagnostics,
+    ).toEqual([
+      {
+        file: "tools/render/stamps/zeus/bolt-000.png",
+        message: expect.stringContaining("not in stamps.json"),
       },
     ]);
 
@@ -1148,21 +1253,20 @@ describe("render profiles and the camera", () => {
   it("refuses a referencedBy list that omits the profile, and one that lists a file it does not read", () => {
     const omitted = renderCopy();
     editJson(kitsPath(omitted), (k) => {
-      k.kits[0].files[0].referencedBy = [];
+      k.kits[0].files.find(
+        (f: { path: string }) => f.path === "Superhero_Male_FullBody.bin",
+      ).referencedBy = [];
     });
     expect(run(omitted).map((d) => d.message)).toEqual([
       expect.stringContaining("referencedBy omits"),
     ]);
 
     const stray = renderCopy();
-    editJson(profilePath(stray), (p) => {
-      // Dropping a hair piece's model leaves its file listed in kitFiles but unused; dropping the
-      // kit ref itself leaves kits.json listing a file the profile no longer references.
-      p.models.hair = p.models.hair.slice(0, 2);
-      p.kitFiles = p.kitFiles.filter(
-        (r: { path: string }) =>
-          r.path !== "Hair_Long.gltf" && r.path !== "Hair_Long.bin",
-      );
+    editJson(kitsPath(stray), (k) => {
+      // The profile builds its hair, so the kit's hair files are unread; listing them as read by it is refused.
+      for (const file of k.kits[0].files) {
+        if (/^Hair_Long\./.test(file.path)) file.referencedBy = ["zeus"];
+      }
     });
     const messages = run(stray).map((d) => d.message);
     expect(messages).toHaveLength(2);
@@ -1186,7 +1290,7 @@ describe("render profiles and the camera", () => {
   it("refuses a profile that does not parse, and a camera that does not parse", () => {
     const badProfile = renderCopy();
     editJson(profilePath(badProfile), (p) => {
-      p.pose.walk16 = p.pose.walk;
+      p.pose.walk16 = p.pose.seated;
     });
     expect(run(badProfile)).toEqual([
       {
@@ -1254,13 +1358,12 @@ describe("the retro matrix completeness rule", () => {
     writeFileSync(godFile(root), JSON.stringify({ ...god, sprite }));
   };
 
-  /** Every required slot of the Zeus matrix, as the slot keys a god-tall asset holds. */
+  /** Every required slot of the Zeus matrix (12: idle, walk and seated, four facings), as the slot keys a god-tall asset holds. */
   const allSlots = (): string[] =>
     FACINGS.flatMap((facing) => [
       `idle/${facing}`,
       `walk/${facing}`,
       `seated/${facing}`,
-      `act/${facing}/thunderbolt`,
     ]);
 
   /** A 112x96 sprite holding exactly `slots`, built explicitly through the real manifest parser. */
@@ -1350,12 +1453,23 @@ describe("the retro matrix completeness rule", () => {
     expect(validateAssets(root).ok).toBe(false);
   });
 
-  it("fails for a missing idle, seated and act slot too, and lists every missing slot", () => {
-    for (const missing of [
-      "idle/south",
-      "seated/east",
-      "act/north/thunderbolt",
-    ]) {
+  it("requires exactly 12 slots: idle, walk and seated by four facings (act is deferred)", () => {
+    expect(allSlots()).toHaveLength(12);
+    expect(allSlots().some((key) => key.startsWith("act"))).toBe(false);
+    const subject = JSON.parse(
+      readFileSync(
+        join(contentRoot(), "assets", "subjects", "zeus.json"),
+        "utf8",
+      ),
+    );
+    expect(subject.render.matrix.deferred).toEqual([
+      { state: "act", ability: "thunderbolt" },
+      { state: "act", ability: "pronouncement" },
+    ]);
+  });
+
+  it("fails for a missing idle and seated slot too, and lists every missing slot (positive control above: all 12 pass)", () => {
+    for (const missing of ["idle/south", "seated/east"]) {
       const root = contentRoot();
       publish(
         root,
@@ -1374,13 +1488,29 @@ describe("the retro matrix completeness rule", () => {
       root,
       godTallAsset(
         "zeus-retro",
-        allSlots().filter((key) => !key.startsWith("act/")),
+        allSlots().filter((key) => !key.startsWith("seated/")),
       ),
     );
     pointGodAt(root, "zeus-retro");
     const message = diagnosticsOf(root)[0]?.message ?? "";
-    for (const facing of FACINGS)
-      expect(message).toContain(`act/${facing}/thunderbolt`);
+    for (const facing of FACINGS) expect(message).toContain(`seated/${facing}`);
+  });
+
+  it("does not require the deferred act slots, and accepts them when present", () => {
+    const root = contentRoot();
+    publish(root, godTallAsset("zeus-retro", allSlots()));
+    pointGodAt(root, "zeus-retro");
+    expect(validateAssets(root).ok).toBe(true);
+    const withAct = contentRoot();
+    publish(
+      withAct,
+      godTallAsset("zeus-retro", [
+        ...allSlots(),
+        ...FACINGS.map((f) => `act/${f}/thunderbolt`),
+      ]),
+    );
+    pointGodAt(withAct, "zeus-retro");
+    expect(validateAssets(withAct).ok).toBe(true);
   });
 
   it("does not require the deferred pronouncement slot", () => {
@@ -1399,16 +1529,22 @@ describe("the retro matrix completeness rule", () => {
         readFileSync(join(root, "assets", "subjects", "zeus.json"), "utf8"),
       ).render.matrix.cellClass,
     ).toBe("god-tall");
+    // Before promotion, zeus-sprite was the god's own sprite, so it is no legacy sprite of this root.
+    const subjectPath = join(root, "assets", "subjects", "zeus.json");
+    const { legacySprites: _legacy, ...subject } = JSON.parse(
+      readFileSync(subjectPath, "utf8"),
+    );
+    writeFileSync(subjectPath, JSON.stringify(subject));
     publish(root, spriteFixture("zeus-sprite"));
     pointGodAt(root, "zeus-sprite");
     expect(validateAssets(root)).toEqual({ ok: true, diagnostics: [] });
   });
 
-  it("validates the committed legacy zeus-sprite against the committed subject", () => {
+  it("validates the committed promoted Zeus against the committed subject: zeus-retro holds the matrix, zeus-sprite is legacy", () => {
     const god = JSON.parse(
       readFileSync(join(COMMITTED, "gods", "zeus.json"), "utf8"),
     );
-    expect(god.sprite).toBe("zeus-sprite");
+    expect(god.sprite).toBe("zeus-retro");
     expect(validateAssets(COMMITTED)).toEqual({ ok: true, diagnostics: [] });
   });
 

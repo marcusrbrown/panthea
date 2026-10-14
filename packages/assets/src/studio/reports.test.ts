@@ -27,6 +27,7 @@ import {
   withHiddenRgb,
   workingSet,
 } from "./_test-fixtures";
+import { DEFAULT_CONFORM } from "./derivation";
 import { decodePng } from "./png/decode";
 import {
   candidateFrames,
@@ -126,6 +127,7 @@ describe("sheet and summarizeSheet", () => {
   });
   const status = {
     candidates: [north, stuck, first, old, better],
+    renderedCandidates: [],
     workingSets: [set],
   };
 
@@ -161,6 +163,7 @@ describe("sheet and summarizeSheet", () => {
         {
           slotKey: "idle/south",
           candidates: 3,
+          renderedCandidates: [],
           done: 2,
           passing: 2,
           needsScale: 1,
@@ -169,6 +172,7 @@ describe("sheet and summarizeSheet", () => {
         {
           slotKey: "idle/north",
           candidates: 1,
+          renderedCandidates: [],
           done: 1,
           passing: 0,
           needsScale: 0,
@@ -468,6 +472,60 @@ describe("candidateFrames", () => {
       frames.height,
     ]);
     expect([frames.width, frames.height]).toEqual([64, 80]);
+    rig.session.close();
+  });
+
+  test("a rendered candidate exposes every stored frame with its duration and cell size", () => {
+    const { rig, result } = withCandidate();
+    const bytes = rig.session.store.readBlob(result.imageHash);
+    if (!bytes) throw new Error("no stored image");
+    const source = rig.session.store.status().candidates[0]?.source;
+    if (!source) throw new Error("no job source");
+    const renderedId = "zeus-rendered-preview";
+    const renderedHash = rig.session.store.putBlob(bytes);
+    rig.session.store.putRenderedCandidate({
+      schemaVersion: 1,
+      id: renderedId,
+      source,
+      subject: "zeus",
+      kind: "sprite",
+      slotKey: source.slotKey,
+      manifest: sha256Hex(bytes) as never,
+      revisionRecipeHash: sha256Hex(new Uint8Array([5])) as never,
+      slotRecipeHash: sha256Hex(new Uint8Array([6])) as never,
+      postStepVersion: 2,
+      frames: [
+        { hash: renderedHash, durationMs: 100, report: result.report },
+        { hash: renderedHash, durationMs: 100, report: result.report },
+      ],
+      loopStart: 0,
+      params: DEFAULT_CONFORM,
+      target: {
+        cell: { id: "test-cell", w: 64, h: 80 },
+        pivot: { x: 32, y: 60 },
+        palette: {
+          id: MASTER_PALETTE_ID,
+          family: "olympus",
+          digest: null,
+          colours: ["#000000"],
+        },
+      },
+    });
+
+    const frames = candidateFrames(rig.root, renderedId);
+
+    if (!frames.ok) throw new Error(frames.message);
+    expect([frames.width, frames.height]).toEqual([64, 80]);
+    expect(
+      frames.frames.map(({ index, durationMs, imageHash }) => ({
+        index,
+        durationMs,
+        imageHash,
+      })),
+    ).toEqual([
+      { index: 0, durationMs: 100, imageHash: renderedHash },
+      { index: 1, durationMs: 100, imageHash: renderedHash },
+    ]);
     rig.session.close();
   });
 
