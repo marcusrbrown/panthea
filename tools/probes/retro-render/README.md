@@ -2,7 +2,7 @@
 
 ## Outcome
 
-**2026-10-12: the owner accepted the pre-rendered retro direction** after watching timed playback of the scene: a tall Zeus (60–64 px standing) on a 112×96 pose cell, and a 16-frame walk over 800 ms. The art-guide change comes next as an ADR; this probe is its evidence. Nothing here is canon, and the art guide, palette and Zeus's published sprites are unchanged until that ADR lands.
+**2026-10-12: the owner accepted the pre-rendered retro direction** after watching timed playback of the scene: a tall Zeus (60–64 px standing) on a 112×96 pose cell, and a 16-frame walk over 800 ms. This probe is the evidence for [ADR-0012](../../../docs/decisions/0012-pre-rendered-retro-art-direction.md), and nothing here is canon.
 
 Known open items, all build-out work rather than direction questions:
 
