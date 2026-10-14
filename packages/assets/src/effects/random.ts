@@ -97,3 +97,37 @@ export function loopNoise(
   const [cos, sin] = cosSin(turns);
   return valueNoise(seed, x + radius * cos, y + radius * sin);
 }
+
+const wrap = (i: number, period: number): number =>
+  ((i % period) + period) % period;
+
+/**
+ * Value noise that repeats every `period` lattice cells along y and slides up
+ * the plane by `turns * period` cells: at `turns` 1 the slide is a whole
+ * number of periods, so the field is exactly the one at `turns` 0. The slide is
+ * split into whole cells and a fraction so no rounding enters the repeat.
+ */
+export function risingNoise(
+  seed: number,
+  x: number,
+  y: number,
+  period: number,
+  turns: number,
+): number {
+  const slide = turns * period;
+  const whole = Math.floor(slide);
+  const yy = y - (slide - whole);
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(yy);
+  const fx = smooth(x - x0);
+  const fy = smooth(yy - y0);
+  const ya = wrap(y0 - whole, period);
+  const yb = wrap(y0 + 1 - whole, period);
+  const a = hash2(seed, x0, ya);
+  const b = hash2(seed, x0 + 1, ya);
+  const c = hash2(seed, x0, yb);
+  const d = hash2(seed, x0 + 1, yb);
+  const top = a + (b - a) * fx;
+  const bottom = c + (d - c) * fx;
+  return top + (bottom - top) * fy;
+}

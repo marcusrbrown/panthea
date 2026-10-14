@@ -189,7 +189,7 @@ const withFire = (index: number) =>
         target,
         frameImage(fire, f.rgba),
         roof.x - fire.pivot.x,
-        roof.y + 10 - fire.pivot.y,
+        roof.y + 24 - fire.pivot.y,
       );
   });
 
@@ -215,6 +215,25 @@ writePng(
       calm.map((_, i) => withStrike(calm, i)),
     ],
     2,
+    dark,
+  ),
+);
+// A closer look at the key frames: the peak and the frame after, and three of the fire's.
+const crop = (image: RgbaImage, x: number, y: number, w: number, h: number) => {
+  const out = canvas(w, h);
+  over(out, image, -x, -y);
+  return out;
+};
+const box = (image: RgbaImage) => crop(image, 24, 0, 144, 160);
+writePng(
+  "on-building-closeup.png",
+  sheet(
+    [
+      [2, 3].map((i) => box(withStrike(full, i))),
+      [1, 2].map((i) => box(withStrike(calm, i))),
+      [0, 3, 6].map((i) => box(withFire(i))),
+    ],
+    3,
     dark,
   ),
 );

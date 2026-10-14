@@ -11,6 +11,7 @@ import type { Palette } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import {
   FIRE_FAMILY,
+  FIRE_GLOW,
   type FireParams,
   fireColours,
   renderFireFrame,
@@ -27,7 +28,7 @@ import {
 
 export { renderFireFrame } from "./fire";
 
-export const EFFECT_GENERATOR = { id: "panthea-effects", version: 1 } as const;
+export const EFFECT_GENERATOR = { id: "panthea-effects", version: 2 } as const;
 
 export const EFFECT_NAMES = ["fire", "lightning"] as const;
 export type EffectName = (typeof EFFECT_NAMES)[number];
@@ -83,7 +84,7 @@ export function defaultRecipe(effect: EffectName, seed: number): EffectRecipe {
     ? {
         effect,
         seed,
-        params: { width: 48, height: 64, frames: 8, frameMs: 110, tongues: 3 },
+        params: { width: 64, height: 88, frames: 10, frameMs: 90, tongues: 4 },
       }
     : {
         effect,
@@ -118,7 +119,7 @@ const FIRE_BOUNDS = {
   height: [16, 192],
   frames: [4, 16],
   frameMs: [20, 500],
-  tongues: [2, 3],
+  tongues: [2, 5],
 } as const satisfies Record<keyof FireParams, Bounds>;
 
 const FRAME_MS: Bounds = [20, 500];
@@ -250,7 +251,7 @@ export function generateEffect(
         cell: { w: p.width, h: p.height },
         pivot: { x: p.width / 2, y: p.height },
         paletteFamily: FIRE_FAMILY,
-        glowColours: [],
+        glowColours: Object.values(FIRE_GLOW),
         animations: [
           {
             name: "burn",

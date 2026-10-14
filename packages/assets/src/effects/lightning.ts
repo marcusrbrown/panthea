@@ -90,6 +90,11 @@ interface BoltStyle {
   readonly dither?: boolean;
   /** Draw only every nth path pixel. */
   readonly every?: number;
+  /** The core is two pixels wide: each path pixel and the one to its right. */
+  readonly wide?: boolean;
+  /** Squared distance from the core out to which the band and then the edge reach. */
+  readonly bandReach?: number;
+  readonly edgeReach?: number;
 }
 
 function paintBolt(
@@ -99,13 +104,16 @@ function paintBolt(
   style: BoltStyle,
 ): void {
   const { w, h } = canvas;
-  const reach = style.edge !== null ? 2 : style.band !== null ? 1 : 0;
+  const bandReach = style.bandReach ?? 2;
+  const edgeReach = style.edgeReach ?? 5;
+  const outer =
+    style.edge !== null ? edgeReach : style.band !== null ? bandReach : 0;
+  const radius = Math.ceil(Math.sqrt(outer));
   const nearest = new Int32Array(w * h).fill(1 << 20);
   const every = style.every ?? 1;
-  for (const [i, [px, py]] of path.slice(0, count).entries()) {
-    if (i % every !== 0) continue;
-    for (let dy = -reach; dy <= reach; dy += 1)
-      for (let dx = -reach; dx <= reach; dx += 1) {
+  const stamp = (px: number, py: number) => {
+    for (let dy = -radius; dy <= radius; dy += 1)
+      for (let dx = -radius; dx <= radius; dx += 1) {
         const x = px + dx;
         const y = py + dy;
         if (x < 0 || y < 0 || x >= w || y >= h) continue;
@@ -113,12 +121,18 @@ function paintBolt(
         const at = y * w + x;
         if (d2 < (nearest[at] as number)) nearest[at] = d2;
       }
+  };
+  for (const [i, [px, py]] of path.slice(0, count).entries()) {
+    if (i % every !== 0) continue;
+    stamp(px, py);
+    if (style.wide === true) stamp(px + 1, py);
   }
   for (let y = 0; y < h; y += 1)
     for (let x = 0; x < w; x += 1) {
       const d2 = nearest[y * w + x] as number;
-      if (d2 > 5) continue;
-      const colour = d2 === 0 ? style.core : d2 <= 2 ? style.band : style.edge;
+      if (d2 > outer) continue;
+      const colour =
+        d2 === 0 ? style.core : d2 <= bandReach ? style.band : style.edge;
       if (colour === null) continue;
       if (d2 > 0 && style.dither === true && (x + y) % 2 !== 0) continue;
       setPixel(canvas, x, y, colour);
@@ -149,6 +163,24 @@ function paintShape(
   keep: (x: number, y: number) => boolean = () => true,
 ): void {
   for (const [x, y] of shape) if (keep(x, y)) setPixel(canvas, x, y, colour);
+}
+
+/** Rays out from (cx, cy), `from` to `to` pixels long, flattened to the roof plane. */
+function rays(cx: number, cy: number, from: number, to: number): Point[] {
+  const out: Point[] = [];
+  for (const [dx, dy] of [
+    [1, 0],
+    [-1, 0],
+    [0, -1],
+    [0, 1],
+    [1, -1],
+    [-1, -1],
+    [1, 1],
+    [-1, 1],
+  ] as const)
+    for (let i = from; i <= to; i += 1)
+      out.push([cx + dx * i, cy + Math.round(dy * i * 0.5)]);
+  return out;
 }
 
 export interface LightningColours {
@@ -201,21 +233,27 @@ export function renderLightning(
       leader(0.4),
       leader(0.85),
       // The peak: the one frame the bolt is at full strength.
-      draw((c) =>
+      draw((c) => {
         paintBolt(c, path, all, {
           core: glow.core,
           band: glow.band,
           edge: glow.edge,
-        }),
-      ),
+          wide: true,
+          bandReach: 4,
+          edgeReach: 10,
+        });
+        paintShape(c, rays(tx, ty, 5, 13), glow.band);
+        paintShape(c, ellipse(tx, ty, 7, 4, true), glow.core);
+      }),
       draw((c) => {
         paintBolt(c, path, all, {
           core: glow.band,
           band: glow.edge,
           edge: null,
         });
-        paintShape(c, ellipse(tx, ty, 4, 2, true), glow.core);
-        paintShape(c, ellipse(tx, ty, 6, 3, false), glow.band);
+        paintShape(c, rays(tx, ty, 6, 10), glow.edge);
+        paintShape(c, ellipse(tx, ty, 11, 5, false), glow.band);
+        paintShape(c, ellipse(tx, ty, 5, 3, true), glow.core);
       }),
       draw((c) => {
         paintBolt(c, path, all, {
@@ -224,7 +262,7 @@ export function renderLightning(
           edge: null,
           dither: true,
         });
-        paintShape(c, ellipse(tx, ty, 8, 4, false), glow.edge);
+        paintShape(c, ellipse(tx, ty, 13, 6, false), glow.edge);
       }),
       draw((c) => {
         paintBolt(c, path, all, {
@@ -235,7 +273,7 @@ export function renderLightning(
         });
         paintShape(
           c,
-          ellipse(tx, ty, 10, 5, false),
+          ellipse(tx, ty, 14, 7, false),
           glow.edge,
           (x, y) => (x + y) % 2 === 0,
         );
@@ -243,7 +281,7 @@ export function renderLightning(
       draw((c) =>
         paintShape(
           c,
-          ellipse(tx, ty, 11, 5, false),
+          ellipse(tx, ty, 15, 7, false),
           glow.edge,
           (x, y) => (x + y) % 3 === 0,
         ),
@@ -251,7 +289,7 @@ export function renderLightning(
       draw((c) =>
         paintShape(
           c,
-          ellipse(tx, ty, 12, 6, false),
+          ellipse(tx, ty, 16, 8, false),
           glow.edge,
           (x, y) => (x + 2 * y) % 5 === 0,
         ),
@@ -269,17 +307,13 @@ export function renderLightning(
         edge: null,
       }),
     ),
-    draw((c) =>
-      paintBolt(c, path, all, {
-        core: pale,
-        band: mid,
-        edge: null,
-        dither: true,
-      }),
-    ),
     draw((c) => {
-      paintBolt(c, path, all, { core: mid, band: null, edge: null, every: 2 });
-      paintShape(c, ellipse(tx, ty, 4, 2, false), cloud[3] as Rgb);
+      paintBolt(c, path, all, { core: pale, band: mid, edge: null });
+      paintShape(c, ellipse(tx, ty, 3, 2, true), cloud[3] as Rgb);
+    }),
+    draw((c) => {
+      paintBolt(c, path, all, { core: mid, band: null, edge: null });
+      paintShape(c, ellipse(tx, ty, 6, 3, false), cloud[3] as Rgb);
     }),
     draw((c) =>
       paintShape(

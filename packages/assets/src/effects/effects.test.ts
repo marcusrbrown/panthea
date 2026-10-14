@@ -173,8 +173,46 @@ describe("fire", () => {
       ).toBeGreaterThan(0);
   });
 
-  it("uses the terracotta ramp, an outline colour, and binary alpha", () => {
-    const allowed = new Set([...terracotta.map(key), outline]);
+  const glow = effect.glowColours.map(key);
+
+  /** 4-connected parts of the lit pixels; grounded ones touch the bottom row. */
+  const parts = (rgba: Uint8Array) => {
+    const lit = opaque(rgba, w);
+    const seen = new Set<string>();
+    const out: { keys: string[]; grounded: boolean }[] = [];
+    for (const start of lit.keys()) {
+      if (seen.has(start)) continue;
+      const keys: string[] = [];
+      const stack = [start];
+      seen.add(start);
+      while (stack.length > 0) {
+        const k = stack.pop() as string;
+        keys.push(k);
+        const [x = 0, y = 0] = k.split(",").map(Number);
+        for (const [dx, dy] of [
+          [1, 0],
+          [-1, 0],
+          [0, 1],
+          [0, -1],
+        ] as const) {
+          const n = `${x + dx},${y + dy}`;
+          if (lit.has(n) && !seen.has(n)) {
+            seen.add(n);
+            stack.push(n);
+          }
+        }
+      }
+      out.push({
+        keys,
+        grounded: keys.some((k) => k.endsWith(`,${h - 1}`)),
+      });
+    }
+    return out;
+  };
+
+  it("declares the hot colours it draws and uses only those, the outline and binary alpha", () => {
+    expect(effect.glowColours.length).toBeGreaterThanOrEqual(4);
+    const allowed = new Set([...glow, outline]);
     for (const frame of frames) {
       for (let p = 0; p < frame.rgba.length; p += 4)
         expect([0, 255]).toContain(frame.rgba[p + 3] as number);
@@ -183,9 +221,14 @@ describe("fire", () => {
     }
   });
 
-  it("outlines the outer silhouette only", () => {
+  it("outlines the outer silhouette of the flame mass only", () => {
     for (const frame of frames) {
       const lit = opaque(frame.rgba, w);
+      const mass = new Set(
+        parts(frame.rgba)
+          .filter((part) => part.grounded)
+          .flatMap((part) => part.keys),
+      );
       // Transparent pixels reachable from the cell border.
       const outside = new Set<string>();
       const stack: [number, number][] = [];
@@ -209,7 +252,11 @@ describe("fire", () => {
         push(x, y - 1);
       }
       let outlined = 0;
-      for (const px of lit.values()) {
+      for (const [k, px] of lit) {
+        if (!mass.has(k)) {
+          expect(px.colour === outline).toBe(false);
+          continue;
+        }
         const touchesOutside = [
           [1, 0],
           [-1, 0],
@@ -221,7 +268,75 @@ describe("fire", () => {
         expect(px.colour === outline).toBe(touchesOutside);
         if (touchesOutside) outlined += 1;
       }
-      expect(outlined).toBeGreaterThan(10);
+      expect(outlined).toBeGreaterThan(30);
+    }
+  });
+
+  it("is one connected mass planted at its base, with a few flickers free of it", () => {
+    let flickers = 0;
+    for (const frame of frames) {
+      const all = parts(frame.rgba);
+      const mass = all.filter((part) => part.grounded);
+      expect(mass).toHaveLength(1);
+      const total = all.reduce((sum, part) => sum + part.keys.length, 0);
+      expect(
+        (mass[0] as (typeof mass)[number]).keys.length / total,
+      ).toBeGreaterThan(0.95);
+      flickers += all.length - 1;
+    }
+    expect(flickers).toBeGreaterThan(0);
+  });
+
+  it("is widest at the base and narrower above", () => {
+    for (const frame of frames) {
+      const lit = opaque(frame.rgba, w);
+      const widthAt = (y: number) =>
+        [...lit.values()].filter((p) => p.y === y).length;
+      expect(widthAt(h - 4)).toBeGreaterThan(widthAt(Math.floor(h * 0.45)));
+      expect(widthAt(Math.floor(h * 0.45))).toBeGreaterThan(
+        widthAt(Math.floor(h * 0.15)),
+      );
+    }
+  });
+
+  it("changes its silhouette noticeably every frame", () => {
+    const shape = (rgba: Uint8Array) => new Set(opaque(rgba, w).keys());
+    for (const [i, frame] of frames.entries()) {
+      const a = shape(frame.rgba);
+      const b = shape(
+        (frames[(i + 1) % frames.length] as (typeof frames)[number]).rgba,
+      );
+      const moved =
+        [...a].filter((k) => !b.has(k)).length +
+        [...b].filter((k) => !a.has(k)).length;
+      expect(moved / a.size).toBeGreaterThan(0.1);
+    }
+  });
+
+  it("is hot at the base: cream and yellow low in the mass, dark red at the edges and tips", () => {
+    const [red, , , yellow, cream] = effect.glowColours.map(key);
+    for (const frame of frames) {
+      const lit = [...opaque(frame.rgba, w).values()];
+      const hot = lit.filter((p) => p.colour === cream || p.colour === yellow);
+      const cool = lit.filter((p) => p.colour === red);
+      expect(hot.length).toBeGreaterThan(40);
+      expect(cool.length).toBeGreaterThan(40);
+      const mean = (list: typeof lit) =>
+        list.reduce((s, p) => s + p.y, 0) / list.length;
+      expect(mean(hot)).toBeGreaterThan(mean(cool) + h * 0.1);
+      expect(Math.min(...cool.map((p) => p.y))).toBeLessThan(
+        Math.min(...hot.map((p) => p.y)),
+      );
+    }
+  });
+
+  it("reaches well above the value of the terracotta it burns on", () => {
+    const roofTop = lum((terracotta[5] as Rgb).join(","));
+    for (const frame of frames) {
+      const hottest = Math.max(
+        ...[...opaque(frame.rgba, w).values()].map((p) => lum(p.colour)),
+      );
+      expect(hottest).toBeGreaterThan(roofTop + 0.15);
     }
   });
 

@@ -123,7 +123,7 @@ describe("the effect op", () => {
     expect(
       manifest.kind === "effect" && manifest.animations.map((a) => a.name),
     ).toEqual(["burn"]);
-    expect(manifest.kind === "effect" && manifest.glowColours).toEqual([]);
+    expect(manifest.kind === "effect" && manifest.glowColours).toHaveLength(5);
   });
 
   test("applies parameter overrides over the defaults", () => {
