@@ -18,7 +18,7 @@
     { "id": "large", "w": 128, "h": 128, "kinds": ["sprite"] },
     { "id": "god-tall", "w": 112, "h": 96, "kinds": ["sprite"] },
     { "id": "portrait", "w": 96, "h": 96, "kinds": ["portrait"] },
-    { "id": "structure", "w": 176, "h": 168, "kinds": ["sprite"] }
+    { "id": "structure", "w": 192, "h": 192, "kinds": ["sprite"] }
   ],
   "states": [
     {

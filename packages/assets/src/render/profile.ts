@@ -311,16 +311,22 @@ export interface FigureProfile {
   readonly pose: Readonly<Record<string, PoseEntry>>;
 }
 
-/** What a mark on a house wall is: where it sits and which material draws it. */
+/** What a mark on a house is: where it sits and which material draws it. */
 export interface StructureDecal {
-  /** The wall it is laid on: the one facing the viewer or the one facing right. */
-  readonly wall: "front" | "side";
-  /** Centre of the mark: metres along the wall from its left edge, and up from the ground. */
+  /** The surface it is laid on: the wall facing the viewer, the wall facing right, or the front roof slope. */
+  readonly wall: "front" | "side" | "roof";
+  /**
+   * Centre of the mark, metres. On a wall: along it from its left edge (the front's left, the side's
+   * nearest the viewer), and up from the ground. On the roof: along the ridge from the roof's left
+   * end, and up the slope from the eave.
+   */
   readonly at: Vec2;
   /** Width and height of the mark, metres. */
   readonly size: Vec2;
   /** A key of the profile's `materials`. */
   readonly material: string;
+  /** Degrees the mark is turned in its own plane; absent is square to the surface's axes. */
+  readonly angle?: number;
 }
 
 /** One state of a structure: how many frames, and what it looks like. */
@@ -336,8 +342,10 @@ export interface StructureClip {
   readonly decals: readonly StructureDecal[];
   /** The model with its walls and roof broken (a house) or burnt down to a stump (a tree). */
   readonly ruin: boolean;
-  /** The fraction of a tree's leaves this state keeps, 0 to 1. */
+  /** The fraction of a tree's leaf clusters this state keeps, 0 to 1. */
   readonly leaves?: number;
+  /** How many glowing embers a tree shows on its limbs and crown. */
+  readonly embers?: number;
 }
 
 export interface Wind {
@@ -1452,11 +1460,17 @@ function parseDecal(
   path: string,
   materialKeys: ReadonlySet<string>,
 ): ParseResult<StructureDecal> {
-  const record = strict(value, path, ["wall", "at", "size", "material"]);
+  const record = strict(value, path, [
+    "wall",
+    "at",
+    "size",
+    "material",
+    "angle",
+  ]);
   if (!record.ok) return record;
   const wall = record.value.wall;
-  if (wall !== "front" && wall !== "side")
-    return fail(`${path}.wall`, 'expected "front" or "side"');
+  if (wall !== "front" && wall !== "side" && wall !== "roof")
+    return fail(`${path}.wall`, 'expected "front", "side" or "roof"');
   const at = parseVec2(record.value.at, `${path}.at`);
   if (!at.ok) return at;
   const size = parseVec2(record.value.size, `${path}.size`);
@@ -1470,11 +1484,18 @@ function parseDecal(
       `${path}.material`,
       `"${material.value}" is not among the profile's materials`,
     );
+  let angle: number | undefined;
+  if (record.value.angle !== undefined) {
+    const parsed = parseFiniteNumber(record.value.angle, `${path}.angle`);
+    if (!parsed.ok) return parsed;
+    angle = parsed.value;
+  }
   return ok({
     wall,
     at: at.value,
     size: size.value,
     material: material.value,
+    ...(angle === undefined ? {} : { angle }),
   });
 }
 
@@ -1550,6 +1571,7 @@ function parseStructureClips(
       "decals",
       "ruin",
       "leaves",
+      "embers",
     ]);
     if (!record.ok) return record;
     const loop = parseBoolean(record.value.loop, `${at}.loop`);
@@ -1611,6 +1633,17 @@ function parseStructureClips(
       if (!parsed.ok) return parsed;
       leaves = parsed.value;
     }
+    let embers: number | undefined;
+    if (record.value.embers !== undefined) {
+      if (build.kind !== "tree")
+        return fail(`${at}.embers`, "only a tree has embers");
+      const parsed = parseNonNegativeInteger(
+        record.value.embers,
+        `${at}.embers`,
+      );
+      if (!parsed.ok) return parsed;
+      embers = parsed.value;
+    }
     out[state] = {
       loop: loop.value,
       frames: frames.value,
@@ -1619,6 +1652,7 @@ function parseStructureClips(
       decals,
       ruin,
       ...(leaves === undefined ? {} : { leaves }),
+      ...(embers === undefined ? {} : { embers }),
     };
   }
   return ok(out);

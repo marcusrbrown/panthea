@@ -3,87 +3,331 @@
   "kind": "structure",
   "id": "greek-house",
   "kitFiles": [],
-  "build": { "kind": "house" },
+  "build": {
+    "kind": "house"
+  },
   "cell": {
     "id": "structure",
-    "width": 176,
-    "height": 168,
-    "pivot": [88, 124]
+    "width": 192,
+    "height": 192,
+    "pivot": [96, 136]
   },
   "materials": {
-    "wall": { "ramp": "stone-sky", "bias": 0.0 },
-    "gable": { "ramp": "stone-sky", "bias": 0.05 },
-    "base": {
+    "wall": {
       "ramp": "stone-sky",
-      "bias": -0.05,
-      "bandShades": [1, 1, 2, 3, 3]
+      "bias": 0.12,
+      "bandShades": [2, 3, 4, 5, 5]
     },
-    "column": { "ramp": "stone-sky", "bias": 0.1 },
-    "roof": { "ramp": "terracotta", "bias": 0.0 },
-    "door": { "ramp": "soil", "bias": -0.1, "bandShades": [1, 1, 2, 2, 3] },
-    "trim": { "ramp": "soil", "bias": 0.0 },
+    "gable": {
+      "ramp": "stone-sky",
+      "bias": 0.12,
+      "bandShades": [2, 3, 4, 5, 5]
+    },
+    "plinth": {
+      "ramp": "stone-sky",
+      "bias": -0.1,
+      "bandShades": [1, 2, 3, 3, 4]
+    },
+    "column": {
+      "ramp": "stone-sky",
+      "bias": 0.14,
+      "bandShades": [2, 3, 4, 5, 5]
+    },
+    "trim": {
+      "ramp": "stone-sky",
+      "bias": 0.06,
+      "bandShades": [2, 3, 4, 4, 5]
+    },
+    "roof": {
+      "ramp": "terracotta",
+      "bias": 0.0,
+      "bandShades": [1, 2, 3, 4, 4]
+    },
+    "ridge": {
+      "ramp": "terracotta",
+      "bias": -0.12,
+      "bandShades": [0, 1, 2, 3, 3]
+    },
+    "door": {
+      "ramp": "soil",
+      "bias": -0.1,
+      "bandShades": [1, 1, 2, 2, 3]
+    },
+    "shutter": {
+      "ramp": "olive",
+      "bias": -0.05,
+      "bandShades": [1, 2, 2, 3, 3]
+    },
+    "window": {
+      "ramp": "soil",
+      "bias": -0.5,
+      "bandShades": [0, 0, 0, 0, 1]
+    },
     "rubble": {
       "ramp": "stone-sky",
       "bias": -0.1,
       "bandShades": [0, 1, 2, 2, 3]
     },
-    "wall-burnt": {
+    "timber": {
       "ramp": "soil",
-      "bias": -0.1,
-      "bandShades": [1, 2, 2, 3, 3]
+      "bias": -0.3,
+      "bandShades": [0, 0, 1, 1, 2]
     },
-    "roof-burnt": {
+    "wall-ash": {
+      "ramp": "stone-sky",
+      "bias": -0.02,
+      "bandShades": [1, 2, 3, 4, 4]
+    },
+    "soot": {
+      "ramp": "soil",
+      "bias": -0.45,
+      "bandShades": [0, 0, 0, 1, 1]
+    },
+    "scorch": {
       "ramp": "terracotta",
+      "bias": -0.45,
+      "bandShades": [0, 0, 1, 1, 2]
+    },
+    "rafter": {
+      "ramp": "soil",
       "bias": -0.2,
       "bandShades": [0, 1, 1, 2, 2]
     },
-    "soot": { "ramp": "soil", "bias": -0.4, "bandShades": [0, 0, 0, 1, 1] }
+    "gap": {
+      "ramp": "soil",
+      "bias": -0.6,
+      "bandShades": [0, 0, 0, 0, 0]
+    },
+    "plaster-patch": {
+      "ramp": "stone-sky",
+      "bias": -0.12,
+      "bandShades": [1, 2, 3, 3, 4]
+    },
+    "crack": {
+      "ramp": "stone-sky",
+      "bias": -0.45,
+      "bandShades": [0, 0, 1, 1, 2]
+    }
   },
   "clips": {
-    "intact": { "loop": false, "frames": 1, "frameMs": 1000 },
+    "intact": {
+      "loop": false,
+      "frames": 1,
+      "frameMs": [1000]
+    },
     "damaged": {
       "loop": false,
       "frames": 1,
-      "frameMs": 1000,
-      "materials": {
-        "wall": "wall-burnt",
-        "gable": "wall-burnt",
-        "roof": "roof-burnt",
-        "trim": "soot",
-        "door": "soot"
-      },
+      "frameMs": [1000],
       "decals": [
         {
           "wall": "front",
-          "at": [1.0, 1.55],
-          "size": [0.9, 1.1],
+          "at": [0.6, 2.2],
+          "size": [0.54, 0.08],
           "material": "soot"
         },
         {
           "wall": "front",
-          "at": [3.6, 1.2],
-          "size": [0.55, 0.9],
+          "at": [0.42999999999999994, 2.34],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [0.6, 2.44],
+          "size": [0.14, 0.5],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [0.77, 2.32],
+          "size": [0.09, 0.24],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.6, 2.2],
+          "size": [0.54, 0.08],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.43, 2.34],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.6, 2.44],
+          "size": [0.14, 0.5],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.77, 2.32],
+          "size": [0.09, 0.24],
           "material": "soot"
         },
         {
           "wall": "side",
-          "at": [1.2, 1.7],
-          "size": [0.8, 1.0],
+          "at": [1.5, 2.2],
+          "size": [0.54, 0.08],
           "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.33, 2.34],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.5, 2.44],
+          "size": [0.14, 0.5],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.67, 2.32],
+          "size": [0.09, 0.24],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [2.1, 2.36],
+          "size": [0.62, 0.08],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [1.95, 2.5],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [2.1, 2.52],
+          "size": [0.14, 0.34],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [2.27, 2.48],
+          "size": [0.09, 0.26],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.1, 0.78],
+          "size": [0.62, 0.34],
+          "material": "plaster-patch"
+        },
+        {
+          "wall": "front",
+          "at": [3.1, 0.78],
+          "size": [0.04, 0.42],
+          "material": "crack",
+          "angle": 18
+        },
+        {
+          "wall": "front",
+          "at": [3.0, 0.9],
+          "size": [0.04, 0.28],
+          "material": "crack",
+          "angle": -38
+        },
+        {
+          "wall": "front",
+          "at": [1.15, 0.78],
+          "size": [0.5, 0.34],
+          "material": "plaster-patch"
+        },
+        {
+          "wall": "front",
+          "at": [1.15, 0.78],
+          "size": [0.04, 0.42],
+          "material": "crack",
+          "angle": -22
+        },
+        {
+          "wall": "side",
+          "at": [0.55, 1.1],
+          "size": [0.5, 0.6],
+          "material": "plaster-patch"
+        },
+        {
+          "wall": "side",
+          "at": [0.55, 1.1],
+          "size": [0.04, 0.7],
+          "material": "crack",
+          "angle": 15
+        },
+        {
+          "wall": "side",
+          "at": [2.4, 1.4],
+          "size": [0.04, 0.5],
+          "material": "crack",
+          "angle": -30
+        },
+        {
+          "wall": "roof",
+          "at": [1.7, 0.85],
+          "size": [1.5, 0.9],
+          "material": "scorch"
+        },
+        {
+          "wall": "roof",
+          "at": [1.6, 0.85],
+          "size": [0.8, 0.5],
+          "material": "gap"
+        },
+        {
+          "wall": "roof",
+          "at": [1.35, 0.85],
+          "size": [0.07, 0.5],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [1.6, 0.85],
+          "size": [0.07, 0.5],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [1.85, 0.85],
+          "size": [0.07, 0.5],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [3.7, 1.3],
+          "size": [1.0, 0.7],
+          "material": "scorch"
+        },
+        {
+          "wall": "roof",
+          "at": [3.6, 1.3],
+          "size": [0.36, 0.26],
+          "material": "gap"
+        },
+        {
+          "wall": "roof",
+          "at": [3.6, 1.3],
+          "size": [0.06, 0.26],
+          "material": "rafter"
         }
       ]
     },
     "ruin": {
       "loop": false,
       "frames": 1,
-      "frameMs": 1000,
+      "frameMs": [1000],
       "ruin": true,
       "materials": {
-        "wall": "wall-burnt",
-        "gable": "wall-burnt",
-        "roof": "roof-burnt",
-        "trim": "soot",
-        "door": "soot"
+        "wall": "wall-ash",
+        "column": "wall-ash",
+        "trim": "wall-ash"
       }
     }
   }

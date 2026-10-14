@@ -3,8 +3,6 @@
 // shape as a figure's.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { readLog as readBlenderLog } from "../../test/render/fake-blender";
 import {
   closeRigs,
@@ -16,7 +14,6 @@ import {
 } from "../../test/render/rig";
 import { decodePng } from "../studio/png/decode";
 import { cameraHash } from "./camera";
-import { RENDER_SCRIPT_LICENCE } from "./engine";
 import { loadRenderInputs } from "./load";
 import { cellPixelHash } from "./post";
 import { effectiveCamera, NO_STAMPS_HASH } from "./recipe";
@@ -25,7 +22,7 @@ afterEach(closeRigs);
 
 const T = 90_000;
 const south = (state: string) => ({ state, direction: "south" });
-const HOUSE_PIVOT = { x: 88, y: 124 };
+const HOUSE_PIVOT = { x: 96, y: 136 };
 
 const inputs = loadRenderInputs(RENDER_ROOT);
 const house = (() => {
@@ -127,7 +124,7 @@ describe("a structure render job", () => {
   );
 
   test(
-    "records the render script's licence as an input, since the house is the script's geometry",
+    "records only the licences of the kit files it reads: the script's own geometry adds none",
     async () => {
       const rig = await openRig({ launches: [{}] });
       const [id] = submitRender(rig, "house-licence", [south("intact")], {
@@ -135,21 +132,7 @@ describe("a structure render job", () => {
         pivot: HOUSE_PIVOT,
       });
       await drain(rig);
-      const record = jobsById(rig)[id as string];
-      expect(record?.engine?.licences).toEqual([
-        {
-          subject: "render.py",
-          role: "input",
-          licence: RENDER_SCRIPT_LICENCE,
-        },
-      ]);
-      const script = readFileSync(
-        join(RENDER_ROOT, "blender", "render.py"),
-        "utf8",
-      );
-      expect(script.split("\n")[0]).toBe(
-        `# SPDX-License-Identifier: ${RENDER_SCRIPT_LICENCE}`,
-      );
+      expect(jobsById(rig)[id as string]?.engine?.licences).toEqual([]);
     },
     T,
   );

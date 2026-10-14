@@ -1058,10 +1058,17 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         };
       }),
   ];
-  if (handEdits.length > 0) {
+  // A render of the script's own geometry has no input licence to record, and a manifest must
+  // name one: the owner's licence for the work itself.
+  const ownWork =
+    handEdits.length > 0 ||
+    (renderedJobs.size > 0 && licences.length === 0 && generations.size === 0);
+  if (ownWork) {
     if (input.originalWork === undefined)
       return refuse(
-        "the asset has hand edits: the licence of the owner's hand work must be given",
+        handEdits.length > 0
+          ? "the asset has hand edits: the licence of the owner's hand work must be given"
+          : "the asset reads no licensed input: the owner's licence for the work itself must be given",
       );
     licences.push({
       subject: input.assetId,

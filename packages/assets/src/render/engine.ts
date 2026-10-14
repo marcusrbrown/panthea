@@ -138,8 +138,6 @@ export const RENDER_SCRIPT_TEXT: string = RENDER_SCRIPT;
 export const RENDER_SCRIPT_SHA256: Sha256 = sha256Hex(
   new TextEncoder().encode(RENDER_SCRIPT_TEXT),
 );
-/** The script's SPDX licence, the one its header declares: the licence of the geometry it builds. */
-export const RENDER_SCRIPT_LICENCE = "GPL-3.0-or-later";
 
 export interface Clock {
   now(): number;
@@ -565,9 +563,6 @@ function prepare(
   writeFileSync(recipePath, renderRecipeJson(recipe.value), { mode: 0o600 });
 
   const usedKits = [...new Set(profile.kitFiles.map((f) => f.kit))].sort();
-  // A house is the script's own geometry, so the script's licence is an input to its art.
-  const scriptGeometry =
-    profile.kind === "structure" && profile.build.kind === "house";
   return {
     ok: true,
     prepared: {
@@ -586,22 +581,11 @@ function prepare(
       stamps,
       paletteId: palette.id,
       paletteDigest: paletteDigest(palette),
-      licences: [
-        ...usedKits.map((id) => ({
-          subject: id,
-          role: "input" as const,
-          licence: kitById.get(id)?.licence.spdx ?? "unknown",
-        })),
-        ...(scriptGeometry
-          ? [
-              {
-                subject: "render.py",
-                role: "input" as const,
-                licence: RENDER_SCRIPT_LICENCE,
-              },
-            ]
-          : []),
-      ],
+      licences: usedKits.map((id) => ({
+        subject: id,
+        role: "input" as const,
+        licence: kitById.get(id)?.licence.spdx ?? "unknown",
+      })),
     },
   };
 }

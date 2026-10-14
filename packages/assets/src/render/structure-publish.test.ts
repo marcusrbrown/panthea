@@ -24,26 +24,13 @@ import {
   renderCandidates,
 } from "../../test/render/rig";
 import { auditRendered } from "./audit";
-import { RENDER_SCRIPT_LICENCE } from "./engine";
 import { NO_STAMPS_HASH } from "./recipe";
 
 afterEach(closeRigs);
 
 const T = 120_000;
-const HOUSE_PIVOT = { x: 88, y: 124 };
+const HOUSE_PIVOT = { x: 96, y: 136 };
 const STATES = ["intact", "damaged", "ruin"] as const;
-
-const ASSESSMENTS = [
-  {
-    record: {
-      subject: "render.py",
-      role: "input" as const,
-      licence: RENDER_SCRIPT_LICENCE,
-    },
-    disposition: "mit-compatible" as const,
-    reason: "the fixture's owner assessment",
-  },
-];
 
 /** The three states rendered, picked and packed as `greek-house`, then approved. */
 async function approvedHouse() {
@@ -64,7 +51,7 @@ async function approvedHouse() {
   if (!packed.ok) throw new Error(packed.message);
   const approved = rig.session.approveAsset(
     "house-pack",
-    { assessments: ASSESSMENTS },
+    {},
     content,
     approvedPalettes(),
   );
@@ -93,11 +80,41 @@ const auditOf = (
 
 describe("a house through pack, approve, publish and the render audit", () => {
   test(
+    "a house with no kit input needs the owner's licence for it, and says so when it is missing",
+    async () => {
+      const rig = await openRig({ launches: [{}] });
+      const ids = await renderCandidates(
+        rig,
+        "house",
+        [{ state: "intact", direction: "south" }],
+        "house-set",
+        { subject: "greek-house", pivot: HOUSE_PIVOT },
+      );
+      pickAll(rig, "house-set", ids);
+      const refused = rig.session.pack(
+        {
+          id: "house-pack",
+          workingSetId: "house-set",
+          assetId: "greek-house",
+          styleTag: "retro",
+          footprint: { w: 4, h: 3 },
+        },
+        content,
+        approvedPalettes(),
+        registryOf(rig),
+      );
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) expect(refused.message).toContain("owner's licence");
+    },
+    T,
+  );
+
+  test(
     "the three states pack at the profile's cell, south only, with no stamps",
     async () => {
       const { manifest } = await approvedHouse();
       if (manifest.kind !== "sprite") throw new Error("not a sprite");
-      expect(manifest.cell).toEqual({ w: 176, h: 168 });
+      expect(manifest.cell).toEqual({ w: 192, h: 192 });
       expect(manifest.pivot).toEqual(HOUSE_PIVOT);
       expect(
         manifest.animations.map((a) => `${a.state}/${a.direction}`),
@@ -109,8 +126,14 @@ describe("a house through pack, approve, publish and the render audit", () => {
       expect(provenance.method).toBe("rendered");
       expect(provenance.revisionRecipe.stamps).toBe(NO_STAMPS_HASH);
       expect(provenance.revisionRecipe.profile.id).toBe("greek-house");
+      // No kit is read, so the one record is the owner's licence for the house itself.
       expect(provenance.licences).toEqual([
-        { subject: "render.py", role: "input", licence: RENDER_SCRIPT_LICENCE },
+        {
+          subject: "greek-house",
+          role: "original-work",
+          licence: "MIT",
+          attribution: "the owner",
+        },
       ]);
     },
     T,

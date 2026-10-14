@@ -11,30 +11,61 @@
   ],
   "build": {
     "kind": "tree",
-    "model": { "kit": "kenney-nature-kit", "path": "tree_oak.glb" },
-    "heightM": 4.6
+    "model": {
+      "kit": "kenney-nature-kit",
+      "path": "tree_oak.glb"
+    },
+    "heightM": 5.9
   },
   "cell": {
     "id": "structure",
-    "width": 176,
-    "height": 168,
-    "pivot": [88, 124]
+    "width": 192,
+    "height": 192,
+    "pivot": [96, 164]
   },
   "materials": {
-    "trunk": { "ramp": "soil", "bias": -0.3 },
-    "leaf": { "ramp": "olive", "bias": -0.3 },
+    "trunk": {
+      "ramp": "soil",
+      "bias": -0.1,
+      "bandShades": [0, 1, 2, 3, 3]
+    },
+    "leaf": {
+      "ramp": "olive",
+      "bias": -0.1,
+      "bandShades": [1, 2, 3, 4, 5]
+    },
+    "leaf-deep": {
+      "ramp": "olive",
+      "bias": -0.25,
+      "bandShades": [0, 1, 2, 3, 4]
+    },
     "trunk-burnt": {
       "ramp": "soil",
       "bias": -0.3,
-      "bandShades": [0, 0, 1, 1, 2]
+      "bandShades": [0, 0, 0, 1, 1]
+    },
+    "leaf-burnt": {
+      "ramp": "soil",
+      "bias": -0.25,
+      "bandShades": [0, 1, 1, 1, 1]
     },
     "leaf-scorched": {
       "ramp": "soil",
-      "bias": -0.2,
-      "bandShades": [1, 2, 2, 3, 3]
+      "bias": -0.3,
+      "bandShades": [0, 0, 1, 1, 1]
+    },
+    "ember": {
+      "ramp": "terracotta",
+      "bias": 0.6,
+      "bandShades": [3, 3, 3, 3, 3]
     }
   },
-  "wind": { "amplitudeM": 0.14, "lag": 1.2, "cycles": 1, "swirl": 0.45 },
+  "wind": {
+    "amplitudeM": 0.6,
+    "lag": 1.4,
+    "cycles": 1,
+    "swirl": 0.5
+  },
   "clips": {
     "intact": {
       "loop": true,
@@ -46,15 +77,23 @@
       "loop": true,
       "frames": 12,
       "frameMs": [166, 167, 167, 166, 167, 167, 166, 167, 167, 166, 167, 167],
-      "materials": { "trunk": "trunk-burnt", "leaf": "leaf-scorched" },
-      "leaves": 0.6
+      "materials": {
+        "trunk": "trunk-burnt",
+        "leaf": "leaf-burnt",
+        "leaf-deep": "leaf-scorched"
+      },
+      "leaves": 0.5,
+      "embers": 10
     },
     "ruin": {
       "loop": false,
       "frames": 1,
-      "frameMs": 1000,
+      "frameMs": [1000],
       "ruin": true,
-      "materials": { "trunk": "trunk-burnt" }
+      "materials": {
+        "trunk": "trunk-burnt"
+      },
+      "embers": 3
     }
   }
 }

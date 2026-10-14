@@ -89,7 +89,7 @@ describe("asset vocabulary", () => {
       ["large", 128, 128],
       ["god-tall", 112, 96],
       ["portrait", 96, 96],
-      ["structure", 176, 168],
+      ["structure", 192, 192],
     ]);
     expect(parsed.value.cells.find((c) => c.id === "god-tall")?.kinds).toEqual([
       "sprite",

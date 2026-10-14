@@ -1275,14 +1275,14 @@ describe("structures", () => {
   it("refuses a profile whose cell is not the vocabulary's cell for the matrix's class", () => {
     const repo = renderCopy();
     editJson(profileFile(repo), (p) => {
-      p.cell.width = 168;
-      p.cell.pivot = [84, 124];
+      p.cell.width = 184;
+      p.cell.pivot = [92, 136];
     });
     const found = diagnostics(contentRoot(), repo);
     expect(found).toHaveLength(1);
     expect(found[0]?.file).toBe("tools/render/profiles/greek-house.json");
     expect(found[0]?.message).toContain("cell");
-    expect(found[0]?.message).toContain("176x168");
+    expect(found[0]?.message).toContain("192x192");
   });
 
   it("refuses a profile with no clip for a state its subject requires, or with frames the vocabulary does not allow", () => {

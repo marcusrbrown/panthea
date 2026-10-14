@@ -71,7 +71,7 @@ describe("a house rendered by the real Blender", () => {
   live(
     "damaged keeps intact's alpha silhouette, and ruin does not",
     async () => {
-      const { cells } = await render("greek-house", { x: 88, y: 124 }, [
+      const { cells } = await render("greek-house", { x: 96, y: 136 }, [
         "intact",
         "damaged",
         "ruin",
@@ -106,7 +106,7 @@ describe("a tree rendered by the real Blender", () => {
   live(
     "its wind loop is seamless: the step from the last frame back to the first is no bigger than the steps between the others",
     async () => {
-      const { cells } = await render("oak-tree", { x: 88, y: 124 }, ["intact"]);
+      const { cells } = await render("oak-tree", { x: 96, y: 164 }, ["intact"]);
       const frames = cells.intact as RgbaImage[];
       expect(frames).toHaveLength(12);
       const steps = frames.map((frame, i) =>
@@ -125,7 +125,7 @@ describe("a tree rendered by the real Blender", () => {
   live(
     "damaged keeps the trunk and drops the crown's leaves, and the ruin is a still stump",
     async () => {
-      const { cells } = await render("oak-tree", { x: 88, y: 124 }, [
+      const { cells } = await render("oak-tree", { x: 96, y: 164 }, [
         "intact",
         "damaged",
         "ruin",

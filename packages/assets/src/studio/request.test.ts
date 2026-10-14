@@ -810,7 +810,7 @@ describe("subjectOf", () => {
 
 describe("structure requests", () => {
   const engine = renderEngineFor(join(repo, "tools", "render"));
-  const pivot = { x: 88, y: 124 };
+  const pivot = { x: 96, y: 136 };
   const house = (over: Partial<RequestInput> = {}): RequestInput => ({
     subject: "greek-house",
     kind: "sprite",
@@ -837,8 +837,8 @@ describe("structure requests", () => {
       kind: "sprite",
       domains: [],
       iconography: [],
-      cell: { id: "structure", w: 176, h: 168 },
-      generated: { w: 176, h: 168 },
+      cell: { id: "structure", w: 192, h: 192 },
+      generated: { w: 192, h: 192 },
       pivot,
       palette: { id: "greek-retro", family: "town" },
     });
@@ -858,7 +858,7 @@ describe("structure requests", () => {
     );
     expect(refused).toMatchObject({
       ok: false,
-      error: { kind: "unmeasured-size", native: { w: 176, h: 168 } },
+      error: { kind: "unmeasured-size", native: { w: 192, h: 192 } },
     });
   });
 

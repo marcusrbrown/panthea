@@ -255,6 +255,51 @@ describe("a structure profile", () => {
     );
   });
 
+  it("lays a decal on the roof, turned by an angle, and an ember count on a tree", () => {
+    const house = structure(
+      edited(houseJson(), (j) => {
+        j.clips.damaged.decals.push({
+          wall: "roof",
+          at: [1, 1],
+          size: [0.4, 0.4],
+          material: "scorch",
+          angle: 20,
+        });
+      }),
+    );
+    expect(house.clips.damaged?.decals[1]).toMatchObject({
+      wall: "roof",
+      angle: 20,
+    });
+    expect(house.clips.damaged?.decals[0]?.angle).toBeUndefined();
+    const tree = structure(
+      edited(treeJson(), (j) => (j.clips.ruin.embers = 3)),
+    );
+    expect(tree.clips.ruin?.embers).toBe(3);
+    expect(structure(treeJson()).clips.ruin?.embers).toBeUndefined();
+    // They are part of what the hash covers.
+    expect(profileHash(tree)).not.toBe(profileHash(structure(treeJson())));
+  });
+
+  it("refuses a decal angle that is not a number, embers on a house and a fractional ember count", () => {
+    expect(
+      failure(
+        edited(houseJson(), (j) => (j.clips.damaged.decals[0].angle = "tilt")),
+      ).path,
+    ).toBe("profile.clips.damaged.decals[0].angle");
+    expect(
+      failure(edited(houseJson(), (j) => (j.clips.ruin.embers = 2))).path,
+    ).toBe("profile.clips.ruin.embers");
+    expect(
+      failure(edited(treeJson(), (j) => (j.clips.ruin.embers = 1.5))).path,
+    ).toBe("profile.clips.ruin.embers");
+    expect(
+      failure(
+        edited(houseJson(), (j) => (j.clips.damaged.decals[0].wall = "floor")),
+      ).path,
+    ).toBe("profile.clips.damaged.decals[0].wall");
+  });
+
   it("refuses wind that cannot loop", () => {
     expect(failure(edited(treeJson(), (j) => (j.wind.cycles = 0))).path).toBe(
       "profile.wind.cycles",

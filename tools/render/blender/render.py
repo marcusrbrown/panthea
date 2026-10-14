@@ -1128,7 +1128,7 @@ def hash_unit(i: int) -> float:
 
 
 class MeshBuilder:
-    """Faces added in groups, each with a material role and a part id; `finish` makes the object."""
+    """Closed solids added in groups, each with a material role and a part id; `finish` makes the object."""
 
     def __init__(self):
         self.bm = bmesh.new()
@@ -1143,16 +1143,25 @@ class MeshBuilder:
             face.material_index = slot
             self.parts.append(part)
 
-    def box(self, centre, size, role: str, part: str, tilt=None):
+    @staticmethod
+    def turned(verts, centre, turns) -> None:
+        """Turns the vertices about `centre`, one (degrees, axis) after another."""
+        centre = Vector(centre)
+        for degrees, axis in turns:
+            rot = mathutils.Matrix.Rotation(math.radians(degrees), 3, axis)
+            for v in verts:
+                v.co = centre + rot @ (v.co - centre)
+
+    def solid(self, verts, quads, role: str, part: str) -> None:
+        self.add([self.bm.faces.new([verts[i] for i in quad]) for quad in quads], role, part)
+
+    def box(self, centre, size, role: str, part: str, tilt=()):
+        """Axis-aligned box, then turned about its own centre by `tilt`, a sequence of (degrees, axis)."""
         cx, cy, cz = centre
         sx, sy, sz = (s / 2 for s in size)
         verts = [self.bm.verts.new((cx + dx * sx, cy + dy * sy, cz + dz * sz)) for dx in (-1, 1) for dy in (-1, 1) for dz in (-1, 1)]
-        if tilt is not None:  # (degrees, axis): turned about the box's own centre
-            rot = mathutils.Matrix.Rotation(math.radians(tilt[0]), 3, tilt[1])
-            for v in verts:
-                v.co = Vector(centre) + rot @ (v.co - Vector(centre))
-        faces = [self.bm.faces.new([verts[i] for i in idx]) for idx in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3))]
-        self.add(faces, role, part)
+        self.turned(verts, centre, tilt)
+        self.solid(verts, ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)), role, part)
 
     def column(self, centre, radius: float, height: float, role: str, part: str, taper: float = 1.0, segments: int = 10):
         cx, cy, cz = centre
@@ -1163,17 +1172,28 @@ class MeshBuilder:
         faces.append(self.bm.faces.new(bottom))
         self.add(faces, role, part)
 
-    def gable(self, x0: float, x1: float, half_w: float, z0: float, rise: float, slope_role: str, end_role: str):
-        """Triangular prism, ridge along X: the two slopes take `slope_role` (part roof), the two ends `end_role` (part pediment)."""
-        a = [self.bm.verts.new((x0, -half_w, z0)), self.bm.verts.new((x0, half_w, z0)), self.bm.verts.new((x0, 0.0, z0 + rise))]
-        b = [self.bm.verts.new((x1, -half_w, z0)), self.bm.verts.new((x1, half_w, z0)), self.bm.verts.new((x1, 0.0, z0 + rise))]
-        self.add([self.bm.faces.new(a), self.bm.faces.new(b[::-1])], end_role, "pediment")
-        sides = [self.bm.faces.new((a[i], a[(i + 1) % 3], b[(i + 1) % 3], b[i])) for i in range(3)]
-        self.add(sides, slope_role, "roof")  # the first side is the base, hidden under the cornice
+    def limb(self, a, b, r0: float, r1: float, role: str, part: str, segments: int = 7):
+        """A tapering round limb from point a (radius r0) to point b (radius r1), capped at both ends."""
+        a, b = Vector(a), Vector(b)
+        axis = (b - a).normalized()
+        side = axis.cross(Vector((0.0, 0.0, 1.0)) if abs(axis.z) < 0.9 else Vector((1.0, 0.0, 0.0))).normalized()
+        up = axis.cross(side)
+        ring = lambda c, r: [self.bm.verts.new(c + r * (math.cos(2 * math.pi * i / segments) * side + math.sin(2 * math.pi * i / segments) * up)) for i in range(segments)]  # noqa: E731
+        start, end = ring(a, r0), ring(b, r1)
+        faces = [self.bm.faces.new((start[i], start[(i + 1) % segments], end[(i + 1) % segments], end[i])) for i in range(segments)]
+        faces.append(self.bm.faces.new(end[::-1]))
+        faces.append(self.bm.faces.new(start))
+        self.add(faces, role, part)
+
+    def prism(self, axis: str, along0: float, along1: float, half_w: float, z0: float, rise: float, role: str, part: str):
+        """Triangular prism, its ridge along `axis` ("x" or "y"): base at z0 spanning ±half_w across the ridge, apex at z0 + rise."""
+        at = (lambda a, c, z: (a, c, z)) if axis == "x" else (lambda a, c, z: (c, a, z))
+        v = [self.bm.verts.new(at(a, c, z)) for a in (along0, along1) for c, z in ((-half_w, z0), (half_w, z0), (0.0, z0 + rise))]
+        self.solid(v, ((0, 1, 2), (3, 5, 4), (0, 3, 4, 1), (1, 4, 5, 2), (2, 5, 3, 0)), role, part)
 
     def finish(self, name: str, ex: Vector, ey: Vector):
-        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
         mesh = bpy.data.meshes.new(name)
+        bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
         self.bm.to_mesh(mesh)
         self.bm.free()
         for poly in mesh.polygons:
@@ -1253,13 +1273,18 @@ class Structure:
 
 
 class House(Structure):
-    """A Greek town house from script geometry: the ridge along +X, the door on the +Y front, a gable end on +X.
+    """A Greek town house from script geometry: whitewashed walls on a stone plinth, a low-pitch roof of tile courses,
+    a columned porch with a pediment on the +Y front (the door side), windows with shutters, a gable end on +X.
 
-    Damaged is this mesh with other materials and decals. The ruin breaks the walls and the roof."""
+    Damaged is this mesh with its marks added as decals: the silhouette is the whole house's. The ruin breaks the
+    walls, the porch and the roof."""
 
-    LENGTH, DEPTH = 4.0, 3.0  # footprint, metres
-    STEP, WALL, RISE, EAVE, WALL_T = 0.14, 2.3, 1.0, 0.2, 0.26
-    DOOR_X, DOOR_W, DOOR_H = 0.8, 0.9, 1.8
+    LENGTH, DEPTH = 4.2, 3.0  # footprint, metres
+    PLINTH, WALL, CORNICE = 0.3, 2.4, 0.16
+    EAVE, PITCH, COURSES, COURSE_T = 0.35, 20.0, 9, 0.09
+    PORCH_W, PORCH_D, COLUMN_H = 2.3, 1.2, 2.25
+    DOOR_W, DOOR_H = 0.95, 1.85
+    WINDOW_X, WINDOW_Z, WINDOW_W, WINDOW_H = 1.5, 1.5, 0.5, 0.8
 
     def build(self, state: str, clip: dict) -> None:
         if clip["ruin"]:
@@ -1267,60 +1292,149 @@ class House(Structure):
         else:
             self.build_whole(clip)
 
-    def base(self, mb: MeshBuilder) -> None:
-        L, D, s = self.LENGTH, self.DEPTH, self.STEP
-        mb.box((0, 0, s / 2), (L + 0.4, D + 0.4, s), "base", "stylobate")
+    @property
+    def wall_top(self) -> float:
+        return self.PLINTH + self.WALL
+
+    def wall_box(self, mb: MeshBuilder, wall: str, a: float, n: float, z: float, along: float, depth: float, high: float, role: str, part: str, tilt=()):
+        """A box on a wall: `a` along it (x on the front, y on the side), `n` out from its plane, `z` its centre height."""
+        L, D = self.LENGTH, self.DEPTH
+        if wall == "front":
+            mb.box((a, D / 2 + n, z), (along, depth, high), role, part, tilt)
+        else:
+            mb.box((L / 2 + n, a, z), (depth, along, high), role, part, tilt)
+
+    def plinth(self, mb: MeshBuilder) -> None:
+        L, D, P, p = self.LENGTH, self.DEPTH, self.PLINTH, self.PORCH_D
+        mb.box((0, 0, P / 2), (L + 0.5, D + 0.5, P), "plinth", "stylobate")
+        # The porch's floor and the step up to it.
+        mb.box((0, D / 2 + (p + 0.3) / 2 - 0.1, P / 2), (self.PORCH_W + 0.5, p + 0.3, P), "plinth", "stylobate")
+        mb.box((0, D / 2 + p + 0.45, 0.08), (1.5, 0.4, 0.16), "plinth", "stylobate")
+
+    def window(self, mb: MeshBuilder, wall: str, a: float) -> None:
+        w, h, z = self.WINDOW_W, self.WINDOW_H, self.WINDOW_Z
+        self.wall_box(mb, wall, a, 0.01, z, w, 0.03, h, "window", "door")
+        # A deep frame around a dark opening, a sill and a lintel, and a shutter either side.
+        self.wall_box(mb, wall, a - w / 2 - 0.035, 0.05, z, 0.07, 0.1, h + 0.14, "trim", "entablature")
+        self.wall_box(mb, wall, a + w / 2 + 0.035, 0.05, z, 0.07, 0.1, h + 0.14, "trim", "entablature")
+        self.wall_box(mb, wall, a, 0.05, z + h / 2 + 0.035, w + 0.14, 0.1, 0.07, "trim", "entablature")
+        self.wall_box(mb, wall, a, 0.09, z - h / 2 - 0.05, w + 0.3, 0.18, 0.07, "trim", "entablature")
+        self.wall_box(mb, wall, a, 0.03, z + h / 2 + 0.16, w + 0.34, 0.07, 0.1, "trim", "entablature")
+        for side in (-1, 1):
+            self.wall_box(mb, wall, a + side * (w / 2 + 0.22), 0.035, z, 0.24, 0.05, h + 0.1, "shutter", "door")
 
     def whole_walls(self, mb: MeshBuilder) -> None:
-        L, D, s = self.LENGTH, self.DEPTH, self.STEP
-        mb.box((0, 0, s + self.WALL / 2), (L, D, self.WALL), "wall", "wall")
-        top = s + self.WALL
-        mb.box((0, 0, top + 0.07), (L + 0.16, D + 0.16, 0.14), "trim", "entablature")
-        # the door and its lintel on the front, a window each on the front and the gable end
-        mb.box((self.DOOR_X, D / 2 + 0.02, s + self.DOOR_H / 2), (self.DOOR_W, 0.06, self.DOOR_H), "door", "door")
-        mb.box((self.DOOR_X, D / 2 + 0.03, s + self.DOOR_H + 0.08), (self.DOOR_W + 0.3, 0.08, 0.16), "trim", "entablature")
-        mb.box((-0.9, D / 2 + 0.02, 1.55), (0.7, 0.06, 0.7), "door", "door")
-        mb.box((-0.9, D / 2 + 0.03, 1.55 + 0.4), (1.0, 0.08, 0.1), "trim", "entablature")
-        mb.box((L / 2 + 0.02, 0.0, 1.55), (0.06, 0.7, 0.7), "door", "door")
-        mb.box((L / 2 + 0.03, 0.0, 1.55 + 0.4), (0.08, 1.0, 0.1), "trim", "entablature")
+        L, D, P, p = self.LENGTH, self.DEPTH, self.PLINTH, self.PORCH_D
+        mb.box((0, 0, P + self.WALL / 2), (L, D, self.WALL), "wall", "wall")
+        mb.box((0, 0, self.wall_top + self.CORNICE / 2), (L + 0.22, D + 0.22, self.CORNICE), "trim", "entablature")
+        # The door under the porch: a dark leaf in a stone frame.
+        d = self.DOOR_W
+        self.wall_box(mb, "front", 0.0, 0.02, P + self.DOOR_H / 2, d, 0.05, self.DOOR_H, "door", "door")
+        for side in (-1, 1):
+            self.wall_box(mb, "front", side * (d / 2 + 0.07), 0.05, P + self.DOOR_H / 2, 0.14, 0.1, self.DOOR_H + 0.14, "trim", "entablature")
+        self.wall_box(mb, "front", 0.0, 0.05, P + self.DOOR_H + 0.07, d + 0.42, 0.1, 0.14, "trim", "entablature")
+        for side in (-1, 1):
+            self.window(mb, "front", side * self.WINDOW_X)
+        self.window(mb, "side", 0.0)
+        # The porch: two columns on a plinth carrying an architrave and a pediment.
+        cx = self.PORCH_W / 2 - 0.15
+        cy = D / 2 + p - 0.2
+        shaft = self.COLUMN_H - 0.22
+        for side in (-1, 1):
+            mb.box((side * cx, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
+            mb.column((side * cx, cy, P + 0.1), 0.15, shaft, "column", "column", taper=0.82, segments=10)
+            mb.box((side * cx, cy, P + 0.1 + shaft + 0.06), (0.42, 0.42, 0.12), "column", "column")
+        top = P + self.COLUMN_H
+        mb.box((0, cy, top + 0.13), (self.PORCH_W + 0.2, 0.36, 0.26), "trim", "entablature")
+        mb.box((0, (D / 2 + cy) / 2, top + 0.13), (self.PORCH_W - 0.2, p - 0.2, 0.26), "trim", "entablature")
+
+    def roof_slopes(self, mb: MeshBuilder, axis: str, along0: float, along1: float, half_w: float, z_eave: float, rise: float, courses: int) -> None:
+        """Both slopes of a gable roof as courses of tile slabs, each higher one stepped up so its lower lip shows, and a ridge cap."""
+        theta = math.degrees(math.atan2(rise, half_w))
+        length = math.hypot(half_w, rise)
+        pitch = length / courses
+        mid, span = (along0 + along1) / 2, along1 - along0
+        for side in (-1, 1):
+            for k in range(courses):
+                s = (k + 0.5) * pitch
+                across = side * (half_w - s * math.cos(math.radians(theta)))
+                z = z_eave + s * math.sin(math.radians(theta))
+                lift = self.COURSE_T / 2 + (0.07 if k % 2 else 0.0)
+                across += side * lift * math.sin(math.radians(theta))
+                z += lift * math.cos(math.radians(theta))
+                if axis == "x":
+                    mb.box((mid, across, z), (span, pitch * 1.4, self.COURSE_T), "roof", "roof", tilt=[(-side * theta, "X")])
+                else:
+                    mb.box((across, mid, z), (pitch * 1.4, span, self.COURSE_T), "roof", "roof", tilt=[(side * theta, "Y")])
+        ridge_z = z_eave + rise + 0.05
+        if axis == "x":
+            mb.box((mid, 0.0, ridge_z), (span + 0.12, 0.3, 0.16), "ridge", "roof")
+        else:
+            mb.box((0.0, mid, ridge_z), (0.3, span + 0.12, 0.16), "ridge", "roof")
 
     def whole_roof(self, mb: MeshBuilder) -> None:
         L, D, e = self.LENGTH, self.DEPTH, self.EAVE
-        z0 = self.STEP + self.WALL + 0.14
-        mb.gable(-(L / 2 + e), L / 2 + e, D / 2 + e, z0, self.RISE, "roof", "gable")
+        tan = math.tan(math.radians(self.PITCH))
+        half_w = D / 2 + e
+        z_eave = self.wall_top + self.CORNICE - 0.02
+        # Whitewashed gable fill under the slabs, so the end of the house is a wall to the ridge.
+        wall_hw = D / 2 + 0.05
+        z0 = z_eave + (half_w - wall_hw) * tan - self.COURSE_T - 0.05
+        mb.prism("x", -L / 2, L / 2, wall_hw, z0, wall_hw * tan, "gable", "pediment")
+        self.roof_slopes(mb, "x", -(L / 2 + 0.3), L / 2 + 0.3, half_w, z_eave, half_w * tan, self.COURSES)
+        # The porch's own small gable: a pediment on the columns' front line, slabs over it, running into the main roof.
+        D2, p, top = D / 2, self.PORCH_D, self.PLINTH + self.COLUMN_H + 0.26
+        pw = self.PORCH_W / 2 + 0.15
+        porch_z0 = top - 0.02
+        rise = pw * tan * 0.9
+        mb.prism("y", D2 + 0.05, D2 + p - 0.05, pw - 0.1, porch_z0, (pw - 0.1) * 0.9 * tan, "gable", "pediment")
+        self.roof_slopes(mb, "y", D2 + 0.0, D2 + p + 0.05, pw, porch_z0 + 0.12, rise, 4)
 
     def build_whole(self, clip: dict) -> None:
         mb = MeshBuilder()
-        self.base(mb)
+        self.plinth(mb)
         self.whole_walls(mb)
         self.whole_roof(mb)
         self.attach(mb, "house", clip)
         self.decals(clip)
 
     def decals(self, clip: dict) -> None:
-        """Flat marks on the walls, set just proud of them and inside their edges: the silhouette is the whole house's."""
+        """Flat marks proud of the walls and roof and inside their edges: the silhouette stays the whole house's."""
         if not clip["decals"]:
             return
         mb = MeshBuilder()
-        L, D, s = self.LENGTH, self.DEPTH, self.STEP
+        L, D, e = self.LENGTH, self.DEPTH, self.EAVE
         thick = 0.024
+        tan = math.tan(math.radians(self.PITCH))
+        half_w = D / 2 + e
+        theta = self.PITCH
+        z_eave = self.wall_top + self.CORNICE - 0.02
         for decal in clip["decals"]:
-            u, z = decal["at"]
+            u, v = decal["at"]
             w, h = decal["size"]
+            turn = [(decal.get("angle", 0.0), "Y" if decal["wall"] == "front" else "X" if decal["wall"] == "side" else "Z")]
             if decal["wall"] == "front":
-                mb.box((u - L / 2, D / 2 + thick / 2, z), (w, thick, h), decal["material"], "prop")
+                mb.box((u - L / 2, D / 2 + 0.1 + thick / 2, v), (w, thick, h), decal["material"], "prop", tilt=turn)
+            elif decal["wall"] == "side":
+                mb.box((L / 2 + 0.1 + thick / 2, D / 2 - u, v), (thick, w, h), decal["material"], "prop", tilt=turn)
             else:
-                mb.box((L / 2 + thick / 2, D / 2 - u, z), (thick, w, h), decal["material"], "prop")
+                # On the front slope, over the tile courses: along the ridge from the roof's left end, up the slope from the eave.
+                x = u - (L / 2 + 0.3)
+                lift = self.COURSE_T + 0.13
+                y = half_w - v * math.cos(math.radians(theta)) + lift * math.sin(math.radians(theta))
+                z = z_eave + v * math.sin(math.radians(theta)) + lift * math.cos(math.radians(theta))
+                mb.box((x, y, z), (w, h, thick), decal["material"], "prop", tilt=[*turn, (-theta, "X")])
         obj, roles = mb.finish("decals", self.ex, self.ey)
         self.book.bind(obj, roles)
         self.objs.append(obj)
 
     def build_ruin(self, clip: dict) -> None:
-        L, D, s, T = self.LENGTH, self.DEPTH, self.STEP, self.WALL_T
+        L, D, P, T = self.LENGTH, self.DEPTH, self.PLINTH, 0.28
+        p, cy = self.PORCH_D, self.DEPTH / 2 + self.PORCH_D - 0.2
         mb = MeshBuilder()
-        self.base(mb)
-        mb.box((0, 0, s + 0.03), (L - 0.1, D - 0.1, 0.06), "rubble", "ground")  # the floor
-        seg = 0.55
+        self.plinth(mb)
+        mb.box((0, 0, P + 0.03), (L - 0.1, D - 0.1, 0.06), "rubble", "ground")  # the floor
+        seg = 0.6
         index = 0
 
         def course(length: float, fixed: float, along: str, low: float, high: float, gap=None):
@@ -1334,40 +1448,60 @@ class House(Structure):
                     continue
                 index += 1
                 h = low + (high - low) * hash_unit(index)
-                pos = (centre, fixed, s + h / 2) if along == "x" else (fixed, centre, s + h / 2)
+                pos = (centre, fixed, P + h / 2) if along == "x" else (fixed, centre, P + h / 2)
                 size = (width * 0.98, T, h) if along == "x" else (T, width * 0.98, h)
                 mb.box(pos, size, "wall", "wall")
 
-        course(L, -D / 2 + T / 2, "x", 1.5, 2.3)  # the far long wall stands highest
-        course(D, -L / 2 + T / 2, "y", 1.3, 2.2)  # the far gable wall
-        course(L, D / 2 - T / 2, "x", 0.3, 1.0, gap=(self.DOOR_X - self.DOOR_W / 2 - 0.05, self.DOOR_X + self.DOOR_W / 2 + 0.05))
-        course(D, L / 2 - T / 2, "y", 0.3, 1.1)
-        # a charred door post and a short run of the cornice still standing
-        mb.box((self.DOOR_X - self.DOOR_W / 2 - 0.12, D / 2, s + 0.8), (0.12, 0.14, 1.6), "door", "door")
-        mb.box((-L / 2 - 0.02, -D / 4, s + 2.2), (0.3, 0.9, 0.12), "trim", "entablature")
-        # roof timbers fallen into the house, and a slab of tiles on top of them
-        mb.box((-0.6, -0.5, s + 0.7), (0.14, 3.0, 0.14), "trim", "entablature", tilt=(34, "X"))
-        mb.box((0.6, 0.1, s + 0.45), (0.14, 2.6, 0.14), "trim", "entablature", tilt=(-26, "X"))
-        mb.box((-0.4, -0.2, s + 0.78), (1.5, 1.3, 0.1), "roof", "roof", tilt=(28, "X"))
-        mb.box((1.2, 0.6, s + 0.22), (1.1, 0.9, 0.1), "roof", "roof", tilt=(-14, "Y"))
-        # rubble inside and about the base
-        for k in range(16):
+        course(L, -D / 2 + T / 2, "x", 1.6, 2.4)  # the far long wall stands highest
+        course(D, -L / 2 + T / 2, "y", 1.3, 2.3)  # the far gable wall
+        course(L, D / 2 - T / 2, "x", 0.3, 1.1, gap=(-self.DOOR_W / 2 - 0.1, self.DOOR_W / 2 + 0.1))
+        course(D, L / 2 - T / 2, "y", 0.3, 1.2)
+        # A charred door post, a run of cornice on the far wall, and what is left of the porch.
+        mb.box((-self.DOOR_W / 2 - 0.12, D / 2, P + 0.85), (0.14, 0.16, 1.7), "timber", "door", tilt=[(4, "Y")])
+        mb.box((-L / 2 + 0.2, -D / 4, P + 2.5), (0.5, 1.1, self.CORNICE), "trim", "entablature")
+        mb.column((-self.PORCH_W / 2 + 0.15, cy, P + 0.1), 0.15, 1.1, "column", "column", taper=0.9, segments=10)
+        mb.box((-self.PORCH_W / 2 + 0.15, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
+        mb.box((self.PORCH_W / 2 - 0.15, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
+        mb.box((self.PORCH_W / 2 - 0.15, cy + 0.2, P + 0.5), (0.3, 0.3, 0.9), "column", "column", tilt=[(78, "X")])  # a shaft that fell forward
+        mb.box((0.5, cy + 0.85, 0.18), (1.2, 0.34, 0.24), "trim", "entablature", tilt=[(-8, "Z")])  # the architrave on the ground
+        mb.box((-0.4, cy + 0.9, 0.2), (0.44, 0.44, 0.12), "column", "column", tilt=[(12, "Z")])  # a capital
+        # Burnt roof timbers fallen into the house and slabs of tile on them.
+        mb.box((-0.7, -0.5, P + 0.7), (0.16, 3.0, 0.16), "timber", "entablature", tilt=[(34, "X")])
+        mb.box((0.7, 0.1, P + 0.45), (0.16, 2.6, 0.16), "timber", "entablature", tilt=[(-26, "X")])
+        mb.box((-0.2, -0.2, P + 0.8), (1.6, 1.3, 0.1), "roof", "roof", tilt=[(28, "X")])
+        mb.box((1.3, 0.5, P + 0.24), (1.2, 0.9, 0.1), "roof", "roof", tilt=[(-14, "Y")])
+        # Rubble inside and about the plinth.
+        for k in range(18):
             ux, uy = hash_unit(100 + k * 3), hash_unit(101 + k * 3)
             size = 0.22 + 0.34 * hash_unit(102 + k * 3)
             outside = k % 3 == 0
             x = (ux - 0.5) * (L + 1.0 if outside else L - 0.7)
             y = (uy - 0.5) * (D + 1.0 if outside else D - 0.7)
-            mb.box((x, y, s + size / 2 * 0.8), (size, size * (0.7 + hash_unit(k)), size * 0.8), "rubble", "prop", tilt=(hash_unit(k + 40) * 40 - 20, "Z"))
+            mb.box((x, y, P + size / 2 * 0.8), (size, size * (0.7 + hash_unit(k)), size * 0.8), "rubble", "prop", tilt=[(hash_unit(k + 40) * 40 - 20, "Z")])
         self.attach(mb, "ruin", clip)
 
 
 class Tree(Structure):
-    """One kit model standing on the ground, swaying in a seamless wind loop; its ruin is the trunk cut down to a stump.
+    """One kit model made into an old oak: its trunk and roots, limbs added by the script, and its crown copied into
+    clusters. It sways in a seamless wind loop; damaged keeps fewer, scorched clusters and glowing embers; the ruin
+    is the trunk cut down to a charred stump with broken limb stubs."""
 
-    Every state is built from the same model: damaged drops leaves and changes materials, the ruin keeps only the trunk's foot."""
-
-    STUMP = 0.9  # metres of trunk left standing in the ruin
-    PARTS = {"trunk": "trunk", "leaf": "foliage"}
+    # Cluster layout as fractions of the tree's height: x, y, z of the centre and the width.
+    CLUSTERS = (
+        (0.00, 0.00, 0.69, 0.47),
+        (0.24, 0.02, 0.53, 0.36),
+        (0.08, 0.23, 0.57, 0.37),
+        (-0.20, 0.15, 0.55, 0.36),
+        (-0.22, -0.12, 0.53, 0.35),
+        (0.05, -0.24, 0.58, 0.37),
+        (0.20, -0.20, 0.55, 0.34),
+        (-0.03, -0.02, 0.84, 0.33),
+        (0.17, 0.14, 0.77, 0.30),
+        (-0.14, -0.02, 0.76, 0.30),
+    )
+    TRUNK_TOP = 0.34  # fraction of the height where the limbs leave the trunk
+    TRUNK_GIRTH = 1.7  # how much thicker than the kit's the trunk is
+    STUMP = 0.27  # fraction of the height of trunk left standing in the ruin
 
     def __init__(self, profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook):
         super().__init__(profile, camera, staging, scene, axes, book)
@@ -1382,15 +1516,23 @@ class Tree(Structure):
         co = np.empty(count * 3, dtype=np.float64)
         mesh.data.vertices.foreach_get("co", co)
         co = co.reshape(-1, 3)
-        co[:, 2] -= co[:, 2].min()  # standing on the ground
-        co *= self.height / co[:, 2].max()
-        foot = co[co[:, 2] < 0.08 * self.height]
-        co[:, :2] -= foot[:, :2].mean(axis=0)  # the trunk's foot on the world origin
         names = [(m.name if m else "").lower() for m in mesh.data.materials]
-        roles = ["trunk" if ("wood" in names[min(p.material_index, len(names) - 1)] or "bark" in names[min(p.material_index, len(names) - 1)]) else "leaf" for p in mesh.data.polygons]
-        self.template = (co, [tuple(p.vertices) for p in mesh.data.polygons], roles)
+        polys = [(tuple(p.vertices), "trunk" if any(k in names[min(p.material_index, len(names) - 1)] for k in ("wood", "bark")) else "leaf") for p in mesh.data.polygons]
         for o in objs:
             bpy.data.objects.remove(o, do_unlink=True)
+        trunk_idx = sorted({i for verts, role in polys if role == "trunk" for i in verts})
+        crown_idx = sorted({i for verts, role in polys if role == "leaf" for i in verts})
+        ground = co[trunk_idx, 2].min()
+        trunk_top = co[trunk_idx, 2].max()
+        # The trunk, standing on the ground with its roots about the origin, sized so its top is TRUNK_TOP of the tree's height.
+        self.trunk_scale = self.TRUNK_TOP * self.height / (trunk_top - ground)
+        foot = co[[i for i in trunk_idx if co[i, 2] < ground + 0.05 * (trunk_top - ground)]]
+        self.trunk_origin = np.array([foot[:, 0].mean(), foot[:, 1].mean(), ground])
+        self.template = (co, polys)
+        # The crown, centred on the origin and one unit wide: each cluster is a copy of it.
+        crown = co[crown_idx]
+        self.crown_centre = (crown.min(axis=0) + crown.max(axis=0)) / 2
+        self.crown_width = float(max(crown[:, 0].max() - crown[:, 0].min(), crown[:, 1].max() - crown[:, 1].min()))
         right = _norm((axes.right[0], axes.right[1], 0.0))
         back = _norm((axes.back[0], axes.back[1], 0.0))
         self.sway_axes = (np.array(right), np.array(back))
@@ -1398,67 +1540,121 @@ class Tree(Structure):
         self.frames = 0
         self.wind = profile.get("wind")
 
-    def build(self, state: str, clip: dict) -> None:
-        co, polys, roles = self.template
-        keep = clip.get("leaves", 1.0)
-        bm = bmesh.new()
-        verts = [bm.verts.new(tuple(c)) for c in co]
-        order = ["trunk", "leaf"]
-        shrink = math.sqrt(keep)
-        for poly, role in zip(polys, roles):
-            if role == "leaf" and keep < 1.0:
-                # A sparse crown: each leaf face shrinks about its own centre to `keep` of its area, so the foliage
-                # breaks into separate leaves and the trunk shows through.
-                corners = co[list(poly)]
-                centre = corners.mean(axis=0)
-                face = bm.faces.new([bm.verts.new(tuple(centre + (c - centre) * shrink)) for c in corners])
-            else:
-                face = bm.faces.new([verts[k] for k in poly])
-            face.material_index = order.index(role)
-        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
-        if clip["ruin"]:
-            cut = self.STUMP
-            geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
-            result = bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-6, plane_co=(0.0, 0.0, cut), plane_no=(0.0, 0.0, 1.0), clear_outer=True)
+    def trunk_point(self, p) -> tuple:
+        """A template trunk point on the tree: sized to the height, and thicker than the kit's, for an old oak."""
+        x, y, z = (np.asarray(p) - self.trunk_origin) * self.trunk_scale
+        return (x * self.TRUNK_GIRTH, y * self.TRUNK_GIRTH, z)
+
+    def add_trunk(self, mb: MeshBuilder, cut: float | None) -> None:
+        co, polys = self.template
+        verts = {}
+        faces = []
+        for idx, role in polys:
+            if role != "trunk":
+                continue
+            for i in idx:
+                if i not in verts:
+                    verts[i] = mb.bm.verts.new(self.trunk_point(co[i]))
+            faces.append(mb.bm.faces.new([verts[i] for i in idx]))
+        if cut is not None:
+            geom = list(verts.values()) + list({e for f in faces for e in f.edges}) + faces
+            result = bmesh.ops.bisect_plane(mb.bm, geom=geom, dist=1e-6, plane_co=(0.0, 0.0, cut), plane_no=(0.0, 0.0, 1.0), clear_outer=True)
             edges = [g for g in result["geom_cut"] if isinstance(g, bmesh.types.BMEdge)]
-            filled = bmesh.ops.edgenet_fill(bm, edges=edges)
-            for face in filled["faces"]:
-                face.material_index = 0
-            top = [v for v in bm.verts if abs(v.co.z - cut) < 1e-4]
-            for k, v in enumerate(top):  # a broken top, the same on every render
-                v.co.z -= 0.2 * hash_unit(k + 31)
-            bmesh.ops.triangulate(bm, faces=list(bm.faces))
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-        slots = [role for role in order if any(order[f.material_index] == role for f in bm.faces)]
-        used = {order.index(role): i for i, role in enumerate(slots)}
-        for face in bm.faces:
-            face.material_index = used[face.material_index]
-        parts = [self.PARTS[slots[f.material_index]] for f in bm.faces]
-        mesh = bpy.data.meshes.new("tree")
-        bm.to_mesh(mesh)
-        bm.free()
-        for poly in mesh.polygons:
-            poly.use_smooth = False
-        obj = bpy.data.objects.new("tree", mesh)
-        bpy.context.scene.collection.objects.link(obj)
-        set_ids(obj, parts)
-        self.book.bind(obj, [self.look(clip, role) for role in slots])
+            filled = bmesh.ops.edgenet_fill(mb.bm, edges=edges)
+            faces = [f for f in mb.bm.faces if f.is_valid]
+            for k, v in enumerate(v for v in mb.bm.verts if abs(v.co.z - cut) < 1e-4):  # a broken top, the same on every render
+                v.co.z -= 0.08 * self.height * hash_unit(k + 31)
+            faces = list(mb.bm.faces)
+        mb.add(faces, "trunk", "trunk")
+
+    def lobes(self) -> list:
+        """(centre, width) of each leaf cluster, in metres."""
+        h = self.height
+        return [((x * h, y * h, z * h), w * h) for x, y, z, w in self.CLUSTERS]
+
+    def add_cluster(self, mb: MeshBuilder, centre, width: float, role: str) -> None:
+        co, polys = self.template
+        scale = width / self.crown_width
+        verts = {}
+        faces = []
+        for idx, kind in polys:
+            if kind != "leaf":
+                continue
+            for i in idx:
+                if i not in verts:
+                    verts[i] = mb.bm.verts.new(tuple((co[i] - self.crown_centre) * scale + np.asarray(centre)))
+            faces.append(mb.bm.faces.new([verts[i] for i in idx]))
+        mb.add(faces, role, "foliage")
+
+    def build(self, state: str, clip: dict) -> None:
+        h = self.height
+        mb = MeshBuilder()
+        if clip["ruin"]:
+            self.add_trunk(mb, self.STUMP * h)
+            top = self.STUMP * h
+            for k, (angle, rise, length) in enumerate(((20, 0.45, 0.9), (150, 0.25, 0.7), (265, 0.55, 0.6))):
+                a = math.radians(angle)
+                start = (0.1 * math.cos(a), 0.1 * math.sin(a), top - 0.45 - 0.2 * k)
+                end = (start[0] + length * math.cos(a), start[1] + length * math.sin(a), start[2] + rise)
+                mb.limb(start, end, 0.17, 0.11, "trunk", "trunk")
+            self.embers(mb, clip, [(0.12, -0.18, top - 0.1), (-0.17, 0.12, top - 0.3), (0.0, 0.2, top - 0.55)])
+        else:
+            self.add_trunk(mb, None)
+            kept = self.kept_clusters(clip)
+            limb_top = self.TRUNK_TOP * h
+            for k, (centre, width) in kept:
+                start = (0.04 * centre[0], 0.04 * centre[1], limb_top - 0.2)
+                mid = (centre[0] * 0.45 + 0.1 * hash_unit(k), centre[1] * 0.45 + 0.1 * hash_unit(k + 9), limb_top + (centre[2] - limb_top) * 0.45)
+                end = (centre[0], centre[1], centre[2] - 0.08 * h)
+                mb.limb(start, mid, 0.05 * h, 0.032 * h, "trunk", "trunk")
+                mb.limb(mid, end, 0.032 * h, 0.018 * h, "trunk", "trunk")
+            for k, (centre, width) in kept:
+                role = "leaf" if k % 3 else "leaf-deep"
+                self.add_cluster(mb, centre, width * self.cluster_shrink(clip), role)
+            # Embers glow first on the trunk, on the side the viewer sees, then on limbs and crown.
+            spots = [(0.33, 0.33, 0.35 * h * 0.5), (0.30, 0.36, 0.35 * h * 0.8), (0.36, 0.28, 0.25 * h)]
+            for k, (centre, width) in kept:
+                spots.append((centre[0] * 0.5 + 0.25, centre[1] * 0.5 + 0.25, limb_top + (centre[2] - limb_top) * 0.5))
+                spots.append((centre[0] + 0.32 * width, centre[1] + 0.32 * width, centre[2] - 0.12 * width))
+            self.embers(mb, clip, spots)
+        obj, roles = mb.finish("tree", Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)))
+        self.book.bind(obj, [self.look(clip, role) for role in roles])
         self.objs.append(obj)
+        mesh = obj.data
         self.rest = None
         if clip["loop"]:
-            n = len(mesh.vertices)
-            rest = np.empty(n * 3, dtype=np.float64)
+            rest = np.empty(len(mesh.vertices) * 3, dtype=np.float64)
             mesh.vertices.foreach_get("co", rest)
             self.rest = rest.reshape(-1, 3)
             self.frames = clip["frames"]
             self.check_loop()
 
+    def kept_clusters(self, clip: dict) -> list:
+        """The clusters this state keeps: fewer as `leaves` falls, the ones kept never the same two renders over."""
+        lobes = list(enumerate(self.lobes()))
+        keep = clip.get("leaves", 1.0)
+        if keep >= 1.0:
+            return lobes
+        count = max(1, round(len(lobes) * keep))
+        # The centre cluster and a high one hold the crown together; the rest go by a fixed order.
+        order = sorted(lobes[1:], key=lambda item: hash_unit(item[0] * 17 + 3))
+        return [lobes[0], *order[: count - 1]]
+
+    @staticmethod
+    def cluster_shrink(clip: dict) -> float:
+        return 1.0 if clip.get("leaves", 1.0) >= 1.0 else 0.7
+
+    def embers(self, mb: MeshBuilder, clip: dict, spots: list) -> None:
+        """Small glowing blocks on the trunk, limbs and crown: the first `embers` of `spots`."""
+        for rank, spot in enumerate(spots[: clip.get("embers", 0)]):
+            size = 0.2 + 0.1 * hash_unit(rank + 60)
+            mb.box(spot, (size, size, size), "ember", "prop", tilt=[(hash_unit(rank + 3) * 80, "Z")])
+
     def displaced(self, frame: float) -> np.ndarray:
-        """The rest vertices swayed to `frame` of the loop: the travelling wave of the probe's wind plan, along the screen's horizontal."""
+        """The rest vertices swayed to `frame` of the loop: a travelling wave up the tree, planted at the foot, along the screen's horizontal."""
         wind = self.wind
-        x, y, z = self.rest[:, 0], self.rest[:, 1], self.rest[:, 2]
-        h = self.height
-        rel = z / h
+        z = self.rest[:, 2]
+        rel = z / self.height
         weight = np.clip(rel, 0.0, 1.0) ** 2.0
         phase = wind["cycles"] * 2.0 * math.pi * frame / self.frames - wind["lag"] * rel
         along = wind["amplitudeM"] * weight * np.sin(phase)
