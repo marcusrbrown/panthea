@@ -139,20 +139,13 @@ function paintBolt(
     }
 }
 
-/** The pixels of an ellipse at (cx, cy): a ring about a pixel thick, or the filled disc. */
-function ellipse(
-  cx: number,
-  cy: number,
-  rx: number,
-  ry: number,
-  filled: boolean,
-): Point[] {
+/** The pixels of a filled ellipse at (cx, cy). */
+function ellipse(cx: number, cy: number, rx: number, ry: number): Point[] {
   const out: Point[] = [];
   for (let dy = -ry; dy <= ry; dy += 1)
-    for (let dx = -rx; dx <= rx; dx += 1) {
-      const e = Math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry));
-      if (e <= 1 && (filled || e > 1 - 1 / ry)) out.push([cx + dx, cy + dy]);
-    }
+    for (let dx = -rx; dx <= rx; dx += 1)
+      if ((dx * dx) / (rx * rx || 1) + (dy * dy) / (ry * ry || 1) <= 1)
+        out.push([cx + dx, cy + dy]);
   return out;
 }
 
@@ -165,21 +158,29 @@ function paintShape(
   for (const [x, y] of shape) if (keep(x, y)) setPixel(canvas, x, y, colour);
 }
 
-/** Rays out from (cx, cy), `from` to `to` pixels long, flattened to the roof plane. */
-function rays(cx: number, cy: number, from: number, to: number): Point[] {
+/**
+ * Short sparks leaving (cx, cy) along the roof's four slopes: `dist` pixels
+ * out across, `len` pixels long, each step also moving half a pixel down or up.
+ * `sides` picks which slopes: both downward ones, or all four.
+ */
+function sparks(
+  cx: number,
+  cy: number,
+  dist: number,
+  len: number,
+  sides: "down" | "all" = "all",
+): Point[] {
   const out: Point[] = [];
-  for (const [dx, dy] of [
-    [1, 0],
-    [-1, 0],
-    [0, -1],
-    [0, 1],
-    [1, -1],
-    [-1, -1],
+  for (const [sx, sy] of [
     [1, 1],
     [-1, 1],
-  ] as const)
-    for (let i = from; i <= to; i += 1)
-      out.push([cx + dx * i, cy + Math.round(dy * i * 0.5)]);
+    [1, -1],
+    [-1, -1],
+  ] as const) {
+    if (sides === "down" && sy < 0) continue;
+    for (let i = dist; i < dist + len; i += 1)
+      out.push([cx + sx * i, cy + Math.round((sy * i) / 2)]);
+  }
   return out;
 }
 
@@ -232,7 +233,8 @@ export function renderLightning(
     return [
       leader(0.4),
       leader(0.85),
-      // The peak: the one frame the bolt is at full strength.
+      // The peak: the one frame the bolt is at full strength. The contact core
+      // then shrinks while a few sparks run outward along the roof.
       draw((c) => {
         paintBolt(c, path, all, {
           core: glow.core,
@@ -242,8 +244,8 @@ export function renderLightning(
           bandReach: 4,
           edgeReach: 10,
         });
-        paintShape(c, rays(tx, ty, 5, 13), glow.band);
-        paintShape(c, ellipse(tx, ty, 7, 4, true), glow.core);
+        paintShape(c, sparks(tx, ty, 8, 3), glow.band);
+        paintShape(c, ellipse(tx, ty, 5, 3), glow.core);
       }),
       draw((c) => {
         paintBolt(c, path, all, {
@@ -251,9 +253,8 @@ export function renderLightning(
           band: glow.edge,
           edge: null,
         });
-        paintShape(c, rays(tx, ty, 6, 10), glow.edge);
-        paintShape(c, ellipse(tx, ty, 11, 5, false), glow.band);
-        paintShape(c, ellipse(tx, ty, 5, 3, true), glow.core);
+        paintShape(c, sparks(tx, ty, 11, 3), glow.band);
+        paintShape(c, ellipse(tx, ty, 4, 2), glow.core);
       }),
       draw((c) => {
         paintBolt(c, path, all, {
@@ -262,7 +263,8 @@ export function renderLightning(
           edge: null,
           dither: true,
         });
-        paintShape(c, ellipse(tx, ty, 13, 6, false), glow.edge);
+        paintShape(c, sparks(tx, ty, 14, 2), glow.edge);
+        paintShape(c, ellipse(tx, ty, 3, 1), glow.band);
       }),
       draw((c) => {
         paintBolt(c, path, all, {
@@ -271,29 +273,11 @@ export function renderLightning(
           edge: null,
           every: 2,
         });
-        paintShape(
-          c,
-          ellipse(tx, ty, 14, 7, false),
-          glow.edge,
-          (x, y) => (x + y) % 2 === 0,
-        );
+        paintShape(c, sparks(tx, ty, 16, 2), glow.edge);
+        paintShape(c, ellipse(tx, ty, 2, 1), glow.edge);
       }),
-      draw((c) =>
-        paintShape(
-          c,
-          ellipse(tx, ty, 15, 7, false),
-          glow.edge,
-          (x, y) => (x + y) % 3 === 0,
-        ),
-      ),
-      draw((c) =>
-        paintShape(
-          c,
-          ellipse(tx, ty, 16, 8, false),
-          glow.edge,
-          (x, y) => (x + 2 * y) % 5 === 0,
-        ),
-      ),
+      draw((c) => paintShape(c, sparks(tx, ty, 18, 2), glow.edge)),
+      draw((c) => paintShape(c, sparks(tx, ty, 20, 1), glow.edge)),
     ];
   }
 
@@ -307,21 +291,17 @@ export function renderLightning(
         edge: null,
       }),
     ),
+    // The peak: a compact pale cluster where the bolt lands and two short
+    // sparks down the roof, then an immediate decay.
     draw((c) => {
       paintBolt(c, path, all, { core: pale, band: mid, edge: null });
-      paintShape(c, ellipse(tx, ty, 3, 2, true), cloud[3] as Rgb);
+      paintShape(c, ellipse(tx, ty, 2, 1), cloud[5] as Rgb);
+      paintShape(c, sparks(tx, ty, 4, 2, "down"), pale);
     }),
     draw((c) => {
-      paintBolt(c, path, all, { core: mid, band: null, edge: null });
-      paintShape(c, ellipse(tx, ty, 6, 3, false), cloud[3] as Rgb);
+      paintBolt(c, path, all, { core: mid, band: null, edge: null, every: 2 });
+      paintShape(c, ellipse(tx, ty, 1, 0), mid);
     }),
-    draw((c) =>
-      paintShape(
-        c,
-        ellipse(tx, ty, 6, 3, false),
-        lapis[2] as Rgb,
-        (x, y) => (x + y) % 2 === 0,
-      ),
-    ),
+    draw((c) => paintShape(c, ellipse(tx, ty, 1, 0), lapis[2] as Rgb)),
   ];
 }

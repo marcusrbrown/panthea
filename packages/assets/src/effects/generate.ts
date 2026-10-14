@@ -28,7 +28,7 @@ import {
 
 export { renderFireFrame } from "./fire";
 
-export const EFFECT_GENERATOR = { id: "panthea-effects", version: 2 } as const;
+export const EFFECT_GENERATOR = { id: "panthea-effects", version: 3 } as const;
 
 export const EFFECT_NAMES = ["fire", "lightning"] as const;
 export type EffectName = (typeof EFFECT_NAMES)[number];

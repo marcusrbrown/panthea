@@ -221,7 +221,7 @@ describe("fire", () => {
     }
   });
 
-  it("outlines the outer silhouette of the flame mass only", () => {
+  it("outlines the sides and top of the flame mass, not its foot or its inside", () => {
     for (const frame of frames) {
       const lit = opaque(frame.rgba, w);
       const mass = new Set(
@@ -260,7 +260,6 @@ describe("fire", () => {
         const touchesOutside = [
           [1, 0],
           [-1, 0],
-          [0, 1],
           [0, -1],
         ].some(([dx, dy]) =>
           outside.has(`${px.x + (dx as number)},${px.y + (dy as number)}`),
@@ -287,12 +286,126 @@ describe("fire", () => {
     expect(flickers).toBeGreaterThan(0);
   });
 
+  it("shades in solid clusters: no isolated pixel and no pixel-by-pixel alternation", () => {
+    for (const frame of frames) {
+      const lit = opaque(frame.rgba, w);
+      const mass = new Set(
+        parts(frame.rgba)
+          .filter((part) => part.grounded)
+          .flatMap((part) => part.keys),
+      );
+      let body = 0;
+      let isolated = 0;
+      let alternating = 0;
+      for (const k of mass) {
+        const px = lit.get(k) as { x: number; y: number; colour: string };
+        if (px.colour === outline) continue;
+        body += 1;
+        const at = (dx: number, dy: number) =>
+          lit.get(`${px.x + dx},${px.y + dy}`)?.colour;
+        const near = [at(1, 0), at(-1, 0), at(0, 1), at(0, -1)].filter(
+          (c) => c !== undefined && c !== outline,
+        );
+        if (near.length > 0 && !near.includes(px.colour)) isolated += 1;
+        const [left, right] = [at(-1, 0), at(1, 0)];
+        if (
+          left !== undefined &&
+          left === right &&
+          left !== px.colour &&
+          left !== outline
+        )
+          alternating += 1;
+      }
+      expect(isolated).toBe(0);
+      expect(alternating / body).toBeLessThan(0.03);
+    }
+  });
+
+  it("stands on a shallow, irregular footprint: lowest in the middle, higher at the sides, never a flat line", () => {
+    for (const frame of frames) {
+      const lit = opaque(frame.rgba, w);
+      const lowest = (x: number) => {
+        let at = -1;
+        for (let y = 0; y < h; y += 1) if (lit.has(`${x},${y}`)) at = y;
+        return at;
+      };
+      const columns = Array.from({ length: w }, (_, x) => lowest(x)).filter(
+        (y) => y >= 0,
+      );
+      expect(Math.max(...columns)).toBe(h - 1);
+      expect(
+        Math.max(...columns) - Math.min(...columns),
+      ).toBeGreaterThanOrEqual(6);
+      expect(new Set(columns).size).toBeGreaterThanOrEqual(5);
+      const middle = lowest(Math.floor(w / 2));
+      expect(middle).toBe(h - 1);
+      expect(lowest(Math.floor(w * 0.22))).toBeLessThan(middle);
+      expect(lowest(Math.floor(w * 0.78))).toBeLessThan(middle);
+    }
+  });
+
+  it("leaves small roof gaps in its foot", () => {
+    let gapped = 0;
+    for (const frame of frames) {
+      const lit = opaque(frame.rgba, w);
+      let gaps = 0;
+      for (let y = h - 7; y < h; y += 1) {
+        const row = [...lit.values()].filter((p) => p.y === y).map((p) => p.x);
+        if (row.length === 0) continue;
+        for (let x = Math.min(...row); x <= Math.max(...row); x += 1)
+          if (!lit.has(`${x},${y}`)) gaps += 1;
+      }
+      if (gaps > 0) gapped += 1;
+    }
+    expect(gapped).toBeGreaterThanOrEqual(Math.ceil(frames.length / 2));
+  });
+
+  it("splits its hottest region into several lobes", () => {
+    const cream = glow[4];
+    let lobed = 0;
+    for (const frame of frames) {
+      const hot = parts(frame.rgba).length;
+      void hot;
+      const lit = opaque(frame.rgba, w);
+      const seen = new Set<string>();
+      const sizes: number[] = [];
+      for (const [start, px] of lit) {
+        if (px.colour !== cream || seen.has(start)) continue;
+        const stack = [start];
+        seen.add(start);
+        let n = 0;
+        while (stack.length > 0) {
+          const k = stack.pop() as string;
+          n += 1;
+          const [x = 0, y = 0] = k.split(",").map(Number);
+          for (const [dx, dy] of [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+          ] as const) {
+            const next = `${x + dx},${y + dy}`;
+            if (lit.get(next)?.colour === cream && !seen.has(next)) {
+              seen.add(next);
+              stack.push(next);
+            }
+          }
+        }
+        sizes.push(n);
+      }
+      const big = sizes.filter((n) => n >= 8);
+      expect(big.reduce((a, b) => a + b, 0)).toBeGreaterThan(40);
+      if (big.length >= 2) lobed += 1;
+    }
+    expect(lobed).toBeGreaterThanOrEqual(Math.ceil(frames.length * 0.8));
+  });
+
   it("is widest at the base and narrower above", () => {
     for (const frame of frames) {
       const lit = opaque(frame.rgba, w);
       const widthAt = (y: number) =>
         [...lit.values()].filter((p) => p.y === y).length;
-      expect(widthAt(h - 4)).toBeGreaterThan(widthAt(Math.floor(h * 0.45)));
+      expect(widthAt(h - 12)).toBeGreaterThan(widthAt(Math.floor(h * 0.45)));
       expect(widthAt(Math.floor(h * 0.45))).toBeGreaterThan(
         widthAt(Math.floor(h * 0.15)),
       );
@@ -460,9 +573,71 @@ describe("lightning", () => {
     expect([...last.values()].some((p) => p.y === 0)).toBe(false);
     expect(
       [...last.values()].some(
-        (p) => Math.abs(p.x - target.x) <= 14 && Math.abs(p.y - target.y) <= 8,
+        (p) => Math.abs(p.x - target.x) <= 26 && Math.abs(p.y - target.y) <= 13,
       ),
     ).toBe(true);
+  });
+
+  it("shrinks its contact core and sends short sparks outward along the roof after the peak", () => {
+    const below = (rgba: Uint8Array) =>
+      [...opaque(rgba, w).values()]
+        .map((p) => ({ dx: Math.abs(p.x - target.x), dy: p.y - target.y }))
+        .filter((p) => p.dy >= 1);
+    const core = full.frames.map(
+      (f) => below(f.rgba).filter((p) => p.dx <= 6 && p.dy <= 3).length,
+    );
+    for (let i = 3; i < core.length; i += 1)
+      expect(core[i] as number).toBeLessThanOrEqual(core[i - 1] as number);
+    expect(core[2] as number).toBeGreaterThan(core[4] as number);
+    expect(core[7]).toBe(0);
+    // Sparks: pixels below the target and away from its core, farther out each frame.
+    const reach = full.frames.slice(2).map((f) => {
+      const far = below(f.rgba).filter((p) => p.dx >= 7);
+      expect(far.length).toBeGreaterThan(0);
+      expect(far.length).toBeLessThanOrEqual(12);
+      return far.reduce((s, p) => s + p.dx, 0) / far.length;
+    });
+    for (let i = 1; i < reach.length; i += 1)
+      expect(reach[i] as number).toBeGreaterThan(reach[i - 1] as number);
+  });
+
+  it("makes contact at the calm peak with a compact pale cluster and two sparks, then decays at once", () => {
+    const frame = (i: number) =>
+      opaque((calm.frames[i] as (typeof calm.frames)[number]).rgba, w);
+    const pale = rampShades("olympus", "cloud")[5]?.join(",");
+    const cluster = [...frame(1).values()].filter(
+      (p) =>
+        p.colour === pale &&
+        Math.abs(p.x - target.x) <= 3 &&
+        Math.abs(p.y - target.y) <= 2,
+    );
+    expect(cluster.length).toBeGreaterThanOrEqual(3);
+    expect(cluster.length).toBeLessThanOrEqual(12);
+    for (const side of [-1, 1]) {
+      const spark = [...frame(1).values()].filter(
+        (p) =>
+          Math.sign(p.x - target.x) === side &&
+          Math.abs(p.x - target.x) >= 4 &&
+          Math.abs(p.x - target.x) <= 7 &&
+          p.y - target.y >= 1,
+      );
+      expect(spark.length).toBeGreaterThanOrEqual(1);
+      expect(spark.length).toBeLessThanOrEqual(4);
+    }
+    // After the peak: dimmer every frame, no halo and no second pulse.
+    const bright = brightness(calm);
+    expect(bright.indexOf(Math.max(...bright))).toBe(1);
+    for (let i = 2; i < bright.length; i += 1)
+      expect(bright[i] as number).toBeLessThan((bright[i - 1] as number) * 0.5);
+    for (const i of [2, 3])
+      expect(
+        [...frame(i).values()].filter(
+          (p) =>
+            Math.abs(p.x - target.x) <= 8 &&
+            Math.abs(p.y - target.y) <= 4 &&
+            (Math.abs(p.x - target.x) > 2 || Math.abs(p.y - target.y) > 1),
+        ).length,
+      ).toBeLessThanOrEqual(6);
   });
 
   it("never fills the cell: no frame lights more than 15% of it", () => {
