@@ -13,11 +13,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "3.0.62",
+    "@ai-sdk/openai-compatible": "3.0.67",
     "@panthea/content": "workspace:*",
     "@panthea/contracts": "workspace:*",
     "@panthea/world": "workspace:*",
-    "ai": "7.0.127"
+    "ai": "7.0.137"
   },
   "devDependencies": {
     "@panthea/testkit": "workspace:*"
