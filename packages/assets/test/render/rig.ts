@@ -471,7 +471,9 @@ export async function renderCandidates(
   const result = await drain(rig);
   for (const entry of result.results)
     if (entry.outcome !== "rendered")
-      throw new Error(`${entry.jobId}: ${entry.outcome}`);
+      throw new Error(
+        `${entry.jobId}: ${entry.outcome}${"error" in entry && entry.error !== undefined ? `: ${entry.error}` : ""}`,
+      );
   for (const id of ids) {
     const conformed = rig.session.conformRendered(id, content);
     if (!conformed.ok) throw new Error(`conform ${id}: ${conformed.message}`);

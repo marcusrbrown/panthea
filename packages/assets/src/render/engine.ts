@@ -24,7 +24,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -71,6 +70,7 @@ import type { JobRecord } from "../studio/store";
 import { parseEngineFacts } from "../studio/workspace";
 import { cameraHash } from "./camera";
 import { gltfClosureProblems, type Kit, parseKitManifest } from "./kits";
+import { listFiles } from "./list-files";
 import { loadRenderInputs } from "./load";
 import {
   cellPixelHash,
@@ -206,19 +206,6 @@ interface Prepared {
 
 const okPalette = (value: ReturnType<typeof postPaletteFrom>) =>
   value.ok ? value.value : undefined;
-
-function listFiles(dir: string): string[] {
-  const found: string[] = [];
-  const walk = (at: string) => {
-    for (const entry of readdirSync(join(dir, at), { withFileTypes: true })) {
-      const path = at === "" ? entry.name : `${at}/${entry.name}`;
-      if (entry.isDirectory()) walk(path);
-      else found.push(path);
-    }
-  };
-  if (existsSync(dir)) walk("");
-  return found.sort();
-}
 
 /** Buffers a staged glTF reads that the profile does not list: they would be missing at import. */
 function unstagedBufferProblems(
