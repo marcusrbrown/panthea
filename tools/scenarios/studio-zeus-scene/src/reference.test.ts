@@ -27,8 +27,14 @@ import {
 const sha256 = (value: Uint8Array | string): string =>
   createHash("sha256").update(value).digest("hex");
 
+// The committed registry decoded and digested once for the file (zeus-retro alone is 136 frames x 4 zooms); both
+// freshness tests compare against this one result instead of each regenerating it.
+let regenerated: ReturnType<typeof buildReference> | undefined;
+const generatedFromCommitted = () =>
+  (regenerated ??= buildReference(readCommittedRegistry()));
+
 test("regenerating from the committed blobs gives exactly the committed digests", () => {
-  const generated = buildReference(readCommittedRegistry());
+  const generated = generatedFromCommitted();
   const committed = readFileSync(COMMITTED_REFERENCE, "utf8");
 
   expect(renderReference(generated)).toBe(committed);
@@ -36,7 +42,7 @@ test("regenerating from the committed blobs gives exactly the committed digests"
 });
 
 test("the generator test fails when a committed digest is edited", () => {
-  const generated = buildReference(readCommittedRegistry());
+  const generated = generatedFromCommitted();
   const edited = JSON.parse(readFileSync(COMMITTED_REFERENCE, "utf8"));
   const frame = edited.assets[0].selections[0].frames[0];
   const original: string = frame.digests["2"];

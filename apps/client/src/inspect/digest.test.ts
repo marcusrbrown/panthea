@@ -123,3 +123,20 @@ test("cutoutOver keeps a pixel at alpha 128 or more and shows the background thr
     10, 20, 30, 255, 11, 21, 31, 255, 1, 2, 3, 255, 1, 2, 3, 255,
   ]);
 });
+
+test("fnv1a32 over a large buffer and with a seed equals the plain definition, so the fast loop changes no digest", () => {
+  // The definition, one byte at a time: xor, then multiply by the prime, modulo 2^32.
+  const plain = (bytes: Uint8Array, seed = 0x811c9dc5): number => {
+    let hash = BigInt(seed);
+    for (const byte of bytes) {
+      hash ^= BigInt(byte);
+      hash = (hash * 0x01000193n) & 0xffffffffn;
+    }
+    return Number(hash);
+  };
+  const bytes = new Uint8Array(4099).map((_, i) => (i * 131 + (i >> 3)) & 255);
+  expect(fnv1a32(bytes)).toBe(plain(bytes));
+  expect(fnv1a32(bytes, 0xdeadbeef)).toBe(plain(bytes, 0xdeadbeef));
+  expect(fnv1a32(bytes, 0xffffffff)).toBe(plain(bytes, 0xffffffff));
+  expect(fnv1a32(new Uint8Array(0), 0x80000000)).toBe(0x80000000);
+});
