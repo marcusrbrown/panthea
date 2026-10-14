@@ -3,6 +3,7 @@ title: "feat: Structures and effects (asset studio Unit 10)"
 type: feat
 status: active
 date: 2026-10-13
+deepened: 2026-10-13
 origin: docs/plans/2026-10-03-001-feat-asset-studio-foundation-plan.md
 ---
 
@@ -40,7 +41,7 @@ These four gaps are the work. Everything else is tuning.
    - The frame comes only from `tools/render/camera.json` (cell fixed to `god-tall`), through `recipe.ts` `postStepSettings` and the camera passed to `render.py`. The size gate accepts only 112×96 (`RENDER_ENGINE.measuredCells`, checked in `request.ts` as `unmeasured-size`).
    - The vocabulary has no structure cell class and no `intact`, `damaged` or `ruin` states.
 2. **Producing and publishing an effect.** No provenance method fits a generated effect (`packages/contracts/src/assets.ts`, methods generated, hand, derived and rendered). The studio has no route for one: pack and request kinds are sprite and portrait only.
-3. **Drawing them in the game.** Buildings and flames are procedural meshes (`apps/client/src/renderer/decor.ts`). The canon resolver refuses non-sprite manifests (`resolve-core.ts`). Every sprite shares one looping clock, so nothing can play a one-shot over an event. The layout was sized for 28×22 stand-ins (`apps/client/src/renderer/layout.ts`).
+3. **Drawing them in the game.** Buildings and flames are procedural meshes that always sort behind actors (`apps/client/src/renderer/decor.ts`). The canon resolver refuses non-sprite manifests (`resolve-core.ts`). Every sprite shares one looping clock, so nothing can play a one-shot over an event. The client can't tell a strike-caused ignition from a director or spread fire, because the server drops the event cause (`server.ts` `readRecentEvents`). The layout was sized for 28×22 stand-ins (`apps/client/src/renderer/layout.ts`).
 4. **The effects setting.** Nothing exists. `settings.tsx` holds model settings and offline mode, and saving them restarts the sidecar.
 
 ## Units
@@ -49,19 +50,30 @@ These four gaps are the work. Everything else is tuning.
 
 - [ ] Goal: publish a tree and a Greek building through the studio's rendered path.
 - **Approach:**
-  - Structures get their own content file (`content/greek/assets/structures/<id>.json`), loaded beside the god subjects. A request for a structure bypasses the god lookup.
-  - A second profile type, `kind: "structure"`, gets its own parser. It has no body, garment, stamps or clips, and its shadow is optional. The engine's stamp and shadow checks apply to figure profiles only.
-  - The structure profile carries its frame: cell, pivot, shadow, and the outline and overlap choices. The recipe passes that frame to the post step and to `render.py` instead of `camera.json`'s cell. The engine's size gate takes the frame's cell. `camera.json`, the figure profile and `POST_STEP_VERSION` stay as they are.
-  - `render.py` gains a static-scene branch that reuses its scene, camera, material and pass helpers and skips the figure. Its hash changes, but `zeus-retro` is unaffected, because the render audit runs only at publish (`publish.ts`). A future Zeus revision just renders with the new script.
-  - The building is script geometry: a Greek town house or shrine. Damaged and ruin are versions of the same model, so damage keeps the silhouette and ruin may change it.
-  - The tree is a Kenney Nature Kit model with a seamless wind loop, porting the probe's wind math and seam check (`tools/probes/retro-render/wind_plan.py`). It covers the same world statuses as a building (the Old Oak is a burnable building in the world).
-  - The vocabulary gains the structure cell classes and states. The studio CLI and app accept a structure subject for a recipe request.
-- **Files:** `content/greek/assets/vocabulary.json`, `content/greek/assets/structures/`, `packages/content/src/` (structure loader), `packages/assets/src/render/` (profile, engine, recipe, post and audit as needed), `packages/assets/src/studio/request.ts`, `tools/render/blender/render.py`, `tools/render/profiles/`, `tools/render/kits.json` and the kit files, `tools/studio/src/commands.ts`, `apps/studio` request form, tests beside each.
+  - **Content.** Structures live under `content/greek/assets/structures/<id>.json`, loaded into a `structures` field on `StudioContent` (`packages/assets/src/studio/content.ts`, `request.ts`). They stay out of `assets/subjects`, whose parser requires a god. A single `subjectOf(content, id)` in `request.ts` replaces the god lookups in `spriteCellClassOf`, `buildSpec` and `newRequestRecord`. A structure has no abilities.
+  - **Profile.** `parseRenderProfile` dispatches on `kind`. An absent `kind` is a figure, so existing profiles don't change. `kind: "structure"` gets its own parser with these fields:
+    - model and kit files
+    - materials
+    - a cell-class id and pivot
+    - clips per state
+    - an optional shadow
+    - wind parameters for the tree
+
+    Wind lives in the profile so that tuning it changes the hash. The engine's stamp and shadow checks (`engine.ts` `prepare`, `audit.ts`) apply only to figure profiles. Structures use a constant "no stamps" hash, so the contract stays the same.
+  - **Frame.** `frameOf(profile, camera)` in `recipe.ts` computes the cell once from the profile's cell class. An effective camera with that cell feeds `render.py`, `postStepSettings`, `prepare` and `auditRendered`, so render and audit read the same frame. A test checks the profile cell matches the vocabulary. The size gate (`RENDER_ENGINE.measuredCells`) gains the structure cell only after a real render at that size. The outline and overlap settings stay as they are.
+  - **Manifest.** The manifest stays `kind: sprite`. "Structure" is a subject and profile property, not an asset kind, so the pack, publish and CLI kind checks need no change. Before PR1, confirm whether pack gives a rendered sprite realm variants (`packing.ts`). If it does, structures don't get them.
+  - **Vocabulary.** It gains one `structure` cell class and the states `intact`, `damaged` and `ruin`. The tree's intact and damaged states are wind loops.
+  - **Script.** `render.py` gains a static-scene branch that reuses its scene, camera, material and pass helpers and skips the figure. Its hash changes, but published `zeus-retro` is unaffected: the render audit runs only at publish, and a future Zeus revision renders with the current script.
+  - **Building.** Script geometry for a Greek town house or shrine. Damaged keeps the silhouette by changing only materials and decals on the same mesh. Ruin is the same model with walls and roof broken.
+  - **Tree.** A Kenney Nature Kit model with a seamless wind loop, ported from the probe's wind math and seam check (`tools/probes/retro-render/wind_plan.py`). Damaged is charred bark with sparse leaves. Ruin is a burnt stump. Both are scripted from the same model, because the Old Oak is a burnable building in the world.
+  - **Order.** First the seams, with no behaviour change: subject lookup, profile dispatch, `frameOf` and the no-stamps hash. Zeus revision hashes and goldens stay bit-identical. Then one intact building through request, render, pack, approve, publish and audit on the CLI as a tracer. Then damaged and ruin, then the tree, then exposing it in the app. Structure ids join `renderSubjectsOf` (`tools/studio/src/commands.ts`), which the app already reads.
+- **Files:** `content/greek/assets/vocabulary.json`, `content/greek/assets/structures/`, `packages/assets/src/studio/` (content, request), `packages/assets/src/render/` (profile, load, engine, recipe and audit), `tools/render/blender/render.py`, `tools/render/profiles/`, `tools/render/kits.json` and the kit files, `tools/content/src/assets.ts`, `tools/studio/src/commands.ts`, tests beside each.
 - **Tests:**
+  - Zeus revision hashes, goldens and parity tests are unchanged after the seams.
   - A structure request renders, packs, approves and publishes, and the audit recomputes it.
+  - A profile whose cell differs from `camera.json` passes its audit. Changing only the profile cell fails the revision check.
   - Damaged keeps intact's alpha silhouette.
-  - The tree's wind loop is seamless.
-  - The Zeus goldens and parity tests pass unchanged.
+  - The tree's wind loops are seamless.
   - The kit gate accepts the vendored Kenney files.
 - **Verification:** a real headless Blender run through the studio CLI publishes both assets. A cross-family reviewer and then the owner judge the contact sheets and the animated tree.
 
@@ -70,7 +82,10 @@ These four gaps are the work. Everything else is tuning.
 - [ ] Goal: publish the best fire loop and lightning strike we can make.
 - **Approach:**
   - A pure, seeded generator in `packages/assets/src/effects/` produces frames quantised to `greek-retro` plus declared glow colours.
-  - The lightning strike has a full animation and a calmer one. The fire is one loop.
+  - **Fire:** hand-shaped flame silhouettes anchored at the roof or the damaged area, with two or three tapering tongues animated by seeded periodic noise. The noise is sampled on a circle in time, so the last frame flows back to the first. Seed-fixed embers are secondary. It uses the terracotta ramp with soil for smoke, a dark warm outline on the outer silhouette only, and binary alpha. Starting point: about 8 frames at about 110 ms.
+  - One effect asset per effect. The lightning asset holds `full` and `calm` animations, and the setting picks the animation name.
+  - **Lightning:** one seeded midpoint-displacement bolt from the top of the cell to the roof target, with a few tapered side branches, a narrow bright core and a coloured band. It runs leader, then a single peak, then afterglow and sparks. Starting point: about 8 frames over about 750 ms. The calmer version keeps the leader, the bolt and the impact, and drops branches, sparks and contrast, at about 4–5 frames. Neither version has a full-cell bright frame or repeated pulses.
+  - Every number above is a starting point that gets tuned at the visual gate. Reference: Slynyrd Pixelblog 45 (fire), and Medeiros's effect tutorials for motion study.
   - A new effect-only `procedural` provenance method records the generator version, seed, parameters and palette digest.
   - Publish re-runs the generator offline and compares the bytes, which fully meets R15.
   - A studio `effect` op runs the generator into a draft. Approve and publish then take an effect draft: pack's `logicalCells`, the request kinds and publish's kind handling (`packing.ts`, `request.ts`, `publish.ts`) are sprite and portrait only today.
@@ -82,26 +97,44 @@ These four gaps are the work. Everything else is tuning.
   - Publish refuses an effect whose bytes don't match its recipe.
   - The schema no longer reads `tier`.
   - Conformance accepts declared glow colours and refuses others.
-- **Verification:** a headless animated preview (HTML or contact sheet), opened only after asking the owner. Cross-family review, then the owner's visual gate.
+- **Verification:** a headless HTML preview at integer zoom with nearest-neighbour scaling, plus a contact sheet. It shows each effect alone and composited on the U1 building (or the probe house until U1 lands), with full and calm side by side. The owner is asked before it opens. A cross-family reviewer checks at 1×:
+  - The fire reads as a building fire with no loop hitch.
+  - The bolt clearly hits the building.
+  - The calm version is still unmistakably a strike, with no broad bright change.
+  - The effects fit `zeus-retro`.
+
+  Then the owner's visual gate.
 
 ### U3. Game: structures, fire, ruin, strike and the effects setting
 
 - [ ] Goal: the packaged game draws the published art for real world events.
 - **Approach:**
-  - Buildings become sprites on the renderer's `structure` layer.
-  - A small presentation table picks the art: the Old Oak draws the tree, and every other building draws the reference building.
-  - Status maps to art: intact, damaged, burning (damaged plus the fire loop), repairing (damaged plus the existing repair bar), and destroyed (ruin).
-  - A strike-caused `building-damaged` or `building-ignited` event plays the bolt once at the building.
-  - Catch-up, replays and remounts show the end state without replaying old bolts.
-  - The resolver gains an effect lookup, and the renderer gains a one-shot timeline.
-  - The effects setting (full or calm) is an instant control stored in the webview's local storage and seeded from `prefers-reduced-motion`. It never reaches the sidecar or the world.
-  - The layout is refitted for the real art sizes. The mesh builders stay as the fallback when art is missing.
-  - The client view gains each building's `material`, read-only from the world.
-- **Files:** `apps/client/src/renderer/` (decor, layout, scene, presentation, actors or a structures module), `packages/renderer/src/`, `packages/assets/src/resolve-core.ts` (effect lookup), `apps/client/src/assets/canon.ts`, `apps/client/src/store.ts`, `apps/client/src/ui/` settings control, `apps/client/src/inspect/`, `tools/scenarios/studio-zeus-scene/reference-digests.json` and `reference.test.ts`, tests.
+  - **Shared presentation module.** A new `packages/renderer/src/structures.ts` is exported for both the game and the studio. The studio doesn't depend on `@panthea/world`, so a client test pins its local status union to `BUILDING_STATUSES`. It holds:
+    - `StructureArt` (tree or building)
+    - a local status union
+    - `structureStateOf(status)`, returning the state, whether fire shows and whether the repair bar shows
+    - the published asset ids
+    - the full/calm animation choice
+    - `oneShotFrameAt(durations, elapsedMs)`
+  - **Status mapping.** Intact, damaged, burning (damaged plus fire), repairing (damaged plus the existing repair bar) and destroyed (ruin).
+  - **Which art.** The client chooses by building id: `old-oak` draws the tree and everything else draws the building. Material can't decide this, because the Old Oak and the Woodshed are both wood.
+  - **Structures as sprites.** A new `apps/client/src/renderer/structures.ts` follows `planActors` and `actorInstances` (`actors.ts`). It resolves the art, keys depth on the art's foot (not `buildingCenter`), and places sprites on the `structure` layer, so actors in front of or behind a building sort correctly. Today every building draws behind every actor. Fire is a second structure sprite whose id sorts after its building's. The decor mesh builders stay as the fallback when art is missing.
+  - **Strike cause on the wire (new gap).** `RecentEvent` carries only `id, sequence, tick, kind, subjects` (`packages/contracts/src/snapshot.ts`). The server drops `cause` (`apps/simulation/src/server.ts` `readRecentEvents`). A strike on a combustible building emits only `building-ignited`, the same kind that director and spread fires use. So:
+    - add a narrow cause field to `RecentEvent`, set by the server;
+    - add `buildingId` to `PlacedEvent` (`presentation.ts`).
+
+    A bolt plays for strike-caused `building-ignited` and for `building-damaged`.
+  - **One-shot bolt.** The bolt is an `effect`-layer sprite timed by `oneShotFrameAt` from the draw that first presents its event. The looping `frameIndexAt` is unchanged. `tick` hides a finished bolt, and `frameSignature` includes the bolt frame so the render loop redraws. The resolver gains an effect lookup (`packages/assets/src/resolve-core.ts`, `apps/client/src/assets/canon.ts`).
+  - **No replays.** A seen-set of event ids lives in the `createWorldRenderer` closure. The first draw marks the current window seen without playing. Every recent event is marked whatever its realm, and the set is updated only after the `stale()` guard and pruned to the window. Event ids are world-stable, so it isn't reset on session change. Receipts are unchanged: the bolt starts at draw and never waits for a relay.
+  - **Effects setting.** `apps/client/src/effects.ts` follows `summary.ts`: injectable storage with an in-memory fallback, and a seed from an injected `matchMedia('(prefers-reduced-motion: reduce)')`. The control sits in the topbar beside Settings (`surface.tsx`), not in the model settings form, which restarts the sidecar.
+  - **Layout.** Refit after U1 and U2 publish, from the measured manifests: building cells for all three states, the tree, the fire anchor and the bolt's top. `layout.test.ts` builds its boxes from those. The 624×592 literals in `scene.test.ts` move with the one constant, and the mesh tests stay as the fallback block.
+  - **Inspection fixture.** Add `structure` and `effect` branches through `inspect/reference.ts`, `selection.ts`, `inspector.ts`, `InspectView.tsx` and `tools/scenarios/studio-zeus-scene/src/reference.ts`, which drops other kinds today. Long loops are keyframed to fit `INSPECT_SIZE`. These checks go in their own test file, and digests are regenerated after U1 and U2 publish.
+  - **Order.** Shared module and the cause field first, then the setting, then structures on the mesh fallback, then the bolt, then the layout refit, then digests. The first three can start before U1 and U2 publish.
+- **Files:** `packages/renderer/src/structures.ts` and `index.ts`, `packages/contracts/src/snapshot.ts`, `apps/simulation/src/server.ts`, `packages/assets/src/resolve-core.ts`, `apps/client/src/` (`assets/canon.ts`, `effects.ts`, `renderer/` structures, scene, layer use, presentation, layout and decor, `ui/surface.tsx`, `inspect/`), `tools/scenarios/studio-zeus-scene/`, tests.
 - **Tests:**
-  - Each status draws its art.
-  - A strike event plays the bolt once and a catch-up doesn't replay it.
-  - The calm setting picks the calm strike, and a seeded world run gives the same state hash in both settings.
+  - Each status draws its art, and an actor below a building draws in front of it.
+  - A strike-caused ignition plays the bolt once. A director or spread fire doesn't. A fresh start, a realm switch out and back, and a remount replay nothing.
+  - Toggling the setting sends no transport call. The calm setting picks the calm animation, and a seeded world run gives the same state hash in both settings.
   - Missing art falls back to the meshes, and the event is still receipted.
   - The fixture digests cover the new frames inside the test budget.
 - **Verification:** the inspection fixture at zoom 1–4 in the packaged app, and the owner's look at a live strike on a building in both settings. Both are GUI launches, so ask the owner first.
@@ -109,9 +142,9 @@ These four gaps are the work. Everything else is tuning.
 ### U4. Studio reference scene
 
 - [ ] Goal: the preview shows the whole T2 scene and proves AE7.
-- **Approach:** the preview harness composes the tree, the building, `zeus-retro` and the strike. It has a Strike button, a building-state control and the effects toggle. In calm mode the strike shows the calm version, and the building still ends burning.
+- **Approach:** the harness swaps its placeholder structure (`apps/studio/src/harness/layout.ts`) for the shared art choice. It composes the tree, the building, `zeus-retro` and the strike, and imports only `@panthea/renderer`'s shared module. `PreviewItem` (`preview.ts`) gains an effect item. A Strike button drives `oneShotFrameAt` from the playback clock, and there is a building-state control and the full/calm toggle. The harness has no world, so a resolved strike sets the building to burning.
 - **Files:** `apps/studio/src/harness/`, `apps/studio/src/renderer/preview.ts`, `apps/studio/src/App.tsx`, tests.
-- **Tests:** the AE7 case, the state control, and the toggle reusing the game's full/calm choice.
+- **Tests:** AE7 in both modes against the playback clock (calm shows the calm bolt, and the building ends burning). Also the state control.
 - **Verification:** the owner's visual gate in the packaged studio, after asking. Then evidence and the traceability updates (X02, X03, R13, R20, R21).
 
 ## Delivery

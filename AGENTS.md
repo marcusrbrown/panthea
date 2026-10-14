@@ -14,7 +14,7 @@ Authority: [decisions.md](docs/product/decisions.md) (D01–D26) for owner choic
 - No credential-bearing data is passed into content, saves, prompts, telemetry, or logs; credentials live only in platform credential storage.
 - Use stable requirement IDs (P/W/M/U/X/O prefixes) in plans, PRs, and evidence.
 - Update [traceability.md](docs/product/traceability.md) in every PR that touches a requirement.
-- Record superseded decisions; do not erase their context.
+- Rewrite plans, requirements and guides in place to the current fact, with no tombstones. Only an owner decision in decisions.md that changes gets a note.
 - Report core feasibility conflicts with measured evidence and a concrete alternative — never silently reduce scope.
 - No purchases, subscriptions, hosted deployments, or publication during implementation.
 - The workspace is Bun-managed; Tauri, Three.js, and Three Flatland are fixed (D19), rendering through WebGPU where supported and WebGL2 otherwise (D25).
