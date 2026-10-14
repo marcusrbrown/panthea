@@ -16,7 +16,6 @@ import {
   content,
   copyRenderRoot,
   openRig,
-  packSet,
   pickAll,
   RENDER_ROOT,
   type Rig,
@@ -43,11 +42,19 @@ async function approvedHouse() {
     { subject: "greek-house", pivot: HOUSE_PIVOT },
   );
   pickAll(rig, "house-set", ids);
-  const packed = packSet(rig, "house-set", approvedPalettes(), {
-    id: "house-pack",
-    assetId: "greek-house",
-    footprint: { w: 4, h: 3 },
-  });
+  // No owner licence is passed: the house reads no licensed input.
+  const packed = rig.session.pack(
+    {
+      id: "house-pack",
+      workingSetId: "house-set",
+      assetId: "greek-house",
+      styleTag: "retro",
+      footprint: { w: 4, h: 3 },
+    },
+    content,
+    approvedPalettes(),
+    registryOf(rig),
+  );
   if (!packed.ok) throw new Error(packed.message);
   const approved = rig.session.approveAsset(
     "house-pack",
@@ -80,36 +87,6 @@ const auditOf = (
 
 describe("a house through pack, approve, publish and the render audit", () => {
   test(
-    "a house with no kit input needs the owner's licence for it, and says so when it is missing",
-    async () => {
-      const rig = await openRig({ launches: [{}] });
-      const ids = await renderCandidates(
-        rig,
-        "house",
-        [{ state: "intact", direction: "south" }],
-        "house-set",
-        { subject: "greek-house", pivot: HOUSE_PIVOT },
-      );
-      pickAll(rig, "house-set", ids);
-      const refused = rig.session.pack(
-        {
-          id: "house-pack",
-          workingSetId: "house-set",
-          assetId: "greek-house",
-          styleTag: "retro",
-          footprint: { w: 4, h: 3 },
-        },
-        content,
-        approvedPalettes(),
-        registryOf(rig),
-      );
-      expect(refused.ok).toBe(false);
-      if (!refused.ok) expect(refused.message).toContain("owner's licence");
-    },
-    T,
-  );
-
-  test(
     "the three states pack at the profile's cell, south only, with no stamps",
     async () => {
       const { manifest } = await approvedHouse();
@@ -126,13 +103,13 @@ describe("a house through pack, approve, publish and the render audit", () => {
       expect(provenance.method).toBe("rendered");
       expect(provenance.revisionRecipe.stamps).toBe(NO_STAMPS_HASH);
       expect(provenance.revisionRecipe.profile.id).toBe("greek-house");
-      // No kit is read, so the one record is the owner's licence for the house itself.
+      // No kit is read, so the one record is the repository's own licence for the house itself.
       expect(provenance.licences).toEqual([
         {
           subject: "greek-house",
           role: "original-work",
           licence: "MIT",
-          attribution: "the owner",
+          attribution: "Marcus R. Brown",
         },
       ]);
     },

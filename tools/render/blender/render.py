@@ -1409,20 +1409,22 @@ class House(Structure):
         half_w = D / 2 + e
         theta = self.PITCH
         z_eave = self.wall_top + self.CORNICE - 0.02
-        for decal in clip["decals"]:
+        for layer, decal in enumerate(clip["decals"]):
             u, v = decal["at"]
             w, h = decal["size"]
+            # Each decal sits a hair above the ones before it, so overlapping marks never tie on depth.
+            lift = 0.001 * layer
             turn = [(decal.get("angle", 0.0), "Y" if decal["wall"] == "front" else "X" if decal["wall"] == "side" else "Z")]
             if decal["wall"] == "front":
-                mb.box((u - L / 2, D / 2 + 0.1 + thick / 2, v), (w, thick, h), decal["material"], "prop", tilt=turn)
+                mb.box((u - L / 2, D / 2 + 0.1 + thick / 2 + lift, v), (w, thick, h), decal["material"], "prop", tilt=turn)
             elif decal["wall"] == "side":
-                mb.box((L / 2 + 0.1 + thick / 2, D / 2 - u, v), (thick, w, h), decal["material"], "prop", tilt=turn)
+                mb.box((L / 2 + 0.1 + thick / 2 + lift, D / 2 - u, v), (thick, w, h), decal["material"], "prop", tilt=turn)
             else:
                 # On the front slope, over the tile courses: along the ridge from the roof's left end, up the slope from the eave.
                 x = u - (L / 2 + 0.3)
-                lift = self.COURSE_T + 0.13
-                y = half_w - v * math.cos(math.radians(theta)) + lift * math.sin(math.radians(theta))
-                z = z_eave + v * math.sin(math.radians(theta)) + lift * math.cos(math.radians(theta))
+                off = self.COURSE_T + 0.13 + lift
+                y = half_w - v * math.cos(math.radians(theta)) + off * math.sin(math.radians(theta))
+                z = z_eave + v * math.sin(math.radians(theta)) + off * math.cos(math.radians(theta))
                 mb.box((x, y, z), (w, h, thick), decal["material"], "prop", tilt=[*turn, (-theta, "X")])
         obj, roles = mb.finish("decals", self.ex, self.ey)
         self.book.bind(obj, roles)
@@ -1482,22 +1484,19 @@ class House(Structure):
 
 
 class Tree(Structure):
-    """One kit model made into an old oak: its trunk and roots, limbs added by the script, and its crown copied into
-    clusters. It sways in a seamless wind loop; damaged keeps fewer, scorched clusters and glowing embers; the ruin
-    is the trunk cut down to a charred stump with broken limb stubs."""
+    """One kit model made into an old oak: its trunk and roots, forked limbs added by the script, and its crown copied
+    into a few wide lobes with gaps between them. It sways in a seamless wind loop; damaged is fire-stripped, bare
+    black limbs and twigs with scraps of scorched foliage and glowing embers; the ruin is the trunk cut down to a
+    charred stump with broken limb stubs."""
 
-    # Cluster layout as fractions of the tree's height: x, y, z of the centre and the width.
-    CLUSTERS = (
-        (0.00, 0.00, 0.69, 0.47),
-        (0.24, 0.02, 0.53, 0.36),
-        (0.08, 0.23, 0.57, 0.37),
-        (-0.20, 0.15, 0.55, 0.36),
-        (-0.22, -0.12, 0.53, 0.35),
-        (0.05, -0.24, 0.58, 0.37),
-        (0.20, -0.20, 0.55, 0.34),
-        (-0.03, -0.02, 0.84, 0.33),
-        (0.17, 0.14, 0.77, 0.30),
-        (-0.14, -0.02, 0.76, 0.30),
+    # Leaf lobes as fractions of the tree's height: across the screen, toward the viewer, up, the width, and how flat they are.
+    LOBES = (
+        (-0.30, 0.02, 0.56, 0.38, 0.72),
+        (0.27, 0.04, 0.54, 0.38, 0.70),
+        (-0.01, -0.04, 0.86, 0.30, 0.78),
+        (0.21, -0.04, 0.80, 0.20, 0.80),
+        (-0.14, -0.26, 0.62, 0.24, 0.74),
+        (0.10, -0.28, 0.56, 0.22, 0.74),
     )
     TRUNK_TOP = 0.34  # fraction of the height where the limbs leave the trunk
     TRUNK_GIRTH = 1.7  # how much thicker than the kit's the trunk is
@@ -1567,28 +1566,86 @@ class Tree(Structure):
             faces = list(mb.bm.faces)
         mb.add(faces, "trunk", "trunk")
 
-    def lobes(self) -> list:
-        """(centre, width) of each leaf cluster, in metres."""
-        h = self.height
-        return [((x * h, y * h, z * h), w * h) for x, y, z, w in self.CLUSTERS]
+    def world_xy(self, r: float, d: float) -> tuple:
+        """A point on the ground from `r` across the screen and `d` toward the viewer, both in metres."""
+        right, back = self.sway_axes
+        xy = r * right + d * back
+        return (float(xy[0]), float(xy[1]))
 
-    def add_cluster(self, mb: MeshBuilder, centre, width: float, role: str) -> None:
+    def lobes(self) -> list:
+        """(centre, width, flatness) of each leaf lobe, in metres."""
+        h = self.height
+        out = []
+        for r, d, z, w, flat in self.LOBES:
+            x, y = self.world_xy(r * h, d * h)
+            out.append(((x, y, z * h), w * h, flat))
+        return out
+
+    def add_cluster(self, mb: MeshBuilder, centre, width: float, flat: float, role: str, cap=None) -> None:
+        """A copy of the kit's crown, `width` wide and `flat` as tall as wide; with `cap` (a direction, a share of its faces) only the faces on that side."""
         co, polys = self.template
         scale = width / self.crown_width
+        stretch = np.array([scale, scale, scale * flat])
         verts = {}
         faces = []
         for idx, kind in polys:
             if kind != "leaf":
                 continue
+            if cap is not None:
+                face = co[list(idx)].mean(axis=0) - self.crown_centre
+                if float(np.dot(face / np.linalg.norm(face), cap[0])) < cap[1]:
+                    continue
             for i in idx:
                 if i not in verts:
-                    verts[i] = mb.bm.verts.new(tuple((co[i] - self.crown_centre) * scale + np.asarray(centre)))
+                    verts[i] = mb.bm.verts.new(tuple((co[i] - self.crown_centre) * stretch + np.asarray(centre)))
             faces.append(mb.bm.faces.new([verts[i] for i in idx]))
         mb.add(faces, role, "foliage")
+
+    def limbs(self, mb: MeshBuilder) -> tuple:
+        """The forked skeleton: three main limbs from the trunk's top to the big lobes, secondary limbs to the rest.
+        Returns the points the ember spots and twigs hang from: (limb middles, limb ends)."""
+        h = self.height
+        top = self.TRUNK_TOP * h
+        lobes = self.lobes()
+        middles, ends = [], []
+        for k, (centre, width, flat) in enumerate(lobes):
+            base = (centre[0], centre[1], centre[2] - 0.34 * flat * width)
+            if k < 3:
+                start = (0.0, 0.0, top - 0.25)
+                bend = (0.10 * h * (hash_unit(k + 9) - 0.5), 0.10 * h * (hash_unit(k + 19) - 0.5))
+                mid = (centre[0] * 0.5 + bend[0], centre[1] * 0.5 + bend[1], top + (base[2] - top) * 0.45)
+                mb.limb(start, mid, 0.075 * h, 0.052 * h, "trunk", "trunk", segments=8)
+                mb.limb(mid, base, 0.052 * h, 0.032 * h, "trunk", "trunk", segments=8)
+                middles.append(mid)
+            else:
+                # A secondary limb leaves the nearest main limb's middle.
+                near = min(range(3), key=lambda j: (middles[j][0] - base[0]) ** 2 + (middles[j][1] - base[1]) ** 2)
+                start = middles[near]
+                mid = ((start[0] + base[0]) / 2, (start[1] + base[1]) / 2, (start[2] + base[2]) / 2 + 0.05 * h)
+                mb.limb(start, mid, 0.04 * h, 0.03 * h, "trunk", "trunk", segments=7)
+                mb.limb(mid, base, 0.03 * h, 0.02 * h, "trunk", "trunk", segments=7)
+                middles.append(mid)
+            ends.append(base)
+        return middles, ends
+
+    def twigs(self, mb: MeshBuilder, points: list) -> list:
+        """Thin bare twigs fanning out of each point; returns their tips."""
+        h = self.height
+        tips = []
+        for k, p in enumerate(points):
+            for j in range(3):
+                a = math.radians(120 * j + 360 * hash_unit(k * 5 + j + 40))
+                length = (0.1 + 0.07 * hash_unit(k * 7 + j + 70)) * h
+                rise = (0.05 + 0.1 * hash_unit(k * 3 + j + 90)) * h
+                tip = (p[0] + length * math.cos(a), p[1] + length * math.sin(a), p[2] + rise)
+                mb.limb(p, tip, 0.016 * h, 0.006 * h, "trunk", "trunk", segments=5)
+                tips.append(tip)
+        return tips
 
     def build(self, state: str, clip: dict) -> None:
         h = self.height
         mb = MeshBuilder()
+        spots = []
         if clip["ruin"]:
             self.add_trunk(mb, self.STUMP * h)
             top = self.STUMP * h
@@ -1597,26 +1654,30 @@ class Tree(Structure):
                 start = (0.1 * math.cos(a), 0.1 * math.sin(a), top - 0.45 - 0.2 * k)
                 end = (start[0] + length * math.cos(a), start[1] + length * math.sin(a), start[2] + rise)
                 mb.limb(start, end, 0.17, 0.11, "trunk", "trunk")
-            self.embers(mb, clip, [(0.12, -0.18, top - 0.1), (-0.17, 0.12, top - 0.3), (0.0, 0.2, top - 0.55)])
+            spots = [(0.12, -0.18, top - 0.1), (-0.17, 0.12, top - 0.3), (0.0, 0.2, top - 0.55)]
         else:
             self.add_trunk(mb, None)
-            kept = self.kept_clusters(clip)
-            limb_top = self.TRUNK_TOP * h
-            for k, (centre, width) in kept:
-                start = (0.04 * centre[0], 0.04 * centre[1], limb_top - 0.2)
-                mid = (centre[0] * 0.45 + 0.1 * hash_unit(k), centre[1] * 0.45 + 0.1 * hash_unit(k + 9), limb_top + (centre[2] - limb_top) * 0.45)
-                end = (centre[0], centre[1], centre[2] - 0.08 * h)
-                mb.limb(start, mid, 0.05 * h, 0.032 * h, "trunk", "trunk")
-                mb.limb(mid, end, 0.032 * h, 0.018 * h, "trunk", "trunk")
-            for k, (centre, width) in kept:
-                role = "leaf" if k % 3 else "leaf-deep"
-                self.add_cluster(mb, centre, width * self.cluster_shrink(clip), role)
-            # Embers glow first on the trunk, on the side the viewer sees, then on limbs and crown.
-            spots = [(0.33, 0.33, 0.35 * h * 0.5), (0.30, 0.36, 0.35 * h * 0.8), (0.36, 0.28, 0.25 * h)]
-            for k, (centre, width) in kept:
-                spots.append((centre[0] * 0.5 + 0.25, centre[1] * 0.5 + 0.25, limb_top + (centre[2] - limb_top) * 0.5))
-                spots.append((centre[0] + 0.32 * width, centre[1] + 0.32 * width, centre[2] - 0.12 * width))
-            self.embers(mb, clip, spots)
+            middles, ends = self.limbs(mb)
+            burnt = clip.get("leaves", 1.0) < 1.0
+            lobes = self.lobes()
+            if not burnt:
+                for k, (centre, width, flat) in enumerate(lobes):
+                    self.add_cluster(mb, centre, width, flat, "leaf" if k % 3 else "leaf-deep")
+            else:
+                # Fire-stripped: bare twigs on every limb, a few scraps of scorched foliage on some lobes, and small clumps on twig tips.
+                tips = self.twigs(mb, [*ends, *middles[:3]])
+                keep = max(1, round(len(lobes) * clip["leaves"]))
+                for k in sorted(range(len(lobes)), key=lambda i: hash_unit(i * 11 + 5))[:keep]:
+                    centre, width, flat = lobes[k]
+                    angle = math.radians(360 * hash_unit(k * 13 + 2))
+                    direction = np.array([math.cos(angle) * 0.8, math.sin(angle) * 0.8, 0.6])
+                    self.add_cluster(mb, centre, width * 0.8, flat, "leaf" if k % 2 else "leaf-deep", cap=(direction / np.linalg.norm(direction), 0.3))
+                for k in sorted(range(len(tips)), key=lambda i: hash_unit(i * 3 + 8))[:5]:
+                    self.add_cluster(mb, tips[k], 0.075 * h, 0.8, "leaf-deep")
+                spots = [*(tuple(p + np.array([0.18, 0.18, 0.0])) for p in middles), *(tuple(p + np.array([0.15, 0.15, 0.05])) for p in ends)]
+            # Embers glow first on the trunk, on the side the viewer sees, then on limbs.
+            spots = [(0.33, 0.33, 0.35 * h * 0.5), (0.30, 0.36, 0.35 * h * 0.8), (0.36, 0.28, 0.25 * h), *spots]
+        self.embers(mb, clip, spots)
         obj, roles = mb.finish("tree", Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)))
         self.book.bind(obj, [self.look(clip, role) for role in roles])
         self.objs.append(obj)
@@ -1628,21 +1689,6 @@ class Tree(Structure):
             self.rest = rest.reshape(-1, 3)
             self.frames = clip["frames"]
             self.check_loop()
-
-    def kept_clusters(self, clip: dict) -> list:
-        """The clusters this state keeps: fewer as `leaves` falls, the ones kept never the same two renders over."""
-        lobes = list(enumerate(self.lobes()))
-        keep = clip.get("leaves", 1.0)
-        if keep >= 1.0:
-            return lobes
-        count = max(1, round(len(lobes) * keep))
-        # The centre cluster and a high one hold the crown together; the rest go by a fixed order.
-        order = sorted(lobes[1:], key=lambda item: hash_unit(item[0] * 17 + 3))
-        return [lobes[0], *order[: count - 1]]
-
-    @staticmethod
-    def cluster_shrink(clip: dict) -> float:
-        return 1.0 if clip.get("leaves", 1.0) >= 1.0 else 0.7
 
     def embers(self, mb: MeshBuilder, clip: dict, spots: list) -> None:
         """Small glowing blocks on the trunk, limbs and crown: the first `embers` of `spots`."""

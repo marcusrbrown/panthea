@@ -55,6 +55,12 @@ import type {
   WorkingSetRecord,
 } from "./working-set";
 
+/** The licence of work made in this repository, as its LICENSE states it. */
+const REPOSITORY_WORK_LICENCE = {
+  licence: "MIT",
+  attribution: "Marcus R. Brown",
+} as const;
+
 export interface PackInput {
   /** The studio's own id for this packed record. */
   readonly id: string;
@@ -1058,17 +1064,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
         };
       }),
   ];
-  // A render of the script's own geometry has no input licence to record, and a manifest must
-  // name one: the owner's licence for the work itself.
-  const ownWork =
-    handEdits.length > 0 ||
-    (renderedJobs.size > 0 && licences.length === 0 && generations.size === 0);
-  if (ownWork) {
+  if (handEdits.length > 0) {
     if (input.originalWork === undefined)
       return refuse(
-        handEdits.length > 0
-          ? "the asset has hand edits: the licence of the owner's hand work must be given"
-          : "the asset reads no licensed input: the owner's licence for the work itself must be given",
+        "the asset has hand edits: the licence of the owner's hand work must be given",
       );
     licences.push({
       subject: input.assetId,
@@ -1077,6 +1076,18 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       ...(input.originalWork.attribution === undefined
         ? {}
         : { attribution: input.originalWork.attribution }),
+    });
+  } else if (
+    renderedJobs.size > 0 &&
+    licences.length === 0 &&
+    generations.size === 0
+  ) {
+    // Art built from the render script's own geometry reads no licensed input, and a manifest
+    // names at least one licence: the repository's, whose LICENSE this is the work of.
+    licences.push({
+      subject: input.assetId,
+      role: "original-work",
+      ...REPOSITORY_WORK_LICENCE,
     });
   }
   const sourceRequests = new Set([
