@@ -1,5 +1,5 @@
 // Test-only fake sd-server and the helpers that stage it as an artifact root.
-// Run as `bun _test-runtime.ts <behaviorFile> <sd-server flags>`; the staged
+// Run as `bun runtime.ts <behaviorFile> <sd-server flags>`; the staged
 // `bin/sd-server` wrapper does exactly that. Behaviour is re-read from the
 // behavior file on every request, and every event is appended to log.jsonl
 // beside it, so tests can see what the process was asked and what it did.
@@ -14,9 +14,12 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { deflateSync } from "node:zlib";
-import { sha256Hex } from "../hash";
-import { encodeRgbaPng } from "../placeholder";
-import { SELECTED_PROFILE, type SelectedProfile } from "./provider";
+import { sha256Hex } from "../../src/hash";
+import { encodeRgbaPng } from "../../src/placeholder";
+import {
+  SELECTED_PROFILE,
+  type SelectedProfile,
+} from "../../src/studio/provider";
 
 export type Mode =
   | "ok"

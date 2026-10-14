@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { callsTo, fakeTransport, hostError } from "../host/_testkit";
+import { callsTo, fakeTransport, hostError } from "../../test/host-kit";
 import { createStudioHost } from "../host/client";
 import {
   activeDeriveChoiceKey,

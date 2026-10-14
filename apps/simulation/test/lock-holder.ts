@@ -3,11 +3,11 @@
 // killed. A refused acquire prints REFUSED and exits 3, matching the real
 // entrypoint's refusal exit code.
 
-import { acquireLock } from "./lifecycle";
+import { acquireLock } from "../src/lifecycle";
 
 const lockPath = process.argv[2];
 if (!lockPath) {
-  console.error("usage: _test-lock-holder.ts <lockPath>");
+  console.error("usage: lock-holder.ts <lockPath>");
   process.exit(1);
 }
 

@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { openStudioSession, readStudioStatus } from "@panthea/assets/studio";
-import { spriteSet } from "../../../packages/assets/src/studio/_test-fixtures";
+import { spriteSet } from "../../../packages/assets/test/studio/fixtures";
 import {
   assetRig,
   capture,
@@ -15,7 +15,7 @@ import {
   heldBy,
   removeTempRoots,
   tempRoot,
-} from "./_testkit";
+} from "../test/kit";
 import { execute, opNames, opSpec, READ_ONLY } from "./commands";
 import type { StudioConfig } from "./config";
 import { exitOf } from "./format";

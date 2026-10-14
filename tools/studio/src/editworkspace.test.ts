@@ -16,7 +16,7 @@ import {
   paintFigure,
   runSlots,
   sheetOf,
-} from "../../../packages/assets/src/studio/_test-fixtures";
+} from "../../../packages/assets/test/studio/fixtures";
 import {
   assetRig,
   capture,
@@ -25,7 +25,7 @@ import {
   removeTempRoots,
   run,
   waitFor,
-} from "./_testkit";
+} from "../test/kit";
 import { execute, opSpec, READ_ONLY } from "./commands";
 import type { StudioConfig } from "./config";
 import { exitOf } from "./format";

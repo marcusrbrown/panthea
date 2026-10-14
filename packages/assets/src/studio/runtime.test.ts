@@ -12,8 +12,11 @@ import {
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import type { Sha256 } from "@panthea/contracts";
-import { sha256Hex } from "../hash";
-import { loadContent, removeTempRoots, tempRoot } from "./_test-fixtures";
+import {
+  loadContent,
+  removeTempRoots,
+  tempRoot,
+} from "../../test/studio/fixtures";
 import {
   type Behavior,
   type LogEvent,
@@ -21,7 +24,8 @@ import {
   readLog,
   stageFixtureRuntime,
   testImage,
-} from "./_test-runtime";
+} from "../../test/studio/runtime";
+import { sha256Hex } from "../hash";
 import { SELECTED_PROFILE, type SelectedProfile } from "./provider";
 import { newRequestRecord, planJobs } from "./request";
 import {

@@ -21,8 +21,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveAseprite } from "@panthea/assets/studio";
 import { paletteFixture } from "../../../packages/assets/src/fixtures";
-import { runSlots } from "../../../packages/assets/src/studio/_test-fixtures";
-import { assetRig, contentRootWithPalette, removeTempRoots } from "./_testkit";
+import { runSlots } from "../../../packages/assets/test/studio/fixtures";
+import { assetRig, contentRootWithPalette, removeTempRoots } from "../test/kit";
 
 const REPO = join(import.meta.dir, "..", "..", "..");
 const SCRIPT = join(REPO, "apps", "studio", "scripts", "build-sidecar.sh");

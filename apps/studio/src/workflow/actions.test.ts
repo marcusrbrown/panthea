@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { fakeTransport, hostError } from "../host/_testkit";
+import { fakeTransport, hostError } from "../../test/host-kit";
 import { createStudioHost, HostError } from "../host/client";
 import type { ConformParams } from "../host/types";
 import * as workflowActions from "./actions";

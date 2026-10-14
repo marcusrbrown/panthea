@@ -39,9 +39,9 @@ Test helpers had been landing inside production source as underscore-prefixed fi
 
 ## Why This Matters
 
-Only the guard keeps a helper out of a production bundle; the directory and devDependency do not. The client guard covers only `apps/client/src`. Nothing automated enforces the underscore rule, so review does.
+Only the guard keeps a helper out of a production bundle; the directory and devDependency do not. The guard also fails on any source file under `apps/`, `packages/` or `tools/` whose name starts with an underscore, and on any production source that imports a workspace `test/` directory (`findUnderscoreSourceFiles`, `findTestDirectoryImports`).
 
-Known exceptions that predate the rule: `apps/simulation/src/_test-lock-holder.ts`, `apps/studio/src/host/_testkit.ts`, `apps/studio/src/source/_testkit.ts`, `packages/assets/src/studio/_test-{fixtures,holder,preview,runtime}.ts` and `tools/studio/src/_testkit.ts`.
+The eight underscore-prefixed files that predated the rule now live in `apps/simulation/test/`, `apps/studio/test/`, `packages/assets/test/studio/` and `tools/studio/test/`. Each of those packages' `tsconfig.json` includes `test`.
 
 ## Related
 

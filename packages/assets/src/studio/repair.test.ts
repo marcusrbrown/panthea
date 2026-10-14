@@ -13,8 +13,6 @@ import {
   parseAssetManifest,
   type Sha256,
 } from "@panthea/contracts";
-import type { RgbaImage } from "../conformance";
-import { readRevision } from "../registry";
 import {
   type AssetRig,
   assetRig,
@@ -27,7 +25,9 @@ import {
   SPRITE_CELL,
   succeedWithImage,
   upscale,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import type { RgbaImage } from "../conformance";
+import { readRevision } from "../registry";
 import { editSettings, resolveEdit } from "./edit";
 import { cutFrame, frameHashOf, registryFrameReader } from "./frame-ref";
 import type { PackInput } from "./packing";

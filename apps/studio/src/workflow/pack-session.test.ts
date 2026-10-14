@@ -3,6 +3,8 @@ import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PackInput } from "@panthea/assets/studio";
+import { decodePng } from "../../../../packages/assets/src/studio/png/decode";
+import { editReport as sdkEditReport } from "../../../../packages/assets/src/studio/reports";
 import {
   type AssetRig,
   assetRig,
@@ -12,10 +14,8 @@ import {
   runSlots,
   sheetOf,
   spriteSet,
-} from "../../../../packages/assets/src/studio/_test-fixtures";
-import { decodePng } from "../../../../packages/assets/src/studio/png/decode";
-import { editReport as sdkEditReport } from "../../../../packages/assets/src/studio/reports";
-import { fakeTransport, hostError } from "../host/_testkit";
+} from "../../../../packages/assets/test/studio/fixtures";
+import { fakeTransport, hostError } from "../../test/host-kit";
 import { createStudioHost } from "../host/client";
 import * as workflowActions from "./actions";
 

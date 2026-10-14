@@ -7,8 +7,8 @@ import {
   parseGenerationJob,
   parseGenerationRequest,
 } from "@panthea/contracts";
+import { loadContent } from "../../test/studio/fixtures";
 import type { Palette } from "../palette";
-import { loadContent } from "./_test-fixtures";
 import { PROVIDER, RENDER_PROVIDER, SELECTED_PROFILE } from "./provider";
 import {
   adapterInput,

@@ -8,15 +8,19 @@ import {
   committedVocabulary,
   type FixtureAsset,
   spriteFixture,
-} from "../fixtures";
-import { sha256Hex } from "../hash";
-import { encodeRgbaPng } from "../placeholder";
-import { parseAssetManifest, selectRevision, writeRevision } from "../registry";
+} from "../../src/fixtures";
+import { sha256Hex } from "../../src/hash";
+import { encodeRgbaPng } from "../../src/placeholder";
+import {
+  parseAssetManifest,
+  selectRevision,
+  writeRevision,
+} from "../../src/registry";
 import type {
   PreviewScheduler,
   PreviewWatcher,
   WatchFs,
-} from "./preview-source";
+} from "../../src/studio/preview-source";
 
 export const vocabulary = committedVocabulary();
 

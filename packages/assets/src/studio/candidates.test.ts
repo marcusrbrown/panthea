@@ -10,8 +10,6 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
-import { sha256Hex } from "../hash";
-import { paletteDigest } from "../palette";
 import {
   loadContent,
   masterOf,
@@ -24,13 +22,15 @@ import {
   tempRoot,
   upscale,
   withHiddenRgb,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
 import {
   grayscalePng,
   readLog,
   stageFixtureRuntime,
   withTransparencyChunk,
-} from "./_test-runtime";
+} from "../../test/studio/runtime";
+import { sha256Hex } from "../hash";
+import { paletteDigest } from "../palette";
 import type { ConformParams } from "./candidates";
 import { decodePng } from "./png/decode";
 import { newRequestRecord } from "./request";

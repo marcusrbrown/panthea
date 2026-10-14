@@ -12,10 +12,6 @@ import {
   type LicenceRecord,
   type Sha256,
 } from "@panthea/contracts";
-import type { RgbaImage } from "../conformance";
-import { sha256Hex } from "../hash";
-import { encodeRgbaPng } from "../placeholder";
-import { readRevision } from "../registry";
 import {
   type AssetRig,
   assetRig,
@@ -25,7 +21,11 @@ import {
   paintFigure,
   removeTempRoots,
   runSlots,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import type { RgbaImage } from "../conformance";
+import { sha256Hex } from "../hash";
+import { encodeRgbaPng } from "../placeholder";
+import { readRevision } from "../registry";
 import { rampIndex, recomputeStep } from "./derivation";
 import { swapImage } from "./derive";
 import { type PackInput, packAsset } from "./packing";

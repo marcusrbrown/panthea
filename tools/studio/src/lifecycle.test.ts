@@ -4,7 +4,7 @@ import {
   openStudioSession,
   readStudioStatus,
 } from "@panthea/assets/studio";
-import { readLog } from "../../../packages/assets/src/studio/_test-runtime";
+import { readLog } from "../../../packages/assets/test/studio/runtime";
 import {
   alive,
   capture,
@@ -13,7 +13,7 @@ import {
   run,
   runtimeRig,
   waitFor,
-} from "./_testkit";
+} from "../test/kit";
 import { execute } from "./commands";
 import { Studio } from "./host";
 

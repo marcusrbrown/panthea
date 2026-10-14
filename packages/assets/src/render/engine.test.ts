@@ -29,7 +29,7 @@ import {
   submitSd,
   WATCHDOG_MS,
 } from "../../test/render/rig";
-import { readLog as readSdLog } from "../studio/_test-runtime";
+import { readLog as readSdLog } from "../../test/studio/runtime";
 import { decodePng } from "../studio/png/decode";
 import { RENDER_SCRIPT_SHA256 } from "./engine";
 import { loadRenderInputs } from "./load";

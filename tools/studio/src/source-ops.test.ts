@@ -24,7 +24,7 @@ import {
   publishCanon,
   variantSprite,
   writeDraft,
-} from "../../../packages/assets/src/studio/_test-preview";
+} from "../../../packages/assets/test/studio/preview";
 import {
   capture,
   depsFor,
@@ -32,7 +32,7 @@ import {
   pipe,
   REAL_CONTENT,
   removeTempRoots,
-} from "./_testkit";
+} from "../test/kit";
 import { execute } from "./commands";
 import type { StudioConfig } from "./config";
 import { exitOf, type Outcome } from "./format";
