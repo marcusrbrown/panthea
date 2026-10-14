@@ -45,6 +45,84 @@ These four gaps are the work. Everything else is tuning.
 3. **Drawing them in the game.** Buildings and flames are procedural meshes that always sort behind actors (`apps/client/src/renderer/decor.ts`). The canon resolver refuses non-sprite manifests (`resolve-core.ts`). Every sprite shares one looping clock, so nothing can play a one-shot over an event. The client can't tell a strike-caused ignition from a director or spread fire, because the server drops the event cause (`server.ts` `readRecentEvents`). The layout was sized for 28×22 stand-ins (`apps/client/src/renderer/layout.ts`).
 4. **The effects setting.** Nothing exists. `settings.tsx` holds model settings and offline mode, and saving them restarts the sidecar.
 
+## Prior-Art Survey
+
+```json
+{
+  "schema_version": 2,
+  "verdict": "extend",
+  "scope": "packages/assets/src/render; packages/assets/src/studio; packages/contracts/src/assets.ts; packages/renderer/src; apps/client/src/renderer; tools/render; tools/probes/retro-render as a candidate",
+  "freshness": {
+    "vcs_reference": "32608a8"
+  },
+  "budget": {
+    "max_search_passes": 8,
+    "max_candidate_inspections": 14,
+    "exhausted": false
+  },
+  "candidates": [
+    {
+      "path_or_symbol": "tools/render/blender/render.py fresh_scene, make_camera, MaterialBook, render_pass, render_slot",
+      "description": "Pinned headless render route with scene, camera, toon material and pass helpers; main() and render_slot assume a rigged Figure.",
+      "disposition": "extend"
+    },
+    {
+      "path_or_symbol": "packages/assets/src/render/profile.ts parseProfile; recipe.ts postStepSettings; engine.ts prepare; audit.ts auditRendered",
+      "description": "Figure profile, recipe hashes, engine preparation and publish audit for rendered sprites; frame comes from camera.json.",
+      "disposition": "extend"
+    },
+    {
+      "path_or_symbol": "packages/assets/src/render/post.ts postProcessSlot",
+      "description": "Deterministic post step: palette snap, downscale, outline, optional shadow and stamps.",
+      "disposition": "reuse"
+    },
+    {
+      "path_or_symbol": "tools/probes/retro-render/wind_plan.py, render_retro.py Tree",
+      "description": "Probe wind displacement with a frame-n-equals-frame-0 seam check, and environment items rendered in the probe.",
+      "disposition": "extend"
+    },
+    {
+      "path_or_symbol": "packages/contracts/src/assets.ts EffectManifest, parseEffectBody, provenance methods",
+      "description": "Effect manifest with tier, accents and tier-one duration checks; provenance is generated, hand, derived or rendered.",
+      "disposition": "extend"
+    },
+    {
+      "path_or_symbol": "packages/assets/src/studio/derive.ts encodeRgbaPng, recipe versioning",
+      "description": "Pinned PNG encoder and versioned deterministic recipes recomputed at publish.",
+      "disposition": "reuse"
+    },
+    {
+      "path_or_symbol": "packages/assets/src/studio/derivation.ts DERIVE_OPS",
+      "description": "Mirror, palette swap and bob over published sprite revisions.",
+      "disposition": "insufficient",
+      "insufficiency_reason": "Transforms published sprite pixels; it neither generates effects nor renders structures."
+    },
+    {
+      "path_or_symbol": "apps/client/src/renderer/actors.ts planActors, actorInstances",
+      "description": "Resolves canon art and builds depth-sorted sprite instances on the actor layer.",
+      "disposition": "extend"
+    },
+    {
+      "path_or_symbol": "apps/client/src/renderer/decor.ts buildDecor",
+      "description": "Procedural meshes for places, buildings, flames, repair bars and rings.",
+      "disposition": "insufficient",
+      "insufficiency_reason": "Mesh stand-ins that sort behind every actor; building and flame meshes are replaced by sprites."
+    },
+    {
+      "path_or_symbol": "packages/renderer/src/layer.ts frameIndexAt",
+      "description": "Looping frame selection on one shared clock.",
+      "disposition": "insufficient",
+      "insufficiency_reason": "Always loops; a one-shot needs its own frame function beside it."
+    },
+    {
+      "path_or_symbol": "apps/client/src/summary.ts createSummaryDismissal",
+      "description": "Injectable local-storage preference with an in-memory fallback.",
+      "disposition": "extend"
+    }
+  ]
+}
+```
+
 ## Units
 
 ### U1. Structures: non-character render path, tree and building
