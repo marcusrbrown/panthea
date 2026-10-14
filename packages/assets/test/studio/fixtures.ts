@@ -12,32 +12,45 @@ import {
   type Sha256,
   transitionAsset,
 } from "@panthea/contracts";
-import type { ConformanceMetrics, RgbaImage } from "../conformance";
+import type { ConformanceMetrics, RgbaImage } from "../../src/conformance";
 import {
   type FixturePalette,
   paletteFixture,
   spriteFixture,
-} from "../fixtures";
-import { sha256Hex } from "../hash";
+} from "../../src/fixtures";
+import { sha256Hex } from "../../src/hash";
 import {
   MASTER_PALETTE_ID,
   type Palette,
   type PaletteSet,
   paletteDigest,
   parsePalette,
-} from "../palette";
-import { encodeRgbaPng } from "../placeholder";
-import type { CandidateRecord, ConformParams } from "./candidates";
-import { loadStudioContent } from "./content";
-import { type FinishStep, sheetJson } from "./export-import";
-import { SELECTED_PROFILE } from "./provider";
-import type { StudioContent } from "./request";
-import { newRequestRecord } from "./request";
-import { openStudioSession, type StudioSession } from "./session";
-import type { AuthoredFrames, Keyframe, WorkingSetRecord } from "./working-set";
-import type { EngineFacts, StudioAssetRecord } from "./workspace";
+} from "../../src/palette";
+import { encodeRgbaPng } from "../../src/placeholder";
+import type {
+  CandidateRecord,
+  ConformParams,
+} from "../../src/studio/candidates";
+import { loadStudioContent } from "../../src/studio/content";
+import { type FinishStep, sheetJson } from "../../src/studio/export-import";
+import { SELECTED_PROFILE } from "../../src/studio/provider";
+import type { StudioContent } from "../../src/studio/request";
+import { newRequestRecord } from "../../src/studio/request";
+import {
+  openStudioSession,
+  type StudioSession,
+} from "../../src/studio/session";
+import type {
+  AuthoredFrames,
+  Keyframe,
+  WorkingSetRecord,
+} from "../../src/studio/working-set";
+import type {
+  EngineFacts,
+  StudioAssetRecord,
+} from "../../src/studio/workspace";
 
-export const HOLDER = join(import.meta.dir, "_test-holder.ts");
+export const HOLDER = join(import.meta.dir, "holder.ts");
 
 export const request: GenerationRequest = {
   schemaVersion: 1,

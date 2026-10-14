@@ -1,12 +1,16 @@
 // Scanners for the guard test. Test support lives in `@panthea/testkit` and in
-// `apps/client/test`; production sources must never import either, so a
-// production build cannot pick the support code up. Each scan returns the
-// repo-relative paths of the offending files, sorted.
+// each workspace's `test/` directory; production sources must never import
+// either, so a production build cannot pick the support code up. No source
+// file name starts with an underscore. Each scan returns the repo-relative
+// paths of the offending files, sorted.
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/;
+// Anything a build or a developer would call source, for the file-name rule.
+const SOURCE_LIKE = /\.(?:[cm]?[jt]sx?|rs|sh)$/;
+const WORKSPACE_GROUPS = ["apps", "packages", "tools"];
 const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 const SKIPPED_DIRECTORIES = new Set([
   "node_modules",
@@ -35,13 +39,17 @@ function specifiers(text: string): string[] {
   return found;
 }
 
-function walk(root: string, directory = root): string[] {
+function walk(
+  root: string,
+  directory = root,
+  matches: RegExp = SOURCE,
+): string[] {
   const files: string[] = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (SKIPPED_DIRECTORIES.has(entry.name)) continue;
-      files.push(...walk(root, join(directory, entry.name)));
-    } else if (entry.isFile() && SOURCE.test(entry.name)) {
+      files.push(...walk(root, join(directory, entry.name), matches));
+    } else if (entry.isFile() && matches.test(entry.name)) {
       files.push(join(directory, entry.name));
     }
   }
@@ -87,4 +95,52 @@ export function findClientTestImports(root: string): string[] {
     )
     .map((file) => posix(relative(root, file)))
     .sort();
+}
+
+/** Source files under `apps/`, `packages/` and `tools/` (any depth, tests and test directories included) whose name starts with `_`. */
+export function findUnderscoreSourceFiles(root: string): string[] {
+  const found: string[] = [];
+  for (const group of WORKSPACE_GROUPS) {
+    let files: string[];
+    try {
+      files = walk(root, join(root, group), SOURCE_LIKE);
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (basename(file).startsWith("_"))
+        found.push(posix(relative(root, file)));
+    }
+  }
+  return found.sort();
+}
+
+/**
+ * Production sources under `apps/`, `packages/` and `tools/` with a relative
+ * import that lands inside any `test` directory (`<workspace>/test/...`).
+ */
+export function findTestDirectoryImports(root: string): string[] {
+  const found: string[] = [];
+  for (const group of WORKSPACE_GROUPS) {
+    let files: string[];
+    try {
+      files = walk(root, join(root, group));
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      if (!isProductionSource(root, file)) continue;
+      const importsTestDirectory = specifiers(readFileSync(file, "utf8")).some(
+        (specifier) => {
+          if (!specifier.startsWith(".")) return false;
+          const target = posix(
+            relative(root, resolve(dirname(file), specifier)),
+          );
+          return target.split("/").includes("test");
+        },
+      );
+      if (importsTestDirectory) found.push(posix(relative(root, file)));
+    }
+  }
+  return found.sort();
 }

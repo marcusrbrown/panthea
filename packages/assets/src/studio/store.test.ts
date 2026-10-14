@@ -7,7 +7,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { sha256Hex } from "../hash";
 import {
   authoredFrames,
   doneCandidate,
@@ -25,7 +24,8 @@ import {
   TEST_PALETTE,
   tempRoot,
   workingSet,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import { sha256Hex } from "../hash";
 import { DEFAULT_CONFORM } from "./derivation";
 import type { EditRecord } from "./export-import";
 import { readStudioBlob, readStudioStatus } from "./index";

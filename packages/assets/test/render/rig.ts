@@ -18,10 +18,6 @@ import { join } from "node:path";
 import { sha256Hex } from "../../src/hash";
 import { type PaletteSet, paletteDigest } from "../../src/palette";
 import { type Clock, RENDER_ENGINE } from "../../src/render/engine";
-import {
-  type Behavior as SdBehavior,
-  stageFixtureRuntime,
-} from "../../src/studio/_test-runtime";
 import { loadStudioContent } from "../../src/studio/content";
 import type { SelectedProfile } from "../../src/studio/provider";
 import { newRequestRecord } from "../../src/studio/request";
@@ -35,6 +31,10 @@ import {
   type StudioSession,
 } from "../../src/studio/session";
 import { readStudioStatus } from "../../src/studio/store";
+import {
+  type Behavior as SdBehavior,
+  stageFixtureRuntime,
+} from "../studio/runtime";
 import {
   type LaunchBehavior,
   type StagedBlender,

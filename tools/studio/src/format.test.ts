@@ -4,7 +4,7 @@ import { parseCandidateSummary } from "../../../apps/studio/src/host/types";
 import {
   doneCandidate,
   needsScaleCandidate,
-} from "../../../packages/assets/src/studio/_test-fixtures";
+} from "../../../packages/assets/test/studio/fixtures";
 import {
   assetSummary,
   candidateSummary,

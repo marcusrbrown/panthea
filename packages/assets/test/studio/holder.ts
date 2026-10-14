@@ -2,12 +2,12 @@
 // as running, prints READY, then idles until SIGTERM. A busy root prints BUSY
 // and exits 3.
 
-import { jobSource, runningJob } from "./_test-fixtures";
-import { openStudioSession } from "./index";
+import { openStudioSession } from "../../src/studio/index";
+import { jobSource, runningJob } from "./fixtures";
 
 const [root, jobId] = process.argv.slice(2);
 if (!root || !jobId) {
-  console.error("usage: _test-holder.ts <root> <jobId>");
+  console.error("usage: holder.ts <root> <jobId>");
   process.exit(1);
 }
 

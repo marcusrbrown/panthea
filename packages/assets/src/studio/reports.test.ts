@@ -7,8 +7,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import { sha256Hex } from "../hash";
-import { MASTER_PALETTE_ID, parsePalette } from "../palette";
 import {
   assetRig,
   doneCandidate,
@@ -26,7 +24,9 @@ import {
   upscale,
   withHiddenRgb,
   workingSet,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import { sha256Hex } from "../hash";
+import { MASTER_PALETTE_ID, parsePalette } from "../palette";
 import { DEFAULT_CONFORM } from "./derivation";
 import { decodePng } from "./png/decode";
 import {

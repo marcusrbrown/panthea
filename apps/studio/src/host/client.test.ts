@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { callsTo, fakeTransport, hostError } from "./_testkit";
+import { callsTo, fakeTransport, hostError } from "../../test/host-kit";
 import {
   createStudioHost,
   HostError,

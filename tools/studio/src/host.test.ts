@@ -27,7 +27,7 @@ import {
   REAL_CONTENT,
   removeTempRoots,
   tempRoot,
-} from "./_testkit";
+} from "../test/kit";
 import { execute, opNames, READ_ONLY } from "./commands";
 
 import type { StudioConfig } from "./config";

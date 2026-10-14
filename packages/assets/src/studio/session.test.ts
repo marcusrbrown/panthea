@@ -10,7 +10,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import { sha256Hex } from "../hash";
 import {
   doneCandidate,
   engineFacts,
@@ -30,7 +29,8 @@ import {
   TEST_PALETTE,
   tempRoot,
   workingSet,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import { sha256Hex } from "../hash";
 import * as studio from "./index";
 import { openStudioSession, readStudioStatus } from "./index";
 import { newRequestRecord } from "./request";

@@ -16,15 +16,15 @@ import {
   assetRig,
   removeTempRoots,
   tempRoot,
-} from "../../../packages/assets/src/studio/_test-fixtures";
+} from "../../../packages/assets/test/studio/fixtures";
 import {
   type Behavior,
   stageFixtureRuntime,
-} from "../../../packages/assets/src/studio/_test-runtime";
-import { execute } from "./commands";
-import type { StudioConfig } from "./config";
-import type { Outcome } from "./format";
-import { type Deps, defaultDeps, Studio } from "./host";
+} from "../../../packages/assets/test/studio/runtime";
+import { execute } from "../src/commands";
+import type { StudioConfig } from "../src/config";
+import type { Outcome } from "../src/format";
+import { type Deps, defaultDeps, Studio } from "../src/host";
 
 export type { AssetRig };
 export { assetRig, removeTempRoots, tempRoot };

@@ -28,12 +28,12 @@ import {
   registryOf,
   renderCandidates,
 } from "../../test/render/rig";
+import { sheetOf } from "../../test/studio/fixtures";
+import { manualClock } from "../../test/studio/preview";
 import { sha256Hex } from "../hash";
 import { paletteDigest } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import { readRevision } from "../registry";
-import { sheetOf } from "../studio/_test-fixtures";
-import { manualClock } from "../studio/_test-preview";
 import { decodePng } from "../studio/png/decode";
 import { createPreviewSource } from "../studio/preview-source";
 import { auditRendered } from "./audit";

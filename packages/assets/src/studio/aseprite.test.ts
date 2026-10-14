@@ -14,9 +14,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import type { Sha256 } from "@panthea/contracts";
-import type { RgbaImage } from "../conformance";
-import { sha256Hex } from "../hash";
-import { encodeRgbaPng } from "../placeholder";
 import {
   doneCandidate,
   keyframe,
@@ -26,7 +23,10 @@ import {
   tempRoot,
   toneFrame,
   workingSet,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import type { RgbaImage } from "../conformance";
+import { sha256Hex } from "../hash";
+import { encodeRgbaPng } from "../placeholder";
 import {
   createEditorAdapter,
   type EditorAdapter,

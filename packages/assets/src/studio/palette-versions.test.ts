@@ -16,6 +16,15 @@ import {
   newCandidate,
   transitionAsset,
 } from "@panthea/contracts";
+import {
+  type AssetRig,
+  assetRig,
+  loadContent,
+  masterOf,
+  paletteSetOf,
+  removeTempRoots,
+  spriteSet,
+} from "../../test/studio/fixtures";
 import { paletteFixture, spriteFixture } from "../fixtures";
 import {
   MASTER_PALETTE_ID,
@@ -25,15 +34,6 @@ import {
   parsePalette,
 } from "../palette";
 import { publishAsset as publishToRegistry } from "../registry";
-import {
-  type AssetRig,
-  assetRig,
-  loadContent,
-  masterOf,
-  paletteSetOf,
-  removeTempRoots,
-  spriteSet,
-} from "./_test-fixtures";
 import type { PackInput } from "./packing";
 import type { ApproveOptions } from "./publish";
 import { slotConformance } from "./reports";

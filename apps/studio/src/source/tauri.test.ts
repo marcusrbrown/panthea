@@ -5,7 +5,7 @@ import {
   type FakeTransport,
   fakeTransport,
   hostError,
-} from "../host/_testkit";
+} from "../../test/host-kit";
 import { createStudioHost } from "../host/client";
 import type { AssetProblem, SourceChange } from "./port";
 import { createTauriSource } from "./tauri";

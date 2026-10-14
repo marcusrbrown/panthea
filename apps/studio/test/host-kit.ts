@@ -2,7 +2,7 @@
 // name, and lets a test push payloads down the studio channel as the native
 // host would. No timers; every reply is a resolved promise.
 
-import type { HostTransport } from "./client";
+import type { HostTransport } from "../src/host/client";
 
 export interface Call {
   readonly command: string;

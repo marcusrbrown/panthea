@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { findClientTestImports, findTestkitImports } from "./guard-scan";
+import {
+  findClientTestImports,
+  findTestDirectoryImports,
+  findTestkitImports,
+  findUnderscoreSourceFiles,
+} from "./guard-scan";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
 
@@ -30,6 +35,14 @@ describe("test support stays out of production sources", () => {
 
   test("no production source under apps/client/src imports apps/client/test", () => {
     expect(findClientTestImports(repoRoot)).toEqual([]);
+  });
+
+  test("no production source under apps, packages or tools imports a workspace test directory", () => {
+    expect(findTestDirectoryImports(repoRoot)).toEqual([]);
+  });
+
+  test("no source file under apps, packages or tools has a name starting with an underscore", () => {
+    expect(findUnderscoreSourceFiles(repoRoot)).toEqual([]);
   });
 
   describe("positive controls", () => {
@@ -90,6 +103,67 @@ describe("test support stays out of production sources", () => {
         "apps/client/src/ok.ts": `import { f } from "./deep/b";\nimport { g } from "../testing";\n`,
       });
       expect(findClientTestImports(root)).toEqual([]);
+    });
+
+    test("a source file whose name starts with an underscore is reported, in any workspace and at any depth", () => {
+      const root = tree({
+        "apps/a/src/_helper.ts": `export const x = 1;\n`,
+        "apps/a/src/deep/_test-kit.tsx": `export const y = 1;\n`,
+        "packages/b/src/_fixtures.test.ts": `export const z = 1;\n`,
+        "packages/b/test/_kit.ts": `export const w = 1;\n`,
+        "tools/c/src/_run.sh": `echo hi\n`,
+        "apps/a/src-tauri/src/_native.rs": `fn main() {}\n`,
+      });
+      expect(findUnderscoreSourceFiles(root)).toEqual([
+        "apps/a/src-tauri/src/_native.rs",
+        "apps/a/src/_helper.ts",
+        "apps/a/src/deep/_test-kit.tsx",
+        "packages/b/src/_fixtures.test.ts",
+        "packages/b/test/_kit.ts",
+        "tools/c/src/_run.sh",
+      ]);
+    });
+
+    test("an underscore inside a name, a non-source file, a skipped directory and a file outside the workspaces are not reported", () => {
+      const root = tree({
+        "apps/a/src/snake_case.ts": `export const x = 1;\n`,
+        "apps/a/src/a_b_.ts": `export const y = 1;\n`,
+        "apps/a/public/_headers": `/*\n`,
+        "apps/a/src/_notes.md": `# notes\n`,
+        "apps/a/node_modules/dep/_x.ts": `export const z = 1;\n`,
+        "apps/a/dist/_x.js": `export const w = 1;\n`,
+        "docs/_scratch.ts": `export const v = 1;\n`,
+      });
+      expect(findUnderscoreSourceFiles(root)).toEqual([]);
+    });
+
+    test("a production source importing a workspace test directory is reported, by any relative path", () => {
+      const root = tree({
+        "apps/a/src/one.ts": `import { f } from "../test/kit";\n`,
+        "packages/b/src/deep/two.ts": `import { f } from "../../test/studio/fixtures";\n`,
+        "tools/c/src/three.tsx": `export * from "../../../packages/b/test/studio/runtime";\n`,
+        "apps/a/src/deep/four.ts": `export const g = () => import("../../test/kit");\n`,
+        "apps/a/src/five.ts": `import "../test";\n`,
+      });
+      expect(findTestDirectoryImports(root)).toEqual([
+        "apps/a/src/deep/four.ts",
+        "apps/a/src/five.ts",
+        "apps/a/src/one.ts",
+        "packages/b/src/deep/two.ts",
+        "tools/c/src/three.tsx",
+      ]);
+    });
+
+    test("a test, a file in a test directory, an unrelated relative import and a mere mention are not reported", () => {
+      const root = tree({
+        "apps/a/src/one.test.ts": `import { f } from "../test/kit";\n`,
+        "packages/b/src/two.test.tsx": `import { f } from "../../b/test/studio/fixtures";\n`,
+        "apps/a/test/kit.ts": `import { g } from "../src/thing";\n`,
+        "packages/b/test/studio/fixtures.ts": `import { g } from "../../src/studio/thing";\n`,
+        "apps/a/src/ok.ts": `import { f } from "./deep/b";\nimport { g } from "../testing";\nimport { h } from "../latest";\n`,
+        "apps/a/src/comment.ts": `// import { f } from "../test/kit";\nexport const x = 1;\n`,
+      });
+      expect(findTestDirectoryImports(root)).toEqual([]);
     });
   });
 });

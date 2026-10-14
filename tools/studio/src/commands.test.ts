@@ -27,8 +27,8 @@ import {
   succeedWithImage,
   upscale,
   workingSet,
-} from "../../../packages/assets/src/studio/_test-fixtures";
-import { readLog } from "../../../packages/assets/src/studio/_test-runtime";
+} from "../../../packages/assets/test/studio/fixtures";
+import { readLog } from "../../../packages/assets/test/studio/runtime";
 import {
   alive,
   assetRig,
@@ -40,7 +40,7 @@ import {
   runtimeRig,
   tempRoot,
   waitFor,
-} from "./_testkit";
+} from "../test/kit";
 import { execute, opNames, opSpec, READ_ONLY, readArgs } from "./commands";
 import type { StudioConfig } from "./config";
 import { exitOf } from "./format";

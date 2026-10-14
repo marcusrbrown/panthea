@@ -14,8 +14,8 @@ import {
   readStudioStatus,
   type StudioSession,
 } from "@panthea/assets/studio";
-import { runSlots } from "../../../packages/assets/src/studio/_test-fixtures";
-import { readLog } from "../../../packages/assets/src/studio/_test-runtime";
+import { runSlots } from "../../../packages/assets/test/studio/fixtures";
+import { readLog } from "../../../packages/assets/test/studio/runtime";
 import {
   alive,
   assetRig,
@@ -28,7 +28,7 @@ import {
   sleep,
   tempRoot,
   waitFor,
-} from "./_testkit";
+} from "../test/kit";
 import { type Io, main, parseArgv, type Signals } from "./index";
 
 afterEach(removeTempRoots);
