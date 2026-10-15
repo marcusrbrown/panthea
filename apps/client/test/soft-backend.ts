@@ -36,6 +36,9 @@ export function softBackend(options: {
   let ids: string[] = [];
   let painted: Rgba | undefined;
   let zoom = 1;
+  // The viewport's top-left in the core's screen space (y down), as the backend's `view` sets it: the target's first
+  // pixel is this point of the world. The inspection fixture draws from the origin; the game's camera is off centre.
+  let camera = { x: 0, y: 0 };
   const log: string[] = [];
   const views: { zoom: number }[] = [];
   const layer: SceneLayer = {
@@ -80,10 +83,13 @@ export function softBackend(options: {
       }
       const w = frame.sourceWidth ?? 0;
       const h = frame.sourceHeight ?? 0;
+      // A sprite sits at its centre in world space (y up); the camera takes the world to the target's pixels.
       const left =
-        Math.round(sprite.position.x - w / 2) + (options.offset?.x ?? 0);
+        Math.round(sprite.position.x - camera.x - w / 2) +
+        (options.offset?.x ?? 0);
       const top =
-        Math.round(-sprite.position.y - h / 2) + (options.offset?.y ?? 0);
+        Math.round(-sprite.position.y - camera.y - h / 2) +
+        (options.offset?.y ?? 0);
       const fromColumn = Math.round(frame.x * atlas.width);
       const fromRowBottom = Math.round(frame.y * atlas.height);
       for (let dy = 0; dy < h; dy += 1) {
@@ -119,6 +125,8 @@ export function softBackend(options: {
     },
     view(next) {
       zoom = next.zoom;
+      camera = { x: next.camera.x, y: next.camera.y };
+      painted = undefined;
       views.push({ zoom: next.zoom });
     },
     prepare() {
