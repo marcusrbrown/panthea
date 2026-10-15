@@ -137,6 +137,48 @@ describe("source-list", () => {
 });
 
 describe("source-resolve", () => {
+  test("names an effect's animation, and source-bytes serves the effect's atlas under the resolved key", async () => {
+    const base = mkdtempSync(join(tmpdir(), "studio-source-effect-"));
+    dirs.push(base);
+    const studioRoot = join(base, "studio");
+    mkdirSync(studioRoot);
+    const clock = manualClock();
+    const studio = new Studio(
+      {
+        studioRoot,
+        registryRoot: join(REAL_CONTENT, "assets", "registry"),
+        contentRoot: REAL_CONTENT,
+      },
+      depsFor(capture(), { watchRoot: clock.watch, schedule: clock.schedule }),
+      "session",
+    );
+    const call = (op: string, args: unknown = {}) => execute(studio, op, args);
+
+    const resolved = ok(
+      await call("source-resolve", {
+        source: "canon",
+        id: "lightning-strike",
+        animation: "calm",
+      }),
+    );
+
+    expect(resolved).toMatchObject({
+      kind: "frames",
+      asset: { assetId: "lightning-strike", kind: "effect" },
+    });
+    expect(resolved.asset.frames).toHaveLength(4);
+    const bytes = ok(
+      await call("source-bytes", {
+        source: "canon",
+        id: "lightning-strike",
+        v: resolved.bytes.pixelKey,
+      }),
+    );
+    expect(bytes.pixelKey).toBe(resolved.bytes.pixelKey);
+    expect(bytes.base64).toBeString();
+    await studio.teardown();
+  });
+
   test("returns the frames resolution for a draft, with its keys and no URL", async () => {
     const r = rig();
     writeDraft(r.studioRoot, "zeus-take", spriteFixture("placeholder-zeus", 1));

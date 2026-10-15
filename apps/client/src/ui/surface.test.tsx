@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { WorldViewModel } from "../store";
-import { ClientSurface } from "./surface";
+import { ClientSurface, EffectsToggle } from "./surface";
 
 function view(overrides: Partial<WorldViewModel> = {}): WorldViewModel {
   return {
@@ -296,4 +296,84 @@ test("no canon art problem, no note", () => {
   );
 
   expect(html).not.toContain("Canon art unavailable");
+});
+
+function clicks(effects: "full" | "calm") {
+  const changed: string[] = [];
+  const element = EffectsToggle({
+    effects,
+    onChange: (mode) => changed.push(mode),
+  });
+  (element.props as { onClick: () => void }).onClick();
+  return changed;
+}
+
+test("the topbar offers the effects setting beside Settings, reading as on when the calm strike is selected", () => {
+  const calm = renderToStaticMarkup(
+    <ClientSurface
+      view={view()}
+      observation={{ kind: "idle" }}
+      effects="calm"
+      onEffectsChange={() => {}}
+    />,
+  );
+  const full = renderToStaticMarkup(
+    <ClientSurface
+      view={view()}
+      observation={{ kind: "idle" }}
+      effects="full"
+      onEffectsChange={() => {}}
+    />,
+  );
+
+  for (const html of [calm, full]) {
+    expect(html.indexOf("Settings</button>")).toBeLessThan(
+      html.indexOf("Calm effects"),
+    );
+    expect(html.indexOf("Calm effects")).toBeLessThan(
+      html.indexOf("Read only"),
+    );
+  }
+  expect(calm).toContain('role="switch"');
+  expect(calm).toContain('aria-checked="true"');
+  expect(full).toContain('aria-checked="false"');
+});
+
+test("with no effects setting supplied the topbar has no effects control", () => {
+  const html = renderToStaticMarkup(
+    <ClientSurface view={view()} observation={{ kind: "idle" }} />,
+  );
+
+  expect(html).not.toContain("Calm effects");
+});
+
+test("the effects control asks for the other mode, and only that", () => {
+  expect(clicks("full")).toEqual(["calm"]);
+  expect(clicks("calm")).toEqual(["full"]);
+});
+
+test("the effects control sits in the topbar, not in the model settings form that restarts the sidecar", () => {
+  const settings = renderToStaticMarkup(
+    <ClientSurface
+      view={view()}
+      observation={{ kind: "idle" }}
+      effects="full"
+      onEffectsChange={() => {}}
+      settingsOpen
+      settingsTransport={{
+        readModelSettings: async () => null,
+        saveModelSettings: async () => {},
+        setEndpointKey: async () => {},
+        deleteEndpointKey: async () => {},
+        endpointKeyStatus: async () => ({}),
+      }}
+    />,
+  );
+
+  // Still in the header while the settings view is open, and absent from the form itself.
+  const header = settings.slice(0, settings.indexOf("</header>"));
+  expect(header).toContain("Calm effects");
+  expect(settings.slice(settings.indexOf("</header>"))).not.toContain(
+    "Calm effects",
+  );
 });

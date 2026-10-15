@@ -138,6 +138,21 @@ a:focus-visible {
 .settings-nav-button[aria-current="page"] {
   background: #ebe6d9;
 }
+.effects-toggle {
+  min-height: 32px;
+  margin-left: 10px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+}
+.effects-toggle:hover,
+.effects-toggle[aria-checked="true"] {
+  background: #ebe6d9;
+}
 
 .status-banner {
   min-height: 38px;

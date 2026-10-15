@@ -19,3 +19,10 @@ export function viewWithZeus(
   if (!parsed.ok) throw new Error(parsed.message);
   return toViewModel(parsed.value, decode(parsed.value.state));
 }
+
+/** The place the observer follows in each realm of the base state: the one scene draws in it. */
+export const PLACE = {
+  mortal: "town-square",
+  olympus: "olympus-hall",
+  underworld: "underworld-gate",
+} as const;

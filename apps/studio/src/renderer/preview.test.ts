@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { type RegistrySnapshot, resolveAsset } from "@panthea/assets";
 import { spriteFixture } from "@panthea/assets/fixtures";
 import {
+  composeScene,
   createSceneLayer,
   type DecodedImage,
   type RawImage,
@@ -1103,6 +1104,150 @@ describe("preparing the backend before a scene is drawn", () => {
     await preview.idle();
     expect(h.live.calls).toEqual(["prepare", "render"]);
     expect(h.backends).toHaveLength(2);
+    preview.dispose();
+  });
+});
+
+describe("an effect item", () => {
+  const STRIKE: Selection = { source: "canon", id: "lightning-strike" };
+  /** Three 100 ms frames of a 64x64 cell in a 192x64 atlas, pivot at the foot. */
+  const effectAsset: Extract<SourceResolution, { kind: "frames" }>["asset"] = {
+    kind: "effect",
+    assetId: god.manifest.id,
+    revision: god.manifest.atlas.blob,
+    uri: "panthea-asset://asset/lightning-strike",
+    atlas: { blob: god.manifest.atlas.blob, width: 192, height: 64 },
+    cell: { w: 64, h: 64 },
+    frames: [0, 1, 2].map((index) => ({
+      rect: { x: index * 64, y: 0, w: 64, h: 64 },
+      durationMs: 100,
+    })),
+    pivot: { x: 32, y: 60 },
+    footprint: { w: 1, h: 1 },
+  };
+  const published3 = () =>
+    published({ width: 192, height: 64, tag: 9, asset: effectAsset });
+
+  const bolt = (elapsedMs?: () => number | undefined): PreviewItem => ({
+    kind: "effect",
+    id: "bolt",
+    layer: "effect",
+    cell: { x: 2, y: 3, z: 0 },
+    offset: { x: -6, y: -20 },
+    request: { ...STRIKE, animation: "full" },
+    ...(elapsedMs === undefined ? {} : { elapsedMs }),
+  });
+
+  it("is placed at its cell with its offset, like a sprite", async () => {
+    const h = new Harness();
+    h.source.publish(STRIKE, published3());
+    const preview = h.preview();
+    await preview.setItems([bolt()]);
+
+    const placed = preview.drawn.find((instance) => instance.id === "bolt");
+    const [home] = composeScene([
+      {
+        kind: "sprite",
+        id: "bolt",
+        layer: "effect",
+        cell: { x: 2, y: 3, z: 0 },
+        resolution: {
+          source: "canon",
+          ...effectAsset,
+        },
+      },
+    ]).instances;
+    expect(placed?.layer).toBe("effect");
+    expect([placed?.w, placed?.h]).toEqual([64, 64]);
+    expect([placed?.x, placed?.y]).toEqual([
+      (home?.x ?? 0) - 6,
+      (home?.y ?? 0) - 20,
+    ]);
+    preview.dispose();
+  });
+
+  it("without a clock of its own loops on the preview clock, as the fire does", async () => {
+    const h = new Harness();
+    h.source.publish(STRIKE, published3());
+    const preview = h.preview();
+    await preview.setItems([bolt()]);
+    const rect = (ms: number) => {
+      preview.tick(ms);
+      const sprite = h.live.backend.layer.spriteFor("bolt");
+      return sprite?.frame?.x;
+    };
+
+    // A frame is 64 of 192 atlas pixels wide.
+    expect(rect(0)).toBeCloseTo(0, 5);
+    expect(rect(150)).toBeCloseTo(64 / 192, 5);
+    expect(rect(310)).toBeCloseTo(0, 5);
+    preview.dispose();
+  });
+
+  it("with a one-shot clock draws nothing before it starts, the clock's frame while it plays and nothing once it is over", async () => {
+    const h = new Harness();
+    h.source.publish(STRIKE, published3());
+    const preview = h.preview();
+    let played: number | undefined;
+    await preview.setItems([bolt(() => played)]);
+    const shown = () => h.live.backend.layer.spriteFor("bolt")?.frame?.x;
+
+    preview.tick(5000);
+    expect(shown()).toBeUndefined();
+    expect(preview.drawn.some((instance) => instance.id === "bolt")).toBe(
+      false,
+    );
+
+    played = 0;
+    preview.tick(5001);
+    expect(shown()).toBeCloseTo(0, 5);
+    played = 100;
+    preview.tick(5002);
+    expect(shown()).toBeCloseTo(64 / 192, 5);
+    played = 299;
+    preview.tick(5003);
+    expect(shown()).toBeCloseTo(128 / 192, 5);
+    // The instance on show is the one-frame view the layer draws.
+    const drawn = preview.drawn.find((instance) => instance.id === "bolt");
+    expect(drawn?.art.source === "canon" && drawn.art.frames.length).toBe(1);
+
+    played = 300;
+    preview.tick(5004);
+    expect(shown()).toBeUndefined();
+    expect(preview.drawn.some((instance) => instance.id === "bolt")).toBe(
+      false,
+    );
+
+    // Played again from the start, it plays again.
+    played = 10;
+    preview.tick(5005);
+    expect(shown()).toBeCloseTo(0, 5);
+    preview.dispose();
+  });
+
+  it("a one-shot whose art is not published draws nothing and reports nothing it cannot know the length of", async () => {
+    const h = new Harness();
+    h.source.publish(STRIKE, published({ placeholder: true }));
+    const preview = h.preview();
+    await preview.setItems([bolt(() => 0)]);
+    preview.tick(1);
+
+    expect(h.live.backend.layer.spriteFor("bolt")).toBeUndefined();
+    preview.dispose();
+  });
+
+  it("is asked for by animation name and survives device loss", async () => {
+    const h = new Harness();
+    h.source.publish(STRIKE, published3());
+    const preview = h.preview();
+    await preview.setItems([bolt(() => 0)]);
+    preview.tick(1);
+    h.live.lose();
+    await preview.idle();
+    preview.tick(2);
+
+    expect(h.backends).toHaveLength(2);
+    expect(h.live.backend.layer.spriteFor("bolt")).toBeDefined();
     preview.dispose();
   });
 });

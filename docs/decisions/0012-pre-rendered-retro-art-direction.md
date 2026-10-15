@@ -47,7 +47,7 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 
 **Sources.** CC0 kits, or kits whose licence the owner has assessed, through a licence gate: import stops when a pack ships no licence file or a licence that is not CC0 or owner-assessed, and the pack is recorded as unused (the probe stopped on the Farm Animals pack for this reason). Each god and notable character gets its own model and proportion profile. The render recipe is pinned: Blender version and hash, scene script hash, palette digest, camera, shading parameters and input file hashes. Every asset carries reproducible provenance beside its manifest.
 
-**Client target.** The client's 576×592 logical target (`apps/client/src/renderer/layout.ts`) is resized for 112×96 cells during build-out, and the change is checked in the packaged app, not only in a browser.
+**Client target.** The client scene draws the followed place, and its logical target (`apps/client/src/renderer/layout.ts`) is sized for 112×96 cells and the published 192×192 structures, the fire and the event rings: 576×336 with an off-centre camera (top edge 252 px above the layout origin, bottom 84 px below), which fits the default window's scene area at zoom 1 (device pixel ratio 1) and zoom 2 (ratio 2). A strike may leave through the top edge. The size is checked in the packaged app at zoom 1–4, not only in a browser; that check is still owed (U10, with the real art).
 
 **D14.** D14 is not amended. A dated note records that CC0 kit bodies count as appropriately sourced material under [content-direction.md](../product/content-direction.md).
 
@@ -81,7 +81,7 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 - `packages/assets/src/studio/request.ts:35-38`: `MAX_COLOURS` of 16 follows the same change.
 - `packages/assets/src/palette.ts:60-61` and `:229-233`: ramps of 4 or 5 shades, so `greek-retro` needs ramps of up to 6 for that version only; the `greek-master` approval digest does not change.
 - `packages/assets/src/studio/request.ts:376-380`: the pivot defaults to `(floor(w / 2), h)`; add the declared per-asset pivot.
-- `apps/client/src/renderer/layout.ts:15-19` and `:41-46`: `MAX_ACTOR_CELL` is 64×80 with pivot (32, 80), and the 576×592 target is sized from it; resize for 112×96 and check it in the packaged app.
+- `apps/client/src/renderer/layout.ts:15-19` and `:41-46`: `MAX_ACTOR_CELL` is the 112×96 `god-tall` cell with pivot (56, 78), and the 576×336 target is sized from it and the structure cells; check it in the packaged app.
 - `packages/renderer/src/scene.ts:206-222`: the same `(w / 2, h)` default when a manifest has no pivot. The manifest pivot path needs no change.
 - `packages/contracts/src/assets.ts:1706`: the pivot must lie inside the cell, which (56, 78) satisfies. `packages/assets/src/studio/packing.ts:617-625`: west is held to the mirrored east unless an asymmetry is declared, which matches the render-not-mirror rule.
 - The published `zeus-sprite` manifest (cell 64×80, pivot (32, 80), `greek-master`) is correct as legacy and is not edited. Fixtures that hard-code 64×80 and (32, 80) (`tools/studio/src/fixtures/zeus.ts:8`, `packages/contracts/src/assets-manifest.test.ts:139`) stay as legacy fixtures.
@@ -108,8 +108,6 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 - **Paper doll or sprite layering.** Cheap for variants, but it needs hand-drawn parts per direction and animation, so it repeats the hand-pixel cost and gives no new range of motion.
 
 ## Dated notes
-
-**2026-10-12.** The client logical target is now 624×592 for `god-tall` cells, replacing the 576×592 in the Client target paragraph above (U9: width 2 × 305 = 610 rounded up to the 16 px grid; height unchanged). The inspection fixture's 1x target (`INSPECT_SIZE`) is now 576×432, up from 576×288, so a 16-frame 112×96 clip fits. The packaged-app check at zoom 1–4 is still owed (U10, with the real art).
 
 **2026-10-12 (retro Zeus makeover).** The owner rejected the first studio render of Zeus ("a step down in quality from the retro probes": noise on the lower face, a hidden right foot, a bolt not held upright). Three rules follow, and the text above is not rewritten:
 

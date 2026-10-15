@@ -187,7 +187,7 @@ These four gaps are the work. Everything else is tuning.
 
 ### U3. Game: structures, fire, ruin, strike and the effects setting
 
-- [ ] Goal: the packaged game draws the published art for real world events.
+- [x] Goal: the packaged game draws the published art for real world events.
 - **Approach:**
   - **Shared presentation module.** A new `packages/renderer/src/structures.ts` is exported for both the game and the studio. It holds:
     - `StructureArt` (tree or building) and the published asset ids
@@ -205,7 +205,7 @@ These four gaps are the work. Everything else is tuning.
   - **No replays.** A seen-set of event ids lives in the `createWorldRenderer` closure. The first draw marks the current window seen without playing. Every recent event is marked whatever its realm, and the set is updated only after the `stale()` guard and pruned to the window. Event ids are world-stable, so it isn't reset on session change. Receipts are unchanged: the bolt starts at draw and never waits for a relay.
   - **Effects setting.** `apps/client/src/effects.ts` follows `summary.ts`: injectable storage with an in-memory fallback, and a seed from an injected `matchMedia('(prefers-reduced-motion: reduce)')`. The control sits in the topbar beside Settings (`surface.tsx`), not in the model settings form, which restarts the sidecar.
   - **Layout.** Refit after U1 and U2 publish, from the measured manifests: building cells for all three states, the tree, the fire anchor and the bolt's top. `layout.test.ts` builds its boxes from those. The 624×592 literals in `scene.test.ts` move with the one constant, and the building and flame mesh tests go with the meshes.
-  - **Inspection fixture.** Add `structure` and `effect` branches through `inspect/reference.ts`, `selection.ts`, `inspector.ts`, `InspectView.tsx` and `tools/scenarios/studio-zeus-scene/src/reference.ts`, which drops other kinds today. Long loops are keyframed to fit `INSPECT_SIZE`. These checks go in their own test file, and digests are regenerated after U1 and U2 publish.
+  - **Inspection fixture.** Add `structure` and `effect` branches through `inspect/reference.ts`, `selection.ts`, `inspector.ts`, `InspectView.tsx` and `tools/scenarios/studio-zeus-scene/src/reference.ts`, which drops other kinds today. Long loops are paged to fit `INSPECT_SIZE`. These checks go in their own test file, and digests are regenerated after U1 and U2 publish.
   - **Order.** Shared module and the cause field first, then the setting, then structures on the placeholder, then the bolt, then the layout refit, then digests.
 - **Files:** `packages/renderer/src/structures.ts` and `index.ts`, `packages/contracts/src/snapshot.ts`, `apps/simulation/src/server.ts`, `packages/assets/src/resolve-core.ts`, `apps/client/src/` (`assets/canon.ts`, `effects.ts`, `renderer/` structures, scene, layer use, presentation, layout and decor, `ui/surface.tsx`, `inspect/`), `tools/scenarios/studio-zeus-scene/`, tests.
 - **Tests:**
@@ -218,7 +218,7 @@ These four gaps are the work. Everything else is tuning.
 
 ### U4. Studio reference scene
 
-- [ ] Goal: the preview shows the whole T2 scene and proves AE7.
+- [x] Goal: the preview shows the whole T2 scene and proves AE7.
 - **Approach:** the harness swaps its placeholder structure (`apps/studio/src/harness/layout.ts`) for the shared art choice. It composes the tree, the building, `zeus-retro` and the strike, and imports only `@panthea/renderer`'s shared module. `PreviewItem` (`preview.ts`) gains an effect item. A Strike button drives `oneShotFrameAt` from the playback clock, and there is a building-state control and the full/calm toggle. The harness has no world, so a resolved strike sets the building to burning.
 - **Files:** `apps/studio/src/harness/`, `apps/studio/src/renderer/preview.ts`, `apps/studio/src/App.tsx`, tests.
 - **Tests:** AE7 in both modes against the playback clock (calm shows the calm bolt, and the building ends burning). Also the state control.

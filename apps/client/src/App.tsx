@@ -17,9 +17,17 @@ import {
   subscribe,
   type Transport,
 } from "./connection";
+import {
+  browserEffectsStorage,
+  browserMatchMedia,
+  createEffectsSetting,
+  type EffectsStorage,
+  type MatchMedia,
+} from "./effects";
 import { previewView } from "./fixtures";
 import {
   createObserver,
+  followedPlace,
   type ObserverTarget,
   type ObserverView,
 } from "./observer";
@@ -60,6 +68,10 @@ export interface ClientDependencies {
   readonly fixture?: boolean;
   /** Where a dismissed catch-up summary is remembered; defaults to the browser's localStorage. */
   readonly summaryStorage?: DismissalStorage;
+  /** Where the effects setting is remembered; defaults to the browser's localStorage. */
+  readonly effectsStorage?: EffectsStorage;
+  /** Seeds the effects setting from the reduced-motion preference; defaults to the browser's matchMedia. */
+  readonly matchMedia?: MatchMedia;
 }
 
 export function App({
@@ -91,6 +103,21 @@ export function App({
   // Re-renders the surface after an explicit Dismiss; the dismissal itself
   // lives in `summaryDismissal` and its storage.
   const [, setDismissals] = useState(0);
+  // The effects setting is presentation only: the renderer reads it when a
+  // strike starts, it is never sent anywhere, and changing it restarts nothing.
+  const effectsSetting = useMemo(
+    () =>
+      createEffectsSetting({
+        storage: dependencies.effectsStorage ?? browserEffectsStorage(),
+        matchMedia: dependencies.matchMedia ?? browserMatchMedia(),
+      }),
+    [dependencies.effectsStorage, dependencies.matchMedia],
+  );
+  const [effects, setEffects] = useState(() => effectsSetting.mode());
+  useEffect(() => {
+    setEffects(effectsSetting.mode());
+    return effectsSetting.subscribe(setEffects);
+  }, [effectsSetting]);
   const [rendererEpoch, setRendererEpoch] = useState(0);
   const [artProblems, setArtProblems] = useState<readonly string[]>([]);
   const fixtureMode =
@@ -114,8 +141,10 @@ export function App({
     });
   }, [dependencies.canon, fixtureMode]);
   const rendererFactory = useMemo(
-    () => dependencies.rendererFactory ?? createWorldRendererFactory({ canon }),
-    [canon, dependencies.rendererFactory],
+    () =>
+      dependencies.rendererFactory ??
+      createWorldRendererFactory({ canon, effects: effectsSetting.mode }),
+    [canon, dependencies.rendererFactory, effectsSetting],
   );
   const transport = useMemo(
     () => dependencies.transport ?? createTauriTransport(),
@@ -209,12 +238,8 @@ export function App({
   );
 
   const dismissedSummary = isSummaryDismissed(view, summaryDismissal);
-  const realm: Realm =
-    observation.kind === "following"
-      ? observation.realm
-      : observation.kind === "held" && observation.lastKnown
-        ? observation.lastKnown.realm
-        : "mortal";
+  const place = followedPlace(observation);
+  const realm: Realm = place?.realm ?? "mortal";
 
   const onDrawn = useCallback(
     (eventIds: readonly string[]) => {
@@ -255,11 +280,14 @@ export function App({
       onCloseSettings={() => setSettingsOpen(false)}
       settingsTransport={transport}
       endpointStatuses={endpointStatuses}
+      effects={effects}
+      onEffectsChange={effectsSetting.set}
       scene={
         <SceneHost
           key={rendererEpoch}
           view={view}
           realm={realm}
+          locationId={place?.locationId}
           rendererFactory={rendererFactory}
           onDrawn={onDrawn}
           onDeviceLost={onDeviceLost}

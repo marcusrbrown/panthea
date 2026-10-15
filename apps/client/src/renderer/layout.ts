@@ -1,26 +1,38 @@
-// The scene's layout on the shared pixel core. Places sit on a ring, buildings
-// in a row above each place and actors in rows below it, in render-target
-// pixel space: whole pixels, x right, y UP (three's convention, which the
-// shared camera uses), origin at the centre of the scene. The core draws the
-// scene at 1x into a fixed-size target and enlarges it by a whole zoom.
+// The scene's layout on the shared pixel core. The scene draws one place, the
+// one the observer follows, at the layout origin: its buildings in a row above
+// it and its actors in rows below, in render-target pixel space: whole pixels,
+// x right, y UP (three's convention, which the shared camera uses). The core
+// draws the scene at 1x into a fixed-size target and enlarges it by a whole zoom.
 //
-// Logical size, by arithmetic (the layout test recomputes every extent):
-//   ring radius R = min(205, 110 + 14 * places), so R <= 205
-//   cell   : the largest actor cell is the 112x96 god-tall at pivot (56, 78), so a
-//            cell reaches 56 left and right of its foot, 78 above it and 18 below
-//   right  : 205 + the last actor slot (-28 + 6 * 12 = +44) + half a 112-wide cell (56) = 305
-//   left   : -(205 + the first actor slot (-28) + 56) = -289
-//   top    : 205 + a building row at +50, its flame centred 20 above and 15 across
-//            (50 + 20 + 15 = 85) = 290; the tallest actor is lower (205 - 48 + 78 = 235)
-//   bottom : -(205 + the actor row at -48, a second row 15 lower, 18 below the pivot) = -286
-// A centred camera needs half the width >= 305 and half the height >= 290, so
-// the width is 2 x 305 = 610 rounded up to the 16 px grid the height already
-// sits on: 624 (half 312, 7 to spare). The height is unchanged at 592 (half 296,
-// 6 to spare): the flame, not an actor, sets it. That is sized for up to 3
-// buildings and 14 actors (two rows) per place and for cells no larger than the
-// 112x96 god-tall cell (the legacy 64x80 god cell sits well inside). Authored
-// worlds hold at most 2 buildings and 8 inhabitants in a place. Anything beyond
-// clips at the target's edge; U6 owns the final size.
+// Logical size, by arithmetic (the layout test recomputes every extent from the
+// published manifests):
+//   actors    : the largest actor cell is the 112x96 god-tall at pivot (56, 78), so a
+//               cell reaches 56 left and right of its foot, 78 above it and 18 below;
+//               the actor slots run from x = -28 to +44, in two rows at y = -48 and -63
+//   buildings : the house and the oak are 192x192 cells with the foot at the pivot,
+//               (96, 136) and (96, 164): 96 left and right of the foot. The feet stand
+//               in one row 80 above the place, one cell (192) apart and centred on it,
+//               so no two structures' cells overlap: one at 0, two at -96 and +96,
+//               three at -192, 0 and +192. The fire's cell is 64x88 (pivot at its
+//               bottom centre) and sits on the structure's anchor (STRUCTURE_ANCHORS:
+//               79 above the oak's foot, 57 above the house's)
+//   rings     : an event ring is at most 24 px in radius, 128 right of and 23 below the place,
+//               clear of the actors (the widest cell in the last column ends at x = 100)
+//   right     : 192 + 96 = 288, the third building's cell (an actor's reach is 100)
+//   left      : -(192 + 96) = -288
+//   top       : 80 + 79 + 88 = 247, the oak's fire (the oak's own top is 80 + 164 = 244)
+//   bottom    : -(48 + 15 + 18) = -81, the second actor row
+// The camera fits that content, so it is off centre: the width is 2 x 288 = 576, on
+// the 16 px grid already; the height is 247 + 81 = 328 rounded up to 336, with the top
+// edge at 252 (5 above the content) and the bottom edge at -84 (3 below it). That is
+// inside the scene area of the default 1280x720 window (714x635, see the layout
+// test), so the canvas is shown whole at zoom 1 at a device pixel ratio of 1 and at
+// zoom 2 at 2. A strike is exempt above the top edge only: its impact and everything
+// below it are inside (the oak's bolt is 116 above its impact, which is 181 above the
+// layout origin, so its top leaves by 45). The target is sized for up to 3 buildings
+// and 14 actors (two rows) at a place and for the cells above. Authored worlds hold at
+// most 2 buildings and 8 inhabitants in a place. Anything beyond clips at the target's
+// edge.
 
 import {
   type CanvasMetrics,
@@ -28,17 +40,31 @@ import {
   type LogicalSize,
 } from "@panthea/renderer";
 
-import type { ViewLocation } from "../store";
+export const LOGICAL_SIZE: LogicalSize = { width: 576, height: 336 };
 
-export const LOGICAL_SIZE: LogicalSize = { width: 624, height: 592 };
+/** The world row (y up) of the target's top edge: the content reaches 247 above the layout origin and 81 below it. */
+const VIEW_TOP = 252;
 
-/** Top-left of the viewport in the core's screen space (y down): the target centred on the origin. */
+/** Top-left of the viewport in the core's screen space (y down): centred across, and set to the content's rows down. */
 export const CAMERA_ORIGIN = {
   x: -LOGICAL_SIZE.width / 2,
-  y: -LOGICAL_SIZE.height / 2,
+  y: -VIEW_TOP,
 } as const;
 
-export const PLACE_RADIUS_MAX = 205;
+/** The scene's event rings: offset from their place, from the smallest radius in steps of 4. */
+export const EVENT_RING = {
+  dx: 128,
+  dy: -23,
+  radius: 16,
+  step: 4,
+  sizes: 3,
+  /** The largest radius a ring is drawn at. */
+  radiusMax: 24,
+} as const;
+
+/** Where the followed place stands: the middle of the scene, the origin every slot is measured from. */
+export const PLACE_ORIGIN: WorldPoint = { x: 0, y: 0 };
+
 export const MAX_BUILDINGS_PER_PLACE = 3;
 export const MAX_ACTORS_PER_PLACE = 14;
 
@@ -50,7 +76,8 @@ export const MAX_ACTOR_CELL = {
   pivotY: 78,
 } as const;
 
-export const BUILDING_SIZE = { width: 28, height: 22 } as const;
+/** Buildings stand in one row `y` above their place, `dx` apart: the width of the widest structure cell. */
+export const BUILDING_SLOT = { dx: 192, y: 80 } as const;
 
 /** Where an actor's foot sits relative to its place, and the grid of slots around it. */
 export const ACTOR_FOOT = {
@@ -66,27 +93,6 @@ export interface WorldPoint {
   readonly y: number;
 }
 
-/** Whole pixels, and never -0. */
-const whole = (value: number): number => Math.round(value) + 0;
-
-export function locationPoints(
-  locations: readonly ViewLocation[],
-): Map<string, WorldPoint> {
-  const points = new Map<string, WorldPoint>();
-  const count = Math.max(1, locations.length);
-  locations.forEach((location, index) => {
-    const angle =
-      count === 1 ? -Math.PI / 2 : (index / count) * Math.PI * 2 - Math.PI / 2;
-    const radius =
-      count === 1 ? 0 : Math.min(PLACE_RADIUS_MAX, 110 + count * 14);
-    points.set(location.id, {
-      x: whole(Math.cos(angle) * radius),
-      y: whole(Math.sin(angle) * radius),
-    });
-  });
-  return points;
-}
-
 export function actorFoot(place: WorldPoint, index: number): WorldPoint {
   return {
     x: place.x + ACTOR_FOOT.x + (index % ACTOR_FOOT.columns) * ACTOR_FOOT.dx,
@@ -97,10 +103,19 @@ export function actorFoot(place: WorldPoint, index: number): WorldPoint {
   };
 }
 
-export function buildingCenter(place: WorldPoint, index: number): WorldPoint {
+/**
+ * The foot of the building in slot `index` of `count` at `place`: the point its
+ * art's pivot sits on. The row is centred on the place, so a lone building
+ * stands at it and two stand half a slot either side.
+ */
+export function buildingFoot(
+  place: WorldPoint,
+  index: number,
+  count: number,
+): WorldPoint {
   return {
-    x: place.x - 46 + (index % 3) * 42,
-    y: place.y + 50 + Math.floor(index / 3) * 35,
+    x: place.x + (index - (count - 1) / 2) * BUILDING_SLOT.dx,
+    y: place.y + BUILDING_SLOT.y,
   };
 }
 

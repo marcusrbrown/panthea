@@ -150,9 +150,9 @@ const PLACEHOLDER_REASONS = [
 function asset(value: unknown) {
   const o = object(value, "resolution.asset");
   const kind =
-    o.kind === "sprite" || o.kind === "portrait"
+    o.kind === "sprite" || o.kind === "portrait" || o.kind === "effect"
       ? o.kind
-      : refuse("resolution.asset.kind", "not sprite or portrait");
+      : refuse("resolution.asset.kind", "not sprite, portrait or effect");
   const atlas = object(o.atlas, "resolution.asset.atlas");
   const frames = list(o.frames, "resolution.asset.frames").map((item, i) => {
     const f = object(item, `resolution.asset.frames[${i}]`);

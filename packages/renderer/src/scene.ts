@@ -56,6 +56,8 @@ export type SceneEntity =
       readonly cell: Cell;
       /** Declared footprint for a placeholder, which has none; canon art uses its manifest's. */
       readonly footprint?: Footprint;
+      /** Whole logical pixels added to the placed position, e.g. to stand a flame on a roof; depth is unchanged. */
+      readonly offset?: Point;
       readonly resolution: SceneResolution;
     }
   | {
@@ -209,7 +211,7 @@ function place(entity: SceneEntity): Attempt {
     pivot = { x: Math.floor(w / 2), y: h };
   } else {
     if (
-      resolution.kind !== "sprite" ||
+      resolution.kind === "portrait" ||
       resolution.pivot === undefined ||
       resolution.footprint === undefined
     ) {
@@ -224,6 +226,15 @@ function place(entity: SceneEntity): Attempt {
 
   const origin = spriteOrigin(entity.cell, footprint, pivot);
   if (!origin.ok) return refuse(origin.reason, origin.detail);
+  const offset = entity.offset ?? { x: 0, y: 0 };
+  for (const [name, value] of [
+    ["offset x", offset.x],
+    ["offset y", offset.y],
+  ] as const) {
+    if (!Number.isInteger(value)) {
+      return refuse("non-integer", `${name}=${value} is not an integer`);
+    }
+  }
   const depth = depthOf(entity.cell, footprint);
   if (!depth.ok) return refuse(depth.reason, depth.detail);
   return {
@@ -233,7 +244,7 @@ function place(entity: SceneEntity): Attempt {
       layer: entity.layer,
       cell: entity.cell,
       footprint,
-      origin: origin.value,
+      origin: { x: origin.value.x + offset.x, y: origin.value.y + offset.y },
       w,
       h,
       depth: depth.value,

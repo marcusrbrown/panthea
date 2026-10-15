@@ -218,7 +218,7 @@ picked up once it is created.
 | Op | Arguments | Reply |
 | --- | --- | --- |
 | `source-list` | none | `{"entries":[{"source","id","assetId","kind","state","ok"}],"problems":[{"scope","message"}]}` |
-| `source-resolve` | `source` (`canon`, `draft` or `approved`), `id`, optional `realm` (a realm palette family: its variant atlas instead of the base atlas; a realm the asset does not publish resolves as a placeholder, `missing-state`), optional `state`, `direction`, `ability`, `expression` | `{"kind":"frames","selection","manifestKey","asset","bytes":{"width","height","pixelKey"}}`, or `{"kind":"placeholder","selection","reason","uri","problems","bytes"}` when nothing valid is held |
+| `source-resolve` | `source` (`canon`, `draft` or `approved`), `id`, optional `realm` (a realm palette family: its variant atlas instead of the base atlas; a realm the asset does not publish resolves as a placeholder, `missing-state`), optional `state`, `direction`, `ability`, `expression`, or for an effect its `animation` (`burn`, `full`, `calm`) | `{"kind":"frames","selection","manifestKey","asset","bytes":{"width","height","pixelKey"}}`, or `{"kind":"placeholder","selection","reason","uri","problems","bytes"}` when nothing valid is held |
 | `source-bytes` | `source`, `id`, optional `realm` and `v` (the `pixelKey` from `source-resolve`), or `placeholder` (a placeholder's `pixelKey`) alone | `{"source","id"[,"realm"],"pixelKey","width","height","base64"}`, or `{"placeholder","base64"}`; `base64` is the validated PNG. A `v` that is not the selection's current key is refused `stale-version` (resolve again); nothing held is `not-found` |
 | `source-keys` | none | `{"listing","selections":[{"source","id","key"}]}`: compare with the previous reply to see what changed |
 

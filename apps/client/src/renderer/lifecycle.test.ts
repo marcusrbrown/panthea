@@ -205,7 +205,7 @@ test("drawing hands the ids the renderer drew to onDrawn", async () => {
   const drawn: (readonly string[])[] = [];
   const failures: string[] = [];
 
-  await drawScene(renderer, view, "mortal", {
+  await drawScene(renderer, view, "mortal", "town-square", {
     onDrawn: (ids) => drawn.push(ids),
     onFailure: (message) => failures.push(message),
   });
@@ -225,7 +225,7 @@ test("ids are handed on only once the frame is on screen, not when the draw begi
   };
   const drawn: (readonly string[])[] = [];
 
-  const drawing = drawScene(renderer, view, "mortal", {
+  const drawing = drawScene(renderer, view, "mortal", "town-square", {
     onDrawn: (ids) => drawn.push(ids),
     onFailure: () => {},
   });
@@ -242,7 +242,7 @@ test("a draw error is reported as a failure and nothing is receipted", async () 
   const drawn: (readonly string[])[] = [];
   const failures: string[] = [];
 
-  await drawScene(renderer, view, "mortal", {
+  await drawScene(renderer, view, "mortal", "town-square", {
     onDrawn: (ids) => drawn.push(ids),
     onFailure: (message) => failures.push(message),
   });
@@ -254,7 +254,7 @@ test("a draw error is reported as a failure and nothing is receipted", async () 
 test("drawing with no renderer draws nothing and receipts nothing", async () => {
   const drawn: (readonly string[])[] = [];
 
-  await drawScene(undefined, view, "mortal", {
+  await drawScene(undefined, view, "mortal", "town-square", {
     onDrawn: (ids) => drawn.push(ids),
     onFailure: () => {},
   });

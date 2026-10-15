@@ -32,6 +32,7 @@ import {
   type SessionId,
   type SyncFrame,
   UNPLACED_EVENT_KINDS,
+  type WorldEvent,
   type WorldId,
   type WorldStatus,
 } from "@panthea/contracts";
@@ -297,6 +298,22 @@ export const RECENT_EVENT_WINDOW_TICKS = 10;
 export const RECENT_EVENT_CAP = 200;
 
 /**
+ * A committed event as a frame lists it at `tick`. An ignition also carries
+ * why it started: a strike, the director or a spread all emit the same event
+ * kind, and a client shows a strike only for the first.
+ */
+export function recentEventOf(event: WorldEvent, tick: number): RecentEvent {
+  return {
+    id: event.id,
+    sequence: event.sequence,
+    tick,
+    kind: event.kind,
+    subjects: eventSubjects(event),
+    ...(event.kind === "building-ignited" ? { cause: event.cause.kind } : {}),
+  };
+}
+
+/**
  * The committed events a frame carries so a client can receipt what it
  * renders: the events of the last `windowTicks` ticks up to and including
  * `currentTick`, at most `cap` of them (the newest), ascending by sequence.
@@ -329,13 +346,7 @@ export function readRecentEvents(
   for (const event of candidates) {
     const tick = Math.round(event.simTime / DEFAULT_TICK_ELAPSED_MS);
     if (tick <= oldestTick) continue;
-    recent.push({
-      id: event.id,
-      sequence: event.sequence,
-      tick,
-      kind: event.kind,
-      subjects: eventSubjects(event),
-    });
+    recent.push(recentEventOf(event, tick));
   }
   return recent;
 }

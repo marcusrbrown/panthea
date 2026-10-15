@@ -1,7 +1,7 @@
 // The sidecar's streaming protocol: one committed-state frame. A reconnect
 // requests a fresh frame; there is no incremental delta protocol.
 
-import { WORLD_EVENT_KINDS, type WorldEvent } from "./event";
+import { type FireCause, WORLD_EVENT_KINDS, type WorldEvent } from "./event";
 import {
   type EntityId,
   type EventId,
@@ -106,7 +106,19 @@ export interface RecentEvent {
   readonly tick: number;
   readonly kind: WorldEvent["kind"];
   readonly subjects: readonly EntityId[];
+  /**
+   * Why a building ignited, on `building-ignited` events only: a strike, the
+   * quiet-world director, or a fire spreading from another building. A client
+   * that shows a strike needs it, because the three look alike otherwise.
+   */
+  readonly cause?: FireCause["kind"];
 }
+
+export const IGNITION_CAUSES = [
+  "strike",
+  "director",
+  "spread",
+] as const satisfies readonly FireCause["kind"][];
 
 function parseRecentEvent(
   value: unknown,
@@ -129,12 +141,30 @@ function parseRecentEvent(
     parseEntityId,
   );
   if (!subjects.ok) return subjects;
+  if (value.cause === undefined) {
+    return ok({
+      id: id.value,
+      sequence: sequence.value,
+      tick: tick.value,
+      kind: kind.value,
+      subjects: subjects.value,
+    });
+  }
+  const cause = parseEnum(value.cause, `${path}.cause`, IGNITION_CAUSES);
+  if (!cause.ok) return cause;
+  if (kind.value !== "building-ignited") {
+    return fail(
+      `${path}.cause`,
+      "only a building-ignited event carries a cause",
+    );
+  }
   return ok({
     id: id.value,
     sequence: sequence.value,
     tick: tick.value,
     kind: kind.value,
     subjects: subjects.value,
+    cause: cause.value,
   });
 }
 

@@ -192,26 +192,6 @@ export function baseState(): WorldState {
   );
 }
 
-/** A world of only locations -- no actors or buildings -- for tests that care about the graph alone. */
-export function locationsWorld(
-  locations: readonly {
-    readonly id: string;
-    readonly realm: RealmName;
-    readonly name: string;
-    readonly edgesTo: readonly string[];
-  }[],
-): WorldState {
-  return worldOf(
-    locations.map((location) =>
-      locationOf(location.id, location.realm, location.name, location.edgesTo),
-    ),
-    [],
-    [],
-    1,
-    0,
-  );
-}
-
 export function movedActor(
   state: WorldState,
   actorId: string,
@@ -263,6 +243,8 @@ export interface FixtureEvent {
   readonly tick: number;
   readonly kind: string;
   readonly subjects: readonly string[];
+  /** Why a building ignited, on `building-ignited` only. */
+  readonly cause?: string;
 }
 
 export interface FrameOptions {

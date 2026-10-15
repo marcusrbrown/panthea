@@ -1,9 +1,24 @@
 // The harness scene as data: a ground patch, the subject at a fixed tile, a
 // seated companion that shows the placeholder fallback, a placeholder mortal
-// for scale, a placeholder 2x2 structure two depth steps behind the subject on its column, so the subject covers part of it, and a flat
-// portrait panel. Coordinates assume HARNESS_CAMERA.
+// for scale, the published Greek house two depth steps behind the subject, so
+// the subject covers part of it, the published Old Oak, the fire over the
+// structure the owner set burning, the strike's bolt, and a flat portrait
+// panel. Coordinates assume HARNESS_CAMERA.
 
-import { frameIndexAt, type Point } from "@panthea/renderer";
+import {
+  type Cell,
+  type EffectsMode,
+  FIRE_ANIMATION,
+  FIRE_ASSET,
+  frameIndexAt,
+  type Layer,
+  type Point,
+  STRIKE_ASSET,
+  STRUCTURE_ANCHORS,
+  STRUCTURE_ASSETS,
+  type StructureArt,
+  strikeAnimation,
+} from "@panthea/renderer";
 import type { PreviewItem } from "../renderer/preview";
 import type {
   AssetSource,
@@ -11,12 +26,17 @@ import type {
   ResolveRequest,
   Selection,
 } from "../source/port";
+import { type BuildingState, lookOf } from "./building";
 
-/** Top-left of the 480x270 viewport in screen space. */
-export const HARNESS_CAMERA: Point = { x: -240, y: -80 };
+/**
+ * Top-left of the 480x270 viewport in screen space. It sits high enough that
+ * the strike's cell, which reaches 116 px above the point the bolt lands on,
+ * lands on a roof or a canopy inside the view.
+ */
+export const HARNESS_CAMERA: Point = { x: -240, y: -140 };
 
 /** Screen position of the portrait panel, right of the ground patch. */
-export const PORTRAIT_PANEL_AT: Point = { x: 138, y: -70 };
+export const PORTRAIT_PANEL_AT: Point = { x: 138, y: -130 };
 
 /** An id no source holds, so every source answers with its placeholder. */
 export const MISSING_SPRITE: Selection = {
@@ -27,14 +47,25 @@ export const MISSING_SPRITE: Selection = {
 const PATCH = 4;
 
 /**
- * Which of the subject and the placeholder structure draws in front where
- * they overlap. A sprite's screen y is 16 x depth + 31, so a 16 px structure
- * can only overlap the taller subject behind it or at its own depth, where
- * the layer decides: "subject-front" puts the structure two depth steps
+ * Which of the subject and the house draws in front where they overlap. The
+ * house is 4x3 tiles, so its depth is that of its bottom cell: at a shared
+ * depth the layer decides. "subject-front" puts the house two depth steps
  * behind, "structure-front" shares the subject's bottom cell and swaps their
  * layers.
  */
 export type OcclusionPair = "subject-front" | "structure-front";
+
+/** The structure the owner sets a state on, and the state. The other structure stays intact. */
+export interface StructureChoice {
+  readonly art: StructureArt;
+  readonly state: BuildingState;
+}
+
+/** The strike's bolt: the animation to ask for, and the clock it plays on (see the effect item). */
+export interface BoltChoice {
+  readonly animation: EffectsMode;
+  readonly elapsedMs: () => number | undefined;
+}
 
 export interface HarnessSelection {
   readonly subject: Selection | undefined;
@@ -47,6 +78,10 @@ export interface HarnessSelection {
   readonly expressions?: readonly string[];
   readonly companion: boolean;
   readonly occlusion?: OcclusionPair;
+  /** Absent: the house, intact. */
+  readonly structure?: StructureChoice;
+  /** Absent: no bolt item. */
+  readonly bolt?: BoltChoice;
 }
 
 export interface PreviewAnimationKey {
@@ -390,6 +425,46 @@ export function harnessSubject(
   return { source: chosen.source, id: chosen.id, realm: selected.realm };
 }
 
+/** The footprints the published structure art declares, in tiles: what a placeholder stands in with. */
+const STRUCTURE_FOOTPRINTS: Readonly<
+  Record<StructureArt, { readonly w: number; readonly h: number }>
+> = { building: { w: 4, h: 3 }, tree: { w: 1, h: 1 } };
+
+const STRUCTURE_FACING = "south";
+
+interface StructureSpot {
+  readonly id: string;
+  readonly layer: Layer;
+  /** The footprint's origin cell. */
+  readonly cell: Cell;
+}
+
+function structureSpots(
+  occlusion: OcclusionPair | undefined,
+): Record<StructureArt, StructureSpot> {
+  const front = occlusion === "structure-front";
+  return {
+    // The house's bottom cell is (x + 3, y + 2): (0, 2) two depth steps behind
+    // the subject, or the subject's own (2, 2) when it is to draw in front.
+    building: {
+      id: "structure",
+      layer: front ? "actor" : "structure",
+      cell: front ? { x: -1, y: 0, z: 0 } : { x: -3, y: 0, z: 0 },
+    },
+    tree: { id: "tree", layer: "structure", cell: { x: 3, y: 0, z: 0 } },
+  };
+}
+
+/** The cell a structure's foot stands on: the bottom cell of its footprint. */
+function footCell(art: StructureArt, spot: StructureSpot): Cell {
+  const footprint = STRUCTURE_FOOTPRINTS[art];
+  return {
+    x: spot.cell.x + footprint.w - 1,
+    y: spot.cell.y + footprint.h - 1,
+    z: spot.cell.z,
+  };
+}
+
 export function harnessItems(selection: HarnessSelection): PreviewItem[] {
   const items: PreviewItem[] = [];
   for (let x = 0; x < PATCH; x += 1) {
@@ -403,14 +478,52 @@ export function harnessItems(selection: HarnessSelection): PreviewItem[] {
   }
   const subject = selection.subject ?? MISSING_SPRITE;
   const structureFront = selection.occlusion === "structure-front";
-  items.push({
-    kind: "sprite",
-    id: "structure",
-    layer: structureFront ? "actor" : "structure",
-    cell: structureFront ? { x: 1, y: 1, z: 0 } : { x: 0, y: 0, z: 0 },
-    footprint: { w: 2, h: 2 },
-    request: MISSING_SPRITE,
-  });
+  const target = selection.structure?.art ?? "building";
+  const look = lookOf(selection.structure?.state ?? "intact");
+  const spots = structureSpots(selection.occlusion);
+  for (const art of ["building", "tree"] as const) {
+    const spot = spots[art];
+    items.push({
+      kind: "sprite",
+      id: spot.id,
+      layer: spot.layer,
+      cell: spot.cell,
+      footprint: STRUCTURE_FOOTPRINTS[art],
+      request: {
+        source: "canon",
+        id: STRUCTURE_ASSETS[art],
+        state: art === target ? look.state : "intact",
+        direction: STRUCTURE_FACING,
+      },
+    });
+  }
+  const targetSpot = spots[target];
+  const targetFoot = footCell(target, targetSpot);
+  if (look.fire) {
+    items.push({
+      kind: "effect",
+      id: `${targetSpot.id}-fire`,
+      layer: targetSpot.layer,
+      cell: targetFoot,
+      offset: STRUCTURE_ANCHORS[target].fire,
+      request: { source: "canon", id: FIRE_ASSET, animation: FIRE_ANIMATION },
+    });
+  }
+  if (selection.bolt !== undefined) {
+    items.push({
+      kind: "effect",
+      id: "strike",
+      layer: "effect",
+      cell: targetFoot,
+      offset: STRUCTURE_ANCHORS[target].strike,
+      request: {
+        source: "canon",
+        id: STRIKE_ASSET,
+        animation: strikeAnimation(selection.bolt.animation),
+      },
+      elapsedMs: selection.bolt.elapsedMs,
+    });
+  }
   items.push({
     kind: "sprite",
     id: "mortal",

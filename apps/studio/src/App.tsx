@@ -1,9 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  EFFECTS_MODES,
+  type EffectsMode,
+  STRIKE_ASSET,
+  type StructureArt,
+  strikeAnimation,
+} from "@panthea/renderer";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 
 import { type CheckResult, runChecks } from "./check/run";
+import { BUILDING_STATES, type BuildingState } from "./harness/building";
 import {
   abilitiesForKey,
   animationKeyMessage,
+  clockTiming,
   createPlaybackClock,
   directionsForState,
   entryKey,
@@ -19,6 +35,7 @@ import {
   spriteKeyAfterListing,
   statesForEntry,
 } from "./harness/layout";
+import { createStrikeScene, type StrikeScene } from "./harness/strike";
 import { usePreview } from "./harness/usePreview";
 import { inTauri } from "./host/tauri";
 import { ZOOMS, type Zoom } from "./renderer/preview";
@@ -144,10 +161,21 @@ function PreviewHarness({
     if (params.animate) playbackRef.current.play();
   }
   const playback = playbackRef.current;
+  // The struck structure, the effects toggle and the strike in flight. Its
+  // state lives in the scene; a change to it redraws the controls.
+  const strikeRef = useRef<StrikeScene | undefined>(undefined);
+  if (strikeRef.current === undefined) {
+    strikeRef.current = createStrikeScene({ now: () => performance.now() });
+  }
+  const strikeScene = strikeRef.current;
+  const [, redrawScene] = useReducer((count: number) => count + 1, 0);
+  const [target, setTarget] = useState<StructureArt>("building");
   const syncFrame = useCallback(() => {
     const next = playback.frame();
     setFrameIndex((current) => (current === next ? current : next));
-  }, [playback]);
+    // A strike whose bolt just ended has resolved: the building burns.
+    if (strikeScene.settle()) redrawScene();
+  }, [playback, strikeScene]);
   const handle = usePreview(container, {
     ...params,
     animate: !params.check,
@@ -155,6 +183,29 @@ function PreviewHarness({
     onTick: syncFrame,
   });
   const { preview, source, listing } = handle;
+  const building = strikeScene.building();
+  const effectsMode = strikeScene.mode();
+  const boltAnimation = strikeScene.bolt().animation;
+  const striking = strikeScene.striking();
+
+  const strike = useCallback(async () => {
+    if (source === undefined || strikeScene.striking()) return;
+    const mode = strikeScene.mode();
+    let durations: readonly number[] = [];
+    try {
+      const resolved = await source.resolve({
+        source: "canon",
+        id: STRIKE_ASSET,
+        animation: strikeAnimation(mode),
+      });
+      if (resolved.kind === "frames")
+        durations = clockTiming(resolved.asset).durations;
+    } catch {
+      // The strike still resolves; it is the picture that is missing.
+    }
+    strikeScene.strike(durations, mode);
+    redrawScene();
+  }, [source, strikeScene]);
 
   useEffect(() => {
     if (
@@ -355,6 +406,11 @@ function PreviewHarness({
         expressions: portraitEntry?.expressions ?? [],
         companion,
         occlusion,
+        structure: { art: target, state: building },
+        bolt: {
+          animation: boltAnimation,
+          elapsedMs: strikeScene.bolt().elapsedMs,
+        },
       }),
     );
   }, [
@@ -374,6 +430,10 @@ function PreviewHarness({
     expression,
     companion,
     occlusion,
+    target,
+    building,
+    boltAnimation,
+    strikeScene,
   ]);
 
   useEffect(() => {
@@ -646,6 +706,60 @@ function PreviewHarness({
               ))}
             </fieldset>
           )}
+          <fieldset className="preview-scene">
+            <legend>Scene</legend>
+            <label>
+              Structure{" "}
+              <select
+                value={target}
+                onChange={(event) =>
+                  setTarget(event.target.value as StructureArt)
+                }
+              >
+                <option value="building">Greek house</option>
+                <option value="tree">Old Oak</option>
+              </select>
+            </label>
+            <label>
+              Building state{" "}
+              <select
+                value={building}
+                onChange={(event) => {
+                  strikeScene.setBuilding(event.target.value as BuildingState);
+                  redrawScene();
+                }}
+              >
+                {BUILDING_STATES.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Effects{" "}
+              <select
+                value={effectsMode}
+                onChange={(event) => {
+                  strikeScene.setMode(event.target.value as EffectsMode);
+                  redrawScene();
+                }}
+              >
+                {EFFECTS_MODES.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={source === undefined || striking}
+              onClick={() => void strike()}
+            >
+              Strike
+            </button>
+          </fieldset>
           {!compact && (
             <div className="preview-more-controls">
               <label>

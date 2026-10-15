@@ -9,7 +9,7 @@ import {
   movedActor,
   withoutActor,
 } from "./fixtures";
-import { createObserver, listTargets } from "./observer";
+import { createObserver, followedPlace, listTargets } from "./observer";
 import { toViewModel, type WorldViewModel } from "./store";
 
 function view(state: WorldState, sequence = 1): WorldViewModel {
@@ -281,4 +281,52 @@ test("the observer's only inputs are picks and view models, so selecting a targe
     kind: "following",
     target: { kind: "location", id: "agora" },
   });
+});
+
+test("the followed place is the followed location, or the followed actor's current location", () => {
+  const observer = createObserver();
+  const state = baseState();
+
+  expect(followedPlace(observer.update(view(state)))).toBeUndefined();
+
+  observer.pick({ kind: "location", id: "agora" });
+  expect(followedPlace(observer.update(view(state)))).toEqual({
+    realm: "mortal",
+    locationId: "agora",
+  });
+
+  observer.pick({ kind: "actor", id: "woodcutter" });
+  expect(followedPlace(observer.update(view(state)))).toEqual({
+    realm: "mortal",
+    locationId: "town-square",
+  });
+  // The actor walks: the place follows it, from state alone.
+  expect(
+    followedPlace(
+      observer.update(view(movedActor(state, "woodcutter", "agora"))),
+    ),
+  ).toEqual({ realm: "mortal", locationId: "agora" });
+  // And across realms.
+  observer.pick({ kind: "actor", id: "zeus" });
+  expect(followedPlace(observer.update(view(state)))?.realm).toBe("olympus");
+});
+
+test("a held observer keeps the last place it knew, and one that never knew one has none", () => {
+  const observer = createObserver();
+  const state = baseState();
+  observer.pick({ kind: "actor", id: "woodcutter" });
+  observer.update(view(state));
+
+  // A dead actor is held where the state reports it.
+  expect(
+    followedPlace(observer.update(view(deadActor(state, "woodcutter")))),
+  ).toEqual({ realm: "mortal", locationId: "town-square" });
+  // A removed one is held at the last place it was followed.
+  expect(
+    followedPlace(observer.update(view(withoutActor(state, "woodcutter")))),
+  ).toEqual({ realm: "mortal", locationId: "town-square" });
+
+  const never = createObserver();
+  never.pick({ kind: "actor", id: "nobody" });
+  expect(followedPlace(never.update(view(state)))).toBeUndefined();
 });

@@ -191,6 +191,39 @@ describe("list, resolve, fetchBytes", () => {
     ]);
   });
 
+  test("an effect's animation is asked for by name, and its resolution is read as an effect", async () => {
+    const effect = {
+      ...frames(KEY_A, "lightning-strike", "canon"),
+      asset: {
+        ...frames(KEY_A).asset,
+        kind: "effect",
+        assetId: "lightning-strike",
+        cell: { w: 64, h: 128 },
+        pivot: { x: 32, y: 116 },
+        loopStart: undefined,
+      },
+    };
+    const r = rig({ "source-resolve": () => effect });
+
+    const resolved = await r.source.resolve({
+      source: "canon",
+      id: "lightning-strike",
+      animation: "calm",
+    });
+
+    expect(resolved).toMatchObject({
+      kind: "frames",
+      asset: { kind: "effect", assetId: "lightning-strike" },
+    });
+    expect(r.transport.to("studio_call").map((c) => c.args)).toEqual([
+      {
+        op: "source-resolve",
+        args: { source: "canon", id: "lightning-strike", animation: "calm" },
+      },
+    ]);
+    expect(r.problems).toEqual([]);
+  });
+
   test("the resolution's bytes name no file: the url is an opaque in-app reference", async () => {
     const r = rig();
     const resolved = await r.source.resolve({
@@ -817,7 +850,7 @@ describe("untrusted payloads", () => {
     ["a missing manifest key", { ...frames(KEY_A), manifestKey: undefined }],
     ["an asset that is not an object", { ...frames(KEY_A), asset: "x" }],
     [
-      "an asset kind that is not sprite or portrait",
+      "an asset kind that is not sprite, portrait or effect",
       withAsset({ kind: "tile" }),
     ],
     ["frames that are not a list", withAsset({ frames: {} })],

@@ -9,5 +9,6 @@ export * from "./decode";
 export * from "./iso";
 export * from "./layer";
 export * from "./scene";
+export * from "./structures";
 export * from "./textures";
 export * from "./view";

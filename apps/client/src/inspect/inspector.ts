@@ -454,22 +454,28 @@ export function createInspector(
                 kind: "portrait",
                 expression: selection.query.expression,
               }
-            : {
-                assetId: asset.assetId,
-                kind: "sprite",
-                state: selection.query.state,
-                direction: selection.query.direction,
-                ...(selection.query.ability === undefined
-                  ? {}
-                  : { ability: selection.query.ability }),
-              },
+            : "animation" in selection.query
+              ? {
+                  assetId: asset.assetId,
+                  kind: "effect",
+                  animation: selection.query.animation,
+                }
+              : {
+                  assetId: asset.assetId,
+                  kind: "sprite",
+                  state: selection.query.state,
+                  direction: selection.query.direction,
+                  ...(selection.query.ability === undefined
+                    ? {}
+                    : { ability: selection.query.ability }),
+                },
         );
       }
       if (asset.kind !== "sprite") continue;
       for (const state of ["seated", "act"]) {
         const published = asset.selections.some(
           (selection) =>
-            !("expression" in selection.query) &&
+            "state" in selection.query &&
             selection.query.state === state &&
             selection.query.direction === "south" &&
             selection.query.ability === undefined,

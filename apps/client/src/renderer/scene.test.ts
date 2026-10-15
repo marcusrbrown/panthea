@@ -1,9 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { EMPTY_SNAPSHOT, resolveAssetPixels } from "@panthea/assets/browser";
-import type { Realm } from "@panthea/contracts";
+import { parseSyncFrame, type Realm } from "@panthea/contracts";
 import { type DecodedImage, placeholderImage } from "@panthea/renderer";
 import { testBackend } from "@panthea/testkit/renderer";
-import type { Mesh, MeshBasicMaterial } from "three";
+import { decode, type WorldState } from "@panthea/world";
 import type { Sprite2D, SpriteGroup } from "three-flatland";
 import {
   decodeFixture,
@@ -20,8 +20,11 @@ import {
   TALL_CELL,
   TALL_SPRITE_ID,
 } from "../../test/god-tall-fixture";
-import { viewWithZeus } from "../../test/view-fixture";
+import { FIRE_ATLAS_HASH } from "../../test/structure-fixture";
+import { PLACE, viewWithZeus } from "../../test/view-fixture";
 import {
+  COMMITTED_CANON_ATLASES,
+  committedCanonPayload,
   RETRO_ATLAS_HASH,
   RETRO_ATLASES,
   retroPayload,
@@ -31,14 +34,10 @@ import {
   type CanonProblem,
   createCanonClient,
 } from "../assets/canon";
-import { previewView } from "../fixtures";
-import type { WorldViewModel } from "../store";
-import {
-  actorFoot,
-  CAMERA_ORIGIN,
-  LOGICAL_SIZE,
-  locationPoints,
-} from "./layout";
+import { baseState, framePayload, movedActor, previewView } from "../fixtures";
+import { createObserver, followedPlace } from "../observer";
+import { toViewModel, type WorldViewModel } from "../store";
+import { actorFoot, CAMERA_ORIGIN, LOGICAL_SIZE, PLACE_ORIGIN } from "./layout";
 import { drawableEvents } from "./presentation";
 import { createWorldRenderer, type WorldRenderer } from "./scene";
 
@@ -134,7 +133,7 @@ test("Zeus draws canon idle-south from the real atlas, and animates by the manif
   const { canon, source, problems } = setup();
   const { renderer, backend } = await mount(canon);
 
-  await renderer.draw(viewWithZeus(), "olympus");
+  await renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
 
   const zeus = spriteOf(backend, "actor:zeus");
   const expected = await decodeFixture(ZEUS_ATLAS_BYTES);
@@ -176,9 +175,9 @@ test("a strike leaves Zeus in idle-south: no act is selected", async () => {
     ],
   });
 
-  await renderer.draw(struck, "olympus");
-  await renderer.draw(struck, "mortal");
-  await renderer.draw(struck, "olympus");
+  await renderer.draw(struck, "olympus", PLACE.olympus);
+  await renderer.draw(struck, "mortal", PLACE.mortal);
+  await renderer.draw(struck, "olympus", PLACE.olympus);
 
   const zeus = spriteOf(backend, "actor:zeus");
   expect(zeus.frame?.name).toBe(IDLE_FRAMES[0]);
@@ -193,21 +192,22 @@ test("an inhabitant draws the shared placeholder pixels", async () => {
   const { canon } = setup();
   const { renderer, backend } = await mount(canon);
 
-  await renderer.draw(viewWithZeus(), "mortal");
+  await renderer.draw(viewWithZeus(), "mortal", PLACE.mortal);
 
   const woodcutter = spriteOf(backend, "actor:woodcutter");
   expect(woodcutter.texture?.image).toMatchObject({ width: 16, height: 16 });
   expect(pixelsOf(woodcutter)).toEqual(placeholderPixels());
-  // One shared placeholder texture serves every placeholder actor.
-  expect(backend.layer.stats).toEqual({ sprites: 2, textures: 1 });
+  // One shared placeholder texture serves every placeholder sprite of the followed place: its inhabitant,
+  // the tavern and its fire.
+  expect(backend.layer.stats).toEqual({ sprites: 3, textures: 1 });
 });
 
 test("only the blob a parsed manifest names is ever fetched", async () => {
   const { canon, source } = setup();
   const { renderer } = await mount(canon);
 
-  await renderer.draw(viewWithZeus(), "mortal");
-  await renderer.draw(viewWithZeus(), "olympus");
+  await renderer.draw(viewWithZeus(), "mortal", PLACE.mortal);
+  await renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
 
   expect(source.atlasCalls()).toEqual([ZEUS_ATLAS_HASH]);
 });
@@ -219,8 +219,10 @@ test("a registry problem falls back to the placeholder, is reported once, and ne
   const { renderer, backend } = await mount(canon);
 
   const view = viewWithZeus();
-  await expect(renderer.draw(view, "olympus")).resolves.toBeInstanceOf(Array);
-  await renderer.draw(view, "olympus");
+  await expect(
+    renderer.draw(view, "olympus", PLACE.olympus),
+  ).resolves.toBeInstanceOf(Array);
+  await renderer.draw(view, "olympus", PLACE.olympus);
 
   const zeus = spriteOf(backend, "actor:zeus");
   expect(pixelsOf(zeus)).toEqual(placeholderPixels());
@@ -234,8 +236,8 @@ test("a refused atlas fetch falls back to the placeholder, is reported once, and
   const { renderer, backend } = await mount(canon);
 
   const view = viewWithZeus();
-  await renderer.draw(view, "olympus");
-  await renderer.draw(view, "olympus");
+  await renderer.draw(view, "olympus", PLACE.olympus);
+  await renderer.draw(view, "olympus", PLACE.olympus);
 
   const zeus = spriteOf(backend, "actor:zeus");
   expect(zeus.texture?.image).toMatchObject({ width: 16, height: 16 });
@@ -255,8 +257,8 @@ test("an atlas that will not decode, or decodes to the wrong size, falls back an
     const { renderer, backend } = await mount(canon, { decode });
 
     const view = viewWithZeus();
-    await renderer.draw(view, "olympus");
-    await renderer.draw(view, "olympus");
+    await renderer.draw(view, "olympus", PLACE.olympus);
+    await renderer.draw(view, "olympus", PLACE.olympus);
 
     expect(pixelsOf(spriteOf(backend, "actor:zeus"))).toEqual(
       placeholderPixels(),
@@ -276,10 +278,11 @@ test("three device-loss remounts rebuild from cached bytes: no refetch, no leake
     backends.push(backend);
     backend.holdPrepare(); // only the draws' own frames are counted below
 
-    await renderer.draw(view, "olympus");
-    await renderer.draw(view, "mortal");
+    await renderer.draw(view, "olympus", PLACE.olympus);
+    await renderer.draw(view, "mortal", PLACE.mortal);
 
-    expect(backend.layer.stats).toEqual({ sprites: 2, textures: 1 });
+    // The followed place: its inhabitant, the tavern and its fire, all on the one placeholder texture.
+    expect(backend.layer.stats).toEqual({ sprites: 3, textures: 1 });
     expect(spriteGroups(backend)).toEqual([backend.layer.group]);
     expect(backend.decor.children.length).toBeGreaterThan(0);
 
@@ -305,8 +308,8 @@ test("repeated renderer replacement never exhausts the sprite-group world limit"
 
   for (let mounted = 0; mounted < 40; mounted += 1) {
     const { renderer, backend } = await mount(canon);
-    await renderer.draw(view, "mortal");
-    await renderer.draw(view, "olympus");
+    await renderer.draw(view, "mortal", PLACE.mortal);
+    await renderer.draw(view, "olympus", PLACE.olympus);
     expect(backend.layer.stats.sprites).toBe(1);
     renderer.dispose();
   }
@@ -319,13 +322,13 @@ test("the ids a draw hands back are exactly the drawable events, as before", asy
 
   for (const view of views) {
     for (const realm of ["mortal", "olympus", "underworld"] as Realm[]) {
-      const drawn = await renderer.draw(view, realm);
+      const drawn = await renderer.draw(view, realm, PLACE[realm]);
       expect(drawn).toEqual(
         drawableEvents(view, realm).map((event) => event.id),
       );
     }
   }
-  const preview = await renderer.draw(previewView(), "mortal");
+  const preview = await renderer.draw(previewView(), "mortal", PLACE.mortal);
   expect(preview).toEqual([
     "evt-strike-14",
     "evt-fire-15",
@@ -353,9 +356,9 @@ test("a draw superseded while its atlas loads hands back nothing and the newer d
   backend.holdPrepare(); // only the draws' own frames are counted below
   await canon.load();
 
-  const first = renderer.draw(viewWithZeus(), "olympus");
+  const first = renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
   await flush();
-  const second = renderer.draw(previewView(), "mortal");
+  const second = renderer.draw(previewView(), "mortal", PLACE.mortal);
   await flush();
   release(ZEUS_ATLAS_BYTES);
 
@@ -374,7 +377,7 @@ test("a draw renders at once however long the backend's async compile takes, the
   // occluded window, a runtime without scheduler.yield): it settles late or never.
   const settle = backend.holdPrepare();
 
-  const drawing = renderer.draw(viewWithZeus(), "olympus");
+  const drawing = renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
   await flush();
   expect(backend.log).toEqual(["start", "render", "prepare"]);
   await drawing;
@@ -408,7 +411,13 @@ test("every view of a stream presents although a compile outlasts the next view,
   const drawn: Promise<readonly string[]>[] = [];
   for (const offset of [0, 1, 2]) {
     // The next view arrives as soon as the last one's synchronous work is done.
-    drawn.push(renderer.draw({ ...view, tick: view.tick + offset }, "mortal"));
+    drawn.push(
+      renderer.draw(
+        { ...view, tick: view.tick + offset },
+        "mortal",
+        PLACE.mortal,
+      ),
+    );
     await flush();
   }
 
@@ -428,7 +437,7 @@ test("a compile that settles after disposal renders nothing, and one that fails 
   const { renderer, backend } = await mount(canon);
   const settle = backend.holdPrepare();
 
-  await renderer.draw(viewWithZeus(), "olympus");
+  await renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
   renderer.dispose();
   settle();
   await flush();
@@ -442,12 +451,12 @@ test("a compile that settles after disposal renders nothing, and one that fails 
     if (attempts === 1) throw new Error("shader link failed");
     await prepare?.();
   };
-  await failing.renderer.draw(viewWithZeus(), "olympus");
+  await failing.renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
   await flush();
   expect(problems.map((problem) => problem.message)).toEqual([
     "shader link failed",
   ]);
-  await failing.renderer.draw(viewWithZeus(), "olympus");
+  await failing.renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
   await flush();
   expect(attempts).toBe(2);
 });
@@ -456,7 +465,7 @@ test("nothing animates, so ticks never render, when no actor is canon", async ()
   const { canon } = setup({ payload: new Error("no canon") });
   const { renderer, backend } = await mount(canon);
 
-  await renderer.draw(viewWithZeus(), "olympus");
+  await renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
   const rendered = backend.log.length;
   renderer.tick(5000);
 
@@ -476,88 +485,219 @@ test("a renderer disposed while its atlas loads renders nothing and hands back n
   const { renderer, backend } = await mount(canon);
   await canon.load();
 
-  const drawing = renderer.draw(viewWithZeus(), "olympus");
+  const drawing = renderer.draw(viewWithZeus(), "olympus", PLACE.olympus);
   await flush();
   renderer.dispose();
   release(ZEUS_ATLAS_BYTES);
 
   expect(await drawing).toEqual([]);
   expect(backend.log).not.toContain("render");
-  expect(await renderer.draw(viewWithZeus(), "olympus")).toEqual([]);
+  expect(await renderer.draw(viewWithZeus(), "olympus", PLACE.olympus)).toEqual(
+    [],
+  );
   expect(() => renderer.tick(10)).not.toThrow();
   expect(() => renderer.dispose()).not.toThrow();
 });
 
-test("the canvas backing store is the logical size times the largest whole zoom that fits, drawn from the centred camera", async () => {
+test("the canvas backing store is the logical size times the largest whole zoom that fits, drawn from the content-fit camera", async () => {
   const { canon } = setup();
   const { backend, element } = await mount(canon, {
-    available: { width: 1300, height: 1300 },
+    available: { width: 1500, height: 1500 },
   });
 
-  expect(element.width).toBe(1248);
-  expect(element.height).toBe(1184);
-  expect(element.style.width).toBe("1248px");
-  expect(element.style.height).toBe("1184px");
-  expect(element.style.left).toBe("26px");
-  expect(element.style.top).toBe("58px");
+  expect(element.width).toBe(1152);
+  expect(element.height).toBe(672);
+  expect(element.style.width).toBe("1152px");
+  expect(element.style.height).toBe("672px");
+  expect(element.style.left).toBe("174px");
+  expect(element.style.top).toBe("414px");
   const view = backend.views.at(-1);
   expect(view?.zoom).toBe(2);
   expect(view?.camera).toEqual(CAMERA_ORIGIN);
   expect(view?.metrics).toMatchObject({
-    backingWidth: 1248,
-    backingHeight: 1184,
+    backingWidth: 1152,
+    backingHeight: 672,
   });
 });
 
 test("at a device pixel ratio of 2 the CSS box is half the backing store", async () => {
   const { canon } = setup();
   const { element } = await mount(canon, {
-    available: { width: 650, height: 620 },
+    available: { width: 576, height: 336 },
     devicePixelRatio: 2,
   });
 
-  expect(element.width).toBe(1248);
-  expect(element.style.width).toBe("624px");
-  expect(element.style.height).toBe("592px");
+  expect(element.width).toBe(1152);
+  expect(element.style.width).toBe("576px");
+  expect(element.style.height).toBe("336px");
 });
 
-test("places, buildings, flames and event rings are meshes in the decor group, redrawn without accumulating", async () => {
+test("event rings are meshes in the decor group, redrawn without accumulating; buildings and flames are not meshes", async () => {
   const { canon } = setup();
   const { renderer, backend } = await mount(canon);
   const view = previewView();
 
-  await renderer.draw(view, "mortal");
+  await renderer.draw(view, "mortal", PLACE.mortal);
   const first = backend.decor.children.length;
-  await renderer.draw(view, "mortal");
+  await renderer.draw(view, "mortal", PLACE.mortal);
 
   expect(backend.decor.children).toHaveLength(first);
   const names = backend.decor.children.map((child) => child.name);
-  expect(names).toContain("place:town-square");
-  expect(names).toContain("building:the-tavern");
-  expect(names).toContain("flame:the-tavern");
   expect(names.filter((name) => name.startsWith("ring:"))).toHaveLength(4);
   expect(names).toContain("dead:fallen-guard");
-  await renderer.draw(view, "olympus");
-  expect(backend.decor.children.map((child) => child.name)).not.toContain(
-    "building:the-tavern",
-  );
+  expect(
+    names.filter(
+      (name) => name.startsWith("building:") || name.startsWith("flame:"),
+    ),
+  ).toEqual([]);
+  await renderer.draw(view, "olympus", PLACE.olympus);
+  // Olympus's place draws its own events' rings, not the town square's.
+  expect(decorNames(backend)).not.toContain("ring:evt-fire-15");
 });
 
-test("pixel building colors use the shared palette without color conversion", async () => {
-  const { canon } = setup();
+const CANON = {
+  payload: committedCanonPayload,
+  atlases: COMMITTED_CANON_ATLASES,
+};
+
+test("buildings draw as structure sprites from the published atlases, and a burning one has the fire over it", async () => {
+  const { canon, problems } = setup({
+    payload: CANON.payload(),
+    atlases: CANON.atlases,
+  });
   const { renderer, backend } = await mount(canon);
 
-  await renderer.draw(previewView(), "mortal");
+  await renderer.draw(previewView(), "mortal", PLACE.mortal);
 
-  const shop = backend.decor.children.find(
-    (child) => child.name === "building:the-tavern",
+  // The burning tavern: the damaged house (second cell) and the first fire frame.
+  expect(spriteOf(backend, "structure:the-tavern").frame?.name).toBe(
+    "192,0,192,192",
   );
-  const wall = shop?.children.find((child) => child.name === "wall") as Mesh;
-  const color = (wall.material as MeshBasicMaterial).color;
-  // The burning tavern uses the shared rust token.
-  expect([color.r, color.g, color.b].map((v) => Math.round(v * 255))).toEqual([
-    0xa5, 0x4d, 0x36,
+  expect(
+    spriteOf(backend, "structure:the-tavern").texture?.image,
+  ).toMatchObject({
+    width: 576,
+    height: 192,
+  });
+  expect(spriteOf(backend, "structure:the-tavern:fire").frame?.name).toBe(
+    "0,0,64,88",
+  );
+  expect(
+    spriteOf(backend, "structure:the-tavern:fire").texture?.image,
+  ).toMatchObject({
+    width: 640,
+    height: 88,
+  });
+  expect(problems).toEqual([]);
+});
+
+test("the fire loops on its own durations while the building beneath stays still", async () => {
+  const { canon } = setup({
+    payload: CANON.payload(),
+    atlases: CANON.atlases,
+  });
+  const { renderer, backend } = await mount(canon);
+  await renderer.draw(previewView(), "mortal", PLACE.mortal);
+  const fire = spriteOf(backend, "structure:the-tavern:fire");
+  const house = spriteOf(backend, "structure:the-tavern");
+
+  // Ten frames of 90 ms, then round again.
+  renderer.tick(89);
+  expect(fire.frame?.name).toBe("0,0,64,88");
+  renderer.tick(1);
+  expect(fire.frame?.name).toBe("64,0,64,88");
+  renderer.tick(810);
+  expect(fire.frame?.name).toBe("0,0,64,88");
+  expect(house.frame?.name).toBe("192,0,192,192");
+});
+
+test("a building draws the placeholder when its art is not published, and the event on it is still drawn for receipts", async () => {
+  const { canon, problems } = setup();
+  const { renderer, backend } = await mount(canon);
+  const view = previewView();
+
+  const drawn = await renderer.draw(view, "mortal", PLACE.mortal);
+
+  for (const id of ["structure:the-tavern", "structure:the-tavern:fire"]) {
+    const sprite = spriteOf(backend, id);
+    expect(sprite.texture?.image).toMatchObject({ width: 16, height: 16 });
+    expect(pixelsOf(sprite)).toEqual(placeholderPixels());
+  }
+  expect(drawn).toEqual(
+    drawableEvents(view, "mortal").map((event) => event.id),
+  );
+  expect(drawn).toContain("evt-fire-15");
+  // Nothing published is not a problem the player is told about: it is the placeholder.
+  expect(problems).toEqual([]);
+});
+
+test("a structure whose atlas cannot be fetched falls back to the placeholder, is reported once, and the rest still draws", async () => {
+  const atlases = new Map(COMMITTED_CANON_ATLASES);
+  atlases.delete(FIRE_ATLAS_HASH);
+  const { canon, problems } = setup({ payload: CANON.payload(), atlases });
+  const { renderer, backend } = await mount(canon);
+
+  await renderer.draw(previewView(), "mortal", PLACE.mortal);
+  await renderer.draw(previewView(), "mortal", PLACE.mortal);
+
+  expect(pixelsOf(spriteOf(backend, "structure:the-tavern:fire"))).toEqual(
+    placeholderPixels(),
+  );
+  expect(spriteOf(backend, "structure:the-tavern").frame?.name).toBe(
+    "192,0,192,192",
+  );
+  expect(problems.map((problem) => problem.scope)).toEqual([
+    `atlas:${FIRE_ATLAS_HASH}`,
   ]);
+});
+
+test("an actor standing below a building draws in front of it, and the fire draws over the building", async () => {
+  const { canon } = setup({ payload: CANON.payload(), atlases: CANON.atlases });
+  const { renderer, backend } = await mount(canon);
+
+  await renderer.draw(previewView(), "mortal", PLACE.mortal);
+
+  // The preview's wanderer stands at the tavern's place, below the building row.
+  const house = spriteOf(backend, "structure:the-tavern");
+  const actor = spriteOf(backend, "actor:wanderer");
+  expect(actor.position.z).toBeGreaterThan(house.position.z);
+  expect(
+    spriteOf(backend, "structure:the-tavern:fire").position.z,
+  ).toBeGreaterThan(house.position.z);
+});
+
+test("a repairing building keeps a repair bar mesh, a burning one has no flame mesh", async () => {
+  const { canon } = setup();
+  const { renderer, backend } = await mount(canon);
+  const base = previewView();
+  const repairing: WorldViewModel = {
+    ...base,
+    realms: {
+      ...base.realms,
+      mortal: base.realms.mortal.map((location) => ({
+        ...location,
+        buildings: location.buildings.map((building) =>
+          building.id === "the-tavern"
+            ? {
+                id: building.id,
+                name: building.name,
+                locationId: building.locationId,
+                status: "repairing" as const,
+                inventory: [],
+                repair: { progress: 1, required: 3 },
+              }
+            : building,
+        ),
+      })),
+    },
+  };
+
+  await renderer.draw(repairing, "mortal", PLACE.mortal);
+
+  const names = backend.decor.children.map((child) => child.name);
+  expect(names).toContain("repair:the-tavern");
+  expect(names.some((name) => name.startsWith("flame:"))).toBe(false);
+  expect(backend.layer.spriteFor("structure:the-tavern:fire")).toBeUndefined();
 });
 
 test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each placed by its own pivot, inside the target", async () => {
@@ -583,10 +723,9 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
     ...base,
     realms: { ...base.realms, olympus },
   };
-  await renderer.draw(view, "olympus");
+  await renderer.draw(view, "olympus", PLACE.olympus);
 
-  const place = locationPoints(olympus).get(olympus[0]?.id ?? "");
-  if (place === undefined) throw new Error("the fixture has no place");
+  const place = PLACE_ORIGIN;
   const legacy = spriteOf(backend, "actor:zeus");
   const tall = spriteOf(backend, "actor:tall");
   expect(problems).toEqual([]);
@@ -611,20 +750,24 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
   expect(bottom(tall.position.y, TALL_CELL.height)).toBe(tallFoot.y - 18);
 
   // Both cells lie inside the camera's view of the target.
-  const halfWidth = LOGICAL_SIZE.width / 2;
-  const halfHeight = LOGICAL_SIZE.height / 2;
+  const bounds = {
+    left: CAMERA_ORIGIN.x,
+    right: CAMERA_ORIGIN.x + LOGICAL_SIZE.width,
+    top: -CAMERA_ORIGIN.y,
+    bottom: -CAMERA_ORIGIN.y - LOGICAL_SIZE.height,
+  };
   for (const [sprite, w, h] of [
     [legacy, 64, 80],
     [tall, TALL_CELL.width, TALL_CELL.height],
   ] as const) {
-    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(-halfWidth);
-    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(halfWidth);
-    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(halfHeight);
-    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(-halfHeight);
+    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(bounds.left);
+    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(bounds.right);
+    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(bounds.top);
+    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(bounds.bottom);
   }
 });
 
-test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 624x592 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
+test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 576x336 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
   const { canon, problems } = setup({
     payload: retroPayload(),
     atlases: RETRO_ATLASES,
@@ -647,19 +790,18 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
     ...base,
     realms: { ...base.realms, olympus },
   };
-  await renderer.draw(view, "olympus");
+  await renderer.draw(view, "olympus", PLACE.olympus);
 
-  const place = locationPoints(olympus).get(olympus[0]?.id ?? "");
-  if (place === undefined) throw new Error("the fixture has no place");
+  const place = PLACE_ORIGIN;
   const retro = spriteOf(backend, "actor:zeus");
   const elder = spriteOf(backend, "actor:elder");
   expect(problems).toEqual([]);
-  // 1200x1300 available: integer zoom 1, so the canvas is the 624x592 target itself.
+  // The default mount's 1200x1300 fits zoom 2, so the canvas is the 576x336 target at twice its size.
   expect([element.width, element.height]).toEqual([
-    LOGICAL_SIZE.width,
-    LOGICAL_SIZE.height,
+    LOGICAL_SIZE.width * 2,
+    LOGICAL_SIZE.height * 2,
   ]);
-  expect(LOGICAL_SIZE).toEqual({ width: 624, height: 592 });
+  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 336 });
   // The real atlas: 136 cells of 112x96 in one row, idle/south first.
   expect(retro.texture?.image).toMatchObject({ width: 15232, height: 96 });
   expect(retro.frame?.name).toBe("0,0,112,96");
@@ -678,18 +820,159 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
     elderFoot.y + 80 - 80 / 2,
   ]);
 
-  // Both cells lie inside the camera's view of the 624x592 target.
-  const halfWidth = LOGICAL_SIZE.width / 2;
-  const halfHeight = LOGICAL_SIZE.height / 2;
+  // Both cells lie inside the camera's view of the 576x336 target.
+  const bounds = {
+    left: CAMERA_ORIGIN.x,
+    right: CAMERA_ORIGIN.x + LOGICAL_SIZE.width,
+    top: -CAMERA_ORIGIN.y,
+    bottom: -CAMERA_ORIGIN.y - LOGICAL_SIZE.height,
+  };
   for (const [sprite, w, h] of [
     [retro, 112, 96],
     [elder, 64, 80],
   ] as const) {
-    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(-halfWidth);
-    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(halfWidth);
-    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(halfHeight);
-    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(-halfHeight);
+    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(bounds.left);
+    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(bounds.right);
+    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(bounds.top);
+    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(bounds.bottom);
   }
   // The retro atlas is the one the registry named, not a stand-in.
   expect(RETRO_ATLAS_HASH).toHaveLength(64);
+});
+
+function viewOfState(state: WorldState): WorldViewModel {
+  const parsed = parseSyncFrame(framePayload(state));
+  if (!parsed.ok) throw new Error(parsed.message);
+  return toViewModel(parsed.value, decode(parsed.value.state));
+}
+
+const decorNames = (backend: ReturnType<typeof testBackend>): string[] =>
+  backend.decor.children.map((child) => child.name);
+
+test("only the followed place is drawn: its buildings, inhabitants and mark, and nothing of the realm's other places", async () => {
+  const { canon } = setup({
+    payload: committedCanonPayload(),
+    atlases: COMMITTED_CANON_ATLASES,
+  });
+  const { renderer, backend } = await mount(canon);
+  const view = viewWithZeus();
+
+  await renderer.draw(view, "mortal", "town-square");
+
+  expect(backend.layer.spriteFor("actor:woodcutter")).toBeDefined();
+  expect(backend.layer.spriteFor("structure:the-tavern")).toBeDefined();
+  expect(backend.layer.spriteFor("structure:the-tavern:fire")).toBeDefined();
+  expect(backend.layer.spriteFor("actor:farmer")).toBeUndefined();
+  expect(backend.layer.spriteFor("structure:agora-shop")).toBeUndefined();
+  expect(backend.layer.stats.sprites).toBe(3);
+  // No other place and no path between places is drawn: the decor is the ground and the place's own rings.
+  expect(
+    decorNames(backend).every(
+      (name) => name.startsWith("grid:") || name.startsWith("ring:"),
+    ),
+  ).toBe(true);
+
+  await renderer.draw(view, "mortal", "agora");
+
+  expect(backend.layer.spriteFor("actor:farmer")).toBeDefined();
+  expect(backend.layer.spriteFor("structure:agora-shop")).toBeDefined();
+  expect(backend.layer.spriteFor("structure:agora-shop:fire")).toBeUndefined();
+  expect(backend.layer.spriteFor("actor:woodcutter")).toBeUndefined();
+  expect(backend.layer.spriteFor("structure:the-tavern")).toBeUndefined();
+  expect(backend.layer.stats.sprites).toBe(2);
+  // The tavern's strike events are the town square's: the agora has no rings.
+  expect(decorNames(backend).some((name) => name.startsWith("ring:"))).toBe(
+    false,
+  );
+});
+
+test("a place of the realm the observer is not looking at, an unknown place, and no place at all draw only the empty ground", async () => {
+  const { canon } = setup();
+  const { renderer, backend } = await mount(canon);
+  const view = viewWithZeus();
+
+  for (const [realm, place] of [
+    ["mortal", "olympus-hall"],
+    ["mortal", "nowhere"],
+    ["mortal", undefined],
+  ] as const) {
+    await renderer.draw(view, realm, place);
+
+    expect(backend.layer.stats.sprites).toBe(0);
+    expect(decorNames(backend).every((name) => name.startsWith("grid:"))).toBe(
+      true,
+    );
+  }
+});
+
+test("following an actor draws the place it is in, and the place changes when the actor walks", async () => {
+  const { canon } = setup({
+    payload: committedCanonPayload(),
+    atlases: COMMITTED_CANON_ATLASES,
+  });
+  const { renderer, backend } = await mount(canon);
+  const observer = createObserver();
+  observer.pick({ kind: "actor", id: "woodcutter" });
+  const state = baseState();
+
+  for (const [world, place, shop] of [
+    [state, "town-square", false],
+    [movedActor(state, "woodcutter", "agora"), "agora", true],
+  ] as const) {
+    const view = viewOfState(world);
+    const followed = followedPlace(observer.update(view));
+    expect(followed?.locationId).toBe(place);
+
+    await renderer.draw(
+      view,
+      followed?.realm ?? "mortal",
+      followed?.locationId,
+    );
+
+    expect(backend.layer.spriteFor("actor:woodcutter")).toBeDefined();
+    expect(backend.layer.spriteFor("structure:agora-shop") !== undefined).toBe(
+      shop,
+    );
+  }
+});
+
+test("only events at the followed place are drawn and handed back for receipts", async () => {
+  const { canon } = setup();
+  const { renderer, backend } = await mount(canon);
+  const view = previewView();
+
+  const here = await renderer.draw(view, "mortal", "town-square");
+  const elsewhere = await renderer.draw(view, "mortal", "agora");
+
+  // The preview's events all concern the tavern, in the town square.
+  expect(here.length).toBeGreaterThan(0);
+  expect(here).toEqual(drawableEvents(view, "mortal").map((event) => event.id));
+  expect(elsewhere).toEqual([]);
+  expect(decorNames(backend).some((name) => name.startsWith("ring:"))).toBe(
+    false,
+  );
+});
+
+// The scene area of the default 1280x720 window, 714x635 (see layout.test.ts, which derives it from the stylesheet).
+const DEFAULT_SCENE_AREA = { width: 714, height: 635 };
+
+test("in the default window the canvas is shown whole: zoom 1 at a device pixel ratio of 1, zoom 2 at 2", async () => {
+  const { canon } = setup();
+
+  const atOne = await mount(canon, { available: DEFAULT_SCENE_AREA });
+  expect([atOne.element.width, atOne.element.height]).toEqual([576, 336]);
+  expect(atOne.backend.views.at(-1)?.zoom).toBe(1);
+  expect(atOne.element.style.left).toBe("69px");
+
+  const atTwo = await mount(canon, {
+    available: DEFAULT_SCENE_AREA,
+    devicePixelRatio: 2,
+  });
+  expect([atTwo.element.width, atTwo.element.height]).toEqual([1152, 672]);
+  expect(atTwo.backend.views.at(-1)?.zoom).toBe(2);
+  // The CSS box is the same 576x336 on either screen: the extra device pixels are detail, not a bigger canvas.
+  expect([atTwo.element.style.width, atTwo.element.style.height]).toEqual([
+    "576px",
+    "336px",
+  ]);
 });

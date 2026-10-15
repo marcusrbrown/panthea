@@ -4,8 +4,8 @@
 // pixels on decode (WebKit may ignore createImageBitmap's colour options) is
 // caught rather than trusted.
 //
-// For every published asset, selection (sprite state and direction, or
-// portrait expression) and frame, the file records the atlas hash, the frame
+// For every published asset, selection (sprite state and direction, portrait
+// expression, or effect animation) and frame, the file records the atlas hash, the frame
 // rect and one digest per integer zoom. A digest is of the frame cut from the
 // decoded atlas, composited over the inspection background by the renderer's
 // alpha cutout, enlarged by nearest repetition to that zoom, then run through
@@ -147,7 +147,14 @@ function selectionsOf(
       )
       .sort(byKey);
   }
-  return [];
+  return manifest.animations
+    .map((animation) =>
+      selection(
+        { animation: animation.name },
+        animation.frames.map((frame) => frame.rect),
+      ),
+    )
+    .sort(byKey);
 }
 
 export function buildReference(files: RegistryFiles): Reference {
@@ -198,7 +205,6 @@ export function buildReference(files: RegistryFiles): Reference {
         `blobs/${manifest.atlas.blob}.png is ${width}x${height}, the manifest declares ${manifest.atlas.width}x${manifest.atlas.height}`,
       );
     }
-    if (manifest.kind !== "sprite" && manifest.kind !== "portrait") continue;
     assets.push({
       assetId,
       kind: manifest.kind,

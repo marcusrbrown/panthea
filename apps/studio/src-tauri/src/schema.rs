@@ -74,6 +74,7 @@ pub const OPS: &[OpSpec] = &[
             "direction",
             "ability",
             "expression",
+            "animation",
         ],
         Read,
     ),
@@ -370,6 +371,18 @@ mod tests {
         assert!(check(
             "source-resolve",
             &json!({ "source": "draft", "id": "zeus-take", "realm": "underworld" })
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn source_resolve_takes_an_effect_animation_by_name() {
+        let row = lookup("source-resolve").unwrap();
+        assert!(row.args.contains(&"animation"));
+        assert_eq!(row.class, Read);
+        assert!(check(
+            "source-resolve",
+            &json!({ "source": "canon", "id": "lightning-strike", "animation": "calm" })
         )
         .is_ok());
     }

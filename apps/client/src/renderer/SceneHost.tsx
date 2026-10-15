@@ -14,6 +14,8 @@ import type { RendererFactory, WorldRenderer } from "./scene";
 export interface SceneHostProps {
   readonly view?: WorldViewModel;
   readonly realm: Realm;
+  /** The followed place: the only one the scene draws; none while nothing is followed. */
+  readonly locationId?: string;
   /** Must be stable: a new factory restarts the renderer. */
   readonly rendererFactory: RendererFactory;
   /** Drives animation; defaults to the browser's animation frames. */
@@ -25,6 +27,7 @@ export interface SceneHostProps {
 export function SceneHost({
   view,
   realm,
+  locationId,
   rendererFactory,
   frames = animationFrames,
   onDrawn,
@@ -61,11 +64,11 @@ export function SceneHost({
 
   useEffect(() => {
     if (!started || !view) return;
-    void drawScene(rendererRef.current, view, realm, {
+    void drawScene(rendererRef.current, view, realm, locationId, {
       onDrawn: (eventIds) => onDrawnRef.current?.(eventIds),
       onFailure: setFailure,
     });
-  }, [realm, started, view]);
+  }, [realm, locationId, started, view]);
 
   useEffect(() => {
     const renderer = rendererRef.current;

@@ -68,7 +68,7 @@ export function startSceneRenderer(
 }
 
 /**
- * Draws `view` into `renderer` and hands the ids of the events it drew to
+ * Draws the followed place of `view` into `renderer` and hands the ids of the events it drew to
  * `onDrawn`, once the frame is on screen. A draw error is reported through
  * `onFailure` and nothing is handed on. With no renderer, nothing is drawn and
  * `onDrawn` receives an empty list.
@@ -77,13 +77,14 @@ export async function drawScene(
   renderer: WorldRenderer | undefined,
   view: WorldViewModel,
   realm: Realm,
+  locationId: string | undefined,
   handlers: {
     onDrawn?: (eventIds: readonly string[]) => void;
     onFailure(message: string): void;
   },
 ): Promise<void> {
   try {
-    handlers.onDrawn?.((await renderer?.draw(view, realm)) ?? []);
+    handlers.onDrawn?.((await renderer?.draw(view, realm, locationId)) ?? []);
   } catch (error) {
     handlers.onFailure(messageOf(error));
   }
