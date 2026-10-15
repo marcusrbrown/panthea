@@ -32,7 +32,7 @@ import {
   fakeSource,
 } from "../../test/canon-fixture";
 import { STRIKE_ATLAS_HASH } from "../../test/structure-fixture";
-import { viewWithZeus } from "../../test/view-fixture";
+import { PLACE, viewWithZeus } from "../../test/view-fixture";
 import {
   COMMITTED_CANON_ATLASES,
   committedCanonPayload,
@@ -43,7 +43,7 @@ import { createCanonClient } from "../assets/canon";
 import { createEffectsSetting } from "../effects";
 import { baseState, type FixtureEvent, framePayload } from "../fixtures";
 import { toViewModel, type WorldViewModel } from "../store";
-import { buildingFoot, locationPoints } from "./layout";
+import { buildingFoot, PLACE_ORIGIN } from "./layout";
 import { drawableEvents } from "./presentation";
 import { createWorldRenderer, type WorldRenderer } from "./scene";
 
@@ -123,9 +123,9 @@ const rendersOf = (harness: Mounted) =>
 test("a strike-caused ignition plays the bolt once, frame by frame on the published durations, then hides it", async () => {
   const harness = await mount();
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
 
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
 
   const durations = [110, 90, 70, 90, 90, 100, 100, 100];
   let elapsed = 0;
@@ -148,7 +148,7 @@ test("a strike-caused ignition plays the bolt once, frame by frame on the publis
   ).toBeUndefined();
 
   // Drawing the same committed window again does not play it again.
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   expect(
     harness.backend.layer.spriteFor(boltId("evt-ignite-1")),
   ).toBeUndefined();
@@ -156,11 +156,12 @@ test("a strike-caused ignition plays the bolt once, frame by frame on the publis
 
 test("every building-damaged event plays the bolt, since the world emits it only from a strike", async () => {
   const harness = await mount();
-  await harness.renderer.draw(viewOf([]), "mortal");
+  await harness.renderer.draw(viewOf([]), "mortal", PLACE.mortal);
 
   await harness.renderer.draw(
     viewOf([event("evt-damaged-1", 21, "building-damaged")]),
     "mortal",
+    PLACE.mortal,
   );
 
   expect(frameOf(harness, "evt-damaged-1")).toBe(FULL_RECTS[0]);
@@ -168,7 +169,7 @@ test("every building-damaged event plays the bolt, since the world emits it only
 
 test("a director or spread fire, an ignition with no cause, and other kinds on a building play no bolt", async () => {
   const harness = await mount();
-  await harness.renderer.draw(viewOf([]), "mortal");
+  await harness.renderer.draw(viewOf([]), "mortal", PLACE.mortal);
   const before = harness.backend.layer.stats.sprites;
 
   await harness.renderer.draw(
@@ -180,6 +181,7 @@ test("a director or spread fire, an ignition with no cause, and other kinds on a
       event("evt-repaired", 24, "building-repaired"),
     ]),
     "mortal",
+    PLACE.mortal,
   );
 
   expect(harness.backend.layer.stats.sprites).toBe(before);
@@ -197,15 +199,16 @@ test("a director or spread fire, an ignition with no cause, and other kinds on a
 test("a fresh start replays nothing: the first draw marks the window seen without playing it", async () => {
   const harness = await mount();
 
-  await harness.renderer.draw(viewOf([struck()]), "mortal");
+  await harness.renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
 
   expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
   // And it is seen: drawing it again, or a later view still carrying it, plays nothing either.
-  await harness.renderer.draw(viewOf([struck()]), "mortal");
+  await harness.renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
   await harness.renderer.draw(
     viewOf([struck(), struck("evt-ignite-2", 21)]),
     "mortal",
+    PLACE.mortal,
   );
   expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
   expect(frameOf(harness, "evt-ignite-2")).toBe(FULL_RECTS[0]);
@@ -213,13 +216,13 @@ test("a fresh start replays nothing: the first draw marks the window seen withou
 
 test("a remount replays nothing: the renderer that replaces a lost one marks its first window seen", async () => {
   const first = await mount();
-  await first.renderer.draw(viewOf([]), "mortal");
-  await first.renderer.draw(viewOf([struck()]), "mortal");
+  await first.renderer.draw(viewOf([]), "mortal", PLACE.mortal);
+  await first.renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   expect(frameOf(first, "evt-ignite-1")).toBe(FULL_RECTS[0]);
   first.renderer.dispose();
 
   const second = await mount();
-  await second.renderer.draw(viewOf([struck()]), "mortal");
+  await second.renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
 
   expect(frameOf(second, "evt-ignite-1")).toBeUndefined();
 });
@@ -227,36 +230,45 @@ test("a remount replays nothing: the renderer that replaces a lost one marks its
 test("a realm switch out and back replays nothing, and a strike in the realm not being viewed is not shown when it is switched to", async () => {
   const harness = await mount();
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
 
   // The strike lands while Olympus is viewed: the tavern is not there, so no bolt.
-  await renderer.draw(viewOf([struck()]), "olympus");
+  await renderer.draw(viewOf([struck()]), "olympus", PLACE.olympus);
   expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
   // Back in the mortal realm, the event is already seen.
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
 
   // A bolt that has played and finished is not played again by leaving and returning.
-  await renderer.draw(viewOf([struck(), struck("evt-ignite-2", 21)]), "mortal");
+  await renderer.draw(
+    viewOf([struck(), struck("evt-ignite-2", 21)]),
+    "mortal",
+    PLACE.mortal,
+  );
   expect(frameOf(harness, "evt-ignite-2")).toBe(FULL_RECTS[0]);
   renderer.tick(800);
   await renderer.draw(
     viewOf([struck(), struck("evt-ignite-2", 21)]),
     "olympus",
+    PLACE.olympus,
   );
-  await renderer.draw(viewOf([struck(), struck("evt-ignite-2", 21)]), "mortal");
+  await renderer.draw(
+    viewOf([struck(), struck("evt-ignite-2", 21)]),
+    "mortal",
+    PLACE.mortal,
+  );
   expect(frameOf(harness, "evt-ignite-2")).toBeUndefined();
 });
 
 test("a bolt that is playing keeps playing across redraws of the same window", async () => {
   const harness = await mount();
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   renderer.tick(120);
   expect(frameOf(harness, "evt-ignite-1")).toBe(FULL_RECTS[1]);
 
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
 
   expect(frameOf(harness, "evt-ignite-1")).toBe(FULL_RECTS[1]);
   renderer.tick(80);
@@ -266,9 +278,9 @@ test("a bolt that is playing keeps playing across redraws of the same window", a
 test("the calm setting picks the calm animation: 4 frames, 540 ms", async () => {
   const harness = await mount({ effects: () => "calm" });
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
 
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
 
   const durations = [150, 130, 130, 130];
   for (const [index, duration] of durations.entries()) {
@@ -287,15 +299,19 @@ test("the setting is read when a strike starts: a bolt keeps the animation it be
   });
   const harness = await mount({ effects: () => setting.mode() });
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   expect(frameOf(harness, "evt-ignite-1")).toBe(FULL_RECTS[0]);
 
   setting.set("calm");
   renderer.tick(120);
   expect(frameOf(harness, "evt-ignite-1")).toBe(FULL_RECTS[1]);
   renderer.tick(700);
-  await renderer.draw(viewOf([struck(), struck("evt-ignite-2", 21)]), "mortal");
+  await renderer.draw(
+    viewOf([struck(), struck("evt-ignite-2", 21)]),
+    "mortal",
+    PLACE.mortal,
+  );
 
   expect(frameOf(harness, "evt-ignite-2")).toBe(CALM_RECTS[0]);
 });
@@ -304,17 +320,16 @@ test("the bolt strikes the building's anchor, in the effect layer in front of th
   const harness = await mount();
   const { renderer, backend } = harness;
   const base = viewOf([]);
-  await renderer.draw(base, "mortal");
+  await renderer.draw(base, "mortal", PLACE.mortal);
 
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
 
   const square = base.realms.mortal.find(
     (location) => location.id === "town-square",
   );
-  const place = locationPoints(base.realms.mortal).get("town-square");
   const index = square?.buildings.findIndex((b) => b.id === "the-tavern") ?? -1;
-  if (place === undefined || index < 0) throw new Error("no tavern");
-  const foot = buildingFoot(place, index);
+  if (square === undefined || index < 0) throw new Error("no tavern");
+  const foot = buildingFoot(PLACE_ORIGIN, index, square.buildings.length);
   const target = STRUCTURE_ANCHORS.building.strike;
   const bolt = backend.layer.spriteFor(boltId("evt-ignite-1"));
   if (bolt === undefined) throw new Error("no bolt");
@@ -332,8 +347,8 @@ test("the bolt strikes the building's anchor, in the effect layer in front of th
 test("a tick that changes no frame renders nothing, and each bolt frame, and its end, renders once", async () => {
   const harness = await mount();
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   const afterDraw = rendersOf(harness);
 
   renderer.tick(1);
@@ -357,10 +372,10 @@ test("a strike with no published bolt shows none, and the event is still drawn f
   const harness = await mount({
     source: fakeSource(retroPayload(), RETRO_ATLASES),
   });
-  await harness.renderer.draw(viewOf([]), "mortal");
+  await harness.renderer.draw(viewOf([]), "mortal", PLACE.mortal);
   const view = viewOf([struck()]);
 
-  const drawn = await harness.renderer.draw(view, "mortal");
+  const drawn = await harness.renderer.draw(view, "mortal", PLACE.mortal);
 
   expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
   expect(drawn).toEqual(drawableEvents(view, "mortal").map((e) => e.id));
@@ -385,10 +400,14 @@ test("a bolt whose atlas cannot be fetched shows none, is reported once, and the
   });
   mounted.push(renderer);
   await renderer.start(() => {});
-  await renderer.draw(viewOf([]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
 
-  const drawn = await renderer.draw(viewOf([struck()]), "mortal");
-  await renderer.draw(viewOf([struck(), struck("evt-ignite-2", 21)]), "mortal");
+  const drawn = await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
+  await renderer.draw(
+    viewOf([struck(), struck("evt-ignite-2", 21)]),
+    "mortal",
+    PLACE.mortal,
+  );
 
   expect(drawn).toContain("evt-ignite-1");
   expect(backend.layer.spriteFor(boltId("evt-ignite-1"))).toBeUndefined();
@@ -407,10 +426,10 @@ test("a draw superseded before it settles does not mark its events seen: the dra
   };
   const harness = await mount({ source: slow });
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
 
-  const first = renderer.draw(viewOf([struck()]), "mortal");
-  const second = renderer.draw(viewOf([struck()]), "mortal");
+  const first = renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
+  const second = renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   release(COMMITTED_CANON_ATLASES.get(STRIKE_ATLAS_HASH) ?? new Uint8Array());
 
   expect(await first).toEqual([]);
@@ -421,18 +440,30 @@ test("a draw superseded before it settles does not mark its events seen: the dra
 test("the seen set is the current window: an event stays seen while the window carries it and is forgotten once it leaves, so the set is as small as the window", async () => {
   const harness = await mount();
   const { renderer } = harness;
-  await renderer.draw(viewOf([]), "mortal");
-  await renderer.draw(viewOf([struck()]), "mortal");
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
   renderer.tick(800);
 
   // Still in the window: seen.
-  await renderer.draw(viewOf([struck(), struck("evt-ignite-2", 21)]), "mortal");
+  await renderer.draw(
+    viewOf([struck(), struck("evt-ignite-2", 21)]),
+    "mortal",
+    PLACE.mortal,
+  );
   renderer.tick(800);
   expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
 
   // Gone from the window (the sidecar's window is a few ticks and only moves forward), it is dropped from the set.
-  await renderer.draw(viewOf([struck("evt-ignite-2", 21)]), "mortal");
-  await renderer.draw(viewOf([struck(), struck("evt-ignite-2", 21)]), "mortal");
+  await renderer.draw(
+    viewOf([struck("evt-ignite-2", 21)]),
+    "mortal",
+    PLACE.mortal,
+  );
+  await renderer.draw(
+    viewOf([struck(), struck("evt-ignite-2", 21)]),
+    "mortal",
+    PLACE.mortal,
+  );
   expect(frameOf(harness, "evt-ignite-1")).toBe(FULL_RECTS[0]);
 });
 
@@ -494,7 +525,7 @@ async function runWorld(
   let prng = createPrng(11);
   let bolts = 0;
   const ids: string[][] = [];
-  await renderer?.draw(toFrame(state, []), "mortal");
+  await renderer?.draw(toFrame(state, []), "mortal", PLACE.mortal);
   for (let tick = 0; tick < ticks; tick += 1) {
     const result = runTick(state, prng, tick === 0 ? [submitted.proposal] : []);
     state = result.state;
@@ -502,7 +533,13 @@ async function runWorld(
     const recent = recentOf(result.events);
     bolts += recent.length;
     if (renderer !== undefined) {
-      ids.push([...(await renderer.draw(toFrame(state, recent), "mortal"))]);
+      ids.push([
+        ...(await renderer.draw(
+          toFrame(state, recent),
+          "mortal",
+          PLACE.mortal,
+        )),
+      ]);
       renderer.tick(250);
     }
   }
@@ -541,7 +578,7 @@ test("toggling the setting asks the registry for nothing and redraws nothing: it
     matchMedia: undefined,
   });
   const harness = await mount({ effects: () => setting.mode() });
-  await harness.renderer.draw(viewOf([]), "mortal");
+  await harness.renderer.draw(viewOf([]), "mortal", PLACE.mortal);
   const registryCalls = harness.source.registryCalls();
   const atlasCalls = [...harness.source.atlasCalls()];
   const log = [...harness.backend.log];
@@ -563,4 +600,40 @@ test("toggling the setting asks the registry for nothing and redraws nothing: it
   expect(harness.backend.layer.stats).toEqual(sprites);
   // The listener is the only thing that heard it.
   expect(heard).toEqual(["calm", "full", "calm"]);
+});
+
+test("switching the followed place replays no bolt: a strike seen while another place was followed stays seen", async () => {
+  const harness = await mount();
+  const { renderer } = harness;
+  const strike = event("evt-ignite-1", 20, "building-ignited", "strike", [
+    "agora-shop",
+    "zeus",
+  ]);
+  await renderer.draw(viewOf([]), "mortal", "agora");
+
+  // The strike lands on the agora's shop while the town square is followed: no bolt is drawn there.
+  await renderer.draw(viewOf([strike]), "mortal", "town-square");
+  expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
+
+  // Following the agora afterwards shows the shop, not a replay of the strike.
+  await renderer.draw(viewOf([strike]), "mortal", "agora");
+  expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
+  await renderer.draw(viewOf([strike]), "mortal", "town-square");
+  expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
+});
+
+test("a strike on the followed place's building plays, and leaving it mid-bolt hides the bolt with the building", async () => {
+  const harness = await mount();
+  const { renderer } = harness;
+  await renderer.draw(viewOf([]), "mortal", PLACE.mortal);
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
+  expect(frameOf(harness, "evt-ignite-1")).toBe(FULL_RECTS[0]);
+
+  await renderer.draw(viewOf([struck()]), "mortal", "agora");
+
+  expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
+  // Coming back does not replay it either.
+  renderer.tick(800);
+  await renderer.draw(viewOf([struck()]), "mortal", PLACE.mortal);
+  expect(frameOf(harness, "evt-ignite-1")).toBeUndefined();
 });

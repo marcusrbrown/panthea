@@ -27,6 +27,7 @@ import {
 import { previewView } from "./fixtures";
 import {
   createObserver,
+  followedPlace,
   type ObserverTarget,
   type ObserverView,
 } from "./observer";
@@ -237,12 +238,8 @@ export function App({
   );
 
   const dismissedSummary = isSummaryDismissed(view, summaryDismissal);
-  const realm: Realm =
-    observation.kind === "following"
-      ? observation.realm
-      : observation.kind === "held" && observation.lastKnown
-        ? observation.lastKnown.realm
-        : "mortal";
+  const place = followedPlace(observation);
+  const realm: Realm = place?.realm ?? "mortal";
 
   const onDrawn = useCallback(
     (eventIds: readonly string[]) => {
@@ -290,6 +287,7 @@ export function App({
           key={rendererEpoch}
           view={view}
           realm={realm}
+          locationId={place?.locationId}
           rendererFactory={rendererFactory}
           onDrawn={onDrawn}
           onDeviceLost={onDeviceLost}

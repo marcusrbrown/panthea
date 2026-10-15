@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { canvasMetrics, STRUCTURE_ANCHORS } from "@panthea/renderer";
 
 import {
@@ -7,48 +8,20 @@ import {
   OAK_MANIFEST_TEXT,
   STRIKE_MANIFEST_TEXT,
 } from "../../test/structure-fixture";
-import type { ViewLocation } from "../store";
 import {
   ACTOR_FOOT,
   actorFoot,
-  BUILDING_FOOT,
+  BUILDING_SLOT,
   buildingFoot,
   CAMERA_ORIGIN,
   EVENT_RING,
   fitView,
   LOGICAL_SIZE,
-  locationPoints,
   MAX_ACTOR_CELL,
   MAX_ACTORS_PER_PLACE,
   MAX_BUILDINGS_PER_PLACE,
-  PLACE_RADIUS_MAX,
+  PLACE_ORIGIN,
 } from "./layout";
-
-function places(count: number): ViewLocation[] {
-  return Array.from({ length: count }, (_, index) => ({
-    id: `place-${index}`,
-    name: `Place ${index}`,
-    realm: "mortal" as const,
-    edges: [],
-    actors: [],
-    buildings: [],
-  }));
-}
-
-test("place points are whole pixels, and the ring radius is capped at 205", () => {
-  for (let count = 1; count <= 40; count += 1) {
-    for (const point of locationPoints(places(count)).values()) {
-      expect(Number.isInteger(point.x)).toBe(true);
-      expect(Number.isInteger(point.y)).toBe(true);
-      expect(Math.hypot(point.x, point.y)).toBeLessThanOrEqual(
-        PLACE_RADIUS_MAX + 1,
-      );
-    }
-  }
-  expect(PLACE_RADIUS_MAX).toBe(205);
-  const only = [...locationPoints(places(1)).values()];
-  expect(only).toEqual([{ x: 0, y: 0 }]);
-});
 
 /** The cells the target must hold: the legacy 64x80 god and the 112x96 `god-tall`, each by its own pivot. */
 const LEGACY_CELL = { width: 64, height: 80, pivotX: 32, pivotY: 80 } as const;
@@ -160,70 +133,96 @@ const inside = (extent: Extent) => {
   expect(extent.bottom).toBeGreaterThanOrEqual(VIEW.bottom);
 };
 
-test("the view holds every actor slot, every structure at its tallest, its fire, the event rings and the strike from its impact down, at 1x for any number of places", () => {
-  let widest = 0;
-  let tallest = 0;
-  let deepest = 0;
+const STRUCTURES = [
+  [BUILDING_CELL, STRUCTURE_ANCHORS.building],
+  [TREE_CELL, STRUCTURE_ANCHORS.tree],
+] as const;
 
-  for (let count = 1; count <= 40; count += 1) {
-    for (const point of locationPoints(places(count)).values()) {
-      const extents: Extent[] = [];
-      for (const cell of [LEGACY_CELL, GOD_TALL_CELL, MAX_ACTOR_CELL]) {
-        for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
-          extents.push(boxOf(cell, actorFoot(point, index)));
-        }
-      }
-      // An event ring, at its largest, drawn at its offset from the place.
-      const ring = {
-        x: point.x + EVENT_RING.dx,
-        y: point.y + EVENT_RING.dy,
-      };
-      extents.push({
-        left: ring.x - EVENT_RING.radiusMax,
-        right: ring.x + EVENT_RING.radiusMax,
-        top: ring.y + EVENT_RING.radiusMax,
-        bottom: ring.y - EVENT_RING.radiusMax,
-      });
-      for (let index = 0; index < MAX_BUILDINGS_PER_PLACE; index += 1) {
-        const foot = buildingFoot(point, index);
-        for (const [cell, anchors] of [
-          [BUILDING_CELL, STRUCTURE_ANCHORS.building],
-          [TREE_CELL, STRUCTURE_ANCHORS.tree],
-        ] as const) {
-          // The cell holds the structure in all three states.
-          extents.push(boxOf(cell, foot));
-          // The anchors are offsets down the screen from the foot.
-          extents.push(
-            boxOf(FIRE_CELL, {
-              x: foot.x + anchors.fire.x,
-              y: foot.y - anchors.fire.y,
-            }),
-          );
-          // The strike may leave through the top: only the cell from its impact down must be seen.
-          const impact = boxOf(STRIKE_CELL, {
-            x: foot.x + anchors.strike.x,
-            y: foot.y - anchors.strike.y,
-          });
-          inside({ ...impact, top: foot.y - anchors.strike.y });
-        }
-      }
-      for (const extent of extents) {
-        inside(extent);
-        widest = Math.max(
-          widest,
-          Math.abs(extent.left),
-          Math.abs(extent.right),
+test("a place's buildings stand in a centred row, one cell apart, so no two structures' cells overlap, whichever art each is", () => {
+  expect<number>(BUILDING_SLOT.dx).toBe(BUILDING_CELL.width);
+  expect<number>(BUILDING_SLOT.dx).toBeGreaterThanOrEqual(TREE_CELL.width);
+
+  for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1) {
+    const feet = Array.from({ length: count }, (_, index) =>
+      buildingFoot(PLACE_ORIGIN, index, count),
+    );
+    // Centred on the place, on whole pixels, all in one row.
+    expect(feet.reduce((sum, foot) => sum + foot.x, 0)).toBe(0);
+    for (const foot of feet) {
+      expect(Number.isInteger(foot.x)).toBe(true);
+      expect(foot.y).toBe(BUILDING_SLOT.y);
+    }
+    // Every pairing of slots and art: the nearer edges of neighbours do not cross.
+    const placed = feet.flatMap((foot) =>
+      STRUCTURES.map(([cell]) => ({ foot, cell })),
+    );
+    for (const left of placed) {
+      for (const right of placed) {
+        if (right.foot.x <= left.foot.x) continue;
+        // Touching is not overlapping.
+        expect(boxOf(left.cell, left.foot).right).toBeLessThanOrEqual(
+          boxOf(right.cell, right.foot).left,
         );
-        tallest = Math.max(tallest, extent.top);
-        deepest = Math.max(deepest, -extent.bottom);
       }
     }
   }
-  // The header's arithmetic: 205 + 60 + 96 = 361 across (the building slots); 205 + 40 + 79 + 88 = 412 up (the
-  // fire on the oak, above the oak's own 205 + 40 + 164 = 409); 286 down (the actor rows).
-  expect(widest).toBe(361);
-  expect(tallest).toBe(412);
-  expect(deepest).toBe(286);
+});
+
+test("the view holds every actor slot, every structure at its tallest, its fire, the event rings and the strike from its impact down, for any number of buildings and actors", () => {
+  let widest = 0;
+  let tallest = 0;
+  let deepest = 0;
+  const extents: Extent[] = [];
+
+  for (const cell of [LEGACY_CELL, GOD_TALL_CELL, MAX_ACTOR_CELL]) {
+    for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
+      extents.push(boxOf(cell, actorFoot(PLACE_ORIGIN, index)));
+    }
+  }
+  // An event ring, at its largest, drawn at its offset from the place.
+  const ring = {
+    x: PLACE_ORIGIN.x + EVENT_RING.dx,
+    y: PLACE_ORIGIN.y + EVENT_RING.dy,
+  };
+  extents.push({
+    left: ring.x - EVENT_RING.radiusMax,
+    right: ring.x + EVENT_RING.radiusMax,
+    top: ring.y + EVENT_RING.radiusMax,
+    bottom: ring.y - EVENT_RING.radiusMax,
+  });
+  for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1) {
+    for (let index = 0; index < count; index += 1) {
+      const foot = buildingFoot(PLACE_ORIGIN, index, count);
+      for (const [cell, anchors] of STRUCTURES) {
+        // The cell holds the structure in all three states.
+        extents.push(boxOf(cell, foot));
+        // The anchors are offsets down the screen from the foot.
+        extents.push(
+          boxOf(FIRE_CELL, {
+            x: foot.x + anchors.fire.x,
+            y: foot.y - anchors.fire.y,
+          }),
+        );
+        // The strike may leave through the top: only the cell from its impact down must be seen.
+        const impact = boxOf(STRIKE_CELL, {
+          x: foot.x + anchors.strike.x,
+          y: foot.y - anchors.strike.y,
+        });
+        inside({ ...impact, top: foot.y - anchors.strike.y });
+      }
+    }
+  }
+  for (const extent of extents) {
+    inside(extent);
+    widest = Math.max(widest, Math.abs(extent.left), Math.abs(extent.right));
+    tallest = Math.max(tallest, extent.top);
+    deepest = Math.max(deepest, -extent.bottom);
+  }
+  // The header's arithmetic: 192 + 96 = 288 across (three buildings, a cell apart); 80 + 79 + 88 = 247 up (the fire
+  // on the oak, above the oak's own 80 + 164 = 244); 286 - 205 = 81 down (the second actor row).
+  expect(widest).toBe(288);
+  expect(tallest).toBe(247);
+  expect(deepest).toBe(81);
   // The size is not slack: the view's edge is within 8 px of the extent on every side.
   expect(VIEW.right - widest).toBeLessThan(8);
   expect(-VIEW.left - widest).toBeLessThan(8);
@@ -231,37 +230,43 @@ test("the view holds every actor slot, every structure at its tallest, its fire,
   expect(VIEW.bottom + deepest).toBeLessThan(8);
 });
 
+test("an event ring stands clear of every actor, whichever cell and slot", () => {
+  const ring = EVENT_RING.dx - EVENT_RING.radiusMax;
+
+  for (const cell of [LEGACY_CELL, GOD_TALL_CELL, MAX_ACTOR_CELL]) {
+    for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
+      expect(boxOf(cell, actorFoot(PLACE_ORIGIN, index)).right).toBeLessThan(
+        ring,
+      );
+    }
+  }
+});
+
 test("the highest strike's top leaves the view, and only its top", () => {
-  const impact = 205 + BUILDING_FOOT.y + -STRUCTURE_ANCHORS.tree.strike.y;
+  const impact = BUILDING_SLOT.y - STRUCTURE_ANCHORS.tree.strike.y;
   const top = impact + STRIKE_CELL.pivotY;
 
   expect(top).toBeGreaterThan(VIEW.top);
   expect(impact).toBeLessThan(VIEW.top);
 });
 
-test("the camera is off centre to fit the content: 736x704 on the 16 px grid, from 416 above the layout origin to 288 below", () => {
-  // Width 2 x 361 = 722 -> 736. Height 412 + 286 = 698 -> 704, with the top edge on the grid at 416.
-  expect(LOGICAL_SIZE).toEqual({ width: 736, height: 704 });
+test("the camera is off centre to fit the content: 576x336 on the 16 px grid, from 252 above the layout origin to 84 below", () => {
+  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 336 });
   expect(LOGICAL_SIZE.width % 16).toBe(0);
   expect(LOGICAL_SIZE.height % 16).toBe(0);
-  expect(CAMERA_ORIGIN).toEqual({ x: -368, y: -416 });
-  expect(VIEW.top).toBe(416);
-  expect(VIEW.bottom).toBe(-288);
+  expect(CAMERA_ORIGIN).toEqual({ x: -288, y: -252 });
+  expect(VIEW.top).toBe(252);
+  expect(VIEW.bottom).toBe(-84);
 });
 
-test("the target is no taller than a 1280x720 window", () => {
-  expect(LOGICAL_SIZE.height).toBeLessThanOrEqual(720);
-  expect(LOGICAL_SIZE.width).toBeLessThanOrEqual(1280);
-});
-
-test("a building's foot is its slot: three across a place, centred on it, with a second row above", () => {
+test("a building's foot is its slot: centred on the place, a cell apart, in one row above the actors", () => {
   const origin = { x: 100, y: 40 };
 
-  expect(BUILDING_FOOT).toEqual({ x: -60, y: 40, columns: 3, dx: 60, dy: 40 });
-  expect(buildingFoot(origin, 0)).toEqual({ x: 40, y: 80 });
-  expect(buildingFoot(origin, 1)).toEqual({ x: 100, y: 80 });
-  expect(buildingFoot(origin, 2)).toEqual({ x: 160, y: 80 });
-  expect(buildingFoot(origin, 3)).toEqual({ x: 40, y: 120 });
+  expect(BUILDING_SLOT).toEqual({ dx: 192, y: 80 });
+  expect(buildingFoot(origin, 0, 1)).toEqual({ x: 100, y: 120 });
+  expect(buildingFoot(origin, 0, 2)).toEqual({ x: 4, y: 120 });
+  expect(buildingFoot(origin, 1, 2)).toEqual({ x: 196, y: 120 });
+  expect(buildingFoot(origin, 2, 3)).toEqual({ x: 292, y: 120 });
 });
 
 test("an actor's foot slot keeps the existing marker arithmetic", () => {
@@ -272,49 +277,99 @@ test("an actor's foot slot keeps the existing marker arithmetic", () => {
   expect(ACTOR_FOOT).toEqual({ x: -28, y: -48, columns: 7, dx: 12, dy: 15 });
 });
 
-const fit1280x720 = () => fitView({ width: 1280, height: 720 }, 1);
+// The scene's area in the window, from the stylesheet: the workspace's side rails at their widest and the topbar and
+// footer, in a 1280x720 window (the most the game's box can be; chrome only makes it smaller). The stage fills the
+// column between the rails.
+const CSS = readFileSync(new URL("../ui/surface.css", import.meta.url), "utf8");
+const px = (pattern: RegExp): number => {
+  const found = CSS.match(pattern)?.[1];
+  if (found === undefined) throw new Error(`surface.css has no ${pattern}`);
+  return Number(found);
+};
+const WINDOW = { width: 1280, height: 720 };
+const SCENE_AREA = {
+  width:
+    WINDOW.width -
+    px(
+      /\.workspace\s*\{[^}]*grid-template-columns:\s*minmax\(\s*\d+px,\s*(\d+)px\s*\)/s,
+    ) -
+    px(/\.workspace\s*\{[^}]*\)\s*minmax\(\s*\d+px,\s*(\d+)px\s*\)\s*;/s),
+  height:
+    WINDOW.height -
+    px(/\.topbar\s*\{[^}]*?height:\s*(\d+)px/s) -
+    px(/\.bottomline\s*\{[^}]*?min-height:\s*(\d+)px/s),
+};
+
+test("the scene area is the window less the rails, topbar and footer, read from the stylesheet", () => {
+  expect(SCENE_AREA).toEqual({ width: 714, height: 635 });
+});
+
+test("the target fits the scene area, so it is never cropped", () => {
+  expect(LOGICAL_SIZE.width).toBeLessThanOrEqual(SCENE_AREA.width);
+  expect(LOGICAL_SIZE.height).toBeLessThanOrEqual(SCENE_AREA.height);
+});
+
+test("at the default window the scene draws at zoom 1 uncropped at a device pixel ratio of 1, and at zoom 2 uncropped at 2", () => {
+  for (const [ratio, zoom] of [
+    [1, 1],
+    [2, 2],
+  ] as const) {
+    const fitted = fitView(SCENE_AREA, ratio);
+
+    expect(fitted.zoom).toBe(zoom);
+    // The backing store, in device pixels, sits inside the area, so the canvas is shown whole.
+    expect(fitted.metrics.backingWidth).toBeLessThanOrEqual(
+      SCENE_AREA.width * ratio,
+    );
+    expect(fitted.metrics.backingHeight).toBeLessThanOrEqual(
+      SCENE_AREA.height * ratio,
+    );
+    expect(fitted.left).toBeGreaterThanOrEqual(0);
+    expect(fitted.top).toBeGreaterThanOrEqual(0);
+    expect(fitted.metrics.cssWidth).toBe(LOGICAL_SIZE.width * (zoom / ratio));
+  }
+  // The next whole zoom would not fit: that is what bounds it.
+  expect(LOGICAL_SIZE.width * 2).toBeGreaterThan(SCENE_AREA.width);
+  expect(LOGICAL_SIZE.width * 3).toBeGreaterThan(SCENE_AREA.width * 2);
+});
 
 test("zoom is the largest whole number that fits the canvas, never below 1", () => {
   const fit = (width: number, height: number, ratio = 1) =>
     fitView({ width, height }, ratio);
 
-  expect(fit(736, 704).zoom).toBe(1);
-  expect(fit(1471, 1407, 1).zoom).toBe(1);
-  expect(fit(1472, 1408, 1).zoom).toBe(2);
-  expect(fit(1472, 1407, 1).zoom).toBe(1);
-  expect(fit(5000, 2200, 1).zoom).toBe(3);
+  expect(fit(576, 336).zoom).toBe(1);
+  expect(fit(1151, 671, 1).zoom).toBe(1);
+  expect(fit(1152, 672, 1).zoom).toBe(2);
+  expect(fit(1152, 671, 1).zoom).toBe(1);
+  expect(fit(5000, 1100, 1).zoom).toBe(3);
   expect(fit(10, 10).zoom).toBe(1);
   expect(fit(0, 0).zoom).toBe(1);
   // The canvas is measured in device pixels: a 1000x1000 CSS box at 2x is 2000x2000.
-  expect(fit(1000, 1000, 2).zoom).toBe(2);
+  expect(fit(1000, 1000, 2).zoom).toBe(3);
 });
 
-test("at the 1280x720 desktop window the zoom is 1 and the whole 736x704 target is shown, uncropped", () => {
-  // The window is the most the game's box can be; chrome only makes it smaller.
-  const fitted = fit1280x720();
+test("a box too small for the target crops it rather than scaling it fractionally", () => {
+  const fitted = fitView({ width: 500, height: 300 }, 1);
 
   expect(fitted.zoom).toBe(1);
-  expect(fitted.metrics.backingWidth).toBeLessThanOrEqual(1280);
-  expect(fitted.metrics.backingHeight).toBeLessThanOrEqual(720);
-  // Centred with room to spare on both axes.
-  expect(fitted.top).toBe(8);
-  expect(fitted.left).toBe(272);
+  expect(fitted.left).toBe(-38);
+  expect(fitted.top).toBe(-18);
 });
 
 test("the backing store is exactly logical size x zoom and the CSS box is that over the pixel ratio", () => {
-  const fitted = fitView({ width: 736, height: 704 }, 2);
+  const fitted = fitView({ width: 576, height: 336 }, 2);
 
   expect(fitted.metrics).toEqual(canvasMetrics(LOGICAL_SIZE, 2, 2));
-  expect(fitted.metrics.backingWidth).toBe(1472);
-  expect(fitted.metrics.backingHeight).toBe(1408);
-  expect(fitted.metrics.cssWidth).toBe(736);
-  expect(fitted.metrics.cssHeight).toBe(704);
+  expect(fitted.metrics.backingWidth).toBe(1152);
+  expect(fitted.metrics.backingHeight).toBe(672);
+  expect(fitted.metrics.cssWidth).toBe(576);
+  expect(fitted.metrics.cssHeight).toBe(336);
 });
 
 test("the canvas is centred on a whole device pixel", () => {
-  const fitted = fitView({ width: 741, height: 709 }, 2);
+  const fitted = fitView({ width: 581, height: 341 }, 2);
 
-  // 1482x1418 device pixels hold 1472x1408: 10 spare on each axis, 5 on each side.
+  // 1162x682 device pixels hold 1152x672: 10 spare on each axis, 5 on each side.
   expect(fitted.left).toBe(5 / 2);
   expect(fitted.top).toBe(5 / 2);
   expect(Number.isInteger(fitted.left * 2)).toBe(true);

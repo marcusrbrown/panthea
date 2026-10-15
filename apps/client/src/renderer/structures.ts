@@ -26,7 +26,7 @@ import type { BuildingStatus } from "@panthea/world";
 
 import type { ViewBuilding, ViewLocation } from "../store";
 import type { ActorArt, SpriteItem } from "./actors";
-import { buildingFoot, type WorldPoint } from "./layout";
+import { buildingFoot, PLACE_ORIGIN } from "./layout";
 
 /** The Old Oak is a building in the world and a tree on screen; material cannot say so, as the Woodshed is wood too. */
 const TREE_BUILDING_ID = "old-oak";
@@ -74,58 +74,55 @@ const artFrom = (resolved: PixelResolution): ActorArt =>
     : resolved;
 
 /**
- * The sprites that draw the buildings at these locations, back to front by
- * slot: each building, then, when it burns, its fire. The fire's id sorts
- * after its building's, and it is keyed on the building's foot, so at one
- * depth it draws over the building.
+ * The sprites that draw the buildings of the followed place, back to front by
+ * slot: each building, then, when it burns, its fire. The buildings stand in
+ * one centred row (see `buildingFoot`). The fire's id sorts after its
+ * building's, and it is keyed on the building's foot, so at one depth it draws
+ * over the building.
  */
 export function planStructures(
-  locations: readonly ViewLocation[],
-  points: ReadonlyMap<string, WorldPoint>,
+  place: ViewLocation | undefined,
   snapshot: RegistrySnapshot,
 ): StructureItem[] {
   const items: StructureItem[] = [];
-  for (const location of locations) {
-    const place = points.get(location.id);
-    if (place === undefined) continue;
-    for (const [index, building] of location.buildings.entries()) {
-      const foot = buildingFoot(place, index);
-      const kind = structureArtOf(building.id);
-      const look = structureStateOf(building.status);
-      const assetId = STRUCTURE_ASSETS[kind];
-      const id = `structure:${building.id}`;
-      items.push({
-        id,
-        building,
-        role: "building",
-        assetId,
-        foot,
-        art: artFrom(
-          resolveAssetPixels(snapshot, {
-            spriteId: assetId,
-            state: look.state,
-            direction: STRUCTURE_FACING,
-          }),
-        ),
-      });
-      if (!look.fire) continue;
-      const anchor = STRUCTURE_ANCHORS[kind].fire;
-      items.push({
-        id: `${id}:fire`,
-        building,
-        role: "fire",
-        assetId: FIRE_ASSET,
-        // The anchor is an offset down the screen; the layout's y points up.
-        foot: { x: foot.x + anchor.x, y: foot.y - anchor.y },
-        depthFoot: foot,
-        art: artFrom(
-          resolveAssetPixels(snapshot, {
-            spriteId: FIRE_ASSET,
-            animation: FIRE_ANIMATION,
-          }),
-        ),
-      });
-    }
+  const buildings = place?.buildings ?? [];
+  for (const [index, building] of buildings.entries()) {
+    const foot = buildingFoot(PLACE_ORIGIN, index, buildings.length);
+    const kind = structureArtOf(building.id);
+    const look = structureStateOf(building.status);
+    const assetId = STRUCTURE_ASSETS[kind];
+    const id = `structure:${building.id}`;
+    items.push({
+      id,
+      building,
+      role: "building",
+      assetId,
+      foot,
+      art: artFrom(
+        resolveAssetPixels(snapshot, {
+          spriteId: assetId,
+          state: look.state,
+          direction: STRUCTURE_FACING,
+        }),
+      ),
+    });
+    if (!look.fire) continue;
+    const anchor = STRUCTURE_ANCHORS[kind].fire;
+    items.push({
+      id: `${id}:fire`,
+      building,
+      role: "fire",
+      assetId: FIRE_ASSET,
+      // The anchor is an offset down the screen; the layout's y points up.
+      foot: { x: foot.x + anchor.x, y: foot.y - anchor.y },
+      depthFoot: foot,
+      art: artFrom(
+        resolveAssetPixels(snapshot, {
+          spriteId: FIRE_ASSET,
+          animation: FIRE_ANIMATION,
+        }),
+      ),
+    });
   }
   return items;
 }

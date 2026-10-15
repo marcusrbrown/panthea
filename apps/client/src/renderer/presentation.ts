@@ -1,6 +1,6 @@
 import type { Realm, RecentEvent } from "@panthea/contracts";
 import type { ReceiptEmitter } from "../receipts";
-import type { ViewLocation, WorldViewModel } from "../store";
+import type { WorldViewModel } from "../store";
 
 export type EffectTone = "fire" | "worship" | "neutral";
 
@@ -119,31 +119,4 @@ export async function receiptDrawnEvents(
   await Promise.all(
     events.map((event) => emitter.present(sessionId, event.id)),
   );
-}
-
-/**
- * Every path between two locations of one realm, exactly once, as an
- * unordered pair (lexically ordered for stability). A path counts however
- * it was declared -- from either end, or both. An edge whose target is not
- * among `locations`, such as one that crosses realms, and an edge from a
- * location to itself are not paths.
- */
-export function realmPaths(
-  locations: readonly ViewLocation[],
-): readonly [string, string][] {
-  const inRealm = new Set(locations.map((location) => location.id));
-  const seen = new Set<string>();
-  const paths: [string, string][] = [];
-  for (const location of locations) {
-    for (const edge of location.edges) {
-      if (edge.to === location.id || !inRealm.has(edge.to)) continue;
-      const [a, b] =
-        location.id < edge.to ? [location.id, edge.to] : [edge.to, location.id];
-      const key = `${a}\u0000${b}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      paths.push([a, b]);
-    }
-  }
-  return paths;
 }

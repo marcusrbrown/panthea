@@ -33,6 +33,21 @@ export type ObserverView =
       readonly lastKnown?: LastKnownLocation;
     };
 
+/**
+ * The place the observer is looking at: the followed location, or the followed
+ * actor's current one; a held observer's last known place; none while idle or
+ * when no place was ever known. The scene draws this place and the
+ * "Current location" label names it.
+ */
+export function followedPlace(
+  observation: ObserverView,
+): LastKnownLocation | undefined {
+  if (observation.kind === "following") {
+    return { locationId: observation.locationId, realm: observation.realm };
+  }
+  return observation.kind === "held" ? observation.lastKnown : undefined;
+}
+
 export interface TargetGroup {
   readonly realm: Realm;
   readonly locations: readonly { readonly id: string; readonly name: string }[];

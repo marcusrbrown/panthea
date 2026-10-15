@@ -10,7 +10,6 @@ import {
 import { createCanonClient } from "../assets/canon";
 import type { ViewActor } from "../store";
 import { type ActorItem, actorInstances, planActors } from "./actors";
-import { locationPoints } from "./layout";
 
 async function snapshot() {
   const canon = createCanonClient({ source: fakeSource(zeusPayload()) });
@@ -20,11 +19,7 @@ async function snapshot() {
 test("Zeus's sprite resolves to zeus-sprite idle-south, the other inhabitants to the placeholder", async () => {
   const view = viewWithZeus();
   const locations = view.realms.olympus;
-  const planned = planActors(
-    locations,
-    locationPoints(locations),
-    await snapshot(),
-  );
+  const planned = planActors(locations[0], await snapshot());
 
   const zeus = planned.find((item) => item.actor.id === "zeus");
   expect(zeus?.actor.sprite).toBe("zeus-sprite");
@@ -35,12 +30,18 @@ test("Zeus's sprite resolves to zeus-sprite idle-south, the other inhabitants to
     333, 167, 333, 167,
   ]);
 
-  const mortal = view.realms.mortal;
-  const others = planActors(mortal, locationPoints(mortal), await snapshot());
+  // The scene draws one place: each mortal place plans its own inhabitants and no other's.
+  const [square, agora] = ["town-square", "agora"].map((id) =>
+    view.realms.mortal.find((location) => location.id === id),
+  );
+  const others = planActors(square, await snapshot());
   expect(others.map((item) => item.actor.sprite)).toEqual([
-    "placeholder-farmer",
     "placeholder-woodcutter",
   ]);
+  expect(
+    planActors(agora, await snapshot()).map((item) => item.actor.sprite),
+  ).toEqual(["placeholder-farmer"]);
+  expect(planActors(undefined, await snapshot())).toEqual([]);
   for (const item of others) {
     expect(item.art).toMatchObject({
       source: "placeholder",
@@ -52,11 +53,7 @@ test("Zeus's sprite resolves to zeus-sprite idle-south, the other inhabitants to
 test("an empty snapshot draws every actor as the placeholder", () => {
   const view = viewWithZeus();
   const locations = view.realms.olympus;
-  const planned = planActors(
-    locations,
-    locationPoints(locations),
-    EMPTY_SNAPSHOT,
-  );
+  const planned = planActors(locations[0], EMPTY_SNAPSHOT);
 
   expect(planned).toHaveLength(1);
   expect(planned[0]?.art.source).toBe("placeholder");
@@ -116,11 +113,7 @@ test("a placeholder is placed by its foot: the bottom centre of its 16x16 cell",
 test("a canon actor is placed by the manifest's pivot and drawn at the cell size", async () => {
   const view = viewWithZeus();
   const locations = view.realms.olympus;
-  const planned = planActors(
-    locations,
-    locationPoints(locations),
-    await snapshot(),
-  );
+  const planned = planActors(locations[0], await snapshot());
 
   const { instances } = actorInstances(planned);
 
@@ -180,11 +173,9 @@ test("promoted Zeus resolves to zeus-retro idle-south (10 frames of 250 ms, pivo
   const { snapshot } = await canon.load();
   const view = viewWithZeus({}, "zeus-retro");
   const locations = view.realms.olympus;
-  const [promoted] = planActors(
-    locations,
-    locationPoints(locations),
-    snapshot,
-  ).filter((item) => item.actor.id === "zeus");
+  const [promoted] = planActors(locations[0], snapshot).filter(
+    (item) => item.actor.id === "zeus",
+  );
   if (promoted?.art.source !== "canon")
     throw new Error("expected canon art for promoted Zeus");
   expect(String(promoted.art.resolution.assetId)).toBe("zeus-retro");
@@ -198,11 +189,9 @@ test("promoted Zeus resolves to zeus-retro idle-south (10 frames of 250 ms, pivo
 
   const legacyView = viewWithZeus({}, "zeus-sprite");
   const legacyLocations = legacyView.realms.olympus;
-  const [elder] = planActors(
-    legacyLocations,
-    locationPoints(legacyLocations),
-    snapshot,
-  ).filter((item) => item.actor.id === "zeus");
+  const [elder] = planActors(legacyLocations[0], snapshot).filter(
+    (item) => item.actor.id === "zeus",
+  );
   if (elder?.art.source !== "canon")
     throw new Error("expected canon art for the pre-promotion actor");
   expect(String(elder.art.resolution.assetId)).toBe("zeus-sprite");

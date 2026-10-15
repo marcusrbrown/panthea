@@ -25,7 +25,7 @@ import {
 } from "@panthea/renderer";
 
 import type { ViewActor, ViewLocation } from "../store";
-import { actorFoot, type WorldPoint } from "./layout";
+import { actorFoot, PLACE_ORIGIN, type WorldPoint } from "./layout";
 
 /** Normal play shows idle facing south. */
 export const ACTOR_QUERY = { state: "idle", direction: "south" } as const;
@@ -74,24 +74,15 @@ export function fallbackActor(
 }
 
 export function planActors(
-  locations: readonly ViewLocation[],
-  points: ReadonlyMap<string, WorldPoint>,
+  place: ViewLocation | undefined,
   snapshot: RegistrySnapshot,
 ): ActorItem[] {
-  const items: ActorItem[] = [];
-  for (const location of locations) {
-    const place = points.get(location.id);
-    if (place === undefined) continue;
-    for (const [index, actor] of location.actors.entries()) {
-      items.push({
-        id: `actor:${actor.id}`,
-        actor,
-        foot: actorFoot(place, index),
-        art: resolveActor(snapshot, actor.sprite),
-      });
-    }
-  }
-  return items;
+  return (place?.actors ?? []).map((actor, index) => ({
+    id: `actor:${actor.id}`,
+    actor,
+    foot: actorFoot(PLACE_ORIGIN, index),
+    art: resolveActor(snapshot, actor.sprite),
+  }));
 }
 
 /** Screen rows per depth step: coarse enough that the ring's rows stay inside the depth key's range. */

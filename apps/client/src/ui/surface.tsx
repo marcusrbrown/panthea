@@ -4,6 +4,7 @@ import type { ReactElement, ReactNode } from "react";
 
 import type { ModelSettingsTransport } from "../connection";
 import {
+  followedPlace,
   listTargets,
   type ObserverTarget,
   type ObserverView,
@@ -231,19 +232,9 @@ export function ClientSurface({
   effects,
   onEffectsChange,
 }: ClientSurfaceProps) {
-  const realm =
-    observation.kind === "following"
-      ? observation.realm
-      : observation.kind === "held" && observation.lastKnown
-        ? observation.lastKnown.realm
-        : "mortal";
-  const locationId =
-    observation.kind === "following"
-      ? observation.locationId
-      : observation.kind === "held"
-        ? observation.lastKnown?.locationId
-        : undefined;
-  const location = locationInRealm(view, realm, locationId);
+  const place = followedPlace(observation);
+  const realm = place?.realm ?? "mortal";
+  const location = locationInRealm(view, realm, place?.locationId);
   const recentEvents = view ? eventsInRealm(view, realm) : [];
   const selectedTarget =
     observation.kind === "idle" ? undefined : observation.target;

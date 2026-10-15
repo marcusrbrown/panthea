@@ -1,5 +1,5 @@
-// Everything in the scene that is not a sprite: the ground grid, paths,
-// places, repair bars, event rings and the mark on a fallen actor. They are
+// Everything in the scene that is not a sprite: the ground grid, repair bars,
+// event rings and the mark on a fallen actor. They are
 // square-edged mesh clusters in render-target pixel space (whole pixels, x
 // right, y up), using the same palette and depth ordering as the sprite layer.
 // Rings and the fallen mark sit above the sprites; the rest sit below them.
@@ -26,21 +26,16 @@ import {
   CAMERA_ORIGIN,
   EVENT_RING,
   LOGICAL_SIZE,
+  PLACE_ORIGIN,
   type WorldPoint,
 } from "./layout";
-import { type EffectTone, placeEvents, realmPaths } from "./presentation";
+import { type EffectTone, placeEvents } from "./presentation";
 
 const INK = 0x273c35;
 const MOSS = 0x426c58;
 const RUST = 0xa54d36;
 const GOLD = 0x96733e;
-const PAPER = 0xeee9dc;
 const PAPER_DEEP = 0xded6c4;
-const REALM_TINT: Record<Realm, number> = {
-  mortal: MOSS,
-  olympus: GOLD,
-  underworld: INK,
-};
 
 const EFFECT_COLOR: Record<EffectTone, number> = {
   fire: RUST,
@@ -55,9 +50,8 @@ const FALLEN_COLOR = RUST;
 /** The scene's clear colour, as sRGB bytes. */
 export const BACKGROUND: readonly [number, number, number] = [238, 233, 220];
 
-// Depth, below every sprite: grid and paths, places, repair bars.
+// Depth, below every sprite: the grid and repair bars.
 const Z_GRID = 0;
-const Z_PLACE = 2;
 const Z_REPAIR = 5;
 // Above every sprite.
 const Z_FALLEN = DEPTH_Z_MAX - 1;
@@ -138,17 +132,6 @@ function fallenMark(id: string, foot: WorldPoint): Group {
   return mark;
 }
 
-function placeMark(name: string, point: WorldPoint, color: number): Group {
-  const mark = new Group();
-  mark.name = name;
-  mark.position.set(point.x, point.y, Z_PLACE);
-  for (const [row, width] of [4, 8, 12, 16, 12, 8, 4].entries()) {
-    mark.add(pixel(`row:${row}`, 0, 6 - row * 2, color, width, 2, 0));
-  }
-  mark.add(pixel("heart", 0, 0, PAPER, 4, 4, 1));
-  return mark;
-}
-
 /** A two-pixel outline ring made from horizontal runs, never a smoothed circle. */
 function eventRing(
   name: string,
@@ -188,12 +171,10 @@ function eventRing(
 export function buildDecor(
   view: WorldViewModel,
   realm: Realm,
-  locations: readonly ViewLocation[],
-  points: ReadonlyMap<string, WorldPoint>,
+  place: ViewLocation | undefined,
   fallen: ReadonlyMap<string, WorldPoint>,
 ): Decor {
   const objects: Object3D[] = [];
-  const ink = REALM_TINT[realm];
 
   const viewTop = -CAMERA_ORIGIN.y;
   const viewBottom = viewTop - LOGICAL_SIZE.height;
@@ -202,43 +183,31 @@ export function buildDecor(
       block(`grid:${y}`, 0, y, GRID_COLOR, LOGICAL_SIZE.width, 2, Z_GRID),
     );
   }
-  for (const [fromId, toId] of realmPaths(locations)) {
-    const start = points.get(fromId);
-    const end = points.get(toId);
-    if (start && end) {
-      const dx = end.x - start.x;
-      const dy = end.y - start.y;
-      const steps = Math.max(Math.abs(dx), Math.abs(dy));
-      for (let step = 0; step <= steps; step += 4) {
-        const x = Math.round(start.x + (dx * step) / Math.max(1, steps));
-        const y = Math.round(start.y + (dy * step) / Math.max(1, steps));
-        objects.push(
-          block(`path:${fromId}:${toId}:${step}`, x, y, ink, 4, 4, Z_GRID),
-        );
-      }
-    }
-  }
-  for (const location of locations) {
-    const from = points.get(location.id);
-    if (!from) continue;
-    objects.push(placeMark(`place:${location.id}`, from, ink));
-    for (const [index, building] of location.buildings.entries()) {
-      if (building.status === "repairing" && building.repair) {
-        objects.push(repairBar(building, buildingFoot(from, index)));
-      }
+  const drawnEventIds: string[] = [];
+  if (place === undefined) return { objects, drawnEventIds };
+
+  for (const [index, building] of place.buildings.entries()) {
+    if (building.status === "repairing" && building.repair) {
+      objects.push(
+        repairBar(
+          building,
+          buildingFoot(PLACE_ORIGIN, index, place.buildings.length),
+        ),
+      );
     }
   }
   for (const [id, foot] of fallen) objects.push(fallenMark(id, foot));
 
-  const drawnEventIds: string[] = [];
-  for (const [index, placed] of placeEvents(view, realm).entries()) {
-    const point = points.get(placed.locationId);
-    if (!point) continue;
+  // An event ring stands beside the place for each event placed at it; events at other places are not drawn.
+  const here = placeEvents(view, realm).filter(
+    (placed) => placed.locationId === place.id,
+  );
+  for (const [index, placed] of here.entries()) {
     objects.push(
       eventRing(
         `ring:${placed.event.id}`,
-        point.x + EVENT_RING.dx,
-        point.y + EVENT_RING.dy,
+        PLACE_ORIGIN.x + EVENT_RING.dx,
+        PLACE_ORIGIN.y + EVENT_RING.dy,
         EFFECT_COLOR[placed.tone],
         EVENT_RING.radius + (index % EVENT_RING.sizes) * EVENT_RING.step,
       ),

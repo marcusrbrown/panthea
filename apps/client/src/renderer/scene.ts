@@ -1,7 +1,7 @@
 // The world renderer on the shared pixel core: a fixed-size target drawn at
 // 1x with nearest filtering and no antialiasing, enlarged by a whole zoom.
 // Actors, buildings and fire are sprites resolved from canon (or the shared
-// placeholder pixels); places, rings and bars are meshes in the same pixel
+// placeholder pixels); rings and bars are meshes in the same pixel
 // space (./decor).
 //
 // A strike is an effect sprite that plays once over the building the world
@@ -53,7 +53,6 @@ import {
   CAMERA_ORIGIN,
   fitView,
   LOGICAL_SIZE,
-  locationPoints,
   type WorldPoint,
 } from "./layout";
 import { placeEvents } from "./presentation";
@@ -62,12 +61,18 @@ import { planStructures, structureArtOf } from "./structures";
 export interface WorldRenderer {
   start(onDeviceLost: () => void): Promise<void>;
   /**
-   * Draws `view`. Resolves, once the frame is on screen, with the ids of the
-   * drawable events it showed (the ones a receipt may be sent for). A draw
+   * Draws the place `locationId` of `realm` in `view`, and no other: its
+   * buildings, inhabitants and event rings, and strikes on its buildings; with
+   * no place, the empty ground. Resolves, once the frame is on screen, with the
+   * ids of the drawable events at that place it showed (the ones a receipt may be sent for). A draw
    * superseded by a newer one before it renders, or one after disposal, shows
    * nothing and resolves with none.
    */
-  draw(view: WorldViewModel, realm: Realm): Promise<readonly string[]>;
+  draw(
+    view: WorldViewModel,
+    realm: Realm,
+    locationId: string | undefined,
+  ): Promise<readonly string[]>;
   /** Advances the animation clock by the render loop's frame delta, redrawing only when a frame changes. */
   tick(deltaMs: number): void;
   dispose(): void;
@@ -372,6 +377,7 @@ export function createWorldRenderer(
   async function draw(
     view: WorldViewModel,
     realm: Realm,
+    locationId: string | undefined,
   ): Promise<readonly string[]> {
     if (disposed) return [];
     generation += 1;
@@ -380,14 +386,16 @@ export function createWorldRenderer(
 
     const { snapshot } = await canon.load();
     if (stale()) return [];
-    const locations = view.realms[realm];
-    const points = locationPoints(locations);
+    const place = view.realms[realm].find(
+      (location) => location.id === locationId,
+    );
     // The strikes this draw would start: events not yet presented, on a
-    // building in the viewed realm. Nothing is marked seen until the draw is
+    // building at the followed place. Nothing is marked seen until the draw is
     // known to be the one that presents.
     const fresh = primed
       ? placeEvents(view, realm).filter(
           (placed) =>
+            placed.locationId === place?.id &&
             placed.buildingId !== undefined &&
             isStrike(placed.event) &&
             !seen.has(placed.event.id),
@@ -395,12 +403,12 @@ export function createWorldRenderer(
       : [];
     const [settled, settledStructures, striking] = await Promise.all([
       Promise.all(
-        planActors(locations, points, snapshot).map((item) =>
+        planActors(place, snapshot).map((item) =>
           settle(item, item.actor.sprite),
         ),
       ),
       Promise.all(
-        planStructures(locations, points, snapshot).map((item) =>
+        planStructures(place, snapshot).map((item) =>
           settle(item, item.assetId),
         ),
       ),
@@ -409,7 +417,8 @@ export function createWorldRenderer(
     if (stale()) return [];
 
     // This draw presents: every event of the window is now seen, whatever its
-    // realm, and the strikes it starts begin on the renderer's clock.
+    // place or realm, so following another place replays nothing, and the
+    // strikes it starts begin on the renderer's clock.
     if (striking !== undefined) {
       for (const placed of fresh) {
         if (placed.buildingId === undefined) continue;
@@ -478,7 +487,7 @@ export function createWorldRenderer(
         .map(({ item }) => [item.actor.id, item.foot] as const),
     );
     clearDecor(group);
-    const decor = buildDecor(view, realm, locations, points, fallen);
+    const decor = buildDecor(view, realm, place, fallen);
     for (const object of decor.objects) group.add(object);
 
     animated = instances.flatMap((instance) =>

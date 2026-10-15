@@ -20,7 +20,7 @@ import {
   type SpriteItem,
   spriteInstances,
 } from "./actors";
-import { buildingFoot, locationPoints } from "./layout";
+import { BUILDING_SLOT, buildingFoot, PLACE_ORIGIN } from "./layout";
 import {
   planStructures,
   type StructureItem,
@@ -67,7 +67,7 @@ function place(
 }
 
 const plan = async (locations: readonly ViewLocation[]) =>
-  planStructures(locations, locationPoints(locations), await snapshot());
+  planStructures(locations[0], await snapshot());
 
 const canonOf = (item: StructureItem | undefined) => {
   if (item?.art.source !== "canon") throw new Error("expected canon art");
@@ -143,11 +143,10 @@ test("a burning building draws the damaged art with the fire loop over it, at th
   expect(burn.frames).toHaveLength(10);
   expect(burn.loopStart).toBeUndefined();
 
-  const point = locationPoints(locations).get("square");
-  if (point === undefined || base === undefined || fire === undefined) {
-    throw new Error("the plan has no place or items");
+  if (base === undefined || fire === undefined) {
+    throw new Error("the plan has no items");
   }
-  const foot = buildingFoot(point, 0);
+  const foot = buildingFoot(PLACE_ORIGIN, 0, 1);
   const anchor = STRUCTURE_ANCHORS.building.fire;
   expect(base.foot).toEqual(foot);
   // The anchor is an offset down the screen; the layout's y points up.
@@ -163,29 +162,57 @@ test("only a burning building has a fire: every other status draws its one struc
   }
 });
 
-test("buildings stand at their slots, each by its own foot", async () => {
-  const locations = place([
-    building("a", "operational"),
-    building("b", "operational"),
-  ]);
-  const items = await plan(locations);
-  const point = locationPoints(locations).get("square");
-  if (point === undefined) throw new Error("no place");
+test("buildings stand at their slots, each by its own foot, in a row centred on the place", async () => {
+  const items = await plan(
+    place([building("a", "operational"), building("b", "operational")]),
+  );
 
   expect(items.map((item) => item.foot)).toEqual([
-    buildingFoot(point, 0),
-    buildingFoot(point, 1),
+    buildingFoot(PLACE_ORIGIN, 0, 2),
+    buildingFoot(PLACE_ORIGIN, 1, 2),
   ]);
+  expect(items.map((item) => item.foot.x)).toEqual([
+    -BUILDING_SLOT.dx / 2,
+    BUILDING_SLOT.dx / 2,
+  ]);
+});
+
+test("the structures of one place never overlap: the drawn cells of two or three buildings of any art and status are disjoint", async () => {
+  const kinds = [
+    ["old-oak", "operational"],
+    ["the-tavern", "burning"],
+    ["the-forge", "destroyed"],
+  ] as const;
+  for (const count of [1, 2, 3]) {
+    const items = await plan(
+      place(kinds.slice(0, count).map(([id, status]) => building(id, status))),
+    );
+    const { instances } = spriteInstances(items, "structure");
+    const cells = instances
+      .filter((instance) => !instance.id.endsWith(":fire"))
+      .map((instance) => ({
+        id: instance.id,
+        left: instance.x,
+        right: instance.x + instance.w,
+      }))
+      .sort((a, b) => a.left - b.left);
+
+    expect(cells).toHaveLength(count);
+    for (const [index, cell] of cells.entries()) {
+      const next = cells[index + 1];
+      if (next !== undefined) expect(cell.right).toBeLessThanOrEqual(next.left);
+    }
+  }
+});
+
+test("with no place followed there are no structures and no actors to plan", async () => {
+  expect(planStructures(undefined, await snapshot())).toEqual([]);
 });
 
 test("a building whose art is not published draws the shared placeholder, and so does its fire", async () => {
   const locations = place([building("the-tavern", "burning")]);
 
-  const items = planStructures(
-    locations,
-    locationPoints(locations),
-    EMPTY_SNAPSHOT,
-  );
+  const items = planStructures(locations[0], EMPTY_SNAPSHOT);
 
   expect(items).toHaveLength(2);
   for (const item of items) {
