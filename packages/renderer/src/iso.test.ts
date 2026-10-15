@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { TILE_DIAMOND_H, tileDiamondRow } from "@panthea/assets";
 import { DataTexture, type InstancedMesh } from "three";
 import { TileMap2D, type TileMapData } from "three-flatland";
 import {
@@ -363,5 +364,14 @@ describe("TileMap2D (three-flatland 0.1.0-alpha.10)", () => {
       dx: -TILE_W / 2,
       dy: TILE_H / 2,
     });
+  });
+});
+
+describe("the diamond the asset conformance checks", () => {
+  it("is the diamond this projection draws, row for row, and 31 rows high", () => {
+    expect(TILE_DIAMOND_H).toBe(DIAMOND_H);
+    for (let row = -1; row <= TILE_H; row += 1) {
+      expect(tileDiamondRow(row), `row ${row}`).toEqual(diamondRow(row));
+    }
   });
 });

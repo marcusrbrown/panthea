@@ -40,6 +40,7 @@ import {
   type Sha256,
   transitionAsset,
 } from "@panthea/contracts";
+import { tileFixture } from "../../../packages/assets/test/fixtures/tile";
 import { validateAssets } from "./assets";
 
 const COMMITTED = join(import.meta.dir, "..", "..", "..", "content", "greek");
@@ -1724,5 +1725,37 @@ describe("the retro matrix completeness rule", () => {
         expect(found[0]?.message).toContain(text);
       });
     }
+  });
+});
+
+describe("tile assets", () => {
+  it("accepts a published tile alongside the other kinds, with no diagnostics", () => {
+    const root = contentRoot();
+    publish(root, tileFixture());
+    expect(diagnosticsOf(root)).toEqual([]);
+    const { snapshot } = loadRegistry(registryOf(root), vocabulary);
+    expect(snapshot.entries.get("grass-flagstone")?.manifest.kind).toBe("tile");
+  });
+
+  it("still holds a tile to the palette it names", () => {
+    const root = contentRoot();
+    publish(root, tileFixture());
+    writePalette(root, paletteFixture("approved", "another-master").files);
+    const [diagnostic] = diagnosticsOf(root);
+    expect(diagnostic?.file).toMatch(
+      /^assets\/registry\/manifests\/[0-9a-f]{64}\.json$/,
+    );
+    expect(diagnostic?.message).toContain("fixture-master");
+  });
+
+  it("refuses an inhabitant whose sprite id is a published tile", () => {
+    const root = contentRoot();
+    publish(root, tileFixture("grass-flagstone"));
+    writeInhabitants(root, [
+      { id: "woodcutter", sprite: "grass-flagstone" },
+      { id: "zeus", deity: true },
+    ]);
+    const [diagnostic] = diagnosticsOf(root);
+    expect(diagnostic?.message).toContain("published as a tile, not a sprite");
   });
 });

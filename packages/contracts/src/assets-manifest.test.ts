@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import canonPortrait from "../../../content/greek/assets/registry/manifests/7cbaf7aa67a604b70b9c721dd0b31123d984c1e3034f10cba70c84e277c09c2d.json";
 import vocabularyJson from "../../../content/greek/assets/vocabulary.json";
 import {
@@ -8,6 +10,7 @@ import {
   parseAssetVocabulary,
   parseGenerationRequest,
   parseProvenance,
+  tileAtlasRect,
 } from "./assets";
 
 const vocab = (() => {
@@ -282,15 +285,6 @@ describe("asset manifests: common metadata", () => {
     sprite,
     (v) => {
       v.kind = "banana";
-    },
-    /kind/,
-    "unknown-kind",
-  );
-  rejects(
-    "the reserved tile kind",
-    sprite,
-    (v) => {
-      v.kind = "tile";
     },
     /kind/,
     "unknown-kind",
@@ -2176,5 +2170,290 @@ describe("rendered provenance", () => {
     expect(refusedRecipe.ok).toBe(false);
     if (!refusedRecipe.ok)
       expect(refusedRecipe.path).toMatch(/generations\[0\]\.request/);
+  });
+});
+
+describe("tile manifests", () => {
+  const PERIOD = 4;
+  const revisionHash = hashOf(0xaaa);
+
+  function tileSlot(role: string, at: number) {
+    return {
+      slotKey: role,
+      recipeHash: hashOf(0xb00 + at),
+      revisionRecipeHash: revisionHash,
+      role,
+      seed: 0,
+      frameCount: 1,
+      raw: {
+        colour: [hashOf(1000 + at)],
+        id: [hashOf(2000 + at)],
+        depth: [hashOf(3000 + at)],
+      },
+    };
+  }
+
+  function tileProvenance(
+    slots: Mutable[] = [tileSlot("base", 0), tileSlot("over", 1)],
+  ): Mutable {
+    return {
+      method: "rendered",
+      revisionRecipe: {
+        hash: revisionHash,
+        profile: { id: "grass-flagstone", hash: H("1") },
+        camera: H("2"),
+        palette: { id: "greek-retro", digest: H("3") },
+        pivot: { x: 32, y: 16 },
+        script: H("4"),
+        postStep: 1,
+        blender: { version: "5.2.2", build: "d13f752e3b9c", sha256: H("a") },
+        kit: H("5"),
+        stamps: H("6"),
+      },
+      slots,
+      licences: [
+        { subject: "blender", role: "runtime", licence: "GPL-3.0-or-later" },
+      ],
+      relatedJobs: [
+        { jobId: "grass-0000", status: "succeeded", outputs: [H("7")] },
+        { jobId: "grass-0001", status: "succeeded", outputs: [H("8")] },
+      ],
+      handEdits: [],
+      sourceAssets: [],
+    };
+  }
+
+  function tile(
+    period = PERIOD,
+    provenance: Mutable = tileProvenance(),
+  ): Mutable {
+    return {
+      schemaVersion: 1,
+      kind: "tile",
+      id: "grass-flagstone",
+      cell: { w: 64, h: 32 },
+      pixelScale: 1,
+      paletteFamily: "town",
+      paletteId: "greek-retro",
+      styleTag: "retro",
+      atlas: { blob: H("d"), width: 16 * 64, height: period * period * 32 },
+      terrain: { base: "grass", over: "flagstone" },
+      period,
+      provenance,
+    };
+  }
+
+  const tileRefusal = (value: Mutable) => {
+    const result = parsesAs(value);
+    if (result.ok) throw new Error("expected a refusal");
+    return `${result.path} ${result.message}`;
+  };
+
+  it("parses an N=4 tile manifest with base and over slots and stores it byte-identical", () => {
+    const parsed = parsesAs(tile());
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.kind).toBe("tile");
+    if (parsed.value.kind !== "tile") return;
+    expect(parsed.value.terrain).toEqual({ base: "grass", over: "flagstone" });
+    expect(parsed.value.period).toBe(4);
+    expect(parsed.value.atlas).toEqual({
+      blob: H("d") as never,
+      width: 1024,
+      height: 512,
+    });
+    const text = canonicalManifestText(parsed.value);
+    const again = parseAssetManifest(JSON.parse(text), vocab);
+    expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+    const slots =
+      parsed.value.provenance.method === "rendered"
+        ? parsed.value.provenance.slots.map((slot) => slot.slotKey)
+        : [];
+    expect(slots).toEqual(["base", "over"]);
+  });
+
+  it("keeps every committed manifest, sprite, portrait and effect, byte-identical through the parser", () => {
+    const dir = join(
+      import.meta.dir,
+      "..",
+      "..",
+      "..",
+      "content",
+      "greek",
+      "assets",
+      "registry",
+      "manifests",
+    );
+    const names = readdirSync(dir).filter((name) => name.endsWith(".json"));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      const text = readFileSync(join(dir, name), "utf8");
+      const parsed = parseAssetManifest(JSON.parse(text), vocab);
+      expect(parsed.ok, name).toBe(true);
+      if (parsed.ok)
+        expect(canonicalManifestText(parsed.value), name).toBe(text);
+    }
+  });
+
+  it("takes any positive integer period, and sizes the atlas 16 columns by N squared rows", () => {
+    for (const period of [1, 2, 3, 8]) {
+      expect(parsesAs(tile(period)).ok, `N=${period}`).toBe(true);
+    }
+    const wrong = tile();
+    wrong.atlas.height = 8 * 32;
+    expect(tileRefusal(wrong)).toMatch(/atlas/);
+    const narrow = tile();
+    narrow.atlas.width = 15 * 64;
+    expect(tileRefusal(narrow)).toMatch(/atlas/);
+  });
+
+  it("refuses a period that is not a positive integer, naming the period", () => {
+    for (const period of [0, 1.5, -1, "4", null]) {
+      const value = tile();
+      value.period = period;
+      expect(tileRefusal(value), `N=${String(period)}`).toMatch(
+        /period.*positive integer/,
+      );
+    }
+    const none = tile();
+    delete none.period;
+    expect(tileRefusal(none)).toMatch(/period/);
+  });
+
+  it("refuses a tile off the 64x32 cell, equal terrains, or keys that belong to another kind", () => {
+    const off = tile();
+    off.cell = { w: 64, h: 64 };
+    expect(tileRefusal(off)).toMatch(/cell/);
+    const same = tile();
+    same.terrain = { base: "grass", over: "grass" };
+    expect(tileRefusal(same)).toMatch(/terrain/);
+    const bad = tile();
+    bad.terrain = { base: "Grass", over: "flagstone" };
+    expect(tileRefusal(bad)).toMatch(/terrain\.base/);
+    const spriteKey = tile();
+    spriteKey.pivot = { x: 0, y: 0 };
+    expect(tileRefusal(spriteKey)).toMatch(/pivot/);
+  });
+
+  it("tiles take rendered provenance and refuse a slot that names a state or misses a role", () => {
+    const swapped = tile(PERIOD, tileProvenance([tileSlot("base", 0)]));
+    expect(tileRefusal(swapped)).toMatch(/over/);
+    const unknown = tile(
+      PERIOD,
+      tileProvenance([tileSlot("base", 0), tileSlot("under", 1)]),
+    );
+    expect(tileRefusal(unknown)).toMatch(/slots\[1\]/);
+    const mismatched = tileSlot("over", 1);
+    mismatched.slotKey = "base";
+    expect(
+      tileRefusal(
+        tile(PERIOD, tileProvenance([tileSlot("base", 0), mismatched])),
+      ),
+    ).toMatch(/slots\[1\]/);
+    const doubled = tile(
+      PERIOD,
+      tileProvenance([tileSlot("base", 0), tileSlot("base", 1)]),
+    );
+    expect(tileRefusal(doubled)).toMatch(/slots\[1\]/);
+    const { role: _role, ...bare } = tileSlot("over", 1);
+    const spriteSlot = {
+      ...bare,
+      slotKey: "walk/south",
+      state: "walk",
+      clip: "Walking_A",
+      facing: "south",
+    };
+    expect(
+      tileRefusal(
+        tile(PERIOD, tileProvenance([tileSlot("base", 0), spriteSlot])),
+      ),
+    ).toMatch(/slots\[1\]/);
+  });
+
+  it("a tile slot carries no state, clip or facing, and a sprite is unchanged by the tile variant", () => {
+    const withState = tileSlot("base", 0) as Mutable;
+    withState.state = "idle";
+    expect(
+      tileRefusal(
+        tile(PERIOD, tileProvenance([withState, tileSlot("over", 1)])),
+      ),
+    ).toMatch(/state/);
+    const provenance = tileProvenance();
+    provenance.revisionRecipe.pivot = { x: 56, y: 78 };
+    const asSprite = { ...godTallSprite(), provenance };
+    expect(tileRefusal(asSprite)).toMatch(/slots\[0\]/);
+  });
+
+  it("maps (mask, offset) to the atlas cell: 16 columns by mask, one row per offset, frame index offset*16 + mask", () => {
+    expect(tileAtlasRect(0, 0, 4)).toEqual({ x: 0, y: 0, w: 64, h: 32 });
+    expect(tileAtlasRect(15, 0, 4)).toEqual({ x: 960, y: 0, w: 64, h: 32 });
+    expect(tileAtlasRect(0, 15, 4)).toEqual({ x: 0, y: 480, w: 64, h: 32 });
+    expect(tileAtlasRect(15, 15, 4)).toEqual({ x: 960, y: 480, w: 64, h: 32 });
+    expect(tileAtlasRect(5, 7, 4)).toEqual({ x: 320, y: 224, w: 64, h: 32 });
+    expect(tileAtlasRect(15, 0, 1)).toEqual({ x: 960, y: 0, w: 64, h: 32 });
+    const seen = new Set<string>();
+    for (let offset = 0; offset < 16; offset += 1) {
+      for (let mask = 0; mask < 16; mask += 1) {
+        const rect = tileAtlasRect(mask, offset, 4);
+        expect((rect.y / 32) * 16 + rect.x / 64).toBe(offset * 16 + mask);
+        expect(rect.x + rect.w).toBeLessThanOrEqual(1024);
+        expect(rect.y + rect.h).toBeLessThanOrEqual(512);
+        seen.add(`${rect.x},${rect.y}`);
+      }
+    }
+    expect(seen.size).toBe(256);
+  });
+
+  it("the period bounds the offset but does not move a cell", () => {
+    expect(tileAtlasRect(3, 2, 2)).toEqual(tileAtlasRect(3, 2, 4));
+    expect(tileAtlasRect(3, 2, 2)).toEqual({ x: 192, y: 64, w: 64, h: 32 });
+    expect(() => tileAtlasRect(0, 4, 2)).toThrow(RangeError);
+    expect(() => tileAtlasRect(0, 16, 4)).toThrow(RangeError);
+    expect(() => tileAtlasRect(16, 0, 4)).toThrow(RangeError);
+    expect(() => tileAtlasRect(-1, 0, 4)).toThrow(RangeError);
+    expect(() => tileAtlasRect(0, 1.5, 4)).toThrow(RangeError);
+    expect(() => tileAtlasRect(0, 0, 0)).toThrow(RangeError);
+  });
+
+  it("accepts a tile recipe request, with state and direction gone and the role named", () => {
+    const parsed = parseGenerationRequest({
+      schemaVersion: 1,
+      subject: "grass-flagstone",
+      kind: "tile",
+      slots: [{ role: "base" }, { role: "over" }],
+      recipe: {
+        profile: "grass-flagstone",
+        palette: "greek-retro",
+        pivot: { x: 32, y: 16 },
+      },
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value).toMatchObject({ kind: "tile", batch: 1, seed: 0 });
+    expect(parsed.value.slots).toEqual([{ role: "base" }, { role: "over" }]);
+    expect(
+      parseGenerationRequest(JSON.parse(JSON.stringify(parsed.value))),
+    ).toEqual(parsed);
+  });
+
+  it("refuses a slot role outside base and over, and still refuses a recipe request for a portrait", () => {
+    const request = (slots: unknown[], kind = "tile") => ({
+      schemaVersion: 1,
+      subject: "grass-flagstone",
+      kind,
+      slots,
+      recipe: {
+        profile: "grass-flagstone",
+        palette: "greek-retro",
+        pivot: { x: 32, y: 16 },
+      },
+    });
+    const under = parseGenerationRequest(request([{ role: "under" }]));
+    expect(under.ok).toBe(false);
+    if (!under.ok) expect(under.path).toMatch(/slots\[0\]\.role/);
+    expect(
+      parseGenerationRequest(request([{ expression: "neutral" }], "portrait"))
+        .ok,
+    ).toBe(false);
   });
 });

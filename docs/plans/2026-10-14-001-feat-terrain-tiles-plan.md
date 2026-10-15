@@ -259,7 +259,7 @@ flowchart LR
 
 ### Stage A: the tile set (PR 1)
 
-- [ ] **Unit 1: Tile kind and tile provenance in contracts**
+- [x] **Unit 1: Tile kind and tile provenance in contracts**
 
 **Goal:** a tile manifest with `rendered` tile provenance parses, and a tile recipe request is accepted.
 

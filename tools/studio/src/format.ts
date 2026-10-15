@@ -241,7 +241,7 @@ export function editSummary(record: EditRecord): Json {
 
 type Manifest = StudioAssetRecord["record"]["manifest"];
 
-/** A manifest's slot keys: `state/direction[/ability]`, an expression, or an effect animation's name. */
+/** A manifest's slot keys: `state/direction[/ability]`, an expression, an effect animation's name, or a tile terrain's role. */
 function slotsOf(manifest: Manifest): string[] {
   switch (manifest.kind) {
     case "sprite":
@@ -253,6 +253,8 @@ function slotsOf(manifest: Manifest): string[] {
       return manifest.expressions.map((e) => e.expression);
     case "effect":
       return manifest.animations.map((a) => a.name);
+    case "tile":
+      return ["base", "over"];
   }
 }
 

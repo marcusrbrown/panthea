@@ -46,7 +46,7 @@ const EDIT_PRESERVE =
 const EDIT_NEGATIVE_PROMPT =
   "different person, changed identity, changed hairline, new facial features, altered iris or pupil, photorealistic, blurry, antialiasing, round O mouth";
 
-const KINDS = ["sprite", "portrait"] as const;
+const KINDS = ["sprite", "portrait", "tile"] as const;
 type StudioKind = (typeof KINDS)[number];
 
 /**
@@ -230,7 +230,7 @@ export interface PlannedJob {
 }
 
 export function slotKey(slot: GenerationSlot): string {
-  return [slot.state, slot.direction, slot.ability, slot.expression]
+  return [slot.state, slot.direction, slot.ability, slot.expression, slot.role]
     .filter((part) => part !== undefined)
     .join("/");
 }
@@ -323,6 +323,20 @@ function checkSlot(
   cellId: string,
   deferred: readonly { state: string; ability?: string }[],
 ): RequestResult<SlotCheck> {
+  if (kind === "tile") {
+    if (
+      slot.state !== undefined ||
+      slot.direction !== undefined ||
+      slot.ability !== undefined ||
+      slot.expression !== undefined
+    )
+      return invalidSlot(slot, "a tile slot takes only a role");
+    if (slot.role === undefined)
+      return invalidSlot(slot, "a tile slot needs a role");
+    return good({ ability: undefined, view: undefined });
+  }
+  if (slot.role !== undefined)
+    return invalidSlot(slot, "only a tile slot takes a role");
   if (kind === "portrait") {
     if (
       slot.state !== undefined ||
@@ -398,6 +412,7 @@ function promptFor(
   styleNote: string | undefined,
   edit: GenerationEdit | undefined,
 ): string {
+  if (kind === "tile") return `${name}, ${slot.role} terrain, seamless ground`;
   const subject = `${name}, Greek god, ${iconography.join(", ")}`;
   const style = styleNote === undefined ? "" : `, ${styleNote}`;
   if (edit !== undefined)
@@ -440,6 +455,13 @@ export function buildSpec(
       requested: request.kind,
       valid: KINDS,
     });
+  // The image engine draws no ground: a tile only exists as a render.
+  if (kind === "tile" && request.recipe === undefined)
+    return bad({
+      kind: "invalid-request",
+      path: "recipe",
+      message: "a tile is drawn only by the render engine: it takes a recipe",
+    });
   const subject = subjectOf(content, request.subject);
   if (subject === undefined)
     return bad({
@@ -450,11 +472,11 @@ export function buildSpec(
 
   const { recipe } = request;
   // The image engine draws gods; a tree or a building only exists as a render.
-  if (subject.structure && (recipe === undefined || kind !== "sprite"))
+  if (subject.structure && (recipe === undefined || kind === "portrait"))
     return bad({
       kind: "invalid-request",
       path: "recipe",
-      message: `${request.subject} is a structure, drawn only by the render engine as a sprite`,
+      message: `${request.subject} is a structure, drawn only by the render engine as a sprite or a tile`,
     });
   const { measuredCells, generationScale, spriteCellClass } =
     engine ?? SD_ENGINE;
@@ -475,9 +497,9 @@ export function buildSpec(
     spriteCell = subject.render.matrix.cellClass;
   }
   const cell = vocabulary.cells.find((c) =>
-    kind === "sprite"
-      ? c.id === spriteCell && c.kinds.includes("sprite")
-      : c.kinds.includes("portrait"),
+    kind === "portrait"
+      ? c.kinds.includes("portrait")
+      : c.id === spriteCell && c.kinds.includes(kind),
   );
   if (cell === undefined)
     return bad({
@@ -581,7 +603,10 @@ export function buildSpec(
       approval: palette.approval,
       family: family.id,
       ramps: family.ramps,
-      maxColours: colourLimit(palette, kind),
+      maxColours: colourLimit(
+        palette,
+        kind === "portrait" ? "portrait" : "sprite",
+      ),
     },
     slots,
   });

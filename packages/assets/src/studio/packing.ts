@@ -397,6 +397,10 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     );
   const { spec } = { spec: built.value };
   const { kind } = spec;
+  if (kind === "tile")
+    return refuse(
+      `${spec.subject} is a tile set: a working set of drawn candidates does not pack one`,
+    );
   const palette = content.palettes.get(spec.palette.id);
   if (palette === undefined)
     return refuse(`the palette ${spec.palette.id} is not loaded`);

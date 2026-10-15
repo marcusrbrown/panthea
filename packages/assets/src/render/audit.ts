@@ -17,11 +17,13 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type {
-  AssetManifest,
-  RenderedProvenance,
-  RenderedSlot,
-  Sha256,
+import {
+  type AssetManifest,
+  isTileSlot,
+  type RenderedProvenance,
+  type RenderedSlot,
+  type Sha256,
+  type SpriteRenderedSlot,
 } from "@panthea/contracts";
 import type { RgbaImage } from "../conformance";
 import { sha256Hex } from "../hash";
@@ -150,7 +152,8 @@ export function auditRendered(audit: RenderAudit): string | undefined {
   const blenderNow = audit.current?.blender ?? BLENDER_PIN;
   const postStepNow = audit.current?.postStepVersion ?? POST_STEP_VERSION;
   if (manifest.provenance.method !== "rendered") return undefined;
-  if (manifest.kind !== "sprite") return "a rendered asset is a sprite";
+  if (manifest.kind !== "sprite")
+    return `a rendered ${manifest.kind} is not audited: only a rendered sprite can be rebuilt from its raw frames`;
   const provenance: RenderedProvenance = manifest.provenance;
   const recorded = provenance.revisionRecipe;
 
@@ -243,7 +246,13 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     return `the revision recipe hash ${recorded.hash} is not the hash of the committed inputs (${recomputed})`;
 
   // --- the slots ---
-  const mixed = provenance.slots.filter(
+  const slots: SpriteRenderedSlot[] = [];
+  for (const slot of provenance.slots) {
+    if (isTileSlot(slot))
+      return `slot ${slot.slotKey} is a tile slot, which a sprite does not render`;
+    slots.push(slot);
+  }
+  const mixed = slots.filter(
     (slot) => slot.revisionRecipeHash !== recorded.hash,
   );
   if (mixed.length > 0)
@@ -263,7 +272,7 @@ export function auditRendered(audit: RenderAudit): string | undefined {
   const rebuilt = new Uint8Array(atlas.image.rgba.length);
   let rebuiltCells = 0;
 
-  for (const slot of provenance.slots) {
+  for (const slot of slots) {
     const expectedHash = slotRecipeHash(recorded.hash, {
       state: slot.state,
       clip: slot.clip,

@@ -42,6 +42,7 @@ import {
   parseAssetManifest,
   parseAssetVocabulary,
   parseRegistryIndex,
+  type TileManifest,
 } from "@panthea/contracts";
 import { decodePng } from "../../../../packages/assets/src/studio/png/decode";
 
@@ -113,7 +114,7 @@ const byKey = (a: ReferenceSelection, b: ReferenceSelection): number =>
   a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 
 function selectionsOf(
-  manifest: AssetManifest,
+  manifest: Exclude<AssetManifest, TileManifest>,
   atlas: Rgba,
 ): ReferenceSelection[] {
   const selection = (
@@ -184,6 +185,11 @@ export function buildReference(files: RegistryFiles): Reference {
     if (manifest.id !== assetId) {
       throw new Error(
         `manifests/${revision}.json is for "${manifest.id}", not "${assetId}"`,
+      );
+    }
+    if (manifest.kind === "tile") {
+      throw new Error(
+        `${assetId}: the reference scene digests sprites, portraits and effects, and this is a tile`,
       );
     }
     const bytes = files.blobs.get(manifest.atlas.blob);

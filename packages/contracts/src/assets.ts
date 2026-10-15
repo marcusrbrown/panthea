@@ -165,7 +165,12 @@ export interface Range {
   readonly max: number;
 }
 
-export const VOCABULARY_KINDS = ["sprite", "portrait", "effect"] as const;
+export const VOCABULARY_KINDS = [
+  "sprite",
+  "portrait",
+  "effect",
+  "tile",
+] as const;
 export type VocabularyKind = (typeof VOCABULARY_KINDS)[number];
 
 export interface CellClass {
@@ -431,11 +436,17 @@ export const ASSET_KINDS = [
 ] as const;
 export type AssetKind = (typeof ASSET_KINDS)[number];
 
+/** The two terrains of a tile set, by role: `base` where a mask bit is clear, `over` where it is set. */
+export const TILE_ROLES = ["base", "over"] as const;
+export type TileRole = (typeof TILE_ROLES)[number];
+
 export interface GenerationSlot {
   readonly state?: string;
   readonly direction?: string;
   readonly ability?: string;
   readonly expression?: string;
+  /** A tile slot names the terrain it renders, and nothing else. */
+  readonly role?: TileRole;
 }
 
 /**
@@ -473,7 +484,7 @@ export interface GenerationEdit {
 }
 
 /**
- * What a render recipe request adds to a sprite request: the render profile, the
+ * What a render recipe request adds to a sprite or tile request: the render profile, the
  * palette and the declared pivot. There is no camera id (the one camera is a
  * committed file whose hash is in the revision recipe) and no seed or batch to
  * choose: a recipe request is stored with batch 1 and seed 0.
@@ -691,24 +702,39 @@ export interface RenderedRevisionRecipe {
   readonly stamps: Sha256;
 }
 
-/** One slot of a rendered revision, from one job: its recipe, the raw frames it came from and its seed. */
-export interface RenderedSlot {
-  /** `state/facing[/ability]`, the manifest's slot key. */
+/** What every slot of a rendered revision records, whatever it draws. */
+interface RenderedSlotCommon {
+  /** The manifest's slot key: `state/facing[/ability]` for a sprite, the role for a tile. */
   readonly slotKey: string;
-  /** The slot recipe hash: the revision hash plus this slot's state, clip, facing and seed. */
+  /** The slot recipe hash: the revision hash plus this slot's own parameters. */
   readonly recipeHash: Sha256;
   /** The revision recipe hash this slot was rendered under; equal across the revision's slots. */
   readonly revisionRecipeHash: Sha256;
-  readonly state: string;
-  /** The animation clip the profile's clip map chose for the state. */
-  readonly clip: string;
-  readonly facing: string;
-  readonly ability?: string;
   /** Always 0: a recipe request has a fixed base seed. */
   readonly seed: 0;
   readonly frameCount: number;
   /** Blob hashes of the raw frames per role, one per frame, in frame order. */
   readonly raw: { readonly [role in RawFrameRole]: readonly Sha256[] };
+}
+
+/** One sprite slot of a rendered revision, from one job: its recipe, the raw frames it came from and its seed. */
+export interface SpriteRenderedSlot extends RenderedSlotCommon {
+  readonly state: string;
+  /** The animation clip the profile's clip map chose for the state. */
+  readonly clip: string;
+  readonly facing: string;
+  readonly ability?: string;
+}
+
+/** One terrain patch of a rendered tile set: it names its role instead of a state, clip and facing. */
+export interface TileRenderedSlot extends RenderedSlotCommon {
+  readonly role: TileRole;
+}
+
+export type RenderedSlot = SpriteRenderedSlot | TileRenderedSlot;
+
+export function isTileSlot(slot: RenderedSlot): slot is TileRenderedSlot {
+  return "role" in slot;
 }
 
 export interface RenderedProvenance extends ProvenanceCommon {
@@ -849,7 +875,64 @@ export interface EffectManifest extends ManifestCommon {
   readonly animations: readonly EffectAnimation[];
 }
 
-export type AssetManifest = SpriteManifest | PortraitManifest | EffectManifest;
+/**
+ * A dual-grid terrain set: one 64x32 diamond tile for each of the 16 corner
+ * masks at each of the `period` squared offsets of a periodic field. The cell,
+ * palette, atlas and provenance (the recipe) are the common fields; the atlas
+ * is the whole set and `tileAtlasRect` finds a cell in it.
+ */
+export interface TileManifest extends ManifestCommon {
+  readonly kind: "tile";
+  /** The two terrains, as the content names them: `over` is drawn where a mask bit is set. */
+  readonly terrain: { readonly base: string; readonly over: string };
+  /** N: the field repeats every N lattice steps along each axis, so the set holds N squared offsets. */
+  readonly period: number;
+}
+
+export type AssetManifest =
+  | SpriteManifest
+  | PortraitManifest
+  | EffectManifest
+  | TileManifest;
+
+/** The cell every tile in a set is drawn on. */
+export const TILE_CELL = { w: 64, h: 32 } as const;
+
+/** Corner masks per offset. Bits: N = 1, E = 2, S = 4, W = 8; a set bit means the corner is `over`. */
+export const TILE_MASKS = 16;
+
+/**
+ * Where the tile for `mask` (0-15) at `offset` (0 to N squared - 1; the
+ * row-major position `(y mod N) * N + (x mod N)` in the period) sits in the
+ * atlas. The atlas has 16 columns, one per mask, and N squared rows, one per
+ * offset, each cell 64x32: the frame index is `offset * 16 + mask`, at
+ * x = mask * 64 and y = offset * 32. N does not move a cell; it bounds the
+ * offset, and a mask or offset outside the atlas is a caller bug, so it throws.
+ */
+export function tileAtlasRect(
+  mask: number,
+  offset: number,
+  period: number,
+): Rect {
+  if (!Number.isInteger(mask) || mask < 0 || mask >= TILE_MASKS)
+    throw new RangeError(`tile mask ${mask} is not an integer from 0 to 15`);
+  if (
+    !Number.isInteger(period) ||
+    period < 1 ||
+    !Number.isInteger(offset) ||
+    offset < 0 ||
+    offset >= period * period
+  )
+    throw new RangeError(
+      `tile offset ${offset} is not an integer from 0 to ${period * period - 1} for period ${period}`,
+    );
+  return {
+    x: mask * TILE_CELL.w,
+    y: offset * TILE_CELL.h,
+    w: TILE_CELL.w,
+    h: TILE_CELL.h,
+  };
+}
 
 function parseOptionalSlug(
   value: unknown,
@@ -862,9 +945,11 @@ function parseSlot(value: unknown, path: string): ParseResult<GenerationSlot> {
   return parseStrictRecord(
     value,
     path,
-    ["state", "direction", "ability", "expression"],
+    ["state", "direction", "ability", "expression", "role"],
     (record) => {
-      const slot: { -readonly [K in keyof GenerationSlot]: string } = {};
+      const slot: {
+        -readonly [K in Exclude<keyof GenerationSlot, "role">]?: string;
+      } = {};
       for (const key of [
         "state",
         "direction",
@@ -875,13 +960,19 @@ function parseSlot(value: unknown, path: string): ParseResult<GenerationSlot> {
         if (!parsed.ok) return parsed;
         if (parsed.value !== undefined) slot[key] = parsed.value;
       }
-      if (Object.keys(slot).length === 0) {
+      let role: TileRole | undefined;
+      if (record.role !== undefined) {
+        const parsed = parseEnum(record.role, `${path}.role`, TILE_ROLES);
+        if (!parsed.ok) return parsed;
+        role = parsed.value;
+      }
+      if (Object.keys(slot).length === 0 && role === undefined) {
         return fail(
           path,
-          "expected at least one of state, direction, ability, expression",
+          "expected at least one of state, direction, ability, expression, role",
         );
       }
-      return ok(slot);
+      return ok(role === undefined ? slot : { ...slot, role });
     },
   );
 }
@@ -1008,7 +1099,7 @@ function parseNonNegativePoint(
 }
 
 /**
- * A recipe request: the sprite request a render engine runs. It takes no style
+ * A recipe request: the sprite or tile request a render engine runs. It takes no style
  * note or edit, a batch of 1 and a seed of 0 (absent means those values), and
  * is stored with the fixed batch and seed. Whether the pivot lies inside the
  * cell is the request builder's check; a request does not know its cell.
@@ -1021,8 +1112,8 @@ function parseRecipeRequest(
   kind: AssetKind,
   slots: readonly GenerationSlot[],
 ): ParseResult<GenerationRequest> {
-  if (kind !== "sprite")
-    return fail(`${path}.kind`, "a recipe request draws a sprite");
+  if (kind !== "sprite" && kind !== "tile")
+    return fail(`${path}.kind`, "a recipe request draws a sprite or a tile");
   for (const key of ["styleNote", "edit"] as const) {
     if (record[key] !== undefined)
       return fail(`${path}.${key}`, `a recipe request takes no ${key}`);
@@ -1596,11 +1687,123 @@ function parseRenderedRevisionRecipe(
   );
 }
 
+/** The recipe hashes every rendered slot holds, read after its own key has been checked. */
+function parseRenderedSlotHashes(
+  record: Record<string, unknown>,
+  path: string,
+  revisionHash: Sha256,
+): ParseResult<Pick<RenderedSlotCommon, "recipeHash" | "revisionRecipeHash">> {
+  const recipeHash = parseSha256(record.recipeHash, `${path}.recipeHash`);
+  if (!recipeHash.ok) return recipeHash;
+  const slotRevision = parseSha256(
+    record.revisionRecipeHash,
+    `${path}.revisionRecipeHash`,
+  );
+  if (!slotRevision.ok) return slotRevision;
+  if (slotRevision.value !== revisionHash)
+    return fail(
+      `${path}.revisionRecipeHash`,
+      "a revision's slots are rendered under one revision recipe hash",
+    );
+  return ok({
+    recipeHash: recipeHash.value,
+    revisionRecipeHash: slotRevision.value,
+  });
+}
+
+/** The seed, frame count and raw frame hashes, which both slot variants end with. */
+function parseRenderedSlotFrames(
+  record: Record<string, unknown>,
+  path: string,
+): ParseResult<Pick<RenderedSlotCommon, "seed" | "frameCount" | "raw">> {
+  if (record.seed !== RECIPE_SEED)
+    return fail(
+      `${path}.seed`,
+      `a rendered slot ran at the fixed seed ${RECIPE_SEED}`,
+    );
+  const frameCount = parsePositiveInteger(
+    record.frameCount,
+    `${path}.frameCount`,
+  );
+  if (!frameCount.ok) return frameCount;
+  const raw = parseStrictRecord(
+    record.raw,
+    `${path}.raw`,
+    RAW_FRAME_ROLES,
+    (r) => {
+      const roles: { -readonly [R in RawFrameRole]?: readonly Sha256[] } = {};
+      for (const role of RAW_FRAME_ROLES) {
+        const hashes = parseArray(r[role], `${path}.raw.${role}`, parseSha256);
+        if (!hashes.ok) return hashes;
+        if (hashes.value.length !== frameCount.value)
+          return fail(
+            `${path}.raw.${role}`,
+            `expected ${frameCount.value} hashes, one per frame`,
+          );
+        roles[role] = hashes.value;
+      }
+      return ok(roles as { [role in RawFrameRole]: readonly Sha256[] });
+    },
+  );
+  if (!raw.ok) return raw;
+  return ok({
+    seed: RECIPE_SEED,
+    frameCount: frameCount.value,
+    raw: raw.value,
+  });
+}
+
+function parseTileSlot(
+  value: Record<string, unknown>,
+  path: string,
+  revisionHash: Sha256,
+): ParseResult<TileRenderedSlot> {
+  return parseStrictRecord(
+    value,
+    path,
+    [
+      "slotKey",
+      "recipeHash",
+      "revisionRecipeHash",
+      "role",
+      "seed",
+      "frameCount",
+      "raw",
+    ],
+    (record) => {
+      const role = parseEnum(record.role, `${path}.role`, TILE_ROLES);
+      if (!role.ok) return role;
+      const slotKey = parseString(record.slotKey, `${path}.slotKey`);
+      if (!slotKey.ok) return slotKey;
+      if (slotKey.value !== role.value)
+        return fail(
+          `${path}.slotKey`,
+          `expected "${role.value}", the slot's role`,
+        );
+      const common = parseRenderedSlotHashes(record, path, revisionHash);
+      if (!common.ok) return common;
+      const frames = parseRenderedSlotFrames(record, path);
+      if (!frames.ok) return frames;
+      return ok({
+        slotKey: slotKey.value,
+        recipeHash: common.value.recipeHash,
+        revisionRecipeHash: common.value.revisionRecipeHash,
+        role: role.value,
+        seed: frames.value.seed,
+        frameCount: frames.value.frameCount,
+        raw: frames.value.raw,
+      });
+    },
+  );
+}
+
 function parseRenderedSlot(
   revisionHash: Sha256,
 ): (value: unknown, path: string) => ParseResult<RenderedSlot> {
-  return (value, path) =>
-    parseStrictRecord(
+  return (value, path) => {
+    if (isRecord(value) && value.role !== undefined)
+      return parseTileSlot(value, path, revisionHash);
+    return parseStrictRecord(
       value,
       path,
       [
@@ -1632,69 +1835,27 @@ function parseRenderedSlot(
             `${path}.slotKey`,
             `expected "${expected}", the slot's state, facing and ability`,
           );
-        const recipeHash = parseSha256(record.recipeHash, `${path}.recipeHash`);
-        if (!recipeHash.ok) return recipeHash;
-        const slotRevision = parseSha256(
-          record.revisionRecipeHash,
-          `${path}.revisionRecipeHash`,
-        );
-        if (!slotRevision.ok) return slotRevision;
-        if (slotRevision.value !== revisionHash)
-          return fail(
-            `${path}.revisionRecipeHash`,
-            "a revision's slots are rendered under one revision recipe hash",
-          );
+        const common = parseRenderedSlotHashes(record, path, revisionHash);
+        if (!common.ok) return common;
         const clip = parseString(record.clip, `${path}.clip`);
         if (!clip.ok) return clip;
-        if (record.seed !== RECIPE_SEED)
-          return fail(
-            `${path}.seed`,
-            `a rendered slot ran at the fixed seed ${RECIPE_SEED}`,
-          );
-        const frameCount = parsePositiveInteger(
-          record.frameCount,
-          `${path}.frameCount`,
-        );
-        if (!frameCount.ok) return frameCount;
-        const raw = parseStrictRecord(
-          record.raw,
-          `${path}.raw`,
-          RAW_FRAME_ROLES,
-          (r) => {
-            const roles: { -readonly [R in RawFrameRole]?: readonly Sha256[] } =
-              {};
-            for (const role of RAW_FRAME_ROLES) {
-              const hashes = parseArray(
-                r[role],
-                `${path}.raw.${role}`,
-                parseSha256,
-              );
-              if (!hashes.ok) return hashes;
-              if (hashes.value.length !== frameCount.value)
-                return fail(
-                  `${path}.raw.${role}`,
-                  `expected ${frameCount.value} hashes, one per frame`,
-                );
-              roles[role] = hashes.value;
-            }
-            return ok(roles as { [role in RawFrameRole]: readonly Sha256[] });
-          },
-        );
-        if (!raw.ok) return raw;
+        const frames = parseRenderedSlotFrames(record, path);
+        if (!frames.ok) return frames;
         return ok({
           slotKey: slotKey.value,
-          recipeHash: recipeHash.value,
-          revisionRecipeHash: slotRevision.value,
+          recipeHash: common.value.recipeHash,
+          revisionRecipeHash: common.value.revisionRecipeHash,
           state: state.value,
           clip: clip.value,
           facing: facing.value,
           ...(ability.value === undefined ? {} : { ability: ability.value }),
-          seed: RECIPE_SEED,
-          frameCount: frameCount.value,
-          raw: raw.value,
+          seed: frames.value.seed,
+          frameCount: frames.value.frameCount,
+          raw: frames.value.raw,
         });
       },
     );
+  };
 }
 
 function parseRenderedSlots(
@@ -2625,6 +2786,50 @@ function parseEffectBody(
   });
 }
 
+function parseTileBody(
+  record: Record<string, unknown>,
+  path: string,
+  cell: { w: number; h: number },
+  atlas: Atlas,
+  common: ManifestCommon,
+): ParseResult<TileManifest> {
+  if (cell.w !== TILE_CELL.w || cell.h !== TILE_CELL.h)
+    return fail(
+      `${path}.cell`,
+      `a tile is drawn on the ${TILE_CELL.w}x${TILE_CELL.h} cell`,
+    );
+  const terrain = parseStrictRecord(
+    record.terrain,
+    `${path}.terrain`,
+    ["base", "over"],
+    (t) => {
+      const base = parseSlug(t.base, `${path}.terrain.base`);
+      if (!base.ok) return base;
+      const over = parseSlug(t.over, `${path}.terrain.over`);
+      if (!over.ok) return over;
+      if (base.value === over.value)
+        return fail(`${path}.terrain`, "expected two different terrains");
+      return ok({ base: base.value, over: over.value });
+    },
+  );
+  if (!terrain.ok) return terrain;
+  const period = parsePositiveInteger(record.period, `${path}.period`);
+  if (!period.ok) return period;
+  const width = TILE_MASKS * TILE_CELL.w;
+  const height = period.value * period.value * TILE_CELL.h;
+  if (atlas.width !== width || atlas.height !== height)
+    return fail(
+      `${path}.atlas`,
+      `a period-${period.value} tile set is ${width}x${height}, 16 columns by ${period.value * period.value} rows; got ${atlas.width}x${atlas.height}`,
+    );
+  return ok({
+    ...common,
+    kind: "tile",
+    terrain: terrain.value,
+    period: period.value,
+  });
+}
+
 const MANIFEST_KEYS = [
   "schemaVersion",
   "kind",
@@ -2649,6 +2854,7 @@ const KIND_KEYS = {
   ],
   portrait: ["characterId", "expressions"],
   effect: ["pivot", "footprint", "glowColours", "animations"],
+  tile: ["terrain", "period"],
 } as const;
 
 type ManifestKind = keyof typeof KIND_KEYS;
@@ -2741,6 +2947,8 @@ export function parseAssetManifest(
         return parsePortraitBody(input, path, vocabulary, context, common);
       case "effect":
         return parseEffectBody(input, path, cell.value, context, common);
+      case "tile":
+        return parseTileBody(input, path, cell.value, atlas.value, common);
     }
   };
   if (provenance.value.method === "procedural" && manifestKind !== "effect") {
@@ -2749,10 +2957,14 @@ export function parseAssetManifest(
       `a ${manifestKind} is not procedural; only effects are`,
     );
   }
-  if (provenance.value.method === "rendered" && manifestKind !== "sprite") {
+  if (
+    provenance.value.method === "rendered" &&
+    manifestKind !== "sprite" &&
+    manifestKind !== "tile"
+  ) {
     return fail(
       `${path}.provenance.method`,
-      `a ${manifestKind} is not rendered; only sprites are`,
+      `a ${manifestKind} is not rendered; only sprites and tiles are`,
     );
   }
   const manifest = body();
@@ -2768,6 +2980,12 @@ export function parseAssetManifest(
       );
     }
     for (const [index, slot] of recorded.slots.entries()) {
+      if (isTileSlot(slot)) {
+        return fail(
+          `${path}.provenance.slots[${index}]`,
+          `slot "${slot.slotKey}" is a tile slot, and a sprite's slots name a state and a facing`,
+        );
+      }
       const animation = animations.find(
         (a) =>
           a.state === slot.state &&
@@ -2784,6 +3002,24 @@ export function parseAssetManifest(
         return fail(
           `${path}.provenance.slots[${index}].frameCount`,
           `the manifest's "${slot.slotKey}" has ${animation.frames.length} frames, the render ${slot.frameCount}`,
+        );
+      }
+    }
+  }
+  if (recorded.method === "rendered" && manifest.value.kind === "tile") {
+    for (const [index, slot] of recorded.slots.entries()) {
+      if (!isTileSlot(slot)) {
+        return fail(
+          `${path}.provenance.slots[${index}]`,
+          `slot "${slot.slotKey}" is a sprite slot, and a tile's slots name a role`,
+        );
+      }
+    }
+    for (const role of TILE_ROLES) {
+      if (!recorded.slots.some((slot) => slot.slotKey === role)) {
+        return fail(
+          `${path}.provenance.slots`,
+          `no slot renders the "${role}" terrain`,
         );
       }
     }
@@ -2838,6 +3074,8 @@ export function slotKeys(manifest: AssetManifest): readonly string[] {
       return manifest.expressions.map((e) => e.expression);
     case "effect":
       return manifest.animations.map((a) => a.name);
+    case "tile":
+      return TILE_ROLES;
   }
 }
 

@@ -236,7 +236,7 @@ describe("spec derivation", () => {
       buildSpec(content, {
         schemaVersion: 1,
         subject: "zeus",
-        kind: "tile",
+        kind: "sound",
         slots: [{ state: "idle" }],
         batch: 1,
       }),
@@ -244,8 +244,8 @@ describe("spec derivation", () => {
       ok: false,
       error: {
         kind: "unsupported-kind",
-        requested: "tile",
-        valid: ["sprite", "portrait"],
+        requested: "sound",
+        valid: ["sprite", "portrait", "tile"],
       },
     });
   });
@@ -1401,5 +1401,190 @@ describe("the render provider descriptor", () => {
       hosting: "local",
     });
     expect(RENDER_PROVIDER.id).not.toBe(PROVIDER.id);
+  });
+});
+
+describe("tile requests", () => {
+  const ground = {
+    schemaVersion: 1,
+    id: "grass-flagstone",
+    name: "Grass and flagstone",
+    paletteFamily: "town",
+    render: {
+      profile: "grass-flagstone",
+      matrix: {
+        cellClass: "tile",
+        directions: ["south"],
+        required: [{ state: "base" }, { state: "over" }],
+        deferred: [],
+      },
+    },
+  };
+  const withGround: StudioContent = {
+    ...content,
+    structures: [...content.structures, ground],
+  };
+  const engine: EngineCells = {
+    provider: RENDER_PROVIDER,
+    measuredCells: [{ w: 64, h: 32 }],
+    generationScale: 1,
+  };
+  const pivot = { x: 32, y: 16 };
+  const tile = (over: Partial<RequestInput> = {}): RequestInput => ({
+    subject: "grass-flagstone",
+    kind: "tile",
+    slots: [{ role: "base" }, { role: "over" }],
+    render: { palette: "greek-retro", pivot },
+    ...over,
+  });
+  const create = (input: RequestInput, given: EngineCells = engine) =>
+    newRequestRecord(
+      withGround,
+      { id: "grass-flagstone-set", ...input },
+      neverDraw,
+      given,
+    );
+
+  test("a recipe request of kind tile is accepted, stored at batch 1 and seed 0 with the role slots", () => {
+    const { record, spec } = ok(create(tile()));
+    expect(record.request).toEqual({
+      schemaVersion: 1,
+      subject: "grass-flagstone",
+      kind: "tile",
+      slots: [{ role: "base" }, { role: "over" }],
+      batch: 1,
+      seed: 0,
+      recipe: { profile: "grass-flagstone", palette: "greek-retro", pivot },
+    });
+    expect(spec).toMatchObject({
+      subject: "grass-flagstone",
+      kind: "tile",
+      cell: { id: "tile", w: 64, h: 32 },
+      native: { w: 64, h: 32 },
+      generated: { w: 64, h: 32 },
+      palette: { id: "greek-retro", family: "town" },
+    });
+    expect(spec.slots.map((slot) => slot.key)).toEqual(["base", "over"]);
+    expect(spec.pivot).toBeUndefined();
+  });
+
+  test("a tile request without a recipe is refused, naming the render engine", () => {
+    const refused = newRequestRecord(
+      withGround,
+      {
+        id: "grass-flagstone-set",
+        subject: "grass-flagstone",
+        kind: "tile",
+        slots: [{ role: "base" }],
+      },
+      () => 1,
+    );
+    expect(refused).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-request", path: "recipe" },
+    });
+    if (!refused.ok && refused.error.kind === "invalid-request")
+      expect(refused.error.message).toContain("render engine");
+    expect(
+      buildSpec(withGround, {
+        schemaVersion: 1,
+        subject: "grass-flagstone",
+        kind: "tile",
+        slots: [{ role: "base" }],
+        batch: 1,
+        seed: 3,
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-request", path: "recipe" },
+    });
+  });
+
+  test("a tile slot names a role and nothing else", () => {
+    for (const slots of [
+      [{ role: "under" }],
+      [{ state: "idle", direction: "south" }],
+      [{ role: "base", state: "idle" }],
+      [{ expression: "neutral" }],
+    ]) {
+      expect(create(tile({ slots: slots as never }))).toMatchObject({
+        ok: false,
+      });
+    }
+    expect(create(tile({ slots: [{ role: "under" }] as never }))).toMatchObject(
+      {
+        ok: false,
+        error: { kind: "invalid-request", path: "request.slots[0].role" },
+      },
+    );
+    expect(
+      create(tile({ slots: [{ state: "idle", direction: "south" }] })),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-slot" } });
+  });
+
+  test("no other kind takes a role", () => {
+    const rendered = renderEngineFor(join(repo, "tools", "render"));
+    const house = (slots: RequestInput["slots"]) =>
+      create(
+        {
+          subject: "greek-house",
+          kind: "sprite",
+          slots,
+          render: { palette: "greek-retro", pivot: { x: 96, y: 136 } },
+        },
+        rendered,
+      );
+    expect(house([{ state: "intact", direction: "south" }]).ok).toBe(true);
+    expect(
+      house([{ state: "intact", direction: "south", role: "base" }]),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-slot" } });
+    expect(
+      newRequestRecord(
+        withGround,
+        {
+          id: "face",
+          subject: "zeus",
+          kind: "portrait",
+          slots: [{ expression: "neutral", role: "base" }] as never,
+        },
+        () => 1,
+      ),
+    ).toMatchObject({ ok: false, error: { kind: "invalid-slot" } });
+  });
+
+  test("a figure is not a ground: its tile request finds no tile cell, and the size gate still applies", () => {
+    expect(
+      create({
+        subject: "zeus",
+        kind: "tile",
+        slots: [{ role: "base" }],
+        render: { palette: "greek-retro", pivot },
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "invalid-request", path: "vocabulary.cells" },
+    });
+    expect(
+      create(tile(), { ...engine, measuredCells: [{ w: 64, h: 64 }] }),
+    ).toMatchObject({
+      ok: false,
+      error: { kind: "unmeasured-size", native: { w: 64, h: 32 } },
+    });
+  });
+
+  test("planning a tile request gives one render job per role at seed 0", () => {
+    const { record } = ok(create(tile()));
+    const planned = ok(planJobs(record, 1));
+    expect(planned.jobs.map((j) => j.source.slotKey)).toEqual(["base", "over"]);
+    for (const { job } of planned.jobs) {
+      expect(job.provider).toEqual(RENDER_PROVIDER);
+      expect(job.request.kind).toBe("tile");
+      expect(job.request.seed).toBe(0);
+      expect(job.request.recipe?.profile).toBe("grass-flagstone");
+    }
+    expect(planned.jobs.map((j) => j.job.request.slots)).toEqual([
+      [{ role: "base" }],
+      [{ role: "over" }],
+    ]);
   });
 });

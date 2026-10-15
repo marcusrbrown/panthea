@@ -797,6 +797,11 @@ export function conformCandidate(args: {
     );
   if (!spec.value.slots.some((slot) => slot.key === job.source.slotKey))
     return refuse("wrong-state", `the spec has no slot ${job.source.slotKey}`);
+  if (spec.value.kind === "tile")
+    return refuse(
+      "wrong-state",
+      `${spec.value.subject} is a tile, rendered rather than drawn: its output is no image candidate`,
+    );
   const { width, height } = decoded.image;
   if (width !== output.width || height !== output.height)
     return refuse(

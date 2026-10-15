@@ -91,7 +91,12 @@ describe("asset vocabulary", () => {
       ["god-tall", 112, 96],
       ["portrait", 96, 96],
       ["structure", 192, 192],
+      ["tile", 64, 32],
     ]);
+    expect(parsed.value.cells.find((c) => c.id === "tile")?.kinds).toEqual([
+      "tile",
+    ]);
+    expect(parsed.value.version).toBe(4);
     expect(parsed.value.cells.find((c) => c.id === "god-tall")?.kinds).toEqual([
       "sprite",
     ]);
@@ -294,7 +299,7 @@ describe("asset vocabulary", () => {
       [
         "unknown cell kind",
         (v) => {
-          v.cells[0].kinds = ["tile"];
+          v.cells[0].kinds = ["sound"];
         },
         /cells\[0\]\.kinds/,
       ],

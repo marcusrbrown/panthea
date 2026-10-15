@@ -758,7 +758,7 @@ describe("untrusted payloads", () => {
     ],
     [
       "an entry with an unknown kind",
-      { entries: [{ ...listing.entries[0], kind: "tile" }], problems: [] },
+      { entries: [{ ...listing.entries[0], kind: "sound" }], problems: [] },
     ],
     [
       "an entry whose ok is not a boolean",
@@ -851,7 +851,7 @@ describe("untrusted payloads", () => {
     ["an asset that is not an object", { ...frames(KEY_A), asset: "x" }],
     [
       "an asset kind that is not sprite, portrait or effect",
-      withAsset({ kind: "tile" }),
+      withAsset({ kind: "sound" }),
     ],
     ["frames that are not a list", withAsset({ frames: {} })],
     [
