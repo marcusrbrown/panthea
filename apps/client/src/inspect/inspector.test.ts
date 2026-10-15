@@ -279,8 +279,9 @@ test("with the registry withheld every canon check fails, whatever the placehold
 
   const canon = suite.results.filter((r) => r.id.startsWith("canon:"));
   // 112 before promotion (zeus-sprite and the portrait); zeus-retro adds 12 selections and 136 frames; greek-house
-  // (3 selections, 3 frames) and oak-tree (3 selections, 25 frames) add 158 more.
-  expect(canon).toHaveLength(986);
+  // (3 selections, 3 frames) and oak-tree (3 selections, 25 frames) add 158 more; fire (1 selection, 10 frames) and
+  // lightning-strike (2 selections, 12 frames) add 119.
+  expect(canon).toHaveLength(1105);
   expect(canon.filter((r) => r.ok)).toEqual([]);
   expect(suite.results.find((r) => r.id === "root-kind")?.ok).toBe(false);
   expect(summarize(suite.results).ok).toBe(false);
@@ -384,7 +385,9 @@ test("the listing offers the snapshot's assets, the vocabulary's options and the
   const listing = await inspector.listing();
 
   expect(listing.assets.map((a) => a.assetId)).toEqual([
+    "fire",
     "greek-house",
+    "lightning-strike",
     "oak-tree",
     "zeus-portrait",
     "zeus-retro",

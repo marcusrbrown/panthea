@@ -1,5 +1,6 @@
 import type { ModelEndpointStatus, Realm } from "@panthea/contracts";
-import type { ReactNode } from "react";
+import type { EffectsMode } from "@panthea/renderer";
+import type { ReactElement, ReactNode } from "react";
 
 import type { ModelSettingsTransport } from "../connection";
 import {
@@ -171,6 +172,28 @@ function CatchUp({
   );
 }
 
+/** The effects setting as a switch: on means the calm strike. It changes only how a strike is drawn. */
+export function EffectsToggle({
+  effects,
+  onChange,
+}: {
+  readonly effects: EffectsMode;
+  readonly onChange?: (mode: EffectsMode) => void;
+}): ReactElement {
+  const calm = effects === "calm";
+  return (
+    <button
+      className="effects-toggle"
+      type="button"
+      role="switch"
+      aria-checked={calm}
+      onClick={() => onChange?.(calm ? "full" : "calm")}
+    >
+      Calm effects
+    </button>
+  );
+}
+
 export interface ClientSurfaceProps {
   readonly view?: WorldViewModel;
   readonly observation: ObserverView;
@@ -186,6 +209,9 @@ export interface ClientSurfaceProps {
   readonly onCloseSettings?: () => void;
   readonly settingsTransport?: ModelSettingsTransport;
   readonly endpointStatuses?: readonly ModelEndpointStatus[];
+  /** The effects setting; the topbar offers the control only when this is given. */
+  readonly effects?: EffectsMode;
+  readonly onEffectsChange?: (mode: EffectsMode) => void;
 }
 
 export function ClientSurface({
@@ -202,6 +228,8 @@ export function ClientSurface({
   onCloseSettings,
   settingsTransport,
   endpointStatuses = [],
+  effects,
+  onEffectsChange,
 }: ClientSurfaceProps) {
   const realm =
     observation.kind === "following"
@@ -246,6 +274,9 @@ export function ClientSurface({
         >
           Settings
         </button>
+        {effects !== undefined && (
+          <EffectsToggle effects={effects} onChange={onEffectsChange} />
+        )}
         <span className="read-only-label">
           <span aria-hidden="true">◉</span> Read only
         </span>

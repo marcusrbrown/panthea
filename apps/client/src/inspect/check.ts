@@ -254,6 +254,7 @@ function placeholderChecks(
 
 function selectionKeyOf(selection: Selection) {
   const query = selectionQuery(selection);
+  if (query.animation !== undefined) return { animation: query.animation };
   return "expression" in query && query.expression !== undefined
     ? { expression: query.expression }
     : {

@@ -263,6 +263,8 @@ export interface FixtureEvent {
   readonly tick: number;
   readonly kind: string;
   readonly subjects: readonly string[];
+  /** Why a building ignited, on `building-ignited` only. */
+  readonly cause?: string;
 }
 
 export interface FrameOptions {

@@ -4,7 +4,7 @@ Reference digests for the packaged game's canon inspection fixture (`apps/client
 
 ## What is committed
 
-`reference-digests.json`: for every published asset, selection (sprite state and direction, or portrait expression) and frame, the atlas blob hash, the frame rect and one digest per integer zoom (1 to 4).
+`reference-digests.json`: for every published asset, selection (sprite state and direction, portrait expression, or effect animation) and frame, the atlas blob hash, the frame rect and one digest per integer zoom (1 to 4).
 
 ## How a digest is made
 

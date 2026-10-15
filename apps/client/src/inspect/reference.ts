@@ -11,11 +11,13 @@ export type SelectionQuery =
       readonly direction: string;
       readonly ability?: string;
     }
-  | { readonly expression: string };
+  | { readonly expression: string }
+  | { readonly animation: string };
 
-/** `state/direction[/ability]` for a sprite, `expression:<name>` for a portrait. */
+/** `state/direction[/ability]` for a sprite, `expression:<name>` for a portrait, `animation:<name>` for an effect. */
 export function selectionKey(query: SelectionQuery): string {
   if ("expression" in query) return `expression:${query.expression}`;
+  if ("animation" in query) return `animation:${query.animation}`;
   return query.ability === undefined
     ? `${query.state}/${query.direction}`
     : `${query.state}/${query.direction}/${query.ability}`;
@@ -35,7 +37,7 @@ export interface ReferenceSelection {
 
 export interface ReferenceAsset {
   readonly assetId: string;
-  readonly kind: "sprite" | "portrait";
+  readonly kind: "sprite" | "portrait" | "effect";
   /** The atlas blob the frames were taken from, as the committed registry names it. */
   readonly atlas: {
     readonly blob: string;

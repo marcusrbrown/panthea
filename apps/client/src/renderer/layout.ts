@@ -4,23 +4,31 @@
 // shared camera uses), origin at the centre of the scene. The core draws the
 // scene at 1x into a fixed-size target and enlarges it by a whole zoom.
 //
-// Logical size, by arithmetic (the layout test recomputes every extent):
+// Logical size, by arithmetic (the layout test recomputes every extent from the
+// published manifests):
 //   ring radius R = min(205, 110 + 14 * places), so R <= 205
-//   cell   : the largest actor cell is the 112x96 god-tall at pivot (56, 78), so a
+//   actors : the largest actor cell is the 112x96 god-tall at pivot (56, 78), so a
 //            cell reaches 56 left and right of its foot, 78 above it and 18 below
-//   right  : 205 + the last actor slot (-28 + 6 * 12 = +44) + half a 112-wide cell (56) = 305
-//   left   : -(205 + the first actor slot (-28) + 56) = -289
-//   top    : 205 + a building row at +50, its flame centred 20 above and 15 across
-//            (50 + 20 + 15 = 85) = 290; the tallest actor is lower (205 - 48 + 78 = 235)
+//   buildings : the house and the oak are 192x192 cells with the foot at the pivot,
+//            (96, 136) and (96, 164): 96 left and right of the foot. A building's
+//            foot sits in a slot of a row of three, 60 apart and centred on the
+//            place (-60, 0, +60), 40 above it. The fire's cell is 64x88 (pivot at
+//            its bottom centre) and the strike's 64x128 (pivot at the impact, 116
+//            above the cell's bottom); each sits on the structure's anchor
+//            (STRUCTURE_ANCHORS: the strike 101 above the oak's foot, 75 above
+//            the house's)
+//   right  : 205 + 60 + 96 = 361 (a building slot; an actor's reach is 305)
+//   left   : -(205 + 60 + 96) = -361 (an actor's is -289)
+//   top    : 205 + 40 + 101 + 116 = 462, the top of a strike on the oak (the oak's
+//            own top is 205 + 40 + 164 = 409, its fire's 205 + 40 + 79 + 88 = 412)
 //   bottom : -(205 + the actor row at -48, a second row 15 lower, 18 below the pivot) = -286
-// A centred camera needs half the width >= 305 and half the height >= 290, so
-// the width is 2 x 305 = 610 rounded up to the 16 px grid the height already
-// sits on: 624 (half 312, 7 to spare). The height is unchanged at 592 (half 296,
-// 6 to spare): the flame, not an actor, sets it. That is sized for up to 3
-// buildings and 14 actors (two rows) per place and for cells no larger than the
-// 112x96 god-tall cell (the legacy 64x80 god cell sits well inside). Authored
-// worlds hold at most 2 buildings and 8 inhabitants in a place. Anything beyond
-// clips at the target's edge; U6 owns the final size.
+// A centred camera needs half the width >= 361 and half the height >= 462, so each
+// is doubled and rounded up to the 16 px grid: 2 x 361 = 722 -> 736 (half 368, 7 to
+// spare) and 2 x 462 = 924 -> 928 (half 464, 2 to spare). That is sized for up to 3
+// buildings and 14 actors (two rows) per place and for the cells above. Authored worlds
+// hold at most 2 buildings and 8 inhabitants in a place. Anything beyond clips at the
+// target's edge. The target is taller than a 1280x720 window, which crops it equally
+// above and below (see `fitView`).
 
 import {
   type CanvasMetrics,
@@ -30,7 +38,7 @@ import {
 
 import type { ViewLocation } from "../store";
 
-export const LOGICAL_SIZE: LogicalSize = { width: 624, height: 592 };
+export const LOGICAL_SIZE: LogicalSize = { width: 736, height: 928 };
 
 /** Top-left of the viewport in the core's screen space (y down): the target centred on the origin. */
 export const CAMERA_ORIGIN = {
@@ -50,7 +58,14 @@ export const MAX_ACTOR_CELL = {
   pivotY: 78,
 } as const;
 
-export const BUILDING_SIZE = { width: 28, height: 22 } as const;
+/** Where a building's foot sits relative to its place, and the slots in its row. */
+export const BUILDING_FOOT = {
+  x: -60,
+  y: 40,
+  columns: 3,
+  dx: 60,
+  dy: 40,
+} as const;
 
 /** Where an actor's foot sits relative to its place, and the grid of slots around it. */
 export const ACTOR_FOOT = {
@@ -97,10 +112,17 @@ export function actorFoot(place: WorldPoint, index: number): WorldPoint {
   };
 }
 
-export function buildingCenter(place: WorldPoint, index: number): WorldPoint {
+/** The foot of the building in slot `index` at `place`: the point its art's pivot sits on. */
+export function buildingFoot(place: WorldPoint, index: number): WorldPoint {
   return {
-    x: place.x - 46 + (index % 3) * 42,
-    y: place.y + 50 + Math.floor(index / 3) * 35,
+    x:
+      place.x +
+      BUILDING_FOOT.x +
+      (index % BUILDING_FOOT.columns) * BUILDING_FOOT.dx,
+    y:
+      place.y +
+      BUILDING_FOOT.y +
+      Math.floor(index / BUILDING_FOOT.columns) * BUILDING_FOOT.dy,
   };
 }
 

@@ -19,10 +19,15 @@ import {
   ZEUS_REVISION,
 } from "./canon-fixture";
 import {
+  EFFECT_ATLASES,
+  FIRE_MANIFEST_TEXT,
+  FIRE_REVISION,
   HOUSE_MANIFEST_TEXT,
   HOUSE_REVISION,
   OAK_MANIFEST_TEXT,
   OAK_REVISION,
+  STRIKE_MANIFEST_TEXT,
+  STRIKE_REVISION,
   STRUCTURE_ATLASES,
 } from "./structure-fixture";
 
@@ -75,20 +80,24 @@ export const RETRO_ATLASES: ReadonlyMap<string, Uint8Array> = new Map([
   [ZEUS_ATLAS_HASH, ZEUS_ATLAS_BYTES],
 ]);
 
-/** Everything the committed canon now publishes: Zeus's portrait, the promoted retro sprite, the legacy sprite and the two structures. */
+/** Everything the committed canon now publishes: Zeus's portrait, the promoted retro sprite, the legacy sprite, the two structures and the two effects. */
 export function committedCanonPayload(): RegistryPayload {
   const retro = retroPayload();
   return {
     ...retro,
     index: indexText([
+      { assetId: "fire", revision: FIRE_REVISION },
       { assetId: "greek-house", revision: HOUSE_REVISION },
+      { assetId: "lightning-strike", revision: STRIKE_REVISION },
       { assetId: "oak-tree", revision: OAK_REVISION },
       { assetId: "zeus-portrait", revision: PORTRAIT_REVISION },
       { assetId: "zeus-retro", revision: RETRO_REVISION },
       { assetId: "zeus-sprite", revision: ZEUS_REVISION },
     ]),
     manifests: [
+      { hash: FIRE_REVISION, text: FIRE_MANIFEST_TEXT },
       { hash: HOUSE_REVISION, text: HOUSE_MANIFEST_TEXT },
+      { hash: STRIKE_REVISION, text: STRIKE_MANIFEST_TEXT },
       { hash: OAK_REVISION, text: OAK_MANIFEST_TEXT },
       { hash: PORTRAIT_REVISION, text: PORTRAIT_MANIFEST_TEXT },
       ...retro.manifests,
@@ -100,6 +109,7 @@ export const COMMITTED_CANON_ATLASES: ReadonlyMap<string, Uint8Array> = new Map(
   [
     ...RETRO_ATLASES,
     ...STRUCTURE_ATLASES,
+    ...EFFECT_ATLASES,
     [PORTRAIT_ATLAS_HASH, PORTRAIT_ATLAS_BYTES],
   ],
 );

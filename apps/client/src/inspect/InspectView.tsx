@@ -239,6 +239,23 @@ export function InspectView({ canon: provided }: InspectViewProps) {
             </select>
           </label>
         )}
+        {selection?.kind === "effect" && asset && (
+          <label>
+            Animation
+            <select
+              value={selection.animation}
+              onChange={(event) =>
+                setSelection({ ...selection, animation: event.target.value })
+              }
+            >
+              {asset.animations.map((animation) => (
+                <option key={animation} value={animation}>
+                  {animation}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <fieldset>
           <legend>Zoom</legend>
           {CHECK_ZOOMS.map((z) => (

@@ -37,13 +37,15 @@ export interface ResolveQuery {
   readonly ability?: string;
   /** When set, the id must resolve to a portrait. */
   readonly expression?: string;
+  /** When set, the id must resolve to an effect, and this is the animation of it. */
+  readonly animation?: string;
 }
 
 export type PlaceholderReason = "missing-id" | "missing-state" | "wrong-kind";
 
 export interface CanonResolution {
   readonly source: "canon";
-  readonly kind: "sprite" | "portrait";
+  readonly kind: "sprite" | "portrait" | "effect";
   readonly assetId: AssetId;
   readonly revision: Sha256;
   readonly uri: string;
@@ -88,6 +90,19 @@ export function lookupCanon(
     );
     if (found === undefined) return miss("missing-state");
     return { ...canon, kind: "portrait", frames: [found.frame] };
+  }
+  if (query.animation !== undefined) {
+    if (manifest.kind !== "effect") return miss("wrong-kind");
+    const found = manifest.animations.find((a) => a.name === query.animation);
+    if (found === undefined) return miss("missing-state");
+    return {
+      ...canon,
+      kind: "effect",
+      frames: found.frames,
+      ...(found.loopStart === undefined ? {} : { loopStart: found.loopStart }),
+      pivot: manifest.pivot,
+      footprint: manifest.footprint,
+    };
   }
   if (manifest.kind !== "sprite") return miss("wrong-kind");
   const state = query.state ?? "idle";

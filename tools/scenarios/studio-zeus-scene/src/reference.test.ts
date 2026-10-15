@@ -56,11 +56,13 @@ test("the generator test fails when a committed digest is edited", () => {
   expect(renderReference(edited)).not.toBe(renderReference(generated));
 });
 
-test("the committed digests cover every published asset, state and expression", () => {
+test("the committed digests cover every published asset, state, expression and animation", () => {
   const byId = new Map(REFERENCE.assets.map((asset) => [asset.assetId, asset]));
 
   expect([...byId.keys()]).toEqual([
+    "fire",
     "greek-house",
+    "lightning-strike",
     "oak-tree",
     "zeus-portrait",
     "zeus-retro",

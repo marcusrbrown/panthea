@@ -1,7 +1,14 @@
 // The world renderer on the shared pixel core: a fixed-size target drawn at
 // 1x with nearest filtering and no antialiasing, enlarged by a whole zoom.
-// Actors are sprites resolved from canon (or the shared placeholder pixels);
-// everything else is a mesh in the same pixel space (./decor).
+// Actors, buildings and fire are sprites resolved from canon (or the shared
+// placeholder pixels); places, rings and bars are meshes in the same pixel
+// space (./decor).
+//
+// A strike is an effect sprite that plays once over the building the world
+// struck, on the renderer's own animation clock from the draw that first
+// presents its event. Which events play is decided from the committed events
+// alone (an ignition by a strike, or any damage); the effects setting only
+// picks which published animation plays.
 //
 // Atlas textures live in the core's reference-counted store, committed once
 // per atlas and bound to the sprites that show them, never freed by a draw.
@@ -10,27 +17,47 @@
 // loss asks the shell for nothing. A draw never throws on account of art: any
 // canon failure draws the placeholder and is reported once.
 
-import type { Atlas, Realm } from "@panthea/contracts";
+import {
+  type CanonResolution,
+  resolveAssetPixels,
+} from "@panthea/assets/browser";
+import type { Atlas, Realm, RecentEvent } from "@panthea/contracts";
 import {
   type AtlasSpec,
   createGpuBackend,
   type DecodedImage,
+  type EffectsMode,
   frameIndexAt,
   type GpuBackend,
+  type LayerEntry,
+  oneShotFrameAt,
   placeholderImage,
+  STRIKE_ASSET,
+  STRUCTURE_ANCHORS,
+  strikeAnimation,
 } from "@panthea/renderer";
 
 import type { CanonClient } from "../assets/canon";
 import { type AtlasDecoder, decodeAtlas, releaseImage } from "../assets/decode";
 import type { WorldViewModel } from "../store";
 import {
-  type ActorItem,
+  type ActorArt,
   actorInstances,
   fallbackActor,
   planActors,
+  type SpriteItem,
+  spriteInstances,
 } from "./actors";
 import { BACKGROUND, buildDecor, clearDecor } from "./decor";
-import { CAMERA_ORIGIN, fitView, LOGICAL_SIZE, locationPoints } from "./layout";
+import {
+  CAMERA_ORIGIN,
+  fitView,
+  LOGICAL_SIZE,
+  locationPoints,
+  type WorldPoint,
+} from "./layout";
+import { placeEvents } from "./presentation";
+import { planStructures, structureArtOf } from "./structures";
 
 export interface WorldRenderer {
   start(onDeviceLost: () => void): Promise<void>;
@@ -53,6 +80,8 @@ export interface WorldRendererDeps {
   readonly createBackend?: (canvas: HTMLCanvasElement) => GpuBackend;
   readonly decode?: AtlasDecoder;
   readonly devicePixelRatio?: () => number;
+  /** The player's effects setting, read when a strike starts; defaults to the full strike. */
+  readonly effects?: () => EffectsMode;
   /** The CSS box the canvas is fitted into; defaults to the canvas's parent. */
   readonly available?: (canvas: HTMLCanvasElement) => {
     readonly width: number;
@@ -65,6 +94,23 @@ interface Payload {
   readonly spec: AtlasSpec;
   readonly image: DecodedImage;
 }
+
+/** A strike that is playing: its canon art, and the renderer clock reading it started at. */
+interface Bolt {
+  readonly eventId: string;
+  readonly buildingId: string;
+  readonly startedAt: number;
+  readonly resolution: CanonResolution;
+  readonly payload: Payload;
+}
+
+/** The world emits `building-damaged` only from a strike; an ignition is a strike only when its cause says so. */
+const isStrike = (event: RecentEvent): boolean =>
+  event.kind === "building-damaged" ||
+  (event.kind === "building-ignited" && event.cause === "strike");
+
+const boltDurations = (bolt: Bolt): number[] =>
+  bolt.resolution.frames.map((frame) => frame.durationMs);
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -91,11 +137,25 @@ export function createWorldRenderer(
   const devicePixelRatio =
     deps.devicePixelRatio ?? (() => window.devicePixelRatio || 1);
   const available = deps.available ?? defaultAvailable;
+  const effects = deps.effects ?? ((): EffectsMode => "full");
 
   const payloads = new Map<string, Payload>();
   const loading = new Map<string, Promise<Payload | undefined>>();
   const undecodable = new Set<string>();
   let animated: { durations: number[]; loopStart: number | undefined }[] = [];
+  // The strikes playing, and what the layer shows apart from them: they are
+  // re-applied over `base` whenever a strike's frame changes or it ends.
+  let bolts: Bolt[] = [];
+  let base: LayerEntry[] = [];
+  let strikeTargets = new Map<
+    string,
+    { readonly foot: WorldPoint; readonly strike: WorldPoint }
+  >();
+  // The events already presented, so none plays twice: the window of the last
+  // draw. The first draw only marks it; a renderer that replaces a lost one
+  // starts here, so a remount replays nothing.
+  const seen = new Set<string>();
+  let primed = false;
   let signature = "";
   let elapsed = 0;
   let generation = 0;
@@ -172,7 +232,7 @@ export function createWorldRenderer(
   }
 
   function placeholderPayload(
-    pixels: Extract<ActorItem["art"], { source: "placeholder" }>["pixels"],
+    pixels: Extract<ActorArt, { source: "placeholder" }>["pixels"],
   ): Payload {
     // The client only ever draws the default placeholder, whose pixels are a
     // pure function of its size, so the size names the pixels.
@@ -190,14 +250,15 @@ export function createWorldRenderer(
     return payload;
   }
 
-  /** The item with its art settled: canon whose atlas loaded, otherwise the placeholder. */
-  async function settle(
-    item: ActorItem,
-  ): Promise<{ item: ActorItem; payload: Payload }> {
+  /** The item with its art settled: canon whose atlas loaded, otherwise the placeholder. `sprite` names what the item draws. */
+  async function settle<T extends SpriteItem>(
+    item: T,
+    sprite: string,
+  ): Promise<{ item: T; payload: Payload }> {
     if (item.art.source === "canon") {
       const payload = await canonPayload(item.art.resolution.atlas);
       if (payload !== undefined) return { item, payload };
-      const art = fallbackActor(item.actor.sprite);
+      const art = fallbackActor(sprite);
       return {
         item: { ...item, art },
         payload: placeholderPayload(art.pixels),
@@ -234,10 +295,79 @@ export function createWorldRenderer(
     })();
   }
 
+  const boltFrame = (bolt: Bolt): number | undefined =>
+    oneShotFrameAt(boltDurations(bolt), elapsed - bolt.startedAt);
+
   const frameSignature = (): string =>
-    animated
+    `${animated
       .map((track) => frameIndexAt(track.durations, track.loopStart, elapsed))
-      .join(",");
+      .join(",")}|${bolts.map((bolt) => boltFrame(bolt) ?? "end").join(",")}`;
+
+  /** The strike for `mode`, with its atlas loaded; undefined when it is not published or its atlas cannot be had. */
+  async function strikeArt(
+    snapshot: Parameters<typeof resolveAssetPixels>[0],
+    mode: EffectsMode,
+  ): Promise<{ resolution: CanonResolution; payload: Payload } | undefined> {
+    const resolved = resolveAssetPixels(snapshot, {
+      spriteId: STRIKE_ASSET,
+      animation: strikeAnimation(mode),
+    });
+    if (resolved.source !== "canon") return undefined;
+    const payload = await canonPayload(resolved.atlas);
+    return payload === undefined
+      ? undefined
+      : { resolution: resolved, payload };
+  }
+
+  /** The layer shows `base` and every strike still playing, each at its frame; finished strikes are dropped. */
+  function applyLayer(): void {
+    bolts = bolts.filter((bolt) => boltFrame(bolt) !== undefined);
+    const { layer } = backend;
+    const items = bolts.flatMap((bolt) => {
+      const frame = bolt.resolution.frames[boltFrame(bolt) ?? -1];
+      const target = strikeTargets.get(bolt.buildingId);
+      if (frame === undefined || target === undefined) return [];
+      return [
+        {
+          bolt,
+          item: {
+            id: `effect:bolt:${bolt.eventId}`,
+            foot: target.strike,
+            depthFoot: target.foot,
+            art: {
+              source: "canon" as const,
+              resolution: { ...bolt.resolution, frames: [frame] },
+            },
+          },
+        },
+      ];
+    });
+    const { instances, dropped } = spriteInstances(
+      items.map(({ item }) => item),
+      "effect",
+    );
+    for (const id of dropped) {
+      canon.report({
+        scope: id,
+        message: "no depth slot is left for this strike",
+      });
+    }
+    const atlasOf = new Map(
+      items.map(({ bolt, item }) => [item.id, bolt.payload] as const),
+    );
+    const entries = instances.flatMap((instance) => {
+      const payload = atlasOf.get(instance.id);
+      if (payload === undefined) return [];
+      if (layer.plan(payload.key, payload.spec) !== "keep") {
+        layer.commit(payload.key, payload.spec, payload.image);
+      }
+      return [{ instance, atlasKey: payload.key }];
+    });
+    const applied = layer.apply([...base, ...entries]);
+    for (const id of applied.skipped) {
+      canon.report({ scope: id, message: "its atlas could not be drawn" });
+    }
+  }
 
   async function draw(
     view: WorldViewModel,
@@ -252,38 +382,95 @@ export function createWorldRenderer(
     if (stale()) return [];
     const locations = view.realms[realm];
     const points = locationPoints(locations);
-    const settled = await Promise.all(
-      planActors(locations, points, snapshot).map(settle),
-    );
+    // The strikes this draw would start: events not yet presented, on a
+    // building in the viewed realm. Nothing is marked seen until the draw is
+    // known to be the one that presents.
+    const fresh = primed
+      ? placeEvents(view, realm).filter(
+          (placed) =>
+            placed.buildingId !== undefined &&
+            isStrike(placed.event) &&
+            !seen.has(placed.event.id),
+        )
+      : [];
+    const [settled, settledStructures, striking] = await Promise.all([
+      Promise.all(
+        planActors(locations, points, snapshot).map((item) =>
+          settle(item, item.actor.sprite),
+        ),
+      ),
+      Promise.all(
+        planStructures(locations, points, snapshot).map((item) =>
+          settle(item, item.assetId),
+        ),
+      ),
+      fresh.length > 0 ? strikeArt(snapshot, effects()) : undefined,
+    ]);
     if (stale()) return [];
+
+    // This draw presents: every event of the window is now seen, whatever its
+    // realm, and the strikes it starts begin on the renderer's clock.
+    if (striking !== undefined) {
+      for (const placed of fresh) {
+        if (placed.buildingId === undefined) continue;
+        bolts.push({
+          eventId: placed.event.id,
+          buildingId: placed.buildingId,
+          startedAt: elapsed,
+          ...striking,
+        });
+      }
+    }
+    const inWindow = new Set<string>(
+      view.recentEvents.map((event) => event.id),
+    );
+    for (const id of inWindow) seen.add(id);
+    for (const id of [...seen]) if (!inWindow.has(id)) seen.delete(id);
+    primed = true;
 
     // From here to the render there is no await: the scene changes in one step.
     const { layer, decor: group } = backend;
     const keys = new Map<string, string>();
-    for (const { item, payload } of settled) {
+    for (const { item, payload } of [...settled, ...settledStructures]) {
       keys.set(item.id, payload.key);
       if (layer.plan(payload.key, payload.spec) !== "keep") {
         layer.commit(payload.key, payload.spec, payload.image);
       }
     }
-    const { instances, dropped } = actorInstances(
-      settled.map(({ item }) => item),
+    const actors = actorInstances(settled.map(({ item }) => item));
+    const structures = spriteInstances(
+      settledStructures.map(({ item }) => item),
+      "structure",
     );
-    for (const id of dropped) {
+    const instances = [...structures.instances, ...actors.instances];
+    for (const id of [...actors.dropped, ...structures.dropped]) {
       canon.report({
         scope: id,
         message: "no depth slot is left for this actor",
       });
     }
-    const applied = layer.apply(
-      instances.flatMap((instance) => {
-        const atlasKey = keys.get(instance.id);
-        return atlasKey === undefined ? [] : [{ instance, atlasKey }];
+    base = instances.flatMap((instance) => {
+      const atlasKey = keys.get(instance.id);
+      return atlasKey === undefined ? [] : [{ instance, atlasKey }];
+    });
+    strikeTargets = new Map(
+      settledStructures.flatMap(({ item }) => {
+        if (item.role !== "building") return [];
+        const anchor =
+          STRUCTURE_ANCHORS[structureArtOf(item.building.id)].strike;
+        return [
+          [
+            item.building.id,
+            {
+              foot: item.foot,
+              // The anchor is an offset down the screen; the layout's y points up.
+              strike: { x: item.foot.x + anchor.x, y: item.foot.y - anchor.y },
+            },
+          ] as const,
+        ];
       }),
     );
-    for (const id of applied.skipped) {
-      canon.report({ scope: id, message: "its atlas could not be drawn" });
-    }
+    applyLayer();
 
     const fallen = new Map(
       settled
@@ -336,9 +523,10 @@ export function createWorldRenderer(
       if (Number.isFinite(deltaMs) && deltaMs > 0) elapsed += deltaMs;
       backend.layer.tick(elapsed);
       if (!ready) return;
-      const next = frameSignature();
-      if (next === signature) return;
-      signature = next;
+      if (frameSignature() === signature) return;
+      // A strike changed frame or ended: show it, then note what is shown.
+      applyLayer();
+      signature = frameSignature();
       backend.render();
     },
     dispose() {
@@ -346,6 +534,8 @@ export function createWorldRenderer(
       disposed = true;
       generation += 1;
       ready = false;
+      bolts = [];
+      base = [];
       if (typeof window !== "undefined") {
         window.removeEventListener("resize", onResize);
       }

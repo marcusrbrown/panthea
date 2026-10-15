@@ -31,6 +31,7 @@ import {
   RECENT_EVENT_CAP,
   RECENT_EVENT_WINDOW_TICKS,
   readRecentEvents,
+  recentEventOf,
   updateServiceStatus,
 } from "./server";
 import {
@@ -160,6 +161,56 @@ test("a frame window after a strike tick lists the strike's events with their id
         expect(event.subjects).toEqual(eventSubjects(source));
       }
     }
+  }));
+
+test("a strike's ignition says it was a strike, and no other event in the window carries a cause", () =>
+  withStore((store, reducers, seeded) => {
+    const chain = commitTicks(store, reducers, seeded, [
+      [strikeProposal("the-tavern", 3)],
+    ]);
+
+    const recent = readRecentEvents(
+      store.db,
+      chain.state.lastSequence,
+      chain.state.tick,
+    );
+
+    const ignited = recent.filter((event) => event.kind === "building-ignited");
+    expect(ignited.map((event) => event.cause)).toEqual(["strike"]);
+    for (const event of recent) {
+      if (event.kind !== "building-ignited") {
+        expect(event).not.toHaveProperty("cause");
+      }
+    }
+  }));
+
+test("an ignition by the director or a spread says so, so a client can tell them from a strike", () =>
+  withStore((store, reducers, seeded) => {
+    const chain = commitTicks(store, reducers, seeded, [
+      [strikeProposal("the-tavern", 3)],
+    ]);
+    const struck = chain.eventsByTick
+      .flat()
+      .find((event) => event.kind === "building-ignited");
+    if (struck?.kind !== "building-ignited") throw new Error("no ignition");
+
+    expect(
+      recentEventOf({ ...struck, cause: { kind: "director" } }, 1).cause,
+    ).toBe("director");
+    expect(
+      recentEventOf(
+        { ...struck, cause: { kind: "spread", from: struck.id } },
+        1,
+      ).cause,
+    ).toBe("spread");
+    expect(recentEventOf(struck, 1)).toEqual({
+      id: struck.id,
+      sequence: struck.sequence,
+      tick: 1,
+      kind: "building-ignited",
+      subjects: eventSubjects(struck),
+      cause: "strike",
+    });
   }));
 
 test("the window drops events older than the configured number of ticks", () =>

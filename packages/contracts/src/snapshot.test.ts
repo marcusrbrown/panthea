@@ -83,6 +83,40 @@ test("a frame carrying recent events parses them in order", () => {
   }
 });
 
+test("an ignition carries why it started: a strike, the director or a spread", () => {
+  for (const cause of ["strike", "director", "spread"] as const) {
+    const result = parseSyncFrame(
+      frame({ recentEvents: [recentEvent({ cause })] }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.recentEvents[0]?.cause).toBe(cause);
+  }
+});
+
+test("a recent event's cause is absent unless it was sent", () => {
+  const result = parseSyncFrame(frame({ recentEvents: [recentEvent()] }));
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.value.recentEvents[0]).not.toHaveProperty("cause");
+  }
+});
+
+test("a recent event with an unknown cause, or a cause on an event that is not an ignition, is rejected", () => {
+  const unknown = parseSyncFrame(
+    frame({ recentEvents: [recentEvent({ cause: "lightning" })] }),
+  );
+  expect(unknown.ok).toBe(false);
+  if (!unknown.ok) expect(unknown.path).toBe("recentEvents[0].cause");
+
+  const misplaced = parseSyncFrame(
+    frame({
+      recentEvents: [recentEvent({ kind: "entity-moved", cause: "strike" })],
+    }),
+  );
+  expect(misplaced.ok).toBe(false);
+  if (!misplaced.ok) expect(misplaced.path).toBe("recentEvents[0].cause");
+});
+
 test("a frame missing recentEvents is rejected", () => {
   const payload = frame();
   delete payload.recentEvents;

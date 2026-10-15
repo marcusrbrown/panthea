@@ -2,7 +2,8 @@
 // it, to canon idle-south or to the shared placeholder pixels, and becomes a
 // layer instance positioned by its foot. There is no state selection here:
 // normal play shows idle, whatever happens in the world. Seated, act and
-// portrait expressions belong to the packaged inspection fixture.
+// portrait expressions belong to the packaged inspection fixture. The same
+// instance builder lays out structures and effects (./structures, ./scene).
 //
 // This stays out of `composeScene`: that places iso tile cells, and the
 // client keeps its own place layout. It builds the same `Instance` shape,
@@ -20,6 +21,7 @@ import {
   ENTITY_SLOTS,
   type Instance,
   type InstanceArt,
+  type Layer,
 } from "@panthea/renderer";
 
 import type { ViewActor, ViewLocation } from "../store";
@@ -32,13 +34,19 @@ export type ActorArt =
   | { readonly source: "canon"; readonly resolution: CanonResolution }
   | Extract<PixelResolution, { source: "placeholder" }>;
 
-export interface ActorItem {
+/** What the layer draws: a foot, the art that stands on it, and the point whose screen row sorts it. */
+export interface SpriteItem {
   /** The layer instance id. */
   readonly id: string;
-  readonly actor: ViewActor;
-  /** The foot, in world space (y up). */
+  /** The foot, in world space (y up): where the art's pivot sits. */
   readonly foot: WorldPoint;
+  /** Where the depth key is read from, when that is not the foot: a fire sorts by the building it burns on. */
+  readonly depthFoot?: WorldPoint;
   readonly art: ActorArt;
+}
+
+export interface ActorItem extends SpriteItem {
+  readonly actor: ViewActor;
 }
 
 export function resolveActor(
@@ -93,7 +101,7 @@ const DEPTH_LIMIT = 130;
 const byCodePoint = (a: string, b: string): number =>
   a < b ? -1 : a > b ? 1 : 0;
 
-function artOf(item: ActorItem): {
+function artOf(item: SpriteItem): {
   art: InstanceArt;
   w: number;
   h: number;
@@ -137,22 +145,28 @@ function artOf(item: ActorItem): {
 export interface ActorInstances {
   /** Back to front. */
   readonly instances: readonly Instance[];
-  /** Actors with no depth slot left; they are not drawn. */
+  /** Items with no depth slot left; they are not drawn. */
   readonly dropped: readonly string[];
 }
 
 /**
- * Layer instances for the actors. The depth key is the foot's screen row, so
- * an actor lower on the screen draws in front; actors at one depth are ordered
- * by id, so the result does not depend on the order they are given in.
+ * Layer instances for `items` on `layer`. The depth key is the screen row of
+ * the item's foot (or its depth foot), so one lower on the screen draws in
+ * front; at one depth the layers order structures behind actors behind
+ * effects, and items on one layer at one depth are ordered by id, so the
+ * result does not depend on the order they are given in.
  */
-export function actorInstances(items: readonly ActorItem[]): ActorInstances {
-  const groups = new Map<number, ActorItem[]>();
+export function spriteInstances(
+  items: readonly SpriteItem[],
+  layer: Layer,
+): ActorInstances {
+  const groups = new Map<number, SpriteItem[]>();
   for (const item of items) {
+    const row = (item.depthFoot ?? item.foot).y;
     const depth =
       Math.max(
         -DEPTH_LIMIT,
-        Math.min(DEPTH_LIMIT, Math.round(-item.foot.y / DEPTH_ROW)),
+        Math.min(DEPTH_LIMIT, Math.round(-row / DEPTH_ROW)),
       ) + 0;
     const group = groups.get(depth);
     if (group === undefined) groups.set(depth, [item]);
@@ -165,9 +179,7 @@ export function actorInstances(items: readonly ActorItem[]): ActorInstances {
     group.sort((a, b) => byCodePoint(a.id, b.id));
     for (const [order, item] of group.entries()) {
       const z =
-        order < ENTITY_SLOTS
-          ? depthZ({ depth, layer: "actor", order })
-          : undefined;
+        order < ENTITY_SLOTS ? depthZ({ depth, layer, order }) : undefined;
       if (z === undefined || !z.ok) {
         dropped.push(item.id);
         continue;
@@ -175,7 +187,7 @@ export function actorInstances(items: readonly ActorItem[]): ActorInstances {
       const { art, w, h, pivot } = artOf(item);
       instances.push({
         id: item.id,
-        layer: "actor",
+        layer,
         cell: { x: 0, y: 0, z: 0 },
         footprint: { w: 1, h: 1 },
         x: item.foot.x - pivot.x,
@@ -190,4 +202,9 @@ export function actorInstances(items: readonly ActorItem[]): ActorInstances {
   }
   instances.sort((a, b) => a.z - b.z);
   return { instances, dropped };
+}
+
+/** Layer instances for the actors: `spriteInstances` on the actor layer. */
+export function actorInstances(items: readonly ActorItem[]): ActorInstances {
+  return spriteInstances(items, "actor");
 }

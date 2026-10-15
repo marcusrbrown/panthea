@@ -1,7 +1,7 @@
 // What the inspection fixture can select. A selection is explicit: an asset
-// with a state, direction and optional ability (sprite) or an expression
-// (portrait). It is never derived from world state, and it may name a state
-// that no asset publishes, which draws the placeholder.
+// with a state, direction and optional ability (sprite), an expression
+// (portrait) or an animation (effect). It is never derived from world state,
+// and it may name a state that no asset publishes, which draws the placeholder.
 
 import type { RegistrySnapshot, ResolveQuery } from "@panthea/assets/browser";
 import { type AssetVocabulary, stateIds } from "@panthea/contracts";
@@ -20,12 +20,19 @@ export type Selection =
       readonly assetId: string;
       readonly kind: "portrait";
       readonly expression: string;
+    }
+  | {
+      readonly assetId: string;
+      readonly kind: "effect";
+      readonly animation: string;
     };
 
 export interface AssetListing {
   readonly assetId: string;
   readonly kind: string;
   readonly revision: string;
+  /** An effect's animation names, in the order its manifest publishes them; empty for any other asset. */
+  readonly animations: readonly string[];
 }
 
 export function listAssets(snapshot: RegistrySnapshot): AssetListing[] {
@@ -34,6 +41,10 @@ export function listAssets(snapshot: RegistrySnapshot): AssetListing[] {
       assetId: entry.assetId as string,
       kind: entry.manifest.kind as string,
       revision: entry.revision as string,
+      animations:
+        entry.manifest.kind === "effect"
+          ? entry.manifest.animations.map((animation) => animation.name)
+          : [],
     }))
     .sort((a, b) =>
       a.assetId < b.assetId ? -1 : a.assetId > b.assetId ? 1 : 0,
@@ -68,24 +79,35 @@ export function optionsOf(
   };
 }
 
-/** Idle facing south, or the neutral expression: where the fixture opens. */
+/** Idle facing south, the neutral expression, or an effect's first animation: where the fixture opens. */
 export function defaultSelection(
   asset: AssetListing,
   _vocabulary: AssetVocabulary | undefined,
 ): Selection {
-  return asset.kind === "portrait"
-    ? { assetId: asset.assetId, kind: "portrait", expression: "neutral" }
-    : {
-        assetId: asset.assetId,
-        kind: "sprite",
-        state: "idle",
-        direction: "south",
-      };
+  if (asset.kind === "portrait") {
+    return { assetId: asset.assetId, kind: "portrait", expression: "neutral" };
+  }
+  if (asset.kind === "effect") {
+    return {
+      assetId: asset.assetId,
+      kind: "effect",
+      animation: asset.animations[0] ?? "",
+    };
+  }
+  return {
+    assetId: asset.assetId,
+    kind: "sprite",
+    state: "idle",
+    direction: "south",
+  };
 }
 
 export function selectionQuery(selection: Selection): ResolveQuery {
   if (selection.kind === "portrait") {
     return { spriteId: selection.assetId, expression: selection.expression };
+  }
+  if (selection.kind === "effect") {
+    return { spriteId: selection.assetId, animation: selection.animation };
   }
   return {
     spriteId: selection.assetId,
@@ -101,12 +123,14 @@ export function selectionLabel(selection: Selection): string {
   const key =
     selection.kind === "portrait"
       ? selectionKey({ expression: selection.expression })
-      : selectionKey({
-          state: selection.state,
-          direction: selection.direction,
-          ...(selection.ability === undefined || selection.ability === ""
-            ? {}
-            : { ability: selection.ability }),
-        });
+      : selection.kind === "effect"
+        ? selectionKey({ animation: selection.animation })
+        : selectionKey({
+            state: selection.state,
+            direction: selection.direction,
+            ...(selection.ability === undefined || selection.ability === ""
+              ? {}
+              : { ability: selection.ability }),
+          });
   return `${selection.assetId} ${key}`;
 }

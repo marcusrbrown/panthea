@@ -53,6 +53,50 @@ test("a strike on a building is placed with the fire tone", () => {
   ]);
 });
 
+test("an event on a building names that building, wherever in the event's subjects it stands", () => {
+  const view = viewWith([
+    event("strike-1", "building-damaged", ["the-tavern", "zeus"], 1),
+    event("strike-2", "building-damaged", ["woodcutter", "the-tavern"], 2),
+  ]);
+
+  expect(
+    placeEvents(view, "mortal").map((entry) => [
+      String(entry.event.id),
+      entry.buildingId,
+    ]),
+  ).toEqual([
+    ["strike-1", "the-tavern"],
+    ["strike-2", "the-tavern"],
+  ]);
+});
+
+test("an event on an actor or a location names no building, and a strike seen from a realm without the building names none", () => {
+  const view = viewWith([
+    event("trade-1", "resource-traded", ["woodcutter", "farmer"], 1),
+    event("fire-2", "building-ignited", ["agora"], 2),
+    event("strike-3", "building-damaged", ["the-tavern", "zeus"], 3),
+  ]);
+
+  expect(
+    placeEvents(view, "mortal").map((entry) => [
+      String(entry.event.id),
+      entry.buildingId,
+    ]),
+  ).toEqual([
+    ["trade-1", undefined],
+    ["fire-2", undefined],
+    ["strike-3", "the-tavern"],
+  ]);
+  // Zeus is on Olympus: the same strike is placed there, where the tavern is not.
+  expect(
+    placeEvents(view, "olympus").map((entry) => [
+      String(entry.event.id),
+      entry.locationId,
+      entry.buildingId,
+    ]),
+  ).toEqual([["strike-3", "olympus-hall", undefined]]);
+});
+
 test("each drawn kind is placed with its tone", () => {
   const view = viewWith([
     event("ignite-1", "building-ignited", ["the-tavern"], 1),
