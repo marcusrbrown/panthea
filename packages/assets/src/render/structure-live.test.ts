@@ -1,5 +1,6 @@
 // Structures rendered by the real, pinned, headless Blender. Opt in with PANTHEA_LIVE_BLENDER=1
-// (`bun run test:blender`); the executable is read from PANTHEA_BLENDER or the macOS bundle path.
+// (`PANTHEA_LIVE_BLENDER=1 bun test packages/assets/src/render/structure-live.test.ts`); the executable is read
+// from PANTHEA_BLENDER or the macOS bundle path.
 // The default run uses the fake Blender and does not cover what only the real script can show:
 // the silhouette of a damaged house, and the seam of the tree's wind loop.
 
