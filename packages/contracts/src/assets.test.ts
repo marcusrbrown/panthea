@@ -82,7 +82,8 @@ describe("asset vocabulary", () => {
       "olympus",
       "underworld",
     ]);
-    expect(parsed.value.tiers).toEqual({ min: 1, max: 3 });
+    expect("tiers" in parsed.value).toBe(false);
+    expect("effect" in parsed.value).toBe(false);
     expect(parsed.value.cells.map((c) => [c.id, c.w, c.h])).toEqual([
       ["mortal", 64, 64],
       ["god", 64, 80],
@@ -277,9 +278,9 @@ describe("asset vocabulary", () => {
         /expressions/,
       ],
       [
-        "inverted tiers",
+        "a tiers range",
         (v) => {
-          v.tiers = { min: 3, max: 1 };
+          v.tiers = { min: 1, max: 3 };
         },
         /tiers/,
       ],
@@ -341,9 +342,9 @@ describe("asset vocabulary", () => {
         /states\[0\]/,
       ],
       [
-        "too many emissive accents allowed",
+        "an effect limits block",
         (v) => {
-          v.effect.maxEmissiveAccents = -1;
+          v.effect = { maxEmissiveAccents: 4, tierOneMaxMs: 300 };
         },
         /effect/,
       ],

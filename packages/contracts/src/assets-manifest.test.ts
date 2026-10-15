@@ -188,8 +188,7 @@ function effect() {
     atlas: { blob: H("d"), width: 256, height: 128 },
     pivot: { x: 32, y: 128 },
     footprint: { w: 1, h: 1 },
-    tier: 1,
-    emissiveAccents: ["#ffffcc"],
+    glowColours: ["#ffffcc"],
     animations: [{ name: "strike", frames: frames(3, 64, 128, 80) }],
     provenance: {
       method: "hand",
@@ -198,6 +197,24 @@ function effect() {
       relatedJobs: [],
       sourceAssets: [],
     },
+  };
+}
+
+function procedural(over: Mutable = {}) {
+  return {
+    method: "procedural",
+    generator: { id: "effects", version: 1 },
+    seed: 7,
+    params: { effect: "lightning", segments: 9 },
+    palette: { id: "provisional", digest: H("5") },
+    frameHashes: { strike: [H("1"), H("2"), H("3")] },
+    licences: [
+      { subject: "lightning-strike", role: "original-work", licence: "MIT" },
+    ],
+    relatedJobs: [],
+    handEdits: [],
+    sourceAssets: [],
+    ...over,
   };
 }
 
@@ -615,43 +632,43 @@ describe("asset manifests: portraits and effects", () => {
     /expressions/,
   );
   rejects(
-    "an effect tier outside the vocabulary",
+    "an effect with a tier key",
     effect,
     (v) => {
-      v.tier = 4;
+      v.tier = 1;
     },
     /tier/,
   );
   rejects(
-    "more emissive accents than allowed",
+    "the removed emissiveAccents key",
     effect,
     (v) => {
-      v.emissiveAccents = [
-        "#111111",
-        "#222222",
-        "#333333",
-        "#444444",
-        "#555555",
-      ];
+      v.emissiveAccents = ["#ffffcc"];
     },
     /emissiveAccents/,
   );
   rejects(
-    "a malformed emissive accent",
+    "a malformed glow colour",
     effect,
     (v) => {
-      v.emissiveAccents = ["red"];
+      v.glowColours = ["red"];
     },
-    /emissiveAccents\[0\]/,
+    /glowColours\[0\]/,
   );
   rejects(
-    "a tier-one effect over the reduced-effects bound",
+    "a duplicate glow colour",
     effect,
     (v) => {
-      v.animations[0].frames = frames(3, 64, 128, 120);
+      v.glowColours = ["#ffffcc", "#ffffcc"];
     },
-    /tier/,
+    /glowColours\[1\]/,
   );
+  it("puts no count or duration limit on an effect", () => {
+    const value = effect();
+    value.glowColours = ["#111111", "#222222", "#333333", "#444444", "#555555"];
+    value.animations[0].frames = frames(3, 64, 128, 2000);
+    expect(parseAssetManifest(value, vocab).ok).toBe(true);
+  });
   rejects(
     "an effect animation without a name",
     effect,
@@ -668,12 +685,83 @@ describe("asset manifests: portraits and effects", () => {
     },
     /animations\[1\]/,
   );
-  it("allows a longer animation at tier two", () => {
-    const value = effect();
-    value.tier = 2;
-    value.animations[0].frames = frames(3, 64, 128, 200);
-    expect(parseAssetManifest(value, vocab).ok).toBe(true);
+});
+
+describe("procedural effects", () => {
+  const made = (provenance: unknown = procedural()) => ({
+    ...effect(),
+    provenance,
   });
+
+  it("parses a procedural effect and stores it canonically", () => {
+    const parsed = parseAssetManifest(made(), vocab);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.provenance.method).toBe("procedural");
+    const text = canonicalManifestText(parsed.value);
+    const again = parseAssetManifest(JSON.parse(text), vocab);
+    expect(again.ok && canonicalManifestText(again.value)).toBe(text);
+  });
+  it("parses it through parseProvenance", () => {
+    expect(parseProvenance(procedural()).ok).toBe(true);
+  });
+  rejects(
+    "a procedural sprite",
+    () => ({ ...sprite(), realmVariants: [], provenance: procedural() }),
+    () => {},
+    /procedural/,
+  );
+  rejects(
+    "a procedural effect whose frame hashes miss an animation",
+    () => made(),
+    (v) => {
+      v.animations.push({ name: "calm", frames: frames(3, 64, 128, 80) });
+    },
+    /frameHashes/,
+  );
+  rejects(
+    "a procedural effect with a frame hash count that is not its frame count",
+    () => made(procedural({ frameHashes: { strike: [H("1")] } })),
+    () => {},
+    /frameHashes\.strike/,
+  );
+  rejects(
+    "frame hashes for an animation the effect does not have",
+    () =>
+      made(
+        procedural({
+          frameHashes: {
+            strike: [H("1"), H("2"), H("3")],
+            extra: [H("4")],
+          },
+        }),
+      ),
+    () => {},
+    /frameHashes/,
+  );
+  const badProvenance: [string, Mutable, RegExp][] = [
+    ["a missing generator", { generator: undefined }, /generator/],
+    [
+      "a zero generator version",
+      { generator: { id: "effects", version: 0 } },
+      /version/,
+    ],
+    ["a negative seed", { seed: -1 }, /seed/],
+    ["a fractional param", { params: { segments: 1.5 } }, /params/],
+    [
+      "a palette digest that is not a hash",
+      { palette: { id: "p", digest: "x" } },
+      /digest/,
+    ],
+    ["an unknown key", { extra: 1 }, /extra/],
+  ];
+  for (const [name, over, path] of badProvenance) {
+    it(`rejects ${name}`, () => {
+      const parsed = parseProvenance(procedural(over));
+      expect(parsed.ok).toBe(false);
+      if (!parsed.ok) expect(`${parsed.path} ${parsed.message}`).toMatch(path);
+    });
+  }
 });
 
 describe("derived manifests", () => {

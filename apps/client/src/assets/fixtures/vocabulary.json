@@ -11,7 +11,6 @@
     "awed"
   ],
   "paletteFamilies": ["town", "olympus", "underworld"],
-  "tiers": { "min": 1, "max": 3 },
   "cells": [
     { "id": "mortal", "w": 64, "h": 64, "kinds": ["sprite"] },
     { "id": "god", "w": 64, "h": 80, "kinds": ["sprite"] },
@@ -42,6 +41,5 @@
     },
     { "id": "hurt", "frames": { "min": 2, "max": 2 } },
     { "id": "down", "frames": { "min": 1, "max": 1 } }
-  ],
-  "effect": { "maxEmissiveAccents": 4, "tierOneMaxMs": 300 }
+  ]
 }

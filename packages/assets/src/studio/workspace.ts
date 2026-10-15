@@ -211,7 +211,8 @@ export interface LicenceReviewEntry {
 export interface StudioAssetRecord {
   readonly schemaVersion: 1;
   readonly id: string;
-  readonly workingSetId: string;
+  /** The working set a sprite or portrait was packed from; null for a generated effect, whose recipe is its provenance. */
+  readonly workingSetId: string | null;
   readonly assetId: AssetId;
   /** The registry revision of this asset when it was packed, or null for a first revision. */
   readonly prior: Sha256 | null;
@@ -426,10 +427,10 @@ export function parseStudioAssetRecord(
       if (!version.ok) return version;
       const id = parseSlug(record.id, `${path}.id`);
       if (!id.ok) return id;
-      const workingSetId = parseSlug(
-        record.workingSetId,
-        `${path}.workingSetId`,
-      );
+      const workingSetId =
+        record.workingSetId === null
+          ? ok(null)
+          : parseSlug(record.workingSetId, `${path}.workingSetId`);
       if (!workingSetId.ok) return workingSetId;
       const assetId = parseAssetId(record.assetId, `${path}.assetId`);
       if (!assetId.ok) return assetId;

@@ -28,6 +28,7 @@ import {
   type EditCommandResult,
   type EditResult,
 } from "./edit-session";
+import type { EffectInput } from "./effect";
 import type { FinishStep } from "./export-import";
 import type { PackInput } from "./packing";
 import {
@@ -148,6 +149,17 @@ export interface StudioSession {
    */
   pack(
     input: PackInput,
+    content: StudioContent,
+    palettes: PaletteSet,
+    registryRoot: string,
+  ): AssetOpResult;
+  /**
+   * Runs the effect generator into a draft effect asset record; never approves.
+   * Takes the palettes as they are on disk now, like `pack`, and records the asset's current
+   * registry revision as the draft's prior.
+   */
+  effect(
+    input: EffectInput,
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
@@ -678,6 +690,7 @@ export function openStudioSession(root: string): StudioOpen {
         discardEdit: editOps.discardEdit,
         derive: deriveOps.derive,
         pack: assetOps.pack,
+        effect: assetOps.effect,
         approveAsset: assetOps.approveAsset,
         publishAsset: assetOps.publishAsset,
         rejectAsset: assetOps.rejectAsset,

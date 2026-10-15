@@ -38,6 +38,7 @@ export type {
   EditFailure,
   EditResult,
 } from "./edit-session";
+export type { EffectInput } from "./effect";
 export type {
   EditEvidence,
   EditPreview,

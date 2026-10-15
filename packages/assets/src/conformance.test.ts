@@ -79,7 +79,7 @@ describe("input validation", () => {
         [1, 2, 300],
       ],
     });
-    invalid("accents", { accents: [[10, 20, 30]] });
+    invalid("glow", { glow: [[10, 20, 30]] });
     invalid("alphaCutoff", { alphaCutoff: 0 });
     invalid("alphaCutoff", { alphaCutoff: 256 });
     invalid("grid.edgeTolerance", { grid: { ...GRID, edgeTolerance: -1 } });
@@ -105,13 +105,13 @@ describe("input validation", () => {
     });
   });
 
-  it("allows accents on effects only, and at most four", () => {
-    const accent = (n: number): Rgb => [10 * n, 20, 30];
-    invalid("accents", {
-      kind: "effect",
-      accents: [1, 2, 3, 4, 5].map(accent),
-    });
-    invalid("accents[0]", { kind: "effect", accents: [[10, 20, 400]] });
+  it("allows glow colours on effects only, with no count limit", () => {
+    const glow = (n: number): Rgb => [10 * n, 20, 30];
+    const many = [1, 2, 3, 4, 5, 6].map(glow);
+    expect(conformImage(input({ kind: "effect", glow: many })).status).toBe(
+      "done",
+    );
+    invalid("glow[0]", { kind: "effect", glow: [[10, 20, 400]] });
   });
 
   it("does not mutate the input", () => {
@@ -687,14 +687,14 @@ describe("colour reduction and palette mapping", () => {
     expect(opaque(result.image)).toEqual([[10, 10, 10]]);
   });
 
-  it("gives effects the palette plus declared accents with no colour limit, mapping the rest", () => {
+  it("gives effects the palette plus declared glow colours with no colour limit, mapping the rest", () => {
     const accent: Rgb = [255, 240, 128];
     const colours: Rgb[] = [...PALETTE_20, accent];
     const effect = (extra: readonly Rgb[] = []) =>
       run({
         ...row([...colours, ...extra]),
         kind: "effect",
-        accents: [accent],
+        glow: [accent],
       });
     const clean = effect();
     expect(clean.metrics).toMatchObject({
@@ -841,13 +841,13 @@ describe("report-only mode", () => {
     for (const kind of ["sprite", "portrait", "effect"] as const) {
       const src = cloneImage(figure5());
       src.rgba[(20 * 64 + 20) * 4 + 3] = 100;
-      const accents = kind === "effect" ? { accents: [] as Rgb[] } : {};
+      const glow = kind === "effect" ? { glow: [] as Rgb[] } : {};
       const report = done(
-        input({ ...src, kind, mode: "report-only", ...accents }),
+        input({ ...src, kind, mode: "report-only", ...glow }),
       );
       expect(check(report, "binary-alpha")).toMatchObject({ status: "fail" });
       expect(check(report, "binary-alpha")?.message).toContain("20,20");
-      const auto = done(input({ ...src, kind, mode: "auto", ...accents }));
+      const auto = done(input({ ...src, kind, mode: "auto", ...glow }));
       expect(check(auto, "binary-alpha")).toMatchObject({ status: "pass" });
       expect(auto.metrics.alphaChanged).toBe(1);
     }
@@ -1009,7 +1009,7 @@ describe("silhouette, pivot and palette rules", () => {
       "silhouette",
     );
     expect(
-      ids(done(small(4, 3, split, { kind: "effect", accents: [] }))),
+      ids(done(small(4, 3, split, { kind: "effect", glow: [] }))),
     ).not.toContain("silhouette");
     expect(done(small(4, 3, split, { kind: "portrait" })).report.status).toBe(
       "pass",
@@ -1049,14 +1049,14 @@ describe("silhouette, pivot and palette rules", () => {
     expect(ids(sprite(black, "portrait"))).not.toContain("pure-black-white");
   });
 
-  it("holds an effect to the palette plus its declared accents", () => {
+  it("holds an effect to the palette plus its declared glow colours", () => {
     const accent: Rgb = [255, 240, 128];
     const strayColour: Rgb = [250, 10, 10];
     const effect = (pixels: Rgb[], overrides: Partial<ConformanceInput> = {}) =>
       done(
         small(pixels.length, 1, (x) => [...(pixels[x] as Rgb), 255], {
           kind: "effect",
-          accents: [accent],
+          glow: [accent],
           pivot: { x: 1, y: 1 },
           ...overrides,
         }),
@@ -1068,10 +1068,9 @@ describe("silhouette, pivot and palette rules", () => {
       "binary-alpha",
       "palette",
       "pivot",
-      "accents",
     ]);
     expect(clean.report.status).toBe("pass");
-    expect(check(clean, "accents")?.message).toContain("1 declared accent");
+    expect(check(clean, "palette")?.message).toContain("declared glow colours");
     const undeclared = effect([A, strayColour], { mode: "report-only" });
     expect(check(undeclared, "palette")).toMatchObject({ status: "fail" });
     expect(check(undeclared, "palette")?.message).toContain("#fa0a0a");

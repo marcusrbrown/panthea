@@ -158,7 +158,7 @@ These four gaps are the work. Everything else is tuning.
 
 ### U2. Effects: generator, provenance and the tier-rule removal
 
-- [ ] Goal: publish the best fire loop and lightning strike we can make.
+- [x] Goal: publish the best fire loop and lightning strike we can make.
 - **Approach:**
   - A pure, seeded generator in `packages/assets/src/effects/` produces frames quantised to `greek-retro` plus declared glow colours.
   - **Fire:** hand-shaped flame silhouettes anchored at the roof or the damaged area, with two or three tapering tongues animated by seeded periodic noise. The noise is sampled on a circle in time, so the last frame flows back to the first. It uses the terracotta ramp with soil for smoke, a dark warm outline on the outer silhouette only, and binary alpha. Starting point: about 8 frames at about 110 ms.
