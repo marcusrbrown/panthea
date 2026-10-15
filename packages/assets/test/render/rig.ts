@@ -283,6 +283,31 @@ export function submitRender(
   return [...result.jobIds];
 }
 
+/** Submits a tile recipe request for the ground set: one job per role, base then over. */
+export function submitTile(
+  rig: Rig,
+  id: string,
+  roles: readonly ("base" | "over")[] = ["base", "over"],
+  options: { subject?: string } = {},
+): string[] {
+  const built = newRequestRecord(
+    content,
+    {
+      id,
+      subject: options.subject ?? "grass-flagstone",
+      kind: "tile",
+      slots: roles.map((role) => ({ role })),
+      render: { palette: "greek-retro", pivot: { x: 32, y: 16 } },
+    },
+    refuseDraw,
+    renderEngineFor(RENDER_ROOT),
+  );
+  if (!built.ok) throw new Error(JSON.stringify(built.error));
+  const result = rig.session.submitRequest(built.value.record);
+  if (!result.ok) throw new Error(result.message);
+  return [...result.jobIds];
+}
+
 /** Submits an image request for the sd engine. */
 export function submitSd(rig: Rig, id: string): string[] {
   const built = newRequestRecord(

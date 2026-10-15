@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": 4,
+  "version": 5,
   "directions": ["south", "north", "east", "west"],
   "expressions": [
     "neutral",
@@ -87,6 +87,16 @@
       "frames": { "min": 1, "max": 16 },
       "fps": { "min": 1, "max": 20 },
       "cellClasses": ["structure"]
+    },
+    {
+      "id": "base",
+      "frames": { "min": 1, "max": 1 },
+      "cellClasses": ["tile"]
+    },
+    {
+      "id": "over",
+      "frames": { "min": 1, "max": 1 },
+      "cellClasses": ["tile"]
     },
     {
       "id": "hurt",

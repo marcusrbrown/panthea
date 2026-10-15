@@ -286,7 +286,7 @@ flowchart LR
 
 **Verification:** `validate:assets` accepts the new vocabulary.
 
-- [ ] **Unit 2: Ground profile, outline opt-out and periodic patch**
+- [x] **Unit 2: Ground profile, outline opt-out and periodic patch**
 
 **Goal:** Blender renders a periodic patch for each terrain through the existing engine. The post step crops the centre period, with no outline.
 

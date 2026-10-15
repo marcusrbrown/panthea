@@ -183,9 +183,9 @@ function validateRenderMatrix(
     report(`render.matrix.cellClass: unknown cell class "${matrix.cellClass}"`);
     return;
   }
-  if (!cell.kinds.includes("sprite")) {
+  if (!cell.kinds.includes("sprite") && !cell.kinds.includes("tile")) {
     report(
-      `render.matrix.cellClass: cell class "${cell.id}" does not hold sprites`,
+      `render.matrix.cellClass: cell class "${cell.id}" holds neither sprites nor tiles`,
     );
     return;
   }
@@ -289,7 +289,18 @@ function validateStructureProfile(
     return;
   }
   const drawn = profile.cell;
-  if (drawn.id !== cell.id || drawn.width !== cell.w || drawn.height !== cell.h)
+  // A ground set is drawn on a wide frame and cut to the tile cell; the cell class decides which it is.
+  if ((profile.build.kind === "ground") !== cell.kinds.includes("tile")) {
+    report(
+      file,
+      `${profile.build.kind} build on cell class ${cell.id}: a ground build draws the tile cell, and only it`,
+    );
+    return;
+  }
+  if (
+    profile.build.kind !== "ground" &&
+    (drawn.id !== cell.id || drawn.width !== cell.w || drawn.height !== cell.h)
+  )
     report(
       file,
       `cell ${drawn.id} ${drawn.width}x${drawn.height} is not the vocabulary's ${cell.id} ${cell.w}x${cell.h}`,

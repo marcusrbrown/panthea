@@ -508,6 +508,16 @@ export function buildSpec(
       message: `no cell for ${kind}`,
     });
   if (recipe !== undefined) {
+    // A tile's anchor is the diamond's centre; nothing else is a place to hold it by.
+    if (
+      kind === "tile" &&
+      (recipe.pivot.x !== cell.w / 2 || recipe.pivot.y !== cell.h / 2)
+    )
+      return bad({
+        kind: "invalid-request",
+        path: "request.recipe.pivot",
+        message: `a tile's pivot is the diamond centre (${cell.w / 2}, ${cell.h / 2})`,
+      });
     if (recipe.pivot.x > cell.w || recipe.pivot.y > cell.h)
       return bad({
         kind: "invalid-request",

@@ -1248,6 +1248,8 @@ describe("recipe requests for the render engine", () => {
           "intact",
           "damaged",
           "ruin",
+          "base",
+          "over",
           "hurt",
           "down",
         ],
@@ -1405,30 +1407,7 @@ describe("the render provider descriptor", () => {
 });
 
 describe("tile requests", () => {
-  const ground = {
-    schemaVersion: 1,
-    id: "grass-flagstone",
-    name: "Grass and flagstone",
-    paletteFamily: "town",
-    render: {
-      profile: "grass-flagstone",
-      matrix: {
-        cellClass: "tile",
-        directions: ["south"],
-        required: [{ state: "base" }, { state: "over" }],
-        deferred: [],
-      },
-    },
-  };
-  const withGround: StudioContent = {
-    ...content,
-    structures: [...content.structures, ground],
-  };
-  const engine: EngineCells = {
-    provider: RENDER_PROVIDER,
-    measuredCells: [{ w: 64, h: 32 }],
-    generationScale: 1,
-  };
+  const engine: EngineCells = renderEngineFor(join(repo, "tools", "render"));
   const pivot = { x: 32, y: 16 };
   const tile = (over: Partial<RequestInput> = {}): RequestInput => ({
     subject: "grass-flagstone",
@@ -1439,7 +1418,7 @@ describe("tile requests", () => {
   });
   const create = (input: RequestInput, given: EngineCells = engine) =>
     newRequestRecord(
-      withGround,
+      content,
       { id: "grass-flagstone-set", ...input },
       neverDraw,
       given,
@@ -1470,7 +1449,7 @@ describe("tile requests", () => {
 
   test("a tile request without a recipe is refused, naming the render engine", () => {
     const refused = newRequestRecord(
-      withGround,
+      content,
       {
         id: "grass-flagstone-set",
         subject: "grass-flagstone",
@@ -1486,7 +1465,7 @@ describe("tile requests", () => {
     if (!refused.ok && refused.error.kind === "invalid-request")
       expect(refused.error.message).toContain("render engine");
     expect(
-      buildSpec(withGround, {
+      buildSpec(content, {
         schemaVersion: 1,
         subject: "grass-flagstone",
         kind: "tile",
@@ -1498,6 +1477,27 @@ describe("tile requests", () => {
       ok: false,
       error: { kind: "invalid-request", path: "recipe" },
     });
+  });
+
+  test("the committed ground set is drawn on the 64x32 cell the render engine declares, with nothing passed by hand", () => {
+    expect(engine.measuredCells).toContainEqual({ w: 64, h: 32 });
+    expect(create(tile()).ok).toBe(true);
+  });
+
+  test("a tile recipe takes the diamond centre as its pivot, and nothing else", () => {
+    for (const other of [
+      { x: 0, y: 0 },
+      { x: 32, y: 31 },
+      { x: 31, y: 16 },
+      { x: 64, y: 32 },
+    ]) {
+      expect(
+        create(tile({ render: { palette: "greek-retro", pivot: other } })),
+      ).toMatchObject({
+        ok: false,
+        error: { kind: "invalid-request", path: "request.recipe.pivot" },
+      });
+    }
   });
 
   test("a tile slot names a role and nothing else", () => {
@@ -1540,7 +1540,7 @@ describe("tile requests", () => {
     ).toMatchObject({ ok: false, error: { kind: "invalid-slot" } });
     expect(
       newRequestRecord(
-        withGround,
+        content,
         {
           id: "face",
           subject: "zeus",
