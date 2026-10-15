@@ -187,7 +187,7 @@ These four gaps are the work. Everything else is tuning.
 
 ### U3. Game: structures, fire, ruin, strike and the effects setting
 
-- [ ] Goal: the packaged game draws the published art for real world events.
+- [x] Goal: the packaged game draws the published art for real world events.
 - **Approach:**
   - **Shared presentation module.** A new `packages/renderer/src/structures.ts` is exported for both the game and the studio. It holds:
     - `StructureArt` (tree or building) and the published asset ids
@@ -218,7 +218,7 @@ These four gaps are the work. Everything else is tuning.
 
 ### U4. Studio reference scene
 
-- [ ] Goal: the preview shows the whole T2 scene and proves AE7.
+- [x] Goal: the preview shows the whole T2 scene and proves AE7.
 - **Approach:** the harness swaps its placeholder structure (`apps/studio/src/harness/layout.ts`) for the shared art choice. It composes the tree, the building, `zeus-retro` and the strike, and imports only `@panthea/renderer`'s shared module. `PreviewItem` (`preview.ts`) gains an effect item. A Strike button drives `oneShotFrameAt` from the playback clock, and there is a building-state control and the full/calm toggle. The harness has no world, so a resolved strike sets the building to burning.
 - **Files:** `apps/studio/src/harness/`, `apps/studio/src/renderer/preview.ts`, `apps/studio/src/App.tsx`, tests.
 - **Tests:** AE7 in both modes against the playback clock (calm shows the calm bolt, and the building ends burning). Also the state control.
