@@ -1134,14 +1134,31 @@ class MeshBuilder:
         self.bm = bmesh.new()
         self.roles: list = []
         self.parts: list = []
+        self.bounds: list = []  # (min, max, role) of each solid added
 
     def add(self, faces, role: str, part: str) -> None:
         if role not in self.roles:
             self.roles.append(role)
         slot = self.roles.index(role)
+        points = np.array([v.co[:] for face in faces for v in face.verts])
+        self.bounds.append((points.min(axis=0), points.max(axis=0), role))
         for face in faces:
             face.material_index = slot
             self.parts.append(part)
+
+    def floating(self, ground: float, eps: float = 0.03) -> list:
+        """The solids that neither reach the ground nor touch a solid that does, by their bounding boxes: (role, centre)."""
+        reached = {i for i, (low, _, _) in enumerate(self.bounds) if low[2] <= ground + eps}
+        grew = True
+        while grew:
+            grew = False
+            for i, (low, high, _) in enumerate(self.bounds):
+                if i in reached:
+                    continue
+                if any(np.all(low <= self.bounds[j][1] + eps) and np.all(self.bounds[j][0] <= high + eps) for j in reached):
+                    reached.add(i)
+                    grew = True
+        return [(role, ((low + high) / 2).round(2).tolist()) for i, (low, high, role) in enumerate(self.bounds) if i not in reached]
 
     @staticmethod
     def turned(verts, centre, turns) -> None:
@@ -1458,13 +1475,12 @@ class House(Structure):
         course(D, -L / 2 + T / 2, "y", 1.3, 2.3)  # the far gable wall
         course(L, D / 2 - T / 2, "x", 0.3, 1.1, gap=(-self.DOOR_W / 2 - 0.1, self.DOOR_W / 2 + 0.1))
         course(D, L / 2 - T / 2, "y", 0.3, 1.2)
-        # A charred door post, a run of cornice on the far wall, and what is left of the porch.
+        # A charred door post and what is left of the porch.
         mb.box((-self.DOOR_W / 2 - 0.12, D / 2, P + 0.85), (0.14, 0.16, 1.7), "timber", "door", tilt=[(4, "Y")])
-        mb.box((-L / 2 + 0.2, -D / 4, P + 2.5), (0.5, 1.1, self.CORNICE), "trim", "entablature")
         mb.column((-self.PORCH_W / 2 + 0.15, cy, P + 0.1), 0.15, 1.1, "column", "column", taper=0.9, segments=10)
         mb.box((-self.PORCH_W / 2 + 0.15, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
         mb.box((self.PORCH_W / 2 - 0.15, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
-        mb.box((self.PORCH_W / 2 - 0.15, cy + 0.2, P + 0.5), (0.3, 0.3, 0.9), "column", "column", tilt=[(78, "X")])  # a shaft that fell forward
+        mb.box((self.PORCH_W / 2 - 0.15, cy + 0.2, P + 0.25), (0.3, 0.3, 0.9), "column", "column", tilt=[(78, "X")])  # a shaft that fell forward
         mb.box((0.5, cy + 0.85, 0.18), (1.2, 0.34, 0.24), "trim", "entablature", tilt=[(-8, "Z")])  # the architrave on the ground
         mb.box((-0.4, cy + 0.9, 0.2), (0.44, 0.44, 0.12), "column", "column", tilt=[(12, "Z")])  # a capital
         # Burnt roof timbers fallen into the house and slabs of tile on them.
@@ -1480,6 +1496,9 @@ class House(Structure):
             x = (ux - 0.5) * (L + 1.0 if outside else L - 0.7)
             y = (uy - 0.5) * (D + 1.0 if outside else D - 0.7)
             mb.box((x, y, P + size / 2 * 0.8), (size, size * (0.7 + hash_unit(k)), size * 0.8), "rubble", "prop", tilt=[(hash_unit(k + 40) * 40 - 20, "Z")])
+        loose = mb.floating(0.0)
+        if loose:
+            raise InputError(f"the ruin has pieces in the air: {loose}")
         self.attach(mb, "ruin", clip)
 
 

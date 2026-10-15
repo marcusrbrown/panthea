@@ -61,10 +61,10 @@
     }
   },
   "wind": {
-    "amplitudeM": 0.6,
-    "lag": 1.4,
+    "amplitudeM": 0.25,
+    "lag": 0.8,
     "cycles": 1,
-    "swirl": 0.5
+    "swirl": 0.35
   },
   "clips": {
     "intact": {
