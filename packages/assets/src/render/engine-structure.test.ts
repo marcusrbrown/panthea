@@ -126,6 +126,11 @@ describe("a structure render job", () => {
       expect(staged?.files).toEqual(named);
       expect(record?.engine?.licences).toEqual([
         {
+          subject: "kenney-building-kit",
+          role: "input",
+          licence: "CC0-1.0",
+        },
+        {
           subject: "quaternius-modular-ruins",
           role: "input",
           licence: "CC0-1.0",

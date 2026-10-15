@@ -769,21 +769,25 @@ def import_gltf(path: Path) -> list:
 
 
 def kit_template(staging: Staging, kit: str, path: str):
-    """A kit model's vertices (metres, Z up, in world space) and polygons, read once: the objects are removed again."""
+    """A kit model read once: its vertices (metres, Z up, in world space), its polygons and the name of each one's
+    material. The imported objects are removed again."""
     objs = import_gltf(staging.file(kit, path))
     try:
         meshes = [o for o in objs if o.type == "MESH"]
         if not meshes:
             raise InputError(f"{path} holds no mesh")
-        co, polys, base = [], [], 0
+        co, polys, mats, base = [], [], [], 0
         for o in meshes:
             o.data.transform(o.matrix_world)
             flat = np.empty(len(o.data.vertices) * 3, dtype=np.float64)
             o.data.vertices.foreach_get("co", flat)
             co.append(flat.reshape(-1, 3))
-            polys.extend(tuple(base + i for i in p.vertices) for p in o.data.polygons)
+            names = [m.name if m else "" for m in o.data.materials] or [""]
+            for p in o.data.polygons:
+                polys.append(tuple(base + i for i in p.vertices))
+                mats.append(names[min(p.material_index, len(names) - 1)])
             base += len(o.data.vertices)
-        return np.concatenate(co), polys
+        return np.concatenate(co), polys, mats
     finally:
         for o in objs:
             bpy.data.objects.remove(o, do_unlink=True)
@@ -1155,9 +1159,10 @@ class MeshBuilder:
         self.bm = bmesh.new()
         self.roles: list = []
         self.parts: list = []
+        self.soft: list = []  # per face: shaded smooth
         self.bounds: list = []  # (min, max, role) of each solid added
 
-    def add(self, faces, role: str, part: str) -> None:
+    def add(self, faces, role: str, part: str, soft: bool = False) -> None:
         if role not in self.roles:
             self.roles.append(role)
         slot = self.roles.index(role)
@@ -1166,6 +1171,7 @@ class MeshBuilder:
         for face in faces:
             face.material_index = slot
             self.parts.append(part)
+            self.soft.append(soft)
 
     def floating(self, ground: float, eps: float = 0.03) -> list:
         """The solids that neither reach the ground nor touch a solid that does, by their bounding boxes: (role, centre)."""
@@ -1201,15 +1207,6 @@ class MeshBuilder:
         self.turned(verts, centre, tilt)
         self.solid(verts, ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)), role, part)
 
-    def column(self, centre, radius: float, height: float, role: str, part: str, taper: float = 1.0, segments: int = 10):
-        cx, cy, cz = centre
-        ring = lambda r, z: [self.bm.verts.new((cx + r * math.cos(2 * math.pi * i / segments), cy + r * math.sin(2 * math.pi * i / segments), z)) for i in range(segments)]  # noqa: E731
-        bottom, top = ring(radius, cz), ring(radius * taper, cz + height)
-        faces = [self.bm.faces.new((bottom[i], bottom[(i + 1) % segments], top[(i + 1) % segments], top[i])) for i in range(segments)]
-        faces.append(self.bm.faces.new(top[::-1]))
-        faces.append(self.bm.faces.new(bottom))
-        self.add(faces, role, part)
-
     def limb(self, a, b, r0: float, r1: float, role: str, part: str, segments: int = 7):
         """A tapering round limb from point a (radius r0) to point b (radius r1), capped at both ends."""
         a, b = Vector(a), Vector(b)
@@ -1223,16 +1220,36 @@ class MeshBuilder:
         faces.append(self.bm.faces.new(start))
         self.add(faces, role, part)
 
-    def model(self, template, centre, scale, turn: float, role: str, part: str, band=None, middle: bool = False, tilt=()):
+    def model(self, template, centre, scale, turn: float, role, part: str, band=None, middle: bool = False, tilt=(), dissolve: float = 0.0, soft: bool = False, shaft=None):
         """A kit model, scaled, turned about Z, then placed with its origin (or, with `middle`, its centre) on `centre`
-        and turned by `tilt` about that point. `band` keeps only (low, high) of its scaled height, cut flat and capped."""
-        co, polys = template
+        and turned by `tilt` about that point. `role` is one material role, or a dict from the kit's material names to
+        roles (`"*"` for the rest). `band` keeps only (low, high) of its scaled height, cut flat and capped. `dissolve`
+        merges faces that are flat to within that many degrees, so a kit model's sculpted facets become a few large
+        ones; `shaft` refits the radius of a round shaft between two heights (kit units) to one straight taper; `soft`
+        shades the model smooth."""
+        co, polys, mats = template
         sx, sy, sz = scale
+        names = sorted(set(mats))
         cut = bmesh.new()
         used = sorted({i for poly in polys for i in poly})
         made = {i: cut.verts.new((co[i][0] * sx, co[i][1] * sy, co[i][2] * sz)) for i in used}
-        for poly in polys:
-            cut.faces.new([made[i] for i in poly])
+        for poly, mat in zip(polys, mats):
+            cut.faces.new([made[i] for i in poly]).material_index = names.index(mat)
+        if shaft is not None:
+            # A round shaft between two heights (kit units) is brought to one clean taper: each vertex's radius becomes
+            # the straight line fitted through the shaft's own, which takes the sculpted rings and grooves off.
+            z0, z1 = shaft[0] * sz, shaft[1] * sz
+            ring = [v for v in cut.verts if z0 <= v.co.z <= z1]
+            radii = np.array([math.hypot(v.co.x, v.co.y) for v in ring])
+            heights = np.array([v.co.z for v in ring])
+            slope, base = np.polyfit(heights, radii, 1)
+            for v in ring:
+                r = math.hypot(v.co.x, v.co.y)
+                if r > 1e-9:
+                    fit = base + slope * v.co.z
+                    v.co.x, v.co.y = v.co.x / r * fit, v.co.y / r * fit
+        if dissolve > 0.0:
+            bmesh.ops.dissolve_limit(cut, angle_limit=math.radians(dissolve), verts=list(cut.verts), edges=list(cut.edges), delimit={"MATERIAL"})
         if band is not None:
             for z, below in ((band[1], True), (band[0], False)):
                 if z is None:
@@ -1246,17 +1263,20 @@ class MeshBuilder:
         shift = (points.min(axis=0) + points.max(axis=0)) / 2 if middle else np.zeros(3)
         turn_rot = mathutils.Matrix.Rotation(math.radians(turn), 3, "Z")
         placed = {}
-        faces = []
+        by_role: dict = {}
         for face in cut.faces:
             ring = []
             for v in face.verts:
                 if v not in placed:
                     placed[v] = self.bm.verts.new(Vector(centre) + turn_rot @ (v.co - Vector(shift.tolist())))
                 ring.append(placed[v])
-            faces.append(self.bm.faces.new(ring))
+            name = names[face.material_index]
+            chosen = role if isinstance(role, str) else role.get(name, role["*"])
+            by_role.setdefault(chosen, []).append(self.bm.faces.new(ring))
         cut.free()
         self.turned(list(placed.values()), centre, tilt)
-        self.add(faces, role, part)
+        for chosen, faces in by_role.items():
+            self.add(faces, chosen, part, soft)
 
     def prism(self, axis: str, along0: float, along1: float, half_w: float, z0: float, rise: float, role: str, part: str):
         """Triangular prism, its ridge along `axis` ("x" or "y"): base at z0 spanning ±half_w across the ridge, apex at z0 + rise."""
@@ -1269,8 +1289,8 @@ class MeshBuilder:
         bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
         self.bm.to_mesh(mesh)
         self.bm.free()
-        for poly in mesh.polygons:
-            poly.use_smooth = False
+        for poly, soft in zip(mesh.polygons, self.soft):
+            poly.use_smooth = soft
         obj = bpy.data.objects.new(name, mesh)
         bpy.context.scene.collection.objects.link(obj)
         # Authored in house coordinates (+X along the ridge, +Y toward the front); laid onto the ground axes.
@@ -1346,19 +1366,27 @@ class Structure:
 
 
 class House(Structure):
-    """A Greek town house from script geometry: whitewashed walls on a stone plinth, a low-pitch roof of tile courses,
-    a columned porch with a pediment on the +Y front (the door side), windows with shutters, a gable end on +X.
+    """A Greek town house built from kit pieces: Kenney wall panels (with the door and window openings) on a plinth of
+    Kenney floor slabs, corner pilasters, and a porch of Quaternius round columns on the +Y front (the door side). The
+    script adds only what no kit piece covers: the tile roof and its ridge, the gable ends, the cornice and porch
+    architrave, the shutters, sills and lintels, the door leaf.
 
-    Damaged is this mesh with its marks added as decals: the silhouette is the whole house's. The ruin breaks the
-    walls, the porch and the roof."""
-
-    LENGTH, DEPTH = 4.2, 3.0  # footprint, metres
+    Damaged is this mesh with its marks added as decals: the silhouette is the whole house's. The ruin collapses
+    the same pieces: cut-down walls and pilasters, a broken column, a drum and rubble from the kit."""
+    LENGTH, DEPTH = 4.0, 3.0  # footprint, metres: two 2 m wall panels long, a 2 m and a 1 m panel deep
     PLINTH, WALL, CORNICE = 0.3, 2.4, 0.16
     EAVE, PITCH, COURSES, COURSE_T = 0.35, 20.0, 9, 0.09
     PORCH_W, PORCH_D, COLUMN_H = 2.3, 1.2, 2.25
     DOOR_W, DOOR_H = 0.95, 1.85
-    COLUMN_SCALE = (0.75, 0.75, 2.25 / 1.83)  # the kit's short column, fitted to the porch's height
-    WINDOW_X, WINDOW_Z, WINDOW_W, WINDOW_H = 1.5, 1.5, 0.5, 0.8
+    COLUMN_SCALE = (0.62, 0.62, 2.25 / 3.99)  # the kit's round column, fitted to the porch's height and made slimmer
+    # The kit column's sculpted wear shows as noise at this size; it is taken off by merging facets that are flat to
+    # within these degrees and by refitting the shaft, between these heights of the kit model, to one straight taper.
+    COLUMN_DISSOLVE = 30.0
+    COLUMN_SHAFT = (1.2, 3.4)
+    WINDOW_X, WINDOW_SILL, WINDOW_TOP, WINDOW_W = 1.5, 0.6, 2.0, 0.55  # the kit's window opening, narrowed by scaling the panel to 1 m
+    WALL_T = 0.2  # a kit wall panel's thickness
+    STONE = {"*": "wall"}
+    GLASS = {"glass": "window", "*": "wall"}
 
     def __init__(self, profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook):
         super().__init__(profile, camera, staging, scene, axes, book)
@@ -1388,49 +1416,87 @@ class House(Structure):
         else:
             mb.box((L / 2 + n, a, z), (depth, along, high), role, part, tilt)
 
+    def tile(self, mb: MeshBuilder, x: float, y: float, width: float, depth: float, high: float) -> None:
+        """A Kenney floor slab scaled to a width, depth and thickness, standing on the ground: the plinth is made of these."""
+        mb.model(self.part("floor"), (x, y, 0.0), (width / 2.0, depth / 2.0, high / 0.1), 0.0, "plinth", "stylobate")
+
     def plinth(self, mb: MeshBuilder) -> None:
         L, D, P, p = self.LENGTH, self.DEPTH, self.PLINTH, self.PORCH_D
-        mb.box((0, 0, P / 2), (L + 0.5, D + 0.5, P), "plinth", "stylobate")
-        # The porch's floor and the step up to it.
-        mb.box((0, D / 2 + (p + 0.3) / 2 - 0.1, P / 2), (self.PORCH_W + 0.5, p + 0.3, P), "plinth", "stylobate")
-        mb.box((0, D / 2 + p + 0.45, 0.08), (1.5, 0.4, 0.16), "plinth", "stylobate")
+        # The house's slab, 3 by 2 tiles; the porch's, 2 tiles; and the step up to it, one.
+        for ix in (-1, 0, 1):
+            for iy in (-1, 1):
+                self.tile(mb, ix * (L + 0.5) / 3, iy * (D + 0.5) / 4, (L + 0.5) / 3, (D + 0.5) / 2, P)
+        pw, pd = self.PORCH_W + 0.5, p + 0.3
+        for ix in (-1, 1):
+            self.tile(mb, ix * pw / 4, D / 2 - 0.1 + pd / 2, pw / 2, pd, P)
+        self.tile(mb, 0.0, D / 2 + p + 0.45, 1.5, 0.4, 0.16)
+
+    def panel(self, mb: MeshBuilder, kind: str, wall: str, along: float, band=None, narrow: bool = False) -> None:
+        """A Kenney wall panel whose outer face is on `wall`'s plane (front +Y, back -Y, right +X, left -X), centred
+        `along` it. `narrow` halves a window panel's width, which narrows its opening with it; `band` cuts it down."""
+        L, D, P, t = self.LENGTH, self.DEPTH, self.PLINTH, self.WALL_T
+        thin = kind in ("wall", "wall-half")
+        scale = (2.0 if thin else 1.0, 0.5 if narrow else 1.0, 1.0)
+        roles = self.GLASS if kind == "window" else self.STONE
+        turn = {"front": 90.0, "back": 270.0, "right": 0.0, "left": 180.0}[wall]
+        if wall in ("front", "back"):
+            sign = 1 if wall == "front" else -1
+            centre = (along, sign * (D / 2 - t / 2), P)
+        else:
+            sign = 1 if wall == "right" else -1
+            centre = (sign * (L / 2 - t / 2), along, P)
+        mb.model(self.part(kind), centre, scale, turn, roles, "wall", band=band)
 
     def window(self, mb: MeshBuilder, wall: str, a: float) -> None:
-        w, h, z = self.WINDOW_W, self.WINDOW_H, self.WINDOW_Z
-        self.wall_box(mb, wall, a, 0.01, z, w, 0.03, h, "window", "door")
-        # A deep frame around a dark opening, a sill and a lintel, and a shutter either side.
-        self.wall_box(mb, wall, a - w / 2 - 0.035, 0.05, z, 0.07, 0.1, h + 0.14, "trim", "entablature")
-        self.wall_box(mb, wall, a + w / 2 + 0.035, 0.05, z, 0.07, 0.1, h + 0.14, "trim", "entablature")
-        self.wall_box(mb, wall, a, 0.05, z + h / 2 + 0.035, w + 0.14, 0.1, 0.07, "trim", "entablature")
-        self.wall_box(mb, wall, a, 0.09, z - h / 2 - 0.05, w + 0.3, 0.18, 0.07, "trim", "entablature")
-        self.wall_box(mb, wall, a, 0.03, z + h / 2 + 0.16, w + 0.34, 0.07, 0.1, "trim", "entablature")
+        """A shutter either side of the kit window's opening, and a sill and a lintel: timber and stone trim."""
+        P, w = self.PLINTH, self.WINDOW_W
+        top, sill = P + self.WINDOW_TOP, P + self.WINDOW_SILL
+        z = (top + sill) / 2
+        self.wall_box(mb, wall, a, 0.08, sill - 0.03, w + 0.2, 0.2, 0.06, "trim", "entablature")
+        self.wall_box(mb, wall, a, 0.05, top + 0.05, w + 0.1, 0.12, 0.1, "trim", "entablature")
         for side in (-1, 1):
-            self.wall_box(mb, wall, a + side * (w / 2 + 0.22), 0.035, z, 0.24, 0.05, h + 0.1, "shutter", "door")
+            self.wall_box(mb, wall, a + side * 0.39, 0.03, z, 0.2, 0.05, top - sill, "shutter", "door")
 
     def whole_walls(self, mb: MeshBuilder) -> None:
         L, D, P, p = self.LENGTH, self.DEPTH, self.PLINTH, self.PORCH_D
-        mb.box((0, 0, P + self.WALL / 2), (L, D, self.WALL), "wall", "wall")
+        # Front: a narrow window, the doorway, a narrow window. Back: two plain panels. Sides: plain, window, plain
+        # and a plain pair.
+        self.panel(mb, "window", "front", -self.WINDOW_X, narrow=True)
+        self.panel(mb, "doorway", "front", 0.0)
+        self.panel(mb, "window", "front", self.WINDOW_X, narrow=True)
+        for x in (-1.0, 1.0):
+            self.panel(mb, "wall", "back", x)
+        self.panel(mb, "wall-half", "right", -1.0)
+        self.panel(mb, "window", "right", 0.0, narrow=True)
+        self.panel(mb, "wall-half", "right", 1.0)
+        self.panel(mb, "wall", "left", -0.5)
+        self.panel(mb, "wall-half", "left", 1.0)
+        for sx in (-1, 1):
+            for sy in (-1, 1):
+                self.pilaster(mb, sx, sy)
         mb.box((0, 0, self.wall_top + self.CORNICE / 2), (L + 0.22, D + 0.22, self.CORNICE), "trim", "entablature")
-        # The door under the porch: a dark leaf in a stone frame.
-        d = self.DOOR_W
-        self.wall_box(mb, "front", 0.0, 0.02, P + self.DOOR_H / 2, d, 0.05, self.DOOR_H, "door", "door")
-        for side in (-1, 1):
-            self.wall_box(mb, "front", side * (d / 2 + 0.07), 0.05, P + self.DOOR_H / 2, 0.14, 0.1, self.DOOR_H + 0.14, "trim", "entablature")
-        self.wall_box(mb, "front", 0.0, 0.05, P + self.DOOR_H + 0.07, d + 0.42, 0.1, 0.14, "trim", "entablature")
-        for side in (-1, 1):
-            self.window(mb, "front", side * self.WINDOW_X)
-        self.window(mb, "side", 0.0)
-        # The porch: two columns on a plinth carrying an architrave and a pediment.
+        # The door: a dark leaf in the doorway, and the lintel above it.
+        t = self.WALL_T
+        self.wall_box(mb, "front", 0.0, -t / 2, P + 1.02, 1.0, 0.06, 2.04, "door", "door")
+        for wall, a in (("front", -self.WINDOW_X), ("front", self.WINDOW_X), ("side", 0.0)):
+            self.window(mb, wall, a)
+        # The porch: two kit columns carrying an architrave under the porch's own gable.
         cx = self.PORCH_W / 2 - 0.15
         cy = D / 2 + p - 0.2
-        shaft = self.COLUMN_H - 0.22
         for side in (-1, 1):
-            mb.box((side * cx, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
-            mb.column((side * cx, cy, P + 0.1), 0.15, shaft, "column", "column", taper=0.82, segments=10)
-            mb.box((side * cx, cy, P + 0.1 + shaft + 0.06), (0.42, 0.42, 0.12), "column", "column")
+            self.column(mb, (side * cx, cy, P))
         top = P + self.COLUMN_H
         mb.box((0, cy, top + 0.13), (self.PORCH_W + 0.2, 0.36, 0.26), "trim", "entablature")
         mb.box((0, (D / 2 + cy) / 2, top + 0.13), (self.PORCH_W - 0.2, p - 0.2, 0.26), "trim", "entablature")
+
+    def pilaster(self, mb: MeshBuilder, sx: int, sy: int, band=None) -> None:
+        """A Kenney thin column in a corner of the house: it covers where two wall panels meet."""
+        L, D, P = self.LENGTH, self.DEPTH, self.PLINTH
+        mb.model(self.part("pilaster"), (sx * (L / 2 - 0.15), sy * (D / 2 - 0.15), P), (1.0, 1.0, 1.0), 0.0, "trim", "entablature", band=band)
+
+    def column(self, mb: MeshBuilder, centre, band=None, middle: bool = False, tilt=()) -> None:
+        """A Quaternius round column, cleaned (see COLUMN_DISSOLVE), standing at `centre`: whole, or cut to `band`."""
+        mb.model(self.part("column"), centre, self.COLUMN_SCALE, 0.0, "column", "column", band=band, middle=middle, tilt=tilt, dissolve=self.COLUMN_DISSOLVE, soft=True, shaft=self.COLUMN_SHAFT)
 
     def roof_slopes(self, mb: MeshBuilder, axis: str, along0: float, along1: float, half_w: float, z_eave: float, rise: float, courses: int) -> None:
         """Both slopes of a gable roof as courses of tile slabs, each higher one stepped up so its lower lip shows, and a ridge cap."""
@@ -1515,43 +1581,34 @@ class House(Structure):
         self.objs.append(obj)
 
     def build_ruin(self, clip: dict) -> None:
-        L, D, P, T = self.LENGTH, self.DEPTH, self.PLINTH, 0.28
+        L, D, P = self.LENGTH, self.DEPTH, self.PLINTH
         p, cy = self.PORCH_D, self.DEPTH / 2 + self.PORCH_D - 0.2
         mb = MeshBuilder()
         self.plinth(mb)
         mb.box((0, 0, P + 0.03), (L - 0.1, D - 0.1, 0.06), "floor", "ground")  # the floor, ash-dark under the rubble
-        seg = 0.6
-        index = 0
-
-        def course(length: float, fixed: float, along: str, low: float, high: float, gap=None):
-            """A broken wall: slabs of fixed length whose heights fall between `low` and `high`."""
-            nonlocal index
-            count = max(1, round(length / seg))
-            width = length / count
-            for k in range(count):
-                centre = -length / 2 + width * (k + 0.5)
-                if gap is not None and gap[0] < centre < gap[1]:
-                    continue
-                index += 1
-                h = low + (high - low) * hash_unit(index)
-                pos = (centre, fixed, P + h / 2) if along == "x" else (fixed, centre, P + h / 2)
-                size = (width * 0.98, T, h) if along == "x" else (T, width * 0.98, h)
-                mb.box(pos, size, "wall", "wall")
-
-        course(L, -D / 2 + T / 2, "x", 1.6, 2.4)  # the far long wall stands highest
-        course(D, -L / 2 + T / 2, "y", 1.3, 2.3)  # the far gable wall
-        course(L, D / 2 - T / 2, "x", 0.3, 1.1, gap=(-self.DOOR_W / 2 - 0.1, self.DOOR_W / 2 + 0.1))
-        course(D, L / 2 - T / 2, "y", 0.3, 1.2)
-        # A charred door post and what is left of the porch: a column broken off at its base, a drum, a capital and the architrave on the ground.
+        # The same panels, cut down: the far walls stand highest, the front is stumps with the doorway's jambs.
+        # A cut is measured from the plinth, so a cut under a window's sill leaves a plain wall.
+        self.panel(mb, "window", "front", -self.WINDOW_X, narrow=True, band=(None, 0.5))
+        self.panel(mb, "doorway", "front", 0.0, band=(None, 1.4))
+        self.panel(mb, "window", "front", self.WINDOW_X, narrow=True, band=(None, 0.9))
+        for x, high in ((-1.5, 2.2), (-0.5, 1.4), (0.5, 2.0), (1.5, 1.1)):
+            self.panel(mb, "wall-half", "back", x, band=(None, high))
+        self.panel(mb, "wall-half", "right", -1.0, band=(None, 0.7))
+        self.panel(mb, "window", "right", 0.0, narrow=True, band=(None, 0.5))
+        self.panel(mb, "wall-half", "right", 1.0, band=(None, 1.1))
+        for y, high in ((-1.0, 1.9), (0.0, 1.2), (1.0, 1.6)):
+            self.panel(mb, "wall-half", "left", y, band=(None, high))
+        for sx, sy, high in ((-1, -1, 2.2), (1, -1, 1.2), (-1, 1, 0.8), (1, 1, 0.5)):
+            self.pilaster(mb, sx, sy, band=(None, high))
+        # What is left of the porch: a column broken off above its base, one to its foot, and a charred door post.
         mb.box((-self.DOOR_W / 2 - 0.12, D / 2, P + 0.85), (0.14, 0.16, 1.7), "timber", "door", tilt=[(4, "Y")])
-        sx, sy, sz = self.COLUMN_SCALE
-        short, tall = self.part("porch-column"), self.part("column-tall")
-        mb.model(short, (-self.PORCH_W / 2 + 0.15, cy, P), self.COLUMN_SCALE, 0.0, "column", "column", band=(None, 1.0))
-        mb.model(short, (self.PORCH_W / 2 - 0.15, cy, P), self.COLUMN_SCALE, 0.0, "column", "column", band=(None, 0.3))
-        # A drum from the tall column's shaft lying on its side, and the short column's capital beside it.
-        r = 0.33 * 0.55
-        mb.model(tall, (0.9, cy - 0.15, P + r), (0.55, 0.55, 0.55), 20.0, "column", "column", band=(0.9, 1.7), middle=True, tilt=[(90, "X")])
-        mb.model(short, (-0.35, cy - 0.2, P + 0.2), self.COLUMN_SCALE, 0.0, "column", "column", band=(1.95, None), middle=True, tilt=[(75, "Y")])
+        cx = self.PORCH_W / 2 - 0.15
+        self.column(mb, (-cx, cy, P), band=(None, 0.9))
+        self.column(mb, (cx, cy, P), band=(None, 0.25))
+        # A drum of the second column lying on its side, and its capital, which fell clear of it.
+        drum_r = 0.33 * self.COLUMN_SCALE[0]
+        self.column(mb, (0.9, cy - 0.15, P + drum_r), band=(0.9, 1.5), middle=True, tilt=[(90, "X")])
+        self.column(mb, (-0.35, cy - 0.2, P + 0.2), band=(1.8, None), middle=True, tilt=[(75, "Y")])
         mb.box((0.1, cy + 0.2, P + 0.16), (1.3, 0.34, 0.22), "trim", "entablature", tilt=[(-8, "Z")])  # the architrave fallen on the porch floor
         # Burnt roof timbers fallen into the house, leaning on the walls, and slabs of tile on them.
         mb.box((-0.7, -0.2, P + 0.8), (0.16, 2.6, 0.16), "timber", "entablature", tilt=[(32.5, "X")])
@@ -1561,7 +1618,7 @@ class House(Structure):
         # Wall chunks and rubble from the kit: the stone core spilled from the broken walls, inside the house and about its plinth.
         chunk, low = self.part("wall-chunk"), self.part("wall-chunk-low")
         mb.model(low, (-0.2, -1.05, P), (0.8, 0.8, 0.8), 3.0, "rubble", "wall")
-        mb.model(chunk, (1.5, 0.35, P), (0.45, 0.45, 0.45), 90.0, "rubble", "wall", tilt=[(0, "Z")])
+        mb.model(chunk, (1.5, 0.35, P), (0.45, 0.45, 0.45), 90.0, "rubble", "wall")
         mb.model(low, (-0.9, 2.55, P - 0.02), (0.55, 0.55, 0.55), 15.0, "rubble", "prop")
         for k, (x, y, scale) in enumerate(((0.9, -0.5, 0.7), (-1.5, 0.3, 0.6), (0.2, 1.1, 0.55), (2.3, 1.2, 0.7), (-2.35, -0.9, 0.6), (1.7, -1.1, 0.5))):
             mb.model(self.part("rubble"), (x, y, P + 0.02), (scale, scale, scale), 360 * hash_unit(k + 5), "rubble", "prop")
@@ -1573,13 +1630,17 @@ class House(Structure):
         loose = mb.floating(0.0)
         if loose:
             raise InputError(f"the ruin has pieces in the air: {loose}")
+        # The fallen timbers and tiles lie inside the house's walls; none pokes out through one.
+        out = [role for low_, high_, role in mb.bounds if role in ("timber", "roof") and (low_[0] < -L / 2 - 0.02 or high_[0] > L / 2 + 0.02 or low_[1] < -D / 2 - 0.02 or high_[1] > D / 2 + 0.1)]
+        if out:
+            raise InputError(f"the ruin has roof pieces outside its walls: {out}")
         self.attach(mb, "ruin", clip)
 
 
 class Tree(Structure):
     """One kit model made into an old oak: its trunk and roots, forked limbs added by the script, and its crown copied
     into a few wide lobes with gaps between them. It sways in a seamless wind loop; damaged is fire-stripped, bare
-    black limbs and twigs with scraps of scorched foliage and glowing embers; the ruin is the trunk cut down to a
+    black limbs and twigs with scraps of scorched foliage; the ruin is the trunk cut down to a
     charred stump with broken limb stubs."""
 
     # Leaf lobes as fractions of the tree's height: across the screen, toward the viewer, up, the width, and how flat they are.
@@ -1696,7 +1757,7 @@ class Tree(Structure):
 
     def limbs(self, mb: MeshBuilder) -> tuple:
         """The forked skeleton: three main limbs from the trunk's top to the big lobes, secondary limbs to the rest.
-        Returns the points the ember spots and twigs hang from: (limb middles, limb ends)."""
+        Returns the points the twigs hang from: (limb middles, limb ends)."""
         h = self.height
         top = self.TRUNK_TOP * h
         lobes = self.lobes()
@@ -1738,7 +1799,6 @@ class Tree(Structure):
     def build(self, state: str, clip: dict) -> None:
         h = self.height
         mb = MeshBuilder()
-        spots = []
         if clip["ruin"]:
             self.add_trunk(mb, self.STUMP * h)
             top = self.STUMP * h
@@ -1747,7 +1807,6 @@ class Tree(Structure):
                 start = (0.1 * math.cos(a), 0.1 * math.sin(a), top - 0.45 - 0.2 * k)
                 end = (start[0] + length * math.cos(a), start[1] + length * math.sin(a), start[2] + rise)
                 mb.limb(start, end, 0.17, 0.11, "trunk", "trunk")
-            spots = [(0.12, -0.18, top - 0.1), (-0.17, 0.12, top - 0.3), (0.0, 0.2, top - 0.55)]
         else:
             self.add_trunk(mb, None)
             middles, ends = self.limbs(mb)
@@ -1767,10 +1826,6 @@ class Tree(Structure):
                     self.add_cluster(mb, centre, width * 0.8, flat, "leaf" if k % 2 else "leaf-deep", cap=(direction / np.linalg.norm(direction), 0.3))
                 for k in sorted(range(len(tips)), key=lambda i: hash_unit(i * 3 + 8))[:5]:
                     self.add_cluster(mb, tips[k], 0.075 * h, 0.8, "leaf-deep")
-                spots = [*(tuple(p + np.array([0.18, 0.18, 0.0])) for p in middles), *(tuple(p + np.array([0.15, 0.15, 0.05])) for p in ends)]
-            # Embers glow first on the trunk, on the side the viewer sees, then on limbs.
-            spots = [(0.33, 0.33, 0.35 * h * 0.5), (0.30, 0.36, 0.35 * h * 0.8), (0.36, 0.28, 0.25 * h), *spots]
-        self.embers(mb, clip, spots)
         obj, roles = mb.finish("tree", Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)))
         self.book.bind(obj, [self.look(clip, role) for role in roles])
         self.objs.append(obj)
@@ -1782,12 +1837,6 @@ class Tree(Structure):
             self.rest = rest.reshape(-1, 3)
             self.frames = clip["frames"]
             self.check_loop()
-
-    def embers(self, mb: MeshBuilder, clip: dict, spots: list) -> None:
-        """Small glowing blocks on the trunk, limbs and crown: the first `embers` of `spots`."""
-        for rank, spot in enumerate(spots[: clip.get("embers", 0)]):
-            size = 0.2 + 0.1 * hash_unit(rank + 60)
-            mb.box(spot, (size, size, size), "ember", "prop", tilt=[(hash_unit(rank + 3) * 80, "Z")])
 
     def displaced(self, frame: float) -> np.ndarray:
         """The rest vertices swayed to `frame` of the loop: a travelling wave up the tree, planted at the foot, along the screen's horizontal."""

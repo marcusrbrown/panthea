@@ -155,12 +155,6 @@
           "referencedBy": ["greek-house"]
         },
         {
-          "path": "Column_Round_Short.glb",
-          "sha256": "0d00095d5682e6531d4e82cedead764b874e5b3bf43fa933f9d1bf02aebbc4e3",
-          "size": 26592,
-          "referencedBy": ["greek-house"]
-        },
-        {
           "path": "Wall_Broken.glb",
           "sha256": "115bcf3fb508571e5c2ab2fc4929ab5864280b6300c29aa99cee651f354268f1",
           "size": 49880,
@@ -170,6 +164,59 @@
           "path": "Wall_Double_Broken.glb",
           "sha256": "2d4215d203cb773f22c41dda834e92bf48b6e74bfa4feafa23cd29b607d4fe9f",
           "size": 43656,
+          "referencedBy": ["greek-house"]
+        }
+      ]
+    },
+    {
+      "id": "kenney-building-kit",
+      "title": "Building Kit (Kenney)",
+      "sourceUrl": "https://kenney.nl/assets/building-kit",
+      "licence": {
+        "spdx": "CC0-1.0"
+      },
+      "licenceFile": {
+        "path": "License.txt",
+        "sha256": "60a07f9108f5a3fc5f9429fd1faa5b168c05cc085354f78ed48180ef32ec6209"
+      },
+      "status": "used",
+      "textureSkip": ["Textures/colormap.png"],
+      "notes": "The files are the pack's GLB format files as shipped. Their one texture, Textures/colormap.png, is not vendored: the render draws every surface in its own palette material, so nothing reads it.",
+      "files": [
+        {
+          "path": "wall.glb",
+          "sha256": "769a02a70327132ba864c04299631c65fb08e96e01e1796ba73ddf7f44679a36",
+          "size": 2664,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "wall-half.glb",
+          "sha256": "bc68a006ee810f57c268aded426ae082689c307c1633bb169c32f7105382671e",
+          "size": 2676,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "wall-doorway-square.glb",
+          "sha256": "5fc3ab4d17545ffcca24d73a77589d6f4816d2bd21b29614be3e0819c97f0410",
+          "size": 6308,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "wall-window-square.glb",
+          "sha256": "099d332de4c632cb03692140f9a4004b5d6508cea6a7e3a80268564976cc8b7e",
+          "size": 8964,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "column-thin.glb",
+          "sha256": "37cfd995746888acfd15d6f226f7ddda83257707b6d21793f38fbe851a958daf",
+          "size": 4344,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "floor.glb",
+          "sha256": "fbe8e907e502381db5d9f87676ef9e34522e35fc95a401a754d3e4984819338b",
+          "size": 2832,
           "referencedBy": ["greek-house"]
         }
       ]

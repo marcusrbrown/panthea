@@ -53,11 +53,6 @@
       "ramp": "soil",
       "bias": -0.3,
       "bandShades": [0, 0, 1, 1, 1]
-    },
-    "ember": {
-      "ramp": "terracotta",
-      "bias": 0.6,
-      "bandShades": [3, 3, 3, 3, 3]
     }
   },
   "wind": {
@@ -82,8 +77,7 @@
         "leaf": "leaf-burnt",
         "leaf-deep": "leaf-scorched"
       },
-      "leaves": 0.5,
-      "embers": 10
+      "leaves": 0.5
     },
     "ruin": {
       "loop": false,
@@ -92,8 +86,7 @@
       "ruin": true,
       "materials": {
         "trunk": "trunk-burnt"
-      },
-      "embers": 3
+      }
     }
   }
 }

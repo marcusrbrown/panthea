@@ -103,8 +103,13 @@ describe("a house through pack, approve, publish and the render audit", () => {
       expect(provenance.method).toBe("rendered");
       expect(provenance.revisionRecipe.stamps).toBe(NO_STAMPS_HASH);
       expect(provenance.revisionRecipe.profile.id).toBe("greek-house");
-      // The kit models it is built with are its licensed input; nothing else is recorded.
+      // The kit packs it is built with are its licensed input; nothing else is recorded.
       expect(provenance.licences).toEqual([
+        {
+          subject: "kenney-building-kit",
+          role: "input",
+          licence: "CC0-1.0",
+        },
         {
           subject: "quaternius-modular-ruins",
           role: "input",

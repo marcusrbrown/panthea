@@ -344,8 +344,6 @@ export interface StructureClip {
   readonly ruin: boolean;
   /** The fraction of a tree's leaf clusters this state keeps, 0 to 1. */
   readonly leaves?: number;
-  /** How many glowing embers a tree shows on its limbs and crown. */
-  readonly embers?: number;
 }
 
 export interface Wind {
@@ -1592,7 +1590,6 @@ function parseStructureClips(
       "decals",
       "ruin",
       "leaves",
-      "embers",
     ]);
     if (!record.ok) return record;
     const loop = parseBoolean(record.value.loop, `${at}.loop`);
@@ -1654,17 +1651,6 @@ function parseStructureClips(
       if (!parsed.ok) return parsed;
       leaves = parsed.value;
     }
-    let embers: number | undefined;
-    if (record.value.embers !== undefined) {
-      if (build.kind !== "tree")
-        return fail(`${at}.embers`, "only a tree has embers");
-      const parsed = parseNonNegativeInteger(
-        record.value.embers,
-        `${at}.embers`,
-      );
-      if (!parsed.ok) return parsed;
-      embers = parsed.value;
-    }
     out[state] = {
       loop: loop.value,
       frames: frames.value,
@@ -1673,7 +1659,6 @@ function parseStructureClips(
       decals,
       ruin,
       ...(leaves === undefined ? {} : { leaves }),
-      ...(embers === undefined ? {} : { embers }),
     };
   }
   return ok(out);
