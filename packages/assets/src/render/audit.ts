@@ -13,6 +13,10 @@
 //     the cell in the atlas (a hand-edited slot keeps its hand pixels and is only held to the
 //     rest); with no hand edits the atlas is rebuilt from the cells and must be the stored one.
 //
+// A tile set is audited the same way up to the slots, then differently: its two patches are posted
+// again uncropped and must repeat every N lattice steps (the patch gate), are cropped and checked
+// against what their jobs recorded, stamped, and every atlas cell must be the stamp's.
+//
 // It returns the first reason it refuses, or undefined when everything holds.
 
 import { readFileSync } from "node:fs";
@@ -24,6 +28,8 @@ import {
   type RenderedSlot,
   type Sha256,
   type SpriteRenderedSlot,
+  TILE_MASKS,
+  TILE_ROLES,
 } from "@panthea/contracts";
 import type { RgbaImage } from "../conformance";
 import { sha256Hex } from "../hash";
@@ -31,21 +37,25 @@ import { type PaletteSet, paletteDigest } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import { decodePng } from "../studio/png/decode";
 import type { JobRecord } from "../studio/store";
+import { atlasCell, stampTileSet } from "../tiles/build";
 import { cameraHash } from "./camera";
 import { BLENDER_PIN, RENDER_SCRIPT_SHA256 } from "./engine";
+import { groundCrop, patchGate } from "./ground";
 import { parseRenderJobManifest } from "./job-manifest";
 import { loadRenderInputs } from "./load";
 import {
   cellPixelHash,
   POST_STEP_VERSION,
+  type PostStepSettings,
   postProcessSlot,
   type RawFrame,
 } from "./post";
 import { postPaletteFrom } from "./post-palette";
-import { profileHash } from "./profile";
+import { type ModelProfile, profileHash } from "./profile";
 import {
   type BlenderBinaryPin,
   effectiveCamera,
+  groundPostOf,
   kitHash,
   NO_STAMPS_HASH,
   postSettingsFor,
@@ -89,6 +99,47 @@ export interface RenderAudit {
     readonly blender?: BlenderBinaryPin;
     readonly postStepVersion?: number;
   };
+}
+
+/** The succeeded ledger job that rendered a slot's raw frames, with its role manifest; or why there is none. */
+function ledgerJob(
+  audit: RenderAudit,
+  related: ReadonlySet<string>,
+  slot: RenderedSlot,
+  revisionHash: Sha256,
+):
+  | {
+      job: JobRecord;
+      m: Extract<
+        ReturnType<typeof parseRenderJobManifest>,
+        { ok: true }
+      >["value"];
+    }
+  | string {
+  for (const record of audit.jobs) {
+    if (!related.has(record.job.id) || record.source.slotKey !== slot.slotKey)
+      continue;
+    if (record.job.status !== "succeeded" || record.engine === undefined)
+      continue;
+    const hash = record.engine.settings.manifest;
+    const bytes =
+      typeof hash === "string" ? audit.readBlob(hash as Sha256) : undefined;
+    if (bytes === undefined) continue;
+    const parsed = parseRenderJobManifest(bytes);
+    if (!parsed.ok) continue;
+    if (
+      JSON.stringify(parsed.value.frames.map((f) => f.raw.colour)) !==
+      JSON.stringify(slot.raw.colour)
+    )
+      continue;
+    const m = parsed.value;
+    if (m.revisionRecipeHash !== revisionHash)
+      return `slot ${slot.slotKey}: its job ${record.job.id} rendered under the revision recipe hash ${m.revisionRecipeHash}, not ${revisionHash}: the revision mixes recipes`;
+    if (m.slotRecipeHash !== slot.recipeHash)
+      return `slot ${slot.slotKey}: its job ${record.job.id} records the slot recipe hash ${m.slotRecipeHash}, not ${slot.recipeHash}`;
+    return { job: record, m };
+  }
+  return `slot ${slot.slotKey}: no succeeded job in the ledger rendered its raw frames`;
 }
 
 function crop(
@@ -152,8 +203,8 @@ export function auditRendered(audit: RenderAudit): string | undefined {
   const blenderNow = audit.current?.blender ?? BLENDER_PIN;
   const postStepNow = audit.current?.postStepVersion ?? POST_STEP_VERSION;
   if (manifest.provenance.method !== "rendered") return undefined;
-  if (manifest.kind !== "sprite")
-    return `a rendered ${manifest.kind} is not audited: only a rendered sprite can be rebuilt from its raw frames`;
+  if (manifest.kind !== "sprite" && manifest.kind !== "tile")
+    return `a rendered ${manifest.kind} is not audited: only a rendered sprite or tile can be rebuilt from its raw frames`;
   const provenance: RenderedProvenance = manifest.provenance;
   const recorded = provenance.revisionRecipe;
 
@@ -236,7 +287,7 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     script: scriptNow,
     postStep: {
       version: postStepNow,
-      settings: postSettingsFor(shadowRampOf(profile)),
+      settings: postSettingsFor(shadowRampOf(profile), groundPostOf(profile)),
     },
     blender: blenderNow,
     kit: kitHash(profile.kitFiles),
@@ -244,6 +295,16 @@ export function auditRendered(audit: RenderAudit): string | undefined {
   }).hash;
   if (recomputed !== recorded.hash)
     return `the revision recipe hash ${recorded.hash} is not the hash of the committed inputs (${recomputed})`;
+
+  if (manifest.kind === "tile")
+    return auditTile({
+      audit,
+      manifest,
+      provenance,
+      profile,
+      camera,
+      palette: recorded.palette.id,
+    });
 
   // --- the slots ---
   const slots: SpriteRenderedSlot[] = [];
@@ -262,7 +323,7 @@ export function auditRendered(audit: RenderAudit): string | undefined {
   const settings = postStepSettings(
     camera,
     recorded.pivot,
-    postSettingsFor(shadowRampOf(profile)),
+    postSettingsFor(shadowRampOf(profile), groundPostOf(profile)),
   );
   const postPalette = postPaletteFrom(audit.palettes, recorded.palette.id);
   if (!postPalette.ok) return postPalette.message;
@@ -282,37 +343,9 @@ export function auditRendered(audit: RenderAudit): string | undefined {
     if (expectedHash !== slot.recipeHash)
       return `slot ${slot.slotKey}: its recipe hash ${slot.recipeHash} is not the hash of its inputs (${expectedHash})`;
 
-    // The ledger job that produced these raw frames.
-    let job: JobRecord | undefined;
-    let jobManifest: ReturnType<typeof parseRenderJobManifest> | undefined;
-    for (const record of audit.jobs) {
-      if (!related.has(record.job.id) || record.source.slotKey !== slot.slotKey)
-        continue;
-      if (record.job.status !== "succeeded" || record.engine === undefined)
-        continue;
-      const hash = record.engine.settings.manifest;
-      const bytes =
-        typeof hash === "string" ? audit.readBlob(hash as Sha256) : undefined;
-      if (bytes === undefined) continue;
-      const parsed = parseRenderJobManifest(bytes);
-      if (!parsed.ok) continue;
-      if (
-        JSON.stringify(parsed.value.frames.map((f) => f.raw.colour)) ===
-        JSON.stringify(slot.raw.colour)
-      ) {
-        job = record;
-        jobManifest = parsed;
-        break;
-      }
-    }
-    if (job === undefined || jobManifest === undefined || !jobManifest.ok)
-      return `slot ${slot.slotKey}: no succeeded job in the ledger rendered its raw frames`;
-    const m = jobManifest.value;
-    if (m.revisionRecipeHash !== recorded.hash)
-      return `slot ${slot.slotKey}: its job ${job.job.id} rendered under the revision recipe hash ${m.revisionRecipeHash}, not ${recorded.hash}: the revision mixes recipes`;
-    if (m.slotRecipeHash !== slot.recipeHash)
-      return `slot ${slot.slotKey}: its job ${job.job.id} records the slot recipe hash ${m.slotRecipeHash}, not ${slot.recipeHash}`;
-
+    const found = ledgerJob(audit, related, slot, recorded.hash);
+    if (typeof found === "string") return found;
+    const { m } = found;
     const raw = rawFrames(slot, audit.readBlob);
     if (!raw.ok) return raw.message;
     const frames: RawFrame[] = m.frames.map((frame, index) => ({
@@ -376,5 +409,135 @@ export function auditRendered(audit: RenderAudit): string | undefined {
       manifest.atlas.blob
   )
     return "the atlas differs from the cells recomputed from the raw frames";
+  return undefined;
+}
+
+/**
+ * The tile branch: each of the two patches is posted again, uncropped, and must repeat every N
+ * lattice steps; then cropped, held to the cell its job recorded, and stamped; and every cell of
+ * the stored atlas must be the stamp's.
+ */
+function auditTile(args: {
+  audit: RenderAudit;
+  manifest: Extract<AssetManifest, { kind: "tile" }>;
+  provenance: RenderedProvenance;
+  profile: ModelProfile;
+  camera: ReturnType<typeof effectiveCamera>;
+  palette: string;
+}): string | undefined {
+  const { audit, manifest, provenance, profile, camera } = args;
+  const recorded = provenance.revisionRecipe;
+  if (profile.kind !== "structure" || profile.build.kind !== "ground")
+    return `the profile ${profile.id} is not a ground profile, and the asset is a tile`;
+  const { build } = profile;
+  if (manifest.period !== build.period)
+    return `the manifest's period ${manifest.period} is not the profile's ${build.period}`;
+  if (
+    manifest.terrain.base !== build.terrain.base ||
+    manifest.terrain.over !== build.terrain.over
+  )
+    return `the manifest's terrains (${manifest.terrain.base}, ${manifest.terrain.over}) are not the profile's (${build.terrain.base}, ${build.terrain.over})`;
+  const postPalette = postPaletteFrom(audit.palettes, args.palette);
+  if (!postPalette.ok) return postPalette.message;
+  const ground = groundPostOf(profile);
+  if (ground === undefined)
+    return `the profile ${profile.id} has no ground post settings`;
+  const settings = postStepSettings(
+    camera,
+    recorded.pivot,
+    postSettingsFor(undefined, ground),
+  );
+  // The gate reads the periods either side of the centre one, which the crop leaves out: post uncropped.
+  const whole: PostStepSettings = {
+    cell: settings.cell,
+    originPx: settings.originPx,
+    pivotPx: settings.pivotPx,
+    depthRange: settings.depthRange,
+    overlapThresholdM: settings.overlapThresholdM,
+    shadow: settings.shadow,
+    outline: false,
+  };
+  const related = new Set(provenance.relatedJobs.map((j) => j.jobId));
+  const patches = {} as Record<(typeof TILE_ROLES)[number], RgbaImage>;
+
+  for (const role of TILE_ROLES) {
+    const slot = provenance.slots.find((s) => s.slotKey === role);
+    if (slot === undefined || !isTileSlot(slot))
+      return `no slot renders the "${role}" terrain`;
+    if (slot.revisionRecipeHash !== recorded.hash)
+      return `slot ${role} was not rendered under the revision recipe hash ${recorded.hash}: the revision mixes recipes`;
+    const expectedHash = slotRecipeHash(recorded.hash, {
+      state: role,
+      clip: `${role}1`,
+      facing: "south",
+      seed: slot.seed,
+    });
+    if (expectedHash !== slot.recipeHash)
+      return `slot ${role}: its recipe hash ${slot.recipeHash} is not the hash of its inputs (${expectedHash})`;
+    const found = ledgerJob(audit, related, slot, recorded.hash);
+    if (typeof found === "string") return found;
+    const { m } = found;
+    const raw = rawFrames(slot, audit.readBlob);
+    if (!raw.ok) return raw.message;
+    const post = postProcessSlot({
+      slot: role,
+      settings: whole,
+      palette: postPalette.value,
+      frames: [
+        {
+          name: role,
+          facing: "south",
+          colour: raw.frames.colour[0] as RgbaImage,
+          id: raw.frames.id[0] as RgbaImage,
+          depth: raw.frames.depth[0] as RgbaImage,
+        },
+      ],
+    });
+    if (!post.ok)
+      return `slot ${role}: the post step cannot be run again from its raw frames: ${post.message}`;
+    const uncropped = post.cells[0]?.image as RgbaImage;
+    const gate = patchGate(uncropped, build.period, camera.cell.pivot);
+    if (
+      gate.alongI !== 0 ||
+      gate.alongJ !== 0 ||
+      gate.transparent !== 0 ||
+      gate.outside !== 0
+    )
+      return `slot ${role}: the patch gate failed: the centre period differs from itself one period along the lattice axes in ${gate.alongI} + ${gate.alongJ} of ${gate.compared} pixels (${gate.transparent} transparent, ${gate.outside} outside the frame); the render does not repeat every ${build.period} lattice steps`;
+    const box = groundCrop(build.period, camera.cell.pivot);
+    const patch = crop(uncropped, box.x, box.y, box.w, box.h);
+    const hash = cellPixelHash(patch);
+    if (hash !== m.frames[0]?.cellPixels)
+      return `slot ${role}: the patch recomputed from the raw frames gives ${hash}, not the ${m.frames[0]?.cellPixels} its job recorded`;
+    patches[role] = patch;
+  }
+
+  const stamped = stampTileSet(profile, postPalette.value, patches);
+  if (!stamped.ok)
+    return `the tile set cannot be stamped again: ${stamped.message}`;
+  const atlas = decodePng(audit.atlas);
+  if (!atlas.ok) return "the atlas cannot be decoded";
+  if (
+    atlas.image.width !== stamped.atlas.width ||
+    atlas.image.height !== stamped.atlas.height
+  )
+    return `the atlas is ${atlas.image.width}x${atlas.image.height}, the stamp ${stamped.atlas.width}x${stamped.atlas.height}`;
+  for (let offset = 0; offset < build.period * build.period; offset += 1)
+    for (let mask = 0; mask < TILE_MASKS; mask += 1) {
+      const stored = atlasCell(atlas.image, mask, offset, build.period);
+      const made = atlasCell(stamped.atlas, mask, offset, build.period);
+      if (!stored.rgba.every((byte, at) => byte === made.rgba[at]))
+        return `tile atlas cell (mask ${mask}, offset ${offset}) differs from the stamp of the two patches recomputed from the raw frames`;
+    }
+  if (
+    sha256Hex(
+      encodeRgbaPng(
+        stamped.atlas.rgba,
+        stamped.atlas.width,
+        stamped.atlas.height,
+      ),
+    ) !== manifest.atlas.blob
+  )
+    return "the atlas differs from the stamp of the two patches recomputed from the raw frames";
   return undefined;
 }

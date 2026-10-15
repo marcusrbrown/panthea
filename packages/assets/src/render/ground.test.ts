@@ -5,12 +5,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  groundMosaic,
-  patchGate,
-  RAW_STEP,
-  rhombusPixels,
-} from "../../test/render/ground-mosaic";
+import { groundMosaic, RAW_STEP } from "../../test/render/ground-mosaic";
 import {
   closeRigs,
   content,
@@ -23,7 +18,14 @@ import {
 import { tileDiamondRow } from "../conformance";
 import { decodePng } from "../studio/png/decode";
 import { cameraHash, parseCamera } from "./camera";
-import { GROUND_HALO, groundCrop, periodBox, tileSideM } from "./ground";
+import {
+  GROUND_HALO,
+  groundCrop,
+  patchGate,
+  periodBox,
+  rhombusPixels,
+  tileSideM,
+} from "./ground";
 import { checkKits } from "./kits";
 import { loadRenderInputs } from "./load";
 import { cellPixelHash, postProcessSlot } from "./post";

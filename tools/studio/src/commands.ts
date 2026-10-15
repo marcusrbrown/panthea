@@ -1414,7 +1414,13 @@ const OPS: Record<string, OpDef> = {
             : { attribution: w.attribution as string }),
         };
       }
-      const result = session.pack(input, content, palettes, registry);
+      const result = session.pack(
+        input,
+        content,
+        palettes,
+        registry,
+        studio.renderAudit(),
+      );
       return result.ok
         ? done(assetSummary(result.asset))
         : refuse(result.reason, safeMessage(result.message));

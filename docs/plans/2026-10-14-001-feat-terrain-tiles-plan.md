@@ -325,7 +325,7 @@ flowchart LR
 
 **Verification:** a real headless render produces both patches and passes the live patch gate. The owner sees them as 1× crops before the noise is tuned.
 
-- [ ] **Unit 3: Dual-grid stamper and tile audit**
+- [x] **Unit 3: Dual-grid stamper and tile audit**
 
 **Goal:** a deterministic stamper turns the two cropped patches into the set, and publish audits it offline.
 

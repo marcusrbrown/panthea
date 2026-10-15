@@ -8,21 +8,27 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { patchGate } from "../../test/render/ground-mosaic";
 import {
+  approvedPalettes,
   closeRigs,
+  content,
   drain,
   jobsById,
   openRig,
+  pickAll,
   RENDER_ROOT,
   type Rig,
+  registryOf,
+  renderTile,
   submitRender,
   submitTile,
+  TILE_PACK_INPUT,
 } from "../../test/render/rig";
 import type { RgbaImage } from "../conformance";
 import { decodePng } from "../studio/png/decode";
+import { auditRendered } from "./audit";
 import { BLENDER_PIN } from "./engine";
-import { groundCrop } from "./ground";
+import { groundCrop, patchGate } from "./ground";
 import { loadRenderInputs } from "./load";
 import { postProcessSlot } from "./post";
 import { postPaletteFrom } from "./post-palette";
@@ -278,6 +284,7 @@ describe("a ground set rendered by the real Blender", () => {
                 json.build.slab.heightM = 0;
               }
               json.build.period = layoutPeriod;
+              json.build.stamp.wavelengthTiles = 1;
               writeFileSync(file, JSON.stringify(json));
             },
           }
@@ -469,6 +476,55 @@ describe("a ground set rendered by the real Blender", () => {
         `control over (layout N=${period - 1}, gate N=${period}): ${JSON.stringify(gate)}`,
       );
       expect(gate.alongI + gate.alongJ).toBeGreaterThan(0);
+    },
+    T,
+  );
+
+  live(
+    "a real set packs with every atlas cell conforming, and the audit stamps it again from the stored raw frames",
+    async () => {
+      const rig = await openRig({
+        executable: BLENDER,
+        pin: BLENDER_PIN,
+        watchdogMs: 120_000,
+      });
+      const ids = await renderTile(rig, "grass-flagstone-live", "tile-set");
+      pickAll(rig, "tile-set", ids);
+      const palettes = approvedPalettes();
+      const packed = rig.session.pack(
+        { ...TILE_PACK_INPUT, workingSetId: "tile-set" },
+        content,
+        palettes,
+        registryOf(rig),
+        { renderRoot: RENDER_ROOT },
+      );
+      if (!packed.ok) throw new Error(packed.message);
+      const approved = rig.session.approveAsset(
+        TILE_PACK_INPUT.id,
+        {},
+        content,
+        palettes,
+      );
+      if (!approved.ok) throw new Error(approved.message);
+      const { manifest } = approved.asset.record;
+      const atlas = rig.session.store.readBlob(manifest.atlas.blob);
+      if (atlas === undefined) throw new Error("no atlas");
+      const drafted = packed.asset.record;
+      const report = "report" in drafted ? drafted.report : undefined;
+      expect(report?.status).toBe("pass");
+      expect(report?.checks.length).toBe(256 * 7);
+      expect(report?.checks.filter((c) => c.status === "fail")).toEqual([]);
+      expect(
+        auditRendered({
+          manifest,
+          atlas,
+          palettes,
+          renderRoot: RENDER_ROOT,
+          readBlob: (hash) => rig.session.store.readBlob(hash),
+          jobs: rig.session.store.status().jobs,
+          handEdited: new Set(),
+        }),
+      ).toBeUndefined();
     },
     T,
   );

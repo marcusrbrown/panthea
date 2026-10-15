@@ -7,6 +7,7 @@
   "build": {
     "kind": "ground",
     "period": 4,
+    "terrain": { "base": "grass", "over": "flagstone" },
     "slab": { "heightM": 0.07, "gap": 0.08, "jitter": 0.16 },
     "tuft": { "perTile": 3, "heightM": 0.2, "radiusM": 0.08 },
     "stamp": {

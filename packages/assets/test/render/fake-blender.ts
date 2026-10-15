@@ -80,6 +80,8 @@ export interface LaunchBehavior {
   holdAfterSlots?: number;
   /** Exits 0 after the first line without rendering anything. */
   exitEarly?: boolean;
+  /** A ground mosaic that repeats every this many lattice steps, whatever the profile's period says. */
+  groundPeriod?: number;
 }
 
 export interface Behavior {
@@ -357,7 +359,8 @@ function main(): void {
     const mosaic = ground
       ? groundMosaic({
           role: slot.state as "base" | "over",
-          period: recipe.profile.build?.period as number,
+          period:
+            launch.groundPeriod ?? (recipe.profile.build?.period as number),
           width: rawWidth,
           height: rawHeight,
           origin: [

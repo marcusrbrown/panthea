@@ -21,6 +21,7 @@ import {
   parsePositiveInteger,
   parseSchemaVersion,
   parseSha256,
+  parseSlug,
   parseString,
   type Sha256,
 } from "@panthea/contracts";
@@ -364,6 +365,8 @@ export interface GroundBuild {
   readonly kind: "ground";
   /** N: the field repeats every N lattice steps along each axis. */
   readonly period: number;
+  /** The two terrains: `base` where a mask bit is clear, `over` where it is set. */
+  readonly terrain: { readonly base: string; readonly over: string };
   /** Flagstone slabs: four to a lattice cell, split at jittered lines and inset by the gap. */
   readonly slab: {
     /** Relief of the slabs above the mortar plane; 0 lays none, which leaves the terrain a flat colour. */
@@ -382,7 +385,7 @@ export interface GroundBuild {
   /** What the stamper (not the render) reads to cut the masks from the patches. */
   readonly stamp: {
     readonly noiseSeed: number;
-    /** Wavelength of the blend-field noise, in tiles. */
+    /** Wavelength of the blend-field noise, in tiles: a whole number that divides the period, so the noise repeats with it. */
     readonly wavelengthTiles: number;
     /** Peak of the noise added to the 0..1 blend field. */
     readonly amplitude: number;
@@ -1586,6 +1589,7 @@ function parseGroundBuild(
   const record = strict(value, path, [
     "kind",
     "period",
+    "terrain",
     "slab",
     "tuft",
     "stamp",
@@ -1593,6 +1597,23 @@ function parseGroundBuild(
   if (!record.ok) return record;
   const period = parsePositiveInteger(record.value.period, `${path}.period`);
   if (!period.ok) return period;
+  const terrainRecord = strict(record.value.terrain, `${path}.terrain`, [
+    "base",
+    "over",
+  ]);
+  if (!terrainRecord.ok) return terrainRecord;
+  const terrainBase = parseSlug(
+    terrainRecord.value.base,
+    `${path}.terrain.base`,
+  );
+  if (!terrainBase.ok) return terrainBase;
+  const terrainOver = parseSlug(
+    terrainRecord.value.over,
+    `${path}.terrain.over`,
+  );
+  if (!terrainOver.ok) return terrainOver;
+  if (terrainBase.value === terrainOver.value)
+    return fail(`${path}.terrain`, "expected two different terrains");
   const slabRecord = strict(record.value.slab, `${path}.slab`, [
     "heightM",
     "gap",
@@ -1648,11 +1669,16 @@ function parseGroundBuild(
     `${path}.stamp.noiseSeed`,
   );
   if (!noiseSeed.ok) return noiseSeed;
-  const wavelength = parsePositive(
+  const wavelength = parsePositiveInteger(
     stampRecord.value.wavelengthTiles,
     `${path}.stamp.wavelengthTiles`,
   );
   if (!wavelength.ok) return wavelength;
+  if (period.value % wavelength.value !== 0)
+    return fail(
+      `${path}.stamp.wavelengthTiles`,
+      `expected a divisor of the period ${period.value}, so the noise repeats with it`,
+    );
   const amplitude = parseFraction(
     stampRecord.value.amplitude,
     `${path}.stamp.amplitude`,
@@ -1672,6 +1698,7 @@ function parseGroundBuild(
   return ok({
     kind: "ground",
     period: period.value,
+    terrain: { base: terrainBase.value, over: terrainOver.value },
     slab: { heightM: slabHeight.value, gap: gap.value, jitter: jitter.value },
     tuft: {
       perTile: perTile.value,

@@ -135,8 +135,15 @@ export function createEditOps(host: EditHost): EditOps {
       );
     if (store.readEdit(id).kind !== "missing")
       return refused("wrong-state", `edit ${id} already exists`);
-    const set = readSet(workingSetId);
-    if ("ok" in set) return set;
+    const read = readSet(workingSetId);
+    if ("ok" in read) return read;
+    // A tile set is two rendered patches the stamper reads; there is no frame to redraw.
+    if (read.kind === "tile")
+      return refused(
+        "wrong-state",
+        `working set ${workingSetId} is a tile set: it takes no hand edit`,
+      );
+    const set = { ...read, kind: read.kind };
     if (requested.length === 0)
       return refused("invalid-params", "an edit needs at least one slot");
     if (new Set(requested).size !== requested.length)
@@ -257,7 +264,10 @@ export function createEditOps(host: EditHost): EditOps {
     b !== undefined &&
     JSON.stringify(a) === JSON.stringify(b);
 
-  type Loaded = { edit: EditRecord; set: WorkingSetRecord };
+  type Loaded = {
+    edit: EditRecord;
+    set: WorkingSetRecord & { readonly kind: "sprite" | "portrait" };
+  };
 
   /** The open edit and its working set, or the refusal. */
   function load(id: string): Loaded | ReturnType<typeof refused> {
@@ -270,7 +280,12 @@ export function createEditOps(host: EditHost): EditOps {
       return refused("wrong-state", `edit ${id} is ${found.value.status}`);
     const set = readSet(found.value.workingSetId);
     if ("ok" in set) return set;
-    return { edit: found.value, set };
+    if (set.kind === "tile")
+      return refused(
+        "wrong-state",
+        `working set ${set.id} is a tile set: it takes no hand edit`,
+      );
+    return { edit: found.value, set: { ...set, kind: set.kind } };
   }
 
   const isStale = ({ edit, set }: Loaded) =>

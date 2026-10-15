@@ -71,6 +71,8 @@ export interface AssetOps {
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+    /** Where the committed `tools/render` is, which a tile set is stamped from. */
+    render?: RenderAuditConfig,
   ): AssetOpResult;
   /**
    * Runs the effect generator into a draft effect; never approves. The record has
@@ -292,6 +294,7 @@ export function createAssetOps(host: EditHost): AssetOps {
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+    render?: RenderAuditConfig,
   ): AssetOpResult {
     if (host.isClosed()) return refused("closed", CLOSED);
     if (!parseSlug(input.id, "id").ok)
@@ -345,6 +348,7 @@ export function createAssetOps(host: EditHost): AssetOps {
       readBlob: (hash) => store.readBlob(hash),
       content: { ...content, palettes },
       ...(prior === undefined ? {} : { prior }),
+      ...(render === undefined ? {} : { renderRoot: render.renderRoot }),
     });
     if (!packed.ok) return refused("wrong-state", packed.message);
     const { manifest, atlas, report, variantAtlases } = packed.value;

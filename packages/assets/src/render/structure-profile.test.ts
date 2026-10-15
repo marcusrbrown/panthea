@@ -475,7 +475,7 @@ describe("a ground profile", () => {
     const base = hash(() => undefined);
     for (const edit of [
       (v: Json) => {
-        v.build.period = 3;
+        v.build.period = 2;
       },
       (v: Json) => {
         v.build.slab.gap = 0.1;
@@ -515,6 +515,30 @@ describe("a ground profile", () => {
     const high = ground();
     high.cell.pivot = [272, 20];
     expect(refusal(high)).toMatch(/cell/);
+  });
+
+  it("names two different terrains, and a noise wavelength that divides the period", () => {
+    const parsed = parseProfile(ground());
+    if (!parsed.ok) throw new Error(parsed.message);
+    const build = (parsed.value as StructureProfile).build;
+    if (build.kind === "ground")
+      expect(build.terrain).toEqual({ base: "grass", over: "flagstone" });
+    const same = ground();
+    same.build.terrain.over = "grass";
+    expect(refusal(same)).toMatch(/terrain/);
+    const bad = ground();
+    bad.build.terrain.base = "Grass";
+    expect(refusal(bad)).toMatch(/terrain\.base/);
+    for (const wavelength of [3, 0, 1.5, 8]) {
+      const value = ground();
+      value.build.stamp.wavelengthTiles = wavelength;
+      expect(refusal(value), String(wavelength)).toMatch(/wavelengthTiles/);
+    }
+    for (const wavelength of [1, 2, 4]) {
+      const value = ground();
+      value.build.stamp.wavelengthTiles = wavelength;
+      expect(parseProfile(value).ok, String(wavelength)).toBe(true);
+    }
   });
 
   it("refuses parameters out of range and keys it does not know", () => {

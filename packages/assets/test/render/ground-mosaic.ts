@@ -7,8 +7,7 @@
 // along the second, so a raw pixel's lattice coordinates are (A, B) / 256 with A = dx + 2 dy and
 // B = 2 dy - dx from the origin; the period is 256 N in both. Everything below is integer.
 
-import { TILE_CELL } from "@panthea/contracts";
-import { type RgbaImage, tileDiamondRow } from "../../src/conformance";
+import type { RgbaImage } from "../../src/conformance";
 import { encodeDepth, idByte } from "../../src/render/parts";
 
 export const RAW_STEP = { x: 128, y: 64 } as const;
@@ -123,83 +122,4 @@ export function groundMosaic(options: MosaicOptions): {
     id: { width, height, rgba: id },
     depth: { width, height, rgba: depth },
   };
-}
-
-/** Every cell pixel of the N x N period: the union of the diamonds centred on lattice (0..N-1, 0..N-1). */
-export function rhombusPixels(
-  period: number,
-  pivot: readonly [number, number],
-): [number, number][] {
-  const pixels: [number, number][] = [];
-  for (let i = 0; i < period; i += 1) {
-    for (let j = 0; j < period; j += 1) {
-      const left = pivot[0] + (TILE_CELL.w / 2) * (i - j) - TILE_CELL.w / 2;
-      const top = pivot[1] + (TILE_CELL.h / 2) * (i + j) - TILE_CELL.h / 2;
-      for (let row = 0; row < TILE_CELL.h; row += 1) {
-        const run = tileDiamondRow(row);
-        if (run === null) continue;
-        for (let x = run.x0; x < run.x1; x += 1)
-          pixels.push([left + x, top + row]);
-      }
-    }
-  }
-  return pixels;
-}
-
-export interface PatchGate {
-  /** Rhombus pixels compared along each lattice axis. */
-  readonly compared: number;
-  /** Rhombus pixels whose colour differs from the pixel one period along the first lattice axis. */
-  readonly alongI: number;
-  /** ... and one period along the second. */
-  readonly alongJ: number;
-  /** Rhombus pixels that are not opaque. */
-  readonly transparent: number;
-  /** Rhombus pixels whose shifted copy lies outside the image. */
-  readonly outside: number;
-}
-
-/**
- * The patch gate on a posted cell: the centre period's colours equal the same period one period
- * along each lattice axis. Colour only (alpha is opaque in the period), on the rhombus mask.
- */
-export function patchGate(
-  image: RgbaImage,
-  period: number,
-  pivot: readonly [number, number],
-): PatchGate {
-  const step = {
-    i: [(TILE_CELL.w / 2) * period, (TILE_CELL.h / 2) * period],
-    j: [-(TILE_CELL.w / 2) * period, (TILE_CELL.h / 2) * period],
-  } as const;
-  const at = (x: number, y: number) => (y * image.width + x) * 4;
-  let alongI = 0;
-  let alongJ = 0;
-  let transparent = 0;
-  let outside = 0;
-  const pixels = rhombusPixels(period, pivot);
-  const same = (p: number, q: number) =>
-    image.rgba[p] === image.rgba[q] &&
-    image.rgba[p + 1] === image.rgba[q + 1] &&
-    image.rgba[p + 2] === image.rgba[q + 2];
-  for (const [x, y] of pixels) {
-    const here = at(x, y);
-    if (image.rgba[here + 3] !== 255) transparent += 1;
-    for (const [axis, [dx, dy]] of [
-      ["i", step.i],
-      ["j", step.j],
-    ] as const) {
-      const sx = x + (dx as number);
-      const sy = y + (dy as number);
-      if (sx < 0 || sy < 0 || sx >= image.width || sy >= image.height) {
-        outside += 1;
-        continue;
-      }
-      if (!same(here, at(sx, sy))) {
-        if (axis === "i") alongI += 1;
-        else alongJ += 1;
-      }
-    }
-  }
-  return { compared: pixels.length, alongI, alongJ, transparent, outside };
 }

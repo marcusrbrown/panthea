@@ -593,9 +593,9 @@ describe("candidate and working-set records are strict", () => {
       },
     ],
     [
-      "a kind that is not sprite or portrait",
+      "a kind that is not sprite, portrait or tile",
       (w) => {
-        w.kind = "tile";
+        w.kind = "effect";
       },
     ],
     [
