@@ -355,7 +355,7 @@ flowchart LR
 
 **Verification:** a real grass↔flagstone set packs, and every conformance check passes.
 
-- [ ] **Unit 4: Tile resolution, studio harness and canon publish**
+- [x] **Unit 4: Tile resolution, studio harness and canon publish**
 
 **Goal:** the studio previews a tile set, and the first set reaches canon and the game's registry snapshot.
 
