@@ -2981,6 +2981,12 @@ export function parseAssetManifest(
         return parseTileBody(input, path, cell.value, atlas.value, common);
     }
   };
+  if (manifestKind === "tile" && provenance.value.method !== "rendered") {
+    return fail(
+      `${path}.provenance.method`,
+      `a tile is rendered: ${provenance.value.method} provenance has no audit that holds a tile set`,
+    );
+  }
   if (provenance.value.method === "procedural" && manifestKind !== "effect") {
     return fail(
       `${path}.provenance.method`,

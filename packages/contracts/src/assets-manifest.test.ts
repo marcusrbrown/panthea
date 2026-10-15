@@ -2309,6 +2309,28 @@ describe("tile manifests", () => {
     expect(tileRefusal(narrow)).toMatch(/atlas/);
   });
 
+  it("refuses a tile whose provenance is hand, derived or generated, naming the method and that a tile is rendered", () => {
+    const handDrawn = {
+      method: "hand",
+      handEdits: [{ description: "drawn in the editor" }],
+      licences: [{ subject: "studio", role: "original-work", licence: "MIT" }],
+      relatedJobs: [],
+      sourceAssets: [],
+    };
+    for (const [method, provenance] of [
+      ["hand", handDrawn],
+      ["derived", derived()],
+      ["generated", generated()],
+    ] as const) {
+      const refusal = tileRefusal(tile(PERIOD, provenance as Mutable));
+      expect(refusal, method).toMatch(/provenance\.method/);
+      expect(refusal, method).toContain(method);
+      expect(refusal, method).toMatch(/tile is rendered/);
+    }
+    // The rendered tile is the one that parses.
+    expect(parsesAs(tile()).ok).toBe(true);
+  });
+
   it("refuses a period that is not a positive integer, naming the period", () => {
     for (const period of [0, 1.5, -1, "4", null]) {
       const value = tile();

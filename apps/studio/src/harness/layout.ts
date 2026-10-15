@@ -115,7 +115,10 @@ export interface HarnessSelection {
   readonly bolt?: BoltChoice;
   /** The tile set the ground is drawn from. Absent: one missing set, which fails in the scene. */
   readonly ground?: GroundChoice;
-  /** Moves every tile on to the next offset of its set, so a cycle shows the variants. Absent: 0. */
+  /**
+   * Translates the whole lattice by this many steps (along x first, then y, wrapping at the period), so
+   * every tile shows another offset of its set and neighbours still agree on their shared edge. Absent: 0.
+   */
   readonly groundCycle?: number;
 }
 
@@ -525,7 +528,11 @@ function groundItems(selection: HarnessSelection): PreviewItem[] {
         request: {
           ...set,
           mask: tileMaskAt(GROUND_GRID, gx, gy),
-          offset: (tileOffsetAt(x, y, period) + cycle) % (period * period),
+          offset: tileOffsetAt(
+            x + (cycle % period),
+            y + Math.floor(cycle / period),
+            period,
+          ),
         },
       });
     }

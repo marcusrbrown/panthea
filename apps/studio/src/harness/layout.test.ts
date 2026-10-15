@@ -1283,24 +1283,60 @@ describe("the harness ground", () => {
     );
   });
 
-  it("cycles the offset: each tile's offset is its place in the period plus the cycle, and sixteen cycles show every offset", () => {
-    const first = new Map<string, Set<number>>();
-    for (let cycle = 0; cycle < 16; cycle += 1) {
+  it("cycles the offset by translating the lattice: at every cycle, lattice neighbours show neighbouring offsets, so every shared edge is continuous", () => {
+    const period = 4;
+    for (let cycle = 0; cycle < period * period; cycle += 1) {
+      const placed = new Map<string, number>();
+      for (const tile of tiles(scene({ groundCycle: cycle })))
+        placed.set(
+          `${tile.point.x},${tile.point.y}`,
+          tile.request.offset as number,
+        );
+      let pairs = 0;
+      for (const [key, offset] of placed) {
+        const [x, y] = key.split(",").map(Number) as [number, number];
+        const row = Math.floor(offset / period);
+        const column = offset % period;
+        // The next point along x is the next column of the same row of the period; along y, the next row.
+        const east = placed.get(`${x + 1},${y}`);
+        if (east !== undefined) {
+          pairs += 1;
+          expect(
+            [Math.floor(east / period), east % period],
+            `cycle ${cycle}: (${x},${y}) -> (${x + 1},${y})`,
+          ).toEqual([row, (column + 1) % period]);
+        }
+        const south = placed.get(`${x},${y + 1}`);
+        if (south !== undefined) {
+          pairs += 1;
+          expect(
+            [Math.floor(south / period), south % period],
+            `cycle ${cycle}: (${x},${y}) -> (${x},${y + 1})`,
+          ).toEqual([(row + 1) % period, column]);
+        }
+      }
+      expect(pairs).toBe(2 * 7 * 6);
+    }
+  });
+
+  it("sixteen cycles show every tile every offset of its set, and the first cycle is the one with none given", () => {
+    const seen = new Map<string, Set<number>>();
+    for (let cycle = 0; cycle < 16; cycle += 1)
       for (const tile of tiles(scene({ groundCycle: cycle }))) {
         const offset = tile.request.offset as number;
-        expect(offset).toBe(
-          (tileOffsetAt(tile.point.x, tile.point.y, 4) + cycle) % 16,
-        );
         expect(offset).toBeGreaterThanOrEqual(0);
         expect(offset).toBeLessThan(16);
-        first.set(tile.id, (first.get(tile.id) ?? new Set()).add(offset));
+        seen.set(tile.id, (seen.get(tile.id) ?? new Set()).add(offset));
       }
-    }
-    for (const offsets of first.values()) expect(offsets.size).toBe(16);
-    // No cycle given is the first.
+    for (const offsets of seen.values()) expect(offsets.size).toBe(16);
     expect(tiles(scene()).map((t) => t.request.offset)).toEqual(
       tiles(scene({ groundCycle: 0 })).map((t) => t.request.offset),
     );
+    // Cycle 0 is the lattice untranslated.
+    for (const tile of tiles(scene()))
+      expect(tile.request.offset).toBe(
+        tileOffsetAt(tile.point.x, tile.point.y, 4),
+      );
   });
 
   it("takes the offsets from the set's own period", () => {

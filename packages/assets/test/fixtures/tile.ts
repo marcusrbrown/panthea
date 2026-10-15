@@ -1,4 +1,4 @@
-// A small valid tile asset with a real PNG atlas: every atlas cell is a full
+// A small valid tile asset (rendered provenance, a real PNG atlas): every atlas cell is a full
 // diamond on the fixture palette, so the set conforms cell by cell. Built
 // through the real manifest parser. Not canon art.
 
@@ -22,6 +22,55 @@ const PALETTE_FAMILY = "town";
 /** The fixture ramps the town family holds: soil (0-3) then olive (4-7). */
 const BASE_SHADE = 4;
 const OVER_SHADE = 0;
+
+const hashOf = (n: number): Sha256 =>
+  n.toString(16).padStart(64, "0") as Sha256;
+
+/**
+ * Rendered provenance for a fixture tile: the recipe and the two role slots a tile holds. The hashes are
+ * placeholders that parse; nothing in the fixture's tests re-renders them (the audit's tests render for real).
+ */
+function renderedProvenance() {
+  const revisionHash = hashOf(0xa11);
+  const slot = (role: "base" | "over", at: number) => ({
+    slotKey: role,
+    recipeHash: hashOf(0xb00 + at),
+    revisionRecipeHash: revisionHash,
+    role,
+    seed: 0,
+    frameCount: 1,
+    raw: {
+      colour: [hashOf(0x1000 + at)],
+      id: [hashOf(0x2000 + at)],
+      depth: [hashOf(0x3000 + at)],
+    },
+  });
+  return {
+    method: "rendered",
+    revisionRecipe: {
+      hash: revisionHash,
+      profile: { id: "grass-flagstone", hash: hashOf(0x1) },
+      camera: hashOf(0x2),
+      palette: { id: PALETTE_ID, digest: hashOf(0x3) },
+      pivot: { x: 32, y: 16 },
+      script: hashOf(0x4),
+      postStep: 1,
+      blender: { version: "5.2.2", build: "d13f752e3b9c", sha256: hashOf(0xa) },
+      kit: hashOf(0x5),
+      stamps: hashOf(0x6),
+    },
+    slots: [slot("base", 0), slot("over", 1)],
+    licences: [
+      { subject: "blender", role: "runtime", licence: "GPL-3.0-or-later" },
+    ],
+    relatedJobs: [
+      { jobId: "grass-0000", status: "succeeded", outputs: [hashOf(0x7)] },
+      { jobId: "grass-0001", status: "succeeded", outputs: [hashOf(0x8)] },
+    ],
+    handEdits: [],
+    sourceAssets: [],
+  };
+}
 
 export interface TileFixture extends FixtureAsset<TileManifest> {
   /** The decoded atlas, row-major RGBA. */
@@ -75,15 +124,7 @@ export function tileFixture(
       atlas: { blob, width, height },
       terrain: { base: "grass", over: "flagstone" },
       period,
-      provenance: {
-        method: "hand",
-        handEdits: [{ description: "drawn by hand for a test fixture" }],
-        licences: [
-          { subject: "test-fixture", role: "original-work", licence: "MIT" },
-        ],
-        relatedJobs: [],
-        sourceAssets: [],
-      },
+      provenance: renderedProvenance(),
     },
     vocabulary,
   );
