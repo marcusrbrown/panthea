@@ -40,7 +40,7 @@ export interface PreviewSelection {
 
 export interface PreviewListingEntry extends PreviewSelection {
   readonly assetId: string;
-  readonly kind: "sprite" | "portrait" | "unknown";
+  readonly kind: "sprite" | "portrait" | "tile" | "unknown";
   readonly state: PreviewSourceKind;
   readonly animations: readonly {
     readonly state: string;
@@ -50,6 +50,8 @@ export interface PreviewListingEntry extends PreviewSelection {
   readonly expressions: readonly string[];
   /** The realm palette families the asset publishes a variant atlas for (sprites only). */
   readonly realms: readonly string[];
+  /** N: a tile set's offsets repeat every N lattice steps, so it holds N squared of them (tiles only). */
+  readonly period?: number;
   /** False when the entry failed validation and resolves to the placeholder. */
   readonly ok: boolean;
 }
@@ -71,6 +73,9 @@ export interface PreviewResolveRequest extends PreviewSelection {
   readonly expression?: string;
   /** The named animation of an effect (`full`, `calm`, `burn`); an effect has no state or direction. */
   readonly animation?: string;
+  /** A tile set's cell: the corner mask (0-15) and the offset in the period, which come together. */
+  readonly mask?: number;
+  readonly offset?: number;
 }
 
 export interface PreviewAtlas {
@@ -202,7 +207,22 @@ const RESOLVE_FIELDS = [
   "ability",
   "expression",
   "animation",
+  "mask",
+  "offset",
 ] as const;
+
+/** A whole number as plain digits, no sign, no leading zero: what a mask or an offset is on the wire. */
+const WHOLE = /^(?:0|[1-9][0-9]{0,3})$/;
+
+function wholeNumber(value: unknown): number | undefined {
+  if (typeof value === "number")
+    return Number.isInteger(value) && value >= 0 && value <= 9999
+      ? value
+      : undefined;
+  return typeof value === "string" && WHOLE.test(value)
+    ? Number(value)
+    : undefined;
+}
 
 /** Checks a resolve request that came from outside: known fields only, a source and id, and slugs throughout. Returns the reason when it is refused. */
 export function parsePreviewResolve(
@@ -231,7 +251,16 @@ export function parsePreviewResolve(
       return `${name} must be a lowercase hyphenated id`;
     optional[name] = value;
   }
-  return { source, id, ...optional };
+  const { mask, offset } = input;
+  const tiled = mask !== undefined && mask !== null;
+  if (tiled !== (offset !== undefined && offset !== null))
+    return "mask and offset come together";
+  if (!tiled) return { source, id, ...optional };
+  const maskValue = wholeNumber(mask);
+  const offsetValue = wholeNumber(offset);
+  if (maskValue === undefined) return "mask must be a whole number";
+  if (offsetValue === undefined) return "offset must be a whole number";
+  return { source, id, ...optional, mask: maskValue, offset: offsetValue };
 }
 
 /** `source:id`, or `source:id@realm` for a variant: ids and realms are slugs, so `@` never occurs in either. */
@@ -274,18 +303,31 @@ function hold(
 
 const kindOf = (manifest: unknown): PreviewListingEntry["kind"] => {
   const kind = (manifest as { kind?: unknown } | null)?.kind;
-  return kind === "sprite" || kind === "portrait" ? kind : "unknown";
+  return kind === "sprite" || kind === "portrait" || kind === "tile"
+    ? kind
+    : "unknown";
 };
 
 function keysOf(
   manifest: unknown,
-): Pick<PreviewListingEntry, "animations" | "expressions" | "realms"> {
+): Pick<
+  PreviewListingEntry,
+  "animations" | "expressions" | "realms" | "period"
+> {
   const record = manifest as {
     animations?: unknown;
     expressions?: unknown;
     realmVariants?: unknown;
+    period?: unknown;
     kind?: unknown;
   } | null;
+  if (record?.kind === "tile" && typeof record.period === "number")
+    return {
+      animations: [],
+      expressions: [],
+      realms: [],
+      period: record.period,
+    };
   if (record?.kind === "sprite" && Array.isArray(record.animations)) {
     const realms = Array.isArray(record.realmVariants)
       ? record.realmVariants.flatMap((item) => {
@@ -676,6 +718,9 @@ export function createPreviewSource(
         ...(request.animation === undefined
           ? {}
           : { animation: request.animation }),
+        ...(request.mask === undefined || request.offset === undefined
+          ? {}
+          : { tile: { mask: request.mask, offset: request.offset } }),
       });
       if (resolved.source === "placeholder")
         return missing(resolved.reason, []);

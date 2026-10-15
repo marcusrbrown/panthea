@@ -24,7 +24,13 @@
 //     way from the boundary, the pixel is grass.
 // Every other pixel is the pixel of its terrain's patch at the same place in the plane.
 
-import { TILE_CELL, TILE_MASKS, tileAtlasRect } from "@panthea/contracts";
+import {
+  TILE_CELL,
+  TILE_MASKS,
+  tileAtlasRect,
+  tileMaskAt,
+  tileOffsetAt,
+} from "@panthea/contracts";
 import { type Rgb, type RgbaImage, tileDiamondRow } from "../conformance";
 import { hash2 } from "../effects/random";
 import { patchOrigin, patchSize } from "../render/ground";
@@ -222,28 +228,6 @@ export function stampAtlas(params: StampParams, patches: Patches): StampResult {
   return { ok: true, image: { width, height, rgba } };
 }
 
-/** The corner mask of lattice point (x, y) in a grid of terrain (0 base, 1 over); a point off the grid takes the nearest cell. */
-export function maskAt(
-  grid: readonly (readonly number[])[],
-  x: number,
-  y: number,
-): number {
-  const rows = grid.length;
-  const cols = grid[0]?.length ?? 0;
-  const at = (gx: number, gy: number) =>
-    grid[Math.min(rows - 1, Math.max(0, gy))]?.[
-      Math.min(cols - 1, Math.max(0, gx))
-    ] ?? 0;
-  return (
-    at(x - 1, y - 1) * 1 + at(x, y - 1) * 2 + at(x, y) * 4 + at(x - 1, y) * 8
-  );
-}
-
-/** The atlas row of lattice point (x, y): the position inside the period, `(y mod N) * N + (x mod N)`. */
-export const offsetOf = (x: number, y: number, period: number): number =>
-  (((y % period) + period) % period) * period +
-  (((x % period) + period) % period);
-
 /**
  * Lays a grid of terrain out as the game lays its ground: one tile per lattice point, (w + 1) by
  * (h + 1) of them, a point's 64x32 box being its grid cell's `diamondOrigin` raised 16 px. Each
@@ -261,7 +245,7 @@ export function composeGrid(
   const rgba = new Uint8Array(width * height * 4);
   for (let y = 0; y <= h; y += 1)
     for (let x = 0; x <= w; x += 1) {
-      const made = tileAt(x, y, maskAt(grid, x, y));
+      const made = tileAt(x, y, tileMaskAt(grid, x, y));
       const boxX = (x - y) * (TILE_CELL.w / 2) + (TILE_CELL.w / 2) * h;
       const boxY = (x + y) * (TILE_CELL.h / 2);
       for (let row = 0; row < TILE_CELL.h; row += 1)
@@ -298,7 +282,7 @@ export function assembleGrid(
   grid: readonly (readonly number[])[],
 ): RgbaImage {
   return composeGrid(grid, (x, y, mask) => {
-    const rect = tileAtlasRect(mask, offsetOf(x, y, period), period);
+    const rect = tileAtlasRect(mask, tileOffsetAt(x, y, period), period);
     const rgba = new Uint8Array(rect.w * rect.h * 4);
     for (let row = 0; row < rect.h; row += 1)
       rgba.set(

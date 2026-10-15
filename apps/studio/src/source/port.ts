@@ -16,6 +16,7 @@ export type Selection = PreviewSelection;
 export interface ListingEntry extends PreviewListingEntry {
   readonly animations: PreviewListingEntry["animations"];
   readonly expressions: PreviewListingEntry["expressions"];
+  readonly period?: PreviewListingEntry["period"];
 }
 export type AssetProblem = PreviewProblem;
 export type Listing = PreviewListing;

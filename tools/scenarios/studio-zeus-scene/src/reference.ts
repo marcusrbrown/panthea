@@ -187,11 +187,6 @@ export function buildReference(files: RegistryFiles): Reference {
         `manifests/${revision}.json is for "${manifest.id}", not "${assetId}"`,
       );
     }
-    if (manifest.kind === "tile") {
-      throw new Error(
-        `${assetId}: the reference scene digests sprites, portraits and effects, and this is a tile`,
-      );
-    }
     const bytes = files.blobs.get(manifest.atlas.blob);
     if (bytes === undefined) {
       throw new Error(`${assetId}: blob ${manifest.atlas.blob} is missing`);
@@ -201,6 +196,9 @@ export function buildReference(files: RegistryFiles): Reference {
         `blobs/${manifest.atlas.blob}.png: bytes do not hash to its name`,
       );
     }
+    // A tile set is ground, not a figure the inspection scene draws by selection: its 16 x N squared
+    // cells are held by the studio's pixel check and the publish audit. It is checked, then left out.
+    if (manifest.kind === "tile") continue;
     const decoded = decodePng(bytes);
     if (!decoded.ok) {
       throw new Error(`blobs/${manifest.atlas.blob}.png: ${decoded.message}`);

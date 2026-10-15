@@ -15,6 +15,7 @@ import {
   spriteFixture,
 } from "../../../../packages/assets/src/fixtures";
 import { decodePng } from "../../../../packages/assets/src/studio/png/decode";
+import { tileFixture } from "../../../../packages/assets/test/fixtures/tile";
 import {
   buildReference,
   COMMITTED_REFERENCE,
@@ -222,13 +223,17 @@ function le(value: number): number[] {
   ];
 }
 
-function isolatedRegistry(): RegistryFiles {
+function isolatedRegistry(withTile = false): RegistryFiles {
   const sprite = spriteFixture("fixture-sprite", 3);
   const portrait = portraitFixture("fixture-portrait", "fixture", 5);
   const manifests = new Map<string, string>();
   const blobs = new Map<string, Uint8Array>();
   const entries: { assetId: string; revision: string }[] = [];
-  for (const asset of [portrait, sprite]) {
+  for (const asset of [
+    portrait,
+    sprite,
+    ...(withTile ? [tileFixture()] : []),
+  ]) {
     const text = canonicalManifestText(asset.manifest);
     const revision = sha256(text);
     manifests.set(revision, text);
@@ -275,6 +280,35 @@ test("an isolated registry yields a digest per frame and zoom, sorted by asset a
   expect(
     digestRgba({ width: 1, height: 1, data: new Uint8Array(4) }),
   ).toContain(DIGEST_ALGORITHM);
+});
+
+test("a published tile set is left out of the digests, not refused: the reference scene digests figures, and a tile's cells are checked by the studio's pixel check and the publish audit", () => {
+  const files = isolatedRegistry(true);
+  expect(
+    JSON.parse(files.index).entries.map((e: { assetId: string }) => e.assetId),
+  ).toContain("grass-flagstone");
+
+  const reference = buildReference(files);
+
+  expect(reference.assets.map((a) => a.assetId)).toEqual([
+    "fixture-portrait",
+    "fixture-sprite",
+  ]);
+  // The rest is what it was without the tile.
+  expect(renderReference(reference)).toBe(
+    renderReference(buildReference(isolatedRegistry())),
+  );
+});
+
+test("a tile whose blob is altered is still refused: leaving a tile out is not trusting it", () => {
+  const files = isolatedRegistry(true);
+  const tile = tileFixture();
+  const [hash] = [...tile.blobs.keys()];
+  const tampered = new Uint8Array(tile.blobs.get(hash as never) ?? []);
+  tampered[tampered.length - 1] = (tampered[tampered.length - 1] ?? 0) ^ 1;
+  const blobs = new Map(files.blobs).set(String(hash), tampered);
+
+  expect(() => buildReference({ ...files, blobs })).toThrow(/hash/);
 });
 
 test("a blob whose bytes do not hash to its name is refused, not digested", () => {

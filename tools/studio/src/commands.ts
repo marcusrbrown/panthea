@@ -836,6 +836,8 @@ const OPS: Record<string, OpDef> = {
       ...str("ability"),
       ...str("expression"),
       ...str("animation"),
+      ...str("mask"),
+      ...str("offset"),
     },
     run: async (studio, a) => {
       const request = parsePreviewResolve(a);

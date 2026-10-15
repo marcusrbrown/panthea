@@ -5,7 +5,6 @@ import {
   type AtlasSpec,
   composeScene,
   createSceneLayer,
-  diamondImage,
   diamondRow,
   frameIndexAt,
   type Instance,
@@ -20,6 +19,7 @@ import {
 } from "@panthea/renderer";
 import { Scene, type Texture } from "three";
 import type { Sprite2D } from "three-flatland";
+import { tileFixture } from "../../../../packages/assets/test/fixtures/tile";
 
 const god = spriteFixture("placeholder-zeus");
 const snapshot: RegistrySnapshot = {
@@ -328,19 +328,36 @@ describe("scene layer", () => {
     layer.dispose();
   });
 
-  it("draws the generated ground diamond", () => {
+  it("draws a ground tile as the one 64x32 cell of its set's atlas", () => {
     const { layer } = setup();
+    const tile = tileFixture();
+    const resolution = resolveAsset(
+      {
+        entries: new Map([
+          [
+            tile.manifest.id,
+            {
+              assetId: tile.manifest.id,
+              revision: tile.manifest.atlas.blob,
+              manifest: tile.manifest,
+            },
+          ],
+        ]),
+      },
+      { spriteId: "grass-flagstone", tile: { mask: 6, offset: 9 } },
+    );
     const list = instances({
-      kind: "diamond",
+      kind: "tile",
       id: "g",
-      cell: { x: 0, y: 0, z: 0 },
+      point: { x: 0, y: 0 },
+      resolution,
     });
     layer.commit(
-      "diamond",
-      { pixelKey: "diamond", width: TILE_W, height: TILE_H },
-      diamondImage(),
+      "tile",
+      { pixelKey: "tile-1", width: 1024, height: 512 },
+      atlasImage(1024, 512, 7),
     );
-    expect(layer.apply(entriesFor(list, "diamond")).drawn).toBe(1);
+    expect(layer.apply(entriesFor(list, "tile")).drawn).toBe(1);
     const sprite = spriteOf(layer, "g");
     expect(sprite.scale.toArray()).toEqual([TILE_W, TILE_H, 1]);
     expect(diamondRow(0)).not.toBeNull();

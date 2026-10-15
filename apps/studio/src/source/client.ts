@@ -94,7 +94,7 @@ export function createDevBridgeSource(
     async resolve(request: ResolveRequest) {
       const query = new URLSearchParams();
       for (const [name, value] of Object.entries(request)) {
-        if (value !== undefined) query.set(name, value);
+        if (value !== undefined) query.set(name, String(value));
       }
       return parseResolution(
         await getJson(fetcher, `${bridgePaths.resolve}?${query}`),

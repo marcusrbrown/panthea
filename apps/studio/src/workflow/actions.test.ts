@@ -128,7 +128,7 @@ describe("workflow host actions", () => {
         routePreviewSelection?: (selection: {
           source: "draft" | "approved" | "canon";
           id: string;
-          kind: "portrait" | "sprite";
+          kind: "portrait" | "sprite" | "tile";
         }) => Record<string, string | undefined>;
       }
     ).routePreviewSelection;
@@ -141,6 +141,14 @@ describe("workflow host actions", () => {
         kind: "portrait",
       }),
     ).toEqual({ source: "draft", portraitKey: "draft:face-b" });
+    // A tile set is the ground the scene stands on, not its subject.
+    expect(
+      routePreviewSelection({
+        source: "draft",
+        id: "grass-flagstone-pack",
+        kind: "tile",
+      }),
+    ).toEqual({ source: "draft", groundKey: "draft:grass-flagstone-pack" });
   });
 
   test("pack arguments reject style tags beyond the manifest slug limit", () => {

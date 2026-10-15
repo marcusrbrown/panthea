@@ -934,6 +934,36 @@ export function tileAtlasRect(
   };
 }
 
+/**
+ * The corner mask of lattice point (x, y) in a grid of terrain (0 base, 1 over, row by row): the
+ * corner grid cells are N = (x-1, y-1), E = (x, y-1), S = (x, y) and W = (x-1, y), with the bits
+ * N = 1, E = 2, S = 4, W = 8. A point off the grid takes the nearest grid cell, so an 8x8 grid
+ * has 9x9 lattice points.
+ */
+export function tileMaskAt(
+  grid: readonly (readonly number[])[],
+  x: number,
+  y: number,
+): number {
+  const rows = grid.length;
+  const cols = grid[0]?.length ?? 0;
+  const at = (gx: number, gy: number) =>
+    grid[Math.min(rows - 1, Math.max(0, gy))]?.[
+      Math.min(cols - 1, Math.max(0, gx))
+    ] ?? 0;
+  return (
+    at(x - 1, y - 1) * 1 + at(x, y - 1) * 2 + at(x, y) * 4 + at(x - 1, y) * 8
+  );
+}
+
+/** The atlas row of lattice point (x, y): its position in the period, `(y mod N) * N + (x mod N)`. */
+export function tileOffsetAt(x: number, y: number, period: number): number {
+  return (
+    (((y % period) + period) % period) * period +
+    (((x % period) + period) % period)
+  );
+}
+
 function parseOptionalSlug(
   value: unknown,
   path: string,

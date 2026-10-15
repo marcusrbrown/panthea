@@ -87,7 +87,7 @@ import "./workflow.css";
 export interface PreviewSelection {
   readonly source: "canon" | "draft" | "approved";
   readonly id: string;
-  readonly kind?: "sprite" | "portrait";
+  readonly kind?: "sprite" | "portrait" | "tile";
   readonly state?: string;
   readonly direction?: string;
   readonly ability?: string;
@@ -992,10 +992,12 @@ export function WorkflowView({
     : undefined;
   const activePreviewWithKind: PreviewSelection | undefined =
     activePreview &&
-    (activeAssetKind === "portrait" || activeAssetKind === "sprite")
+    (activeAssetKind === "portrait" ||
+      activeAssetKind === "sprite" ||
+      activeAssetKind === "tile")
       ? {
           ...activePreview,
-          kind: activeAssetKind as "portrait" | "sprite",
+          kind: activeAssetKind as "portrait" | "sprite" | "tile",
         }
       : activePreview;
   const comparison =

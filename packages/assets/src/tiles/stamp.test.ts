@@ -15,8 +15,6 @@ import { stampParamsOf } from "./params";
 import {
   assembleGrid,
   isOver,
-  maskAt,
-  offsetOf,
   type StampParams,
   stampAtlas,
   stampGrid,
@@ -186,21 +184,6 @@ describe("the field gate", () => {
         Buffer.from(direct.image.rgba),
       ),
     ).toBe(true);
-  });
-
-  it("reads the grid as the plan says: lattice (x, y) has N = (x-1, y-1), E = (x, y-1), S = (x, y), W = (x-1, y)", () => {
-    const one = [
-      [0, 0, 0],
-      [0, 1, 0],
-      [0, 0, 0],
-    ];
-    // The over cell (1,1) is the N corner of lattice (2,2), E of (1,2), S of (1,1) and W of (2,1).
-    expect(maskAt(one, 2, 2)).toBe(1);
-    expect(maskAt(one, 1, 2)).toBe(2);
-    expect(maskAt(one, 1, 1)).toBe(4);
-    expect(maskAt(one, 2, 1)).toBe(8);
-    expect(offsetOf(5, 6, 4)).toBe(2 * 4 + 1);
-    expect(offsetOf(-1, -1, 4)).toBe(3 * 4 + 3);
   });
 });
 

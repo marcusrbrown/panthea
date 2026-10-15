@@ -11,6 +11,7 @@ import {
   ZEUS_REVISION,
   zeusPayload,
 } from "../../test/canon-fixture";
+import { tilePayload } from "../../test/tile-fixture";
 import {
   RETRO_ATLASES,
   RETRO_REVISION,
@@ -444,4 +445,62 @@ test("the client resolves every published zeus-retro slot: idle and seated the w
       ability: "thunderbolt",
     } as never).source,
   ).toBe("placeholder");
+});
+
+test("a published tile manifest enters the snapshot, and resolves to the one atlas cell its mask and offset name", async () => {
+  const { payload, revision, atlases, atlasHash } = tilePayload();
+  const { canon, problems } = client(payload, atlases);
+  const { snapshot } = await canon.load();
+
+  expect(problems).toEqual([]);
+  expect(snapshot.entries.get("grass-flagstone")).toMatchObject({
+    manifest: {
+      kind: "tile",
+      period: 4,
+      terrain: { base: "grass", over: "flagstone" },
+    },
+  });
+  const cell = resolveAssetPixels(snapshot, {
+    spriteId: "grass-flagstone",
+    tile: { mask: 3, offset: 5 },
+  });
+  if (cell.source !== "canon") throw new Error("expected canon art");
+  expect(cell.kind).toBe("tile");
+  expect(String(cell.revision)).toBe(revision);
+  expect(cell.cell).toEqual({ w: 64, h: 32 });
+  expect(cell.frames.map((f) => f.rect)).toEqual([
+    { x: 3 * 64, y: 5 * 32, w: 64, h: 32 },
+  ]);
+  // The atlas the manifest names is fetchable, once, like any other.
+  const bytes = await canon.atlas(String(cell.atlas.blob));
+  expect(bytes?.length).toBeGreaterThan(8);
+  expect(String(cell.atlas.blob)).toBe(atlasHash);
+});
+
+test("a tile asked for as a sprite is the placeholder, and a sprite asked for as a tile is too", async () => {
+  const { payload, atlases } = tilePayload();
+  const { canon } = client(
+    {
+      ...payload,
+      index: indexText([
+        ...JSON.parse(payload.index ?? "{}").entries,
+        { assetId: "zeus-sprite", revision: ZEUS_REVISION },
+      ]),
+      manifests: [
+        ...payload.manifests,
+        { hash: ZEUS_REVISION, text: ZEUS_MANIFEST_TEXT },
+      ],
+    },
+    atlases,
+  );
+  const { snapshot } = await canon.load();
+  expect(
+    resolveAssetPixels(snapshot, { spriteId: "grass-flagstone" }),
+  ).toMatchObject({ source: "placeholder", reason: "wrong-kind" });
+  expect(
+    resolveAssetPixels(snapshot, {
+      spriteId: "zeus-sprite",
+      tile: { mask: 0, offset: 0 },
+    }),
+  ).toMatchObject({ source: "placeholder", reason: "wrong-kind" });
 });

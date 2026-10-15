@@ -13,7 +13,6 @@ import {
   canvasMetrics,
   composeScene,
   type DecodedImage,
-  diamondImage,
   type Footprint,
   type Instance,
   type Layer,
@@ -79,9 +78,14 @@ export interface PreviewHandlers {
 
 export type PreviewItem =
   | {
-      readonly kind: "diamond";
+      /**
+       * A ground tile at a lattice point, resolved to one cell of a tile set by the request's mask and
+       * offset. It always draws first, under every other item.
+       */
+      readonly kind: "tile";
       readonly id: string;
-      readonly cell: Cell;
+      readonly point: Point;
+      readonly request: ResolveRequest;
     }
   | {
       readonly kind: "sprite";
@@ -156,13 +160,6 @@ export interface Preview {
   dispose(): void;
 }
 
-const DIAMOND_KEY = "diamond";
-const DIAMOND_SPEC: AtlasSpec = {
-  pixelKey: DIAMOND_KEY,
-  width: 64,
-  height: 32,
-};
-
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -192,11 +189,10 @@ function sceneResolution(resolution: SourceResolution): SceneResolution {
   };
 }
 
-function entityOf(
-  item: Exclude<PreviewItem, { kind: "diamond" }>,
-  resolution: SceneResolution,
-): SceneEntity {
+function entityOf(item: PreviewItem, resolution: SceneResolution): SceneEntity {
   switch (item.kind) {
+    case "tile":
+      return { kind: "tile", id: item.id, point: item.point, resolution };
     case "flat":
       return { kind: "flat", id: item.id, at: item.at, resolution };
     case "effect":
@@ -433,7 +429,6 @@ export function createPreview(options: PreviewOptions): Preview {
   }
 
   const matches = (item: PreviewItem, selections: readonly Selection[]) =>
-    item.kind !== "diamond" &&
     selections.some(
       (selection) =>
         selection.source === item.request.source &&
@@ -441,7 +436,6 @@ export function createPreview(options: PreviewOptions): Preview {
     );
 
   async function resolveItem(item: PreviewItem): Promise<void> {
-    if (item.kind === "diamond") return;
     try {
       const resolved = await source.resolve(item.request);
       if (usable()) resolutions.set(item.id, resolved);
@@ -457,7 +451,6 @@ export function createPreview(options: PreviewOptions): Preview {
     users: readonly PreviewItem[],
     mayReresolve: boolean,
   ): Promise<DecodedImage | "retry" | undefined> {
-    if (key === DIAMOND_KEY) return diamondImage();
     const retained = payloads.get(key);
     if (retained !== undefined && sameSpec(retained.spec, spec)) {
       return retained.image;
@@ -484,18 +477,11 @@ export function createPreview(options: PreviewOptions): Preview {
     const specOfKey = new Map<string, AtlasSpec>();
     const usersOfKey = new Map<string, PreviewItem[]>();
     for (const item of items) {
-      let key: string;
-      if (item.kind === "diamond") {
-        entities.push({ kind: "diamond", id: item.id, cell: item.cell });
-        key = DIAMOND_KEY;
-        specOfKey.set(key, DIAMOND_SPEC);
-      } else {
-        const resolution = resolutions.get(item.id);
-        if (resolution === undefined) continue;
-        entities.push(entityOf(item, sceneResolution(resolution)));
-        key = atlasKeyOf(resolution);
-        specOfKey.set(key, specOf(resolution));
-      }
+      const resolution = resolutions.get(item.id);
+      if (resolution === undefined) continue;
+      entities.push(entityOf(item, sceneResolution(resolution)));
+      const key = atlasKeyOf(resolution);
+      specOfKey.set(key, specOf(resolution));
       keyOfItem.set(item.id, key);
       usersOfKey.set(key, [...(usersOfKey.get(key) ?? []), item]);
     }
@@ -548,9 +534,7 @@ export function createPreview(options: PreviewOptions): Preview {
 
   async function refresh(changed?: readonly Selection[]): Promise<void> {
     const targets = items.filter(
-      (item) =>
-        item.kind !== "diamond" &&
-        (changed === undefined || matches(item, changed)),
+      (item) => changed === undefined || matches(item, changed),
     );
     if (changed !== undefined && targets.length === 0) return;
     await Promise.all(targets.map(resolveItem));

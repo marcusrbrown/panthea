@@ -47,6 +47,20 @@ const snapshot: RegistrySnapshot = {
 };
 
 const CANON: Selection = { source: "canon", id: "placeholder-zeus" };
+const TILE: Selection = { source: "canon", id: "grass-flagstone" };
+
+/** What the source answers for one cell of a tile set: the set's atlas and one 64x32 frame. */
+const tileAsset: NonNullable<Published["asset"]> = {
+  kind: "tile",
+  assetId: "grass-flagstone" as typeof god.manifest.id,
+  revision: god.manifest.atlas.blob,
+  uri: "panthea-asset://grass-flagstone",
+  atlas: { blob: god.manifest.atlas.blob, width: 1024, height: 512 },
+  cell: { w: 64, h: 32 },
+  frames: [{ rect: { x: 384, y: 288, w: 64, h: 32 }, durationMs: 1000 }],
+};
+const publishedTile = () =>
+  published({ width: 1024, height: 512, asset: tileAsset });
 const DRAFT: Selection = { source: "draft", id: "zeus-draft-1" };
 
 interface FakeCanvas {
@@ -605,14 +619,64 @@ describe("preview scene", () => {
     preview.dispose();
   });
 
-  it("draws the ground diamond without asking the source", async () => {
+  it("draws a ground tile from the cell its request names, first on the ground layer under the other items", async () => {
+    const h = new Harness();
+    h.source.publish(TILE, publishedTile());
+    h.source.publish(CANON, published());
+    const preview = h.preview();
+    await preview.setItems([
+      subject,
+      {
+        kind: "tile",
+        id: "g",
+        point: { x: 3, y: 1 },
+        request: { ...TILE, mask: 6, offset: 9 },
+      },
+    ]);
+    expect(h.source.resolves.sort()).toEqual([
+      "canon:grass-flagstone",
+      "canon:placeholder-zeus",
+    ]);
+    expect(h.live.backend.layer.stats).toEqual({ sprites: 2, textures: 2 });
+    expect(preview.drawn.map((i) => `${i.layer}:${i.id}`)).toEqual([
+      "ground:g",
+      "actor:subject",
+    ]);
+    expect(h.problems).toEqual([]);
+    preview.dispose();
+  });
+
+  it("shows one atlas fetch for every tile of a set, whatever cells they name", async () => {
+    const h = new Harness();
+    h.source.publish(TILE, publishedTile());
+    const preview = h.preview();
+    await preview.setItems(
+      [0, 1, 2, 3].map((x) => ({
+        kind: "tile" as const,
+        id: `g-${x}`,
+        point: { x, y: 0 },
+        request: { ...TILE, mask: x, offset: 0 },
+      })),
+    );
+    expect(h.source.resolves).toHaveLength(4);
+    expect(h.source.fetches).toBe(1);
+    expect(h.live.backend.layer.stats).toEqual({ sprites: 4, textures: 1 });
+    preview.dispose();
+  });
+
+  it("reports a tile the source cannot resolve as a problem, and does not draw a flat stand-in", async () => {
     const h = new Harness();
     const preview = h.preview();
     await preview.setItems([
-      { kind: "diamond", id: "g", cell: { x: 0, y: 0, z: 0 } },
+      {
+        kind: "tile",
+        id: "g",
+        point: { x: 0, y: 0 },
+        request: { ...TILE, mask: 0, offset: 0 },
+      },
     ]);
-    expect(h.source.resolves).toEqual([]);
-    expect(h.live.backend.layer.stats).toEqual({ sprites: 1, textures: 1 });
+    expect(h.live.backend.layer.stats.sprites).toBe(0);
+    expect(h.problems[0]).toContain("g");
     preview.dispose();
   });
 
@@ -812,10 +876,16 @@ describe("device loss", () => {
   async function started(zoom: 2 | 3 | 4 = 3) {
     const h = new Harness();
     h.source.publish(CANON, published());
+    h.source.publish(TILE, publishedTile());
     const preview = h.preview({ zoom });
     await preview.setItems([
       subject,
-      { kind: "diamond", id: "g", cell: { x: 2, y: 3, z: 0 } },
+      {
+        kind: "tile",
+        id: "g",
+        point: { x: 2, y: 3 },
+        request: { ...TILE, mask: 6, offset: 9 },
+      },
     ]);
     return { h, preview };
   }

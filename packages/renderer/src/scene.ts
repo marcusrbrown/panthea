@@ -10,18 +10,17 @@ import type {
 } from "@panthea/assets/browser";
 import {
   type Cell,
+  DEPTH_MIN,
   depthOf,
   depthZ,
-  diamondOrigin,
   ENTITY_SLOTS,
   FLAT_DEPTH,
   type Footprint,
   type Layer,
+  latticeOrigin,
   type Point,
   type RefusalReason,
   spriteOrigin,
-  TILE_H,
-  TILE_W,
 } from "./iso";
 
 type Canon = CanonResolution;
@@ -44,11 +43,6 @@ export type SceneResolution =
 
 export type SceneEntity =
   | {
-      readonly kind: "diamond";
-      readonly id: string;
-      readonly cell: Cell;
-    }
-  | {
       readonly kind: "sprite";
       readonly id: string;
       readonly layer: Layer;
@@ -58,6 +52,16 @@ export type SceneEntity =
       readonly footprint?: Footprint;
       /** Whole logical pixels added to the placed position, e.g. to stand a flame on a roof; depth is unchanged. */
       readonly offset?: Point;
+      readonly resolution: SceneResolution;
+    }
+  | {
+      /**
+       * A ground tile at a lattice point, resolved to its one atlas cell. It always draws first: depth
+       * is the least a key can be, on the ground layer, so tiles never need sorting against each other.
+       */
+      readonly kind: "tile";
+      readonly id: string;
+      readonly point: Point;
       readonly resolution: SceneResolution;
     }
   | {
@@ -84,8 +88,7 @@ export type InstanceArt =
       /** Absent for a pixel-only placeholder, which has no logical URI. */
       readonly uri?: string;
       readonly placeholder: PlaceholderSize;
-    }
-  | { readonly source: "diamond" };
+    };
 
 export interface Instance {
   readonly id: string;
@@ -147,23 +150,29 @@ function place(entity: SceneEntity): Attempt {
     refusal: { id: entity.id, reason, detail },
   });
 
-  if (entity.kind === "diamond") {
-    const origin = diamondOrigin(entity.cell);
+  if (entity.kind === "tile") {
+    const { resolution } = entity;
+    if (resolution.source !== "canon" || resolution.kind !== "tile")
+      return refuse(
+        "not-placeable",
+        resolution.source === "canon"
+          ? `${resolution.assetId} is a ${resolution.kind}, not a tile`
+          : `the tile did not resolve (${resolution.reason}); a ground tile has no placeholder`,
+      );
+    const origin = latticeOrigin(entity.point.x, entity.point.y);
     if (!origin.ok) return refuse(origin.reason, origin.detail);
-    const depth = depthOf(entity.cell, SINGLE_TILE);
-    if (!depth.ok) return refuse(depth.reason, depth.detail);
     return {
       ok: true,
       placed: {
         id: entity.id,
         layer: "ground",
-        cell: entity.cell,
+        cell: { x: entity.point.x, y: entity.point.y, z: 0 },
         footprint: SINGLE_TILE,
         origin: origin.value,
-        w: TILE_W,
-        h: TILE_H,
-        depth: depth.value,
-        art: { source: "diamond" },
+        w: resolution.cell.w,
+        h: resolution.cell.h,
+        depth: DEPTH_MIN,
+        art: artOf(resolution),
       },
     };
   }

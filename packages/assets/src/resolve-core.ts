@@ -12,6 +12,8 @@ import {
   type Frame,
   type Point,
   type Sha256,
+  TILE_MASKS,
+  tileAtlasRect,
 } from "@panthea/contracts";
 import type { PlaceholderInput } from "./placeholder-pixels";
 
@@ -39,13 +41,15 @@ export interface ResolveQuery {
   readonly expression?: string;
   /** When set, the id must resolve to an effect, and this is the animation of it. */
   readonly animation?: string;
+  /** When set, the id must resolve to a tile set, and this is the cell of it: the corner mask and the offset in the period. */
+  readonly tile?: { readonly mask: number; readonly offset: number };
 }
 
 export type PlaceholderReason = "missing-id" | "missing-state" | "wrong-kind";
 
 export interface CanonResolution {
   readonly source: "canon";
-  readonly kind: "sprite" | "portrait" | "effect";
+  readonly kind: "sprite" | "portrait" | "effect" | "tile";
   readonly assetId: AssetId;
   readonly revision: Sha256;
   readonly uri: string;
@@ -60,6 +64,9 @@ export interface CanonResolution {
 export type CanonLookup =
   | CanonResolution
   | { readonly source: "miss"; readonly reason: PlaceholderReason };
+
+/** How long a tile's one still frame is shown; a tile does not animate. */
+const TILE_FRAME_MS = 1000;
 
 export const DEFAULT_PLACEHOLDER: PlaceholderInput = { palette: [], parts: {} };
 
@@ -90,6 +97,29 @@ export function lookupCanon(
     );
     if (found === undefined) return miss("missing-state");
     return { ...canon, kind: "portrait", frames: [found.frame] };
+  }
+  if (query.tile !== undefined) {
+    if (manifest.kind !== "tile") return miss("wrong-kind");
+    const { mask, offset } = query.tile;
+    if (
+      !Number.isInteger(mask) ||
+      mask < 0 ||
+      mask >= TILE_MASKS ||
+      !Number.isInteger(offset) ||
+      offset < 0 ||
+      offset >= manifest.period * manifest.period
+    )
+      return miss("missing-state");
+    return {
+      ...canon,
+      kind: "tile",
+      frames: [
+        {
+          rect: tileAtlasRect(mask, offset, manifest.period),
+          durationMs: TILE_FRAME_MS,
+        },
+      ],
+    };
   }
   if (query.animation !== undefined) {
     if (manifest.kind !== "effect") return miss("wrong-kind");

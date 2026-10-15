@@ -1,10 +1,11 @@
-// The harness scene as data: a ground patch, the subject at a fixed tile, a
+// The harness scene as data: a 6x6 ground of the chosen tile set, the subject at a fixed tile, a
 // seated companion that shows the placeholder fallback, a placeholder mortal
 // for scale, the published Greek house two depth steps behind the subject, so
 // the subject covers part of it, the published Old Oak, the fire over the
 // structure the owner set burning, the strike's bolt, and a flat portrait
 // panel. Coordinates assume HARNESS_CAMERA.
 
+import { tileMaskAt, tileOffsetAt } from "@panthea/assets/browser";
 import {
   type Cell,
   type EffectsMode,
@@ -44,7 +45,37 @@ export const MISSING_SPRITE: Selection = {
   id: "missing-placeholder",
 };
 
-const PATCH = 4;
+/** An id no source holds as a tile set, so the ground fails in the scene instead of drawing something else. */
+export const MISSING_GROUND: Selection = {
+  source: "canon",
+  id: "missing-placeholder",
+};
+
+/**
+ * The terrain under the scene, 6x6 grid cells (0 grass, 1 flagstone), drawn as 7x7 lattice points.
+ * It is laid out so every one of the 16 corner masks appears: the cross, the single cells, the
+ * diagonal pair, the edge runs and the inner and outer corners.
+ */
+export const GROUND_GRID: readonly (readonly number[])[] = [
+  [0, 0, 0, 0, 0, 0],
+  [0, 0, 1, 0, 0, 1],
+  [0, 1, 1, 1, 0, 0],
+  [0, 0, 1, 0, 0, 0],
+  [1, 0, 1, 0, 1, 0],
+  [0, 1, 0, 0, 1, 1],
+];
+
+/**
+ * World coordinate of the grid's first cell. The grid is centred on the world origin because that is the
+ * one placement at which its 7x7 lattice, 448 px wide and 224 px high, lies inside HARNESS_CAMERA's 480x270.
+ */
+export const GROUND_ORIGIN = -3;
+
+/** The tile set the ground is drawn from, and the period of its offsets (N, so N squared of them). */
+export interface GroundChoice {
+  readonly selection: Selection;
+  readonly period: number;
+}
 
 /**
  * Which of the subject and the house draws in front where they overlap. The
@@ -82,6 +113,10 @@ export interface HarnessSelection {
   readonly structure?: StructureChoice;
   /** Absent: no bolt item. */
   readonly bolt?: BoltChoice;
+  /** The tile set the ground is drawn from. Absent: one missing set, which fails in the scene. */
+  readonly ground?: GroundChoice;
+  /** Moves every tile on to the next offset of its set, so a cycle shows the variants. Absent: 0. */
+  readonly groundCycle?: number;
 }
 
 export interface PreviewAnimationKey {
@@ -465,17 +500,41 @@ function footCell(art: StructureArt, spot: StructureSpot): Cell {
   };
 }
 
-export function harnessItems(selection: HarnessSelection): PreviewItem[] {
+/** The ground: a tile at every lattice point round the grid, from the chosen set at the cycle's offset. */
+function groundItems(selection: HarnessSelection): PreviewItem[] {
+  if (selection.ground === undefined)
+    return [
+      {
+        kind: "tile",
+        id: "ground",
+        point: { x: GROUND_ORIGIN, y: GROUND_ORIGIN },
+        request: MISSING_GROUND,
+      },
+    ];
+  const { selection: set, period } = selection.ground;
+  const cycle = selection.groundCycle ?? 0;
   const items: PreviewItem[] = [];
-  for (let x = 0; x < PATCH; x += 1) {
-    for (let y = 0; y < PATCH; y += 1) {
+  for (let gy = 0; gy <= GROUND_GRID.length; gy += 1) {
+    for (let gx = 0; gx <= GROUND_GRID.length; gx += 1) {
+      const x = GROUND_ORIGIN + gx;
+      const y = GROUND_ORIGIN + gy;
       items.push({
-        kind: "diamond",
-        id: `ground-${x}-${y}`,
-        cell: { x, y, z: 0 },
+        kind: "tile",
+        id: `ground-${gx}-${gy}`,
+        point: { x, y },
+        request: {
+          ...set,
+          mask: tileMaskAt(GROUND_GRID, gx, gy),
+          offset: (tileOffsetAt(x, y, period) + cycle) % (period * period),
+        },
       });
     }
   }
+  return items;
+}
+
+export function harnessItems(selection: HarnessSelection): PreviewItem[] {
+  const items: PreviewItem[] = groundItems(selection);
   const subject = selection.subject ?? MISSING_SPRITE;
   const structureFront = selection.occlusion === "structure-front";
   const target = selection.structure?.art ?? "building";

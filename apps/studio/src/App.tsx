@@ -83,6 +83,7 @@ function readParams() {
         : ("subject-front" as const),
     subject: query.get("subject"),
     portrait: query.get("portrait"),
+    ground: query.get("ground"),
   };
 }
 
@@ -130,15 +131,25 @@ function PreviewHarness({
     return {
       ...base,
       source: route.source as SourceKind,
-      ...(route.subjectKey === undefined
-        ? { portrait: route.portraitKey }
-        : { subject: route.subjectKey }),
+      ...(route.groundKey !== undefined
+        ? { ground: route.groundKey }
+        : route.subjectKey === undefined
+          ? { portrait: route.portraitKey }
+          : { subject: route.subjectKey }),
     };
   }, [selectionSource, selectionId, selectionKind]);
   const container = useRef<HTMLDivElement | null>(null);
   const [sourceKind, setSourceKind] = useState<SourceKind>(params.source);
   const [subjectKey, setSubjectKey] = useState(params.subject);
   const [portraitKey, setPortraitKey] = useState(params.portrait);
+  const [groundKey, setGroundKey] = useState(params.ground);
+  // The ground's offsets step on every few seconds, so the owner sees every variant of the set.
+  const [groundCycle, setGroundCycle] = useState(0);
+  useEffect(() => {
+    if (!params.animate) return;
+    const timer = setInterval(() => setGroundCycle((c) => c + 1), 1500);
+    return () => clearInterval(timer);
+  }, [params.animate]);
   const [focusKind, setFocusKind] = useState<
     PreviewSelection["kind"] | undefined
   >(selectionKind);
@@ -220,6 +231,7 @@ function PreviewHarness({
       kind: selectionKind,
     });
     setSourceKind(selectionSource);
+    if (route.groundKey !== undefined) setGroundKey(route.groundKey);
     if (route.subjectKey !== undefined) {
       setFocusKind("sprite");
       setSubjectKey(route.subjectKey);
@@ -245,6 +257,21 @@ function PreviewHarness({
       : entries.filter(
           (entry) => entry.source === sourceKind && entry.kind === "portrait",
         );
+  // The ground is the chosen tile set, else the first of this source, else canon's: a sprite draft is
+  // judged on the published ground when it has none of its own.
+  const tileSets = entries.filter(
+    (entry) => entry.kind === "tile" && entry.period !== undefined,
+  );
+  const groundEntry = ((): ListingEntry | undefined => {
+    const inSource = tileSets.filter((entry) => entry.source === sourceKind);
+    const picked =
+      pickIn(inSource, parseKey(groundKey)) ??
+      pickIn(
+        tileSets.filter((entry) => entry.source === "canon"),
+        undefined,
+      );
+    return tileSets.find((entry) => picked && keyOf(entry) === keyOf(picked));
+  })();
   const subjectChoice = pickIn(sprites, parseKey(subjectKey));
   const portraitChoice = pickIn(portraits, parseKey(portraitKey));
   const subjectChosen = subjectChoice && keyOf(subjectChoice);
@@ -406,6 +433,15 @@ function PreviewHarness({
         expressions: portraitEntry?.expressions ?? [],
         companion,
         occlusion,
+        ...(groundEntry?.period === undefined
+          ? {}
+          : {
+              ground: {
+                selection: { source: groundEntry.source, id: groundEntry.id },
+                period: groundEntry.period,
+              },
+            }),
+        groundCycle,
         structure: { art: target, state: building },
         bolt: {
           animation: boltAnimation,
@@ -430,6 +466,8 @@ function PreviewHarness({
     expression,
     companion,
     occlusion,
+    groundEntry,
+    groundCycle,
     target,
     building,
     boltAnimation,

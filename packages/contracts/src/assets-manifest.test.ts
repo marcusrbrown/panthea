@@ -11,6 +11,8 @@ import {
   parseGenerationRequest,
   parseProvenance,
   tileAtlasRect,
+  tileMaskAt,
+  tileOffsetAt,
 } from "./assets";
 
 const vocab = (() => {
@@ -2402,6 +2404,42 @@ describe("tile manifests", () => {
       }
     }
     expect(seen.size).toBe(256);
+  });
+
+  it("reads a lattice point's mask from the grid: N = (x-1,y-1), E = (x,y-1), S = (x,y), W = (x-1,y), set bit = over", () => {
+    const one = [
+      [0, 0, 0],
+      [0, 1, 0],
+      [0, 0, 0],
+    ];
+    // The over cell (1,1) is the N corner of lattice (2,2), E of (1,2), S of (1,1) and W of (2,1).
+    expect(tileMaskAt(one, 2, 2)).toBe(1);
+    expect(tileMaskAt(one, 1, 2)).toBe(2);
+    expect(tileMaskAt(one, 1, 1)).toBe(4);
+    expect(tileMaskAt(one, 2, 1)).toBe(8);
+    expect(tileMaskAt(one, 0, 0)).toBe(0);
+    expect(tileMaskAt([[1]], 0, 0)).toBe(15);
+  });
+
+  it("clamps a lattice point off the grid to the nearest grid cell, so an 8x8 grid draws 9x9 tiles", () => {
+    const grid = Array.from({ length: 8 }, () => Array(8).fill(1));
+    for (let y = 0; y <= 8; y += 1)
+      for (let x = 0; x <= 8; x += 1) expect(tileMaskAt(grid, x, y)).toBe(15);
+    const edge = Array.from({ length: 8 }, () =>
+      Array.from({ length: 8 }, (_, x) => (x === 0 ? 1 : 0)),
+    );
+    // On the west edge all four corners clamp to column 0, which is over; one step in, only N and W are.
+    expect(tileMaskAt(edge, 0, 4)).toBe(15);
+    expect(tileMaskAt(edge, 1, 4)).toBe(1 + 8);
+    expect(tileMaskAt(edge, 8, 4)).toBe(0);
+  });
+
+  it("finds a lattice point's offset in the period: (y mod N) * N + (x mod N), for any integer point", () => {
+    expect(tileOffsetAt(5, 6, 4)).toBe(2 * 4 + 1);
+    expect(tileOffsetAt(-1, -1, 4)).toBe(3 * 4 + 3);
+    expect(tileOffsetAt(0, 0, 4)).toBe(0);
+    expect(tileOffsetAt(3, 3, 4)).toBe(15);
+    expect(tileOffsetAt(7, 2, 1)).toBe(0);
   });
 
   it("the period bounds the offset but does not move a cell", () => {
