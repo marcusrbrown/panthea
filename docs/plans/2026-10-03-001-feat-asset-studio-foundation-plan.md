@@ -46,7 +46,7 @@ R identifiers below refer to the origin document, not new product requirement ID
 | R16 | Representative integer-zoom preview | 6, 7 | AE1 |
 | R17 | Studio live reload | 6, 7 | F4 |
 | R18 | Shared app/CLI pipeline and restricted webview | 5, 7 | AE9 |
-| R19 | Dual-grid tiles, Wang export, depth-sorted map | 11 | F5 |
+| R19 | Dual-grid tiles, depth-sorted map | 11 | F5 |
 | R20 | Complete tiered Zeus reference asset set | 1, 4, 5, 8, 9, 10, 11, 12 | Tier checkpoints |
 | R21 | Three effect tiers and reduced-effects mode | 10 | AE7 |
 | R22 | Committed synth parameters and derived audio | 12 | AE8 |
@@ -305,15 +305,8 @@ The primary studio workspace groups request and queue, candidate sheet with repo
 ### Tier 3: World tiles and sound
 
 ### Unit 11. Dual-grid tiles and map preview
-- (2026-10-10) The game client's isometric place layout was deferred from Unit 8 and belongs here, next to the tiles. Unit 8's shared pixel core already carries the isometric math.
-- [ ] Produce seamless map-ready terrain.
-- **Requirements:** R19, R20; F5; X02.
-- **Dependencies:** Tier 2; existing preview layer.
-- **Files:** Extend `packages/contracts/src/assets.ts` with the tile manifest kind and vocabulary, and `tools/content/src/assets.ts` validation (Unit 2 rejects `tile`); create `packages/assets/src/tiles.ts`, `tiles.test.ts`, `tiled.ts`, `tiled.test.ts`; extend CLI/app map surfaces and tests; add `content/greek/assets/tiles/`, map fixture and evidence; traceability.
-- **Approach:** Generate or choose a seamless base texture through the existing candidate/provenance/approval flow, then stamp sixteen dual-grid masks; isometric diamonds and declared layer/occlusion. Export Tiled JSON tilesets/Wang metadata with correct eight-value wang IDs and map orientation. No 47-tile expansion.
-- **Patterns:** Deterministic recipes, guide grid/elevation/depth order; Tiled format reference in research.
-- **Test scenarios:** Generated and chosen texture paths retain provenance and require approval; non-seamless source reports edge failures. All sixteen masks are generated; neighbouring edge pixels match; identical texture/recipe regenerates bytes; invalid Wang references reject; exported tileset reloads into map preview; elevated/tall props sort correctly at layer ties.
-- **Verification:** External Tiled import and actual studio map render establish exchange/seam/depth behavior, not JSON shape alone.
+- [ ] Produce seamless, map-ready terrain: a dual-grid tile set in the studio, then terrain under the followed place in the game.
+- **Plan:** `docs/plans/2026-10-14-001-feat-terrain-tiles-plan.md`.
 
 ### Unit 12. Procedural sound authoring
 - [ ] Publish reproducible thunder-strike sound.

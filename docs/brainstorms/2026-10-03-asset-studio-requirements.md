@@ -80,8 +80,8 @@ Every asset moves through these states; each flow names the transition it causes
 - F5. Tiles and a map (Tier 3)
   - **Trigger:** A1 asks for a terrain or structure set ("town cobbles with grass edge", "tavern intact/damaged/burning").
   - **Actors:** A1, A4, A5, A6
-  - **Steps:** A seamless base texture is generated or chosen; diamond masks stamp a dual-grid autotile set; structures generate at the guide's footprint and derive damage overlays; the set exports as a Tiled tileset with Wang metadata; a map is assembled and previewed in the studio renderer.
-  - **Outcome:** A map renders with consistent tile edges and correct depth order in the studio preview.
+  - **Steps:** A seamless source patch is rendered for each terrain; isometric diamond masks stamp a dual-grid autotile set from the patches; structures generate at the guide's footprint and derive damage overlays; a map is assembled from content JSON and previewed in the studio renderer and the game.
+  - **Outcome:** A map renders with consistent tile edges and correct depth order in the studio preview and the game.
   - **Covered by:** R19
 
 - F6. Sound for an event (Tier 3)
@@ -126,7 +126,7 @@ Tiers: **T1** Zeus on screen (success criterion 1); **T2** visual reference scen
 - R18. [T1] The CLI exposes every pipeline step (`generate`, `conform`, `open`, `derive`, `pack`, `publish`); the app and the CLI call the same `@panthea/assets` functions and neither implements a step itself; `apps/studio` hosts the pipeline as a Bun sidecar following the `panthea-sim` pattern, and its webview holds no shell or filesystem permissions.
 
 **World tiles and effects**
-- R19. [T3] Autotile sets are produced by procedural stamping from seamless base textures with isometric diamond masks (dual-grid first), exported as Tiled tilesets with Wang metadata, and render edge-consistent and depth-sorted in the studio preview.
+- R19. [T3] Autotile sets are stamped from seamless sources with isometric diamond masks (dual grid first). Maps are content JSON. Tiles render edge-consistent and depth-sorted in the studio preview and the game.
 - R20. [T1→T3] The Zeus reference scene asset set is the first target. T1: Zeus `idle` south, `seated` (on a cloud, body partly obscured), one `act` (strike) sequence, and the six-expression portrait. T2: one tree, one building in `intact`, `damaged`, and `burning` states, the lightning strike with a full and a calm version, and the remaining idle directions. T3: the `thunder-strike` sound (R22), alongside world tiles (R19). Walk cycles and facing-driven states wait for actor position and facing in the contracts, owned by the core lane.
 - R21. [T2] Effects have a full and a calm version. With the effects setting on calm, the same event shows the calm version (X03). Neither version has a full-screen flash or repeated pulses.
 
