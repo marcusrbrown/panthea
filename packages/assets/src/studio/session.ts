@@ -155,12 +155,14 @@ export interface StudioSession {
   ): AssetOpResult;
   /**
    * Runs the effect generator into a draft effect asset record; never approves.
-   * Takes the palettes as they are on disk now, like `pack`.
+   * Takes the palettes as they are on disk now, like `pack`, and records the asset's current
+   * registry revision as the draft's prior.
    */
   effect(
     input: EffectInput,
     content: StudioContent,
     palettes: PaletteSet,
+    registryRoot: string,
   ): AssetOpResult;
   /** The separate, explicit approval of a draft's exact manifest and atlas. */
   approveAsset(

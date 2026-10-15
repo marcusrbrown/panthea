@@ -77,6 +77,43 @@ describe("the effect op", () => {
     ).toEqual(["effect:bolt", "approve:bolt", "publish:bolt"]);
   });
 
+  test("a changed effect under the same asset id replaces the published one; a draft made before that is stale", async () => {
+    const { cli } = setup();
+    const draft = async (id: string, seed: number) => {
+      const drafted = await cli("effect", { ...EFFECT, id, seed });
+      expect(drafted.ok).toBe(true);
+      return (drafted.ok ? drafted.result : {}) as {
+        manifestRevision: string;
+        prior: string | null;
+      };
+    };
+    const approve = (id: string, confirm: string) =>
+      cli("approve", { id, confirm });
+    const publish = (id: string, confirm: string) =>
+      cli("publish", { id, confirm });
+
+    const first = await draft("bolt-a", 7);
+    await approve("bolt-a", first.manifestRevision);
+    expect(await publish("bolt-a", first.manifestRevision)).toMatchObject({
+      ok: true,
+      result: { state: "canon" },
+    });
+
+    const second = await draft("bolt-b", 8);
+    const third = await draft("bolt-c", 9);
+    expect(second.manifestRevision).not.toBe(first.manifestRevision);
+    await approve("bolt-b", second.manifestRevision);
+    await approve("bolt-c", third.manifestRevision);
+    expect(await publish("bolt-b", second.manifestRevision)).toMatchObject({
+      ok: true,
+      result: { state: "canon", revision: second.manifestRevision },
+    });
+
+    const stale = await publish("bolt-c", third.manifestRevision);
+    expect(code(stale)).toBe("wrong-state");
+    expect(stale.ok ? "" : stale.error.message).toMatch(/registry changed/);
+  });
+
   test("takes parameter overrides", async () => {
     const { rig, cli } = setup();
     const drafted = await cli("effect", { ...EFFECT, params: { depth: 4 } });

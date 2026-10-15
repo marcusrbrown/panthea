@@ -43,7 +43,7 @@ const input = (over: Partial<EffectInput> = {}): EffectInput => ({
 });
 
 const make = (r: AssetRig, over: Partial<EffectInput> = {}) =>
-  r.session.effect(input(over), r.content, r.palettes);
+  r.session.effect(input(over), r.content, r.palettes, r.registryRoot);
 
 function made(r: AssetRig, over: Partial<EffectInput> = {}) {
   const result = make(r, over);
@@ -357,6 +357,74 @@ describe("approving and publishing an effect", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.message).toMatch(/recipe/);
     expect(registryEmpty(r)).toBe(true);
+  });
+
+  describe("replacing a published effect", () => {
+    const draft = (r: AssetRig, id: string, seed: number) =>
+      made(r, { id, seed });
+
+    test("a changed effect under the same asset id replaces the published revision", () => {
+      const r = rig();
+      const first = draft(r, "strike-a", 7);
+      expect(first.prior).toBeNull();
+      approved(r, "strike-a");
+      const a = publish(r, "strike-a");
+      expect(a.ok).toBe(true);
+
+      const second = draft(r, "strike-b", 8);
+      expect(second.prior).toBe(first.manifestRevision);
+      expect(second.manifestRevision).not.toBe(first.manifestRevision);
+      approved(r, "strike-b");
+      const b = publish(r, "strike-b");
+      expect(b.ok).toBe(true);
+      if (!b.ok) return;
+      expect(b.asset.record.state).toBe("canon");
+
+      const loaded = loadRegistry(r.registryRoot, r.content.vocabulary);
+      expect(loaded.problems).toEqual([]);
+      expect(loaded.snapshot.entries.get("lightning-strike")?.revision).toBe(
+        second.manifestRevision as Sha256,
+      );
+    });
+
+    test("a draft made before another publication of the asset is refused as stale", () => {
+      const r = rig();
+      draft(r, "strike-a", 7);
+      approved(r, "strike-a");
+      expect(publish(r, "strike-a").ok).toBe(true);
+
+      // Two replacements drafted against the same published revision.
+      draft(r, "strike-b", 8);
+      draft(r, "strike-c", 9);
+      approved(r, "strike-b");
+      approved(r, "strike-c");
+      const winner = publish(r, "strike-b");
+      expect(winner.ok).toBe(true);
+      if (!winner.ok) return;
+
+      const stale = publish(r, "strike-c");
+      expect(stale.ok).toBe(false);
+      if (!stale.ok) {
+        expect(stale.reason).toBe("wrong-state");
+        expect(stale.message).toMatch(/registry changed/);
+      }
+      const loaded = loadRegistry(r.registryRoot, r.content.vocabulary);
+      expect(loaded.snapshot.entries.get("lightning-strike")?.revision).toBe(
+        winner.asset.published?.revision as Sha256,
+      );
+    });
+
+    test("a draft made against an empty registry is refused once the asset has been published", () => {
+      const r = rig();
+      draft(r, "strike-a", 7);
+      draft(r, "strike-b", 8);
+      approved(r, "strike-a");
+      approved(r, "strike-b");
+      expect(publish(r, "strike-a").ok).toBe(true);
+      const stale = publish(r, "strike-b");
+      expect(stale.ok).toBe(false);
+      if (!stale.ok) expect(stale.message).toMatch(/registry changed/);
+    });
   });
 });
 

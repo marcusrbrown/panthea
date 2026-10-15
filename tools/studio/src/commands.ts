@@ -1433,6 +1433,8 @@ const OPS: Record<string, OpDef> = {
       if (isOutcome(content)) return content;
       const palettes = studio.freshPalettes();
       if (isOutcome(palettes)) return palettes;
+      const registry = studio.registryRoot();
+      if (isOutcome(registry)) return registry;
       if (
         a.params !== undefined &&
         (typeof a.params !== "object" ||
@@ -1451,7 +1453,7 @@ const OPS: Record<string, OpDef> = {
           ? {}
           : { params: a.params as NonNullable<EffectInput["params"]> }),
       };
-      const result = session.effect(input, content, palettes);
+      const result = session.effect(input, content, palettes, registry);
       return result.ok
         ? done(assetSummary(result.asset))
         : refuse(result.reason, safeMessage(result.message));

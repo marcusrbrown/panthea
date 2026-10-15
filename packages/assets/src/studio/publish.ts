@@ -75,11 +75,14 @@ export interface AssetOps {
   /**
    * Runs the effect generator into a draft effect; never approves. The record has
    * no working set: its recipe is its provenance. `palettes` is read the same way as for `pack`.
+   * The draft records the asset's current registry revision as its prior, as `pack` does, so a
+   * changed effect can replace a published one and a draft made before another publication is stale.
    */
   effect(
     input: EffectInput,
     content: StudioContent,
     palettes: PaletteSet,
+    registryRoot: string,
   ): AssetOpResult;
   approveAsset(
     id: string,
@@ -387,6 +390,7 @@ export function createAssetOps(host: EditHost): AssetOps {
     input: EffectInput,
     content: StudioContent,
     palettes: PaletteSet,
+    registryRoot: string,
   ): AssetOpResult {
     if (host.isClosed()) return refused("closed", CLOSED);
     if (!parseSlug(input.id, "id").ok)
@@ -407,6 +411,8 @@ export function createAssetOps(host: EditHost): AssetOps {
         "not-found",
         `the palette "${input.palette}" is not among the palettes on disk`,
       );
+    const current = currentRevision(registryRoot, input.assetId);
+    if (!current.ok) return refused("wrong-state", current.message);
     const built = buildEffect({
       recipe: recipe.recipe,
       palette,
@@ -429,7 +435,7 @@ export function createAssetOps(host: EditHost): AssetOps {
       id: input.id,
       workingSetId: null,
       assetId: assetId.value,
-      prior: null,
+      prior: current.value,
       record: picked.value,
       manifestRevision: revision,
       reportBasis: {
