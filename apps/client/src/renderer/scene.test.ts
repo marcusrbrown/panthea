@@ -46,16 +46,23 @@ import {
   type CanonProblem,
   createCanonClient,
 } from "../assets/canon";
-import { baseState, framePayload, movedActor, previewView } from "../fixtures";
+import {
+  baseState,
+  framePayload,
+  movedActor,
+  previewView,
+  repairingTavern,
+} from "../fixtures";
 import { createObserver, followedPlace } from "../observer";
 import { toViewModel, type WorldViewModel } from "../store";
 import {
-  actorFoot,
+  actorCell,
   CAMERA_ORIGIN,
-  GROUND_ORIGIN,
+  cellFoot,
+  GRID_ORIGIN,
   GROUND_POINTS,
+  type GridCell,
   LOGICAL_SIZE,
-  PLACE_ORIGIN,
 } from "./layout";
 import { drawableEvents } from "./presentation";
 import { createWorldRenderer, type WorldRenderer } from "./scene";
@@ -527,30 +534,30 @@ test("the canvas backing store is the logical size times the largest whole zoom 
   });
 
   expect(element.width).toBe(1152);
-  expect(element.height).toBe(768);
+  expect(element.height).toBe(672);
   expect(element.style.width).toBe("1152px");
-  expect(element.style.height).toBe("768px");
+  expect(element.style.height).toBe("672px");
   expect(element.style.left).toBe("174px");
-  expect(element.style.top).toBe("366px");
+  expect(element.style.top).toBe("414px");
   const view = backend.views.at(-1);
   expect(view?.zoom).toBe(2);
   expect(view?.camera).toEqual(CAMERA_ORIGIN);
   expect(view?.metrics).toMatchObject({
     backingWidth: 1152,
-    backingHeight: 768,
+    backingHeight: 672,
   });
 });
 
 test("at a device pixel ratio of 2 the CSS box is half the backing store", async () => {
   const { canon } = setup();
   const { element } = await mount(canon, {
-    available: { width: 576, height: 384 },
+    available: { width: 576, height: 336 },
     devicePixelRatio: 2,
   });
 
   expect(element.width).toBe(1152);
   expect(element.style.width).toBe("576px");
-  expect(element.style.height).toBe("384px");
+  expect(element.style.height).toBe("336px");
 });
 
 test("event rings are meshes in the decor group, redrawn without accumulating; buildings and flames are not meshes", async () => {
@@ -746,7 +753,6 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
   };
   await renderer.draw(view, "olympus", PLACE.olympus);
 
-  const place = PLACE_ORIGIN;
   const legacy = spriteOf(backend, "actor:zeus");
   const tall = spriteOf(backend, "actor:tall");
   expect(problems).toEqual([]);
@@ -755,8 +761,8 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
   expect(tall.texture?.image).toMatchObject({ width: 448, height: 96 });
 
   // A sprite's centre is its foot moved to the pivot's centre-relative offset (y up).
-  const legacyFoot = actorFoot(place, 0);
-  const tallFoot = actorFoot(place, 1);
+  const legacyFoot = cellFoot(actorCell(0) as GridCell);
+  const tallFoot = cellFoot(actorCell(1) as GridCell);
   expect([legacy.position.x, legacy.position.y]).toEqual([
     legacyFoot.x - 32 + 64 / 2,
     legacyFoot.y + 80 - 80 / 2,
@@ -788,7 +794,7 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
   }
 });
 
-test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 576x384 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
+test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 576x336 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
   const { canon, problems } = setup({
     payload: retroPayload(),
     atlases: RETRO_ATLASES,
@@ -813,16 +819,15 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
   };
   await renderer.draw(view, "olympus", PLACE.olympus);
 
-  const place = PLACE_ORIGIN;
   const retro = spriteOf(backend, "actor:zeus");
   const elder = spriteOf(backend, "actor:elder");
   expect(problems).toEqual([]);
-  // The default mount's 1200x1300 fits zoom 2, so the canvas is the 576x384 target at twice its size.
+  // The default mount's 1200x1300 fits zoom 2, so the canvas is the 576x336 target at twice its size.
   expect([element.width, element.height]).toEqual([
     LOGICAL_SIZE.width * 2,
     LOGICAL_SIZE.height * 2,
   ]);
-  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 384 });
+  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 336 });
   // The real atlas: 136 cells of 112x96 in one row, idle/south first.
   expect(retro.texture?.image).toMatchObject({ width: 15232, height: 96 });
   expect(retro.frame?.name).toBe("0,0,112,96");
@@ -830,8 +835,8 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
   expect(elder.texture?.image).toMatchObject({ width: 704, height: 80 });
 
   // Each is placed by its own pivot: (56,78) for the retro cell, (32,80) for the legacy one.
-  const retroFoot = actorFoot(place, 0);
-  const elderFoot = actorFoot(place, 1);
+  const retroFoot = cellFoot(actorCell(0) as GridCell);
+  const elderFoot = cellFoot(actorCell(1) as GridCell);
   expect([retro.position.x, retro.position.y]).toEqual([
     retroFoot.x - 56 + 112 / 2,
     retroFoot.y + 78 - 96 / 2,
@@ -841,7 +846,7 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
     elderFoot.y + 80 - 80 / 2,
   ]);
 
-  // Both cells lie inside the camera's view of the 576x384 target.
+  // Both cells lie inside the camera's view of the 576x336 target.
   const bounds = {
     left: CAMERA_ORIGIN.x,
     right: CAMERA_ORIGIN.x + LOGICAL_SIZE.width,
@@ -981,7 +986,7 @@ test("in the default window the canvas is shown whole: zoom 1 at a device pixel 
   const { canon } = setup();
 
   const atOne = await mount(canon, { available: DEFAULT_SCENE_AREA });
-  expect([atOne.element.width, atOne.element.height]).toEqual([576, 384]);
+  expect([atOne.element.width, atOne.element.height]).toEqual([576, 336]);
   expect(atOne.backend.views.at(-1)?.zoom).toBe(1);
   expect(atOne.element.style.left).toBe("69px");
 
@@ -989,12 +994,12 @@ test("in the default window the canvas is shown whole: zoom 1 at a device pixel 
     available: DEFAULT_SCENE_AREA,
     devicePixelRatio: 2,
   });
-  expect([atTwo.element.width, atTwo.element.height]).toEqual([1152, 768]);
+  expect([atTwo.element.width, atTwo.element.height]).toEqual([1152, 672]);
   expect(atTwo.backend.views.at(-1)?.zoom).toBe(2);
-  // The CSS box is the same 576x384 on either screen: the extra device pixels are detail, not a bigger canvas.
+  // The CSS box is the same 576x336 on either screen: the extra device pixels are detail, not a bigger canvas.
   expect([atTwo.element.style.width, atTwo.element.style.height]).toEqual([
     "576px",
-    "384px",
+    "336px",
   ]);
 });
 
@@ -1063,8 +1068,8 @@ test("a mortal place with terrain draws 81 ground tiles, each the atlas cell its
     const box = latticeOrigin(x, y);
     if (!box.ok) throw new Error(box.detail);
     expect([sprite.position.x + 0, sprite.position.y + 0]).toEqual([
-      box.value.x + GROUND_ORIGIN.x + 32,
-      GROUND_ORIGIN.y - box.value.y - 16,
+      box.value.x + GRID_ORIGIN.x + 32,
+      GRID_ORIGIN.y - box.value.y - 16,
     ]);
   }
   expect(seenMasks.size).toBeGreaterThan(8);
@@ -1179,4 +1184,51 @@ test("the decor no longer draws paper rules: only rings, repair bars and the fal
 
   for (const child of backend.decor.children)
     expect(child.name).not.toMatch(/^grid:/);
+});
+
+test("the actors of a place stand in front of its buildings: every actor draws over the building and its fire, and the ground is under all of them", async () => {
+  const { canon } = groundSetup();
+  const { renderer, backend } = await mount(canon);
+
+  await renderer.draw(squareView(), "mortal", PLACE.mortal);
+
+  const z = (id: string) => spriteOf(backend, id).position.z;
+  const tavern = z("structure:the-tavern");
+  expect(z("structure:the-tavern:fire")).toBeGreaterThan(tavern);
+  expect(z("actor:woodcutter")).toBeGreaterThan(z("structure:the-tavern:fire"));
+  const groundTop = Math.max(
+    ...GROUND_POINTS.map(({ x, y }) => z(`ground:${x}-${y}`)),
+  );
+  expect(tavern).toBeGreaterThan(groundTop);
+});
+
+test("the repair bar draws above the ground and below every sprite: its z is past the ground tiles' and under the lowest building or actor's", async () => {
+  const { canon } = groundSetup();
+  const { renderer, backend } = await mount(canon);
+  const parsed = parseSyncFrame(
+    framePayload(repairingTavern(baseState(), 1), {
+      terrain: {
+        [PLACE.mortal]: { set: "grass-flagstone", rows: SQUARE_ROWS },
+      },
+    }),
+  );
+  if (!parsed.ok) throw new Error(parsed.message);
+  const view = toViewModel(parsed.value, decode(parsed.value.state));
+
+  await renderer.draw(view, "mortal", PLACE.mortal);
+
+  const bar = backend.decor.children.find(
+    (child) => child.name === "repair:the-tavern",
+  );
+  if (bar === undefined) throw new Error("no repair bar is drawn");
+  const groundTop = Math.max(
+    ...GROUND_POINTS.map(
+      ({ x, y }) => spriteOf(backend, `ground:${x}-${y}`).position.z,
+    ),
+  );
+  const sprites = ["structure:the-tavern", "actor:woodcutter"].map(
+    (id) => spriteOf(backend, id).position.z,
+  );
+  expect(bar.position.z).toBeGreaterThan(groundTop);
+  expect(bar.position.z).toBeLessThan(Math.min(...sprites));
 });

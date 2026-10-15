@@ -16,7 +16,15 @@ import {
 import { type CanonProblem, createCanonClient } from "../assets/canon";
 import type { WorldViewModel } from "../store";
 import { BACKGROUND } from "./decor";
-import { CAMERA_ORIGIN, LOGICAL_SIZE } from "./layout";
+import {
+  actorCell,
+  buildingCell,
+  CAMERA_ORIGIN,
+  cellFoot,
+  type GridCell,
+  LOGICAL_SIZE,
+  MAX_ACTORS_PER_PLACE,
+} from "./layout";
 import { createWorldRenderer, type WorldRenderer } from "./scene";
 
 const mounted: WorldRenderer[] = [];
@@ -144,24 +152,60 @@ function extent(p: Painted, other?: Painted) {
 const canvasX = (worldX: number) => worldX - CAMERA_ORIGIN.x;
 const canvasY = (worldY: number) => -worldY - CAMERA_ORIGIN.y;
 
-test("the ground diamond lands whole and centred on the canvas: 576 wide from the left edge to the right, its top vertex 92 px down", async () => {
+/** A view whose followed mortal place holds `count` placeholder inhabitants, none of them a god. */
+function crowded(count: number): WorldViewModel {
+  const view = withTerrain();
+  const people = Array.from({ length: count }, (_, index) => ({
+    id: `person-${String(index).padStart(2, "0")}`,
+    locationId: PLACE.mortal,
+    alive: true,
+    sprite: "placeholder-person",
+    isDeity: false,
+    inventory: [],
+  }));
+  return {
+    ...view,
+    realms: {
+      ...view.realms,
+      mortal: view.realms.mortal.map((l) =>
+        l.id === PLACE.mortal ? { ...l, buildings: [], actors: people } : l,
+      ),
+    },
+  };
+}
+
+/** The pixels of `painted` inside `box` that differ from `other`'s. */
+function differing(
+  painted: Painted,
+  other: Painted,
+  box: { left: number; right: number; top: number; bottom: number },
+): number {
+  let count = 0;
+  for (let y = box.top; y < box.bottom; y += 1)
+    for (let x = box.left; x < box.right; x += 1)
+      if (at(painted, x, y).some((c, k) => c !== at(other, x, y)[k]))
+        count += 1;
+  return count;
+}
+
+test("the ground diamond lands whole and centred on the canvas: 576 wide from the left edge to the right, its top tile 44 px down", async () => {
   const painted = await paint(
     ground(withTerrain(), "mortal", PLACE.mortal),
     "mortal",
     PLACE.mortal,
   );
-  expect([painted.width, painted.height]).toEqual([576, 384]);
+  expect([painted.width, painted.height]).toEqual([576, 336]);
 
   const box = extent(painted);
-  // The 9x9 lattice: 576 across, 288 down; its first tile's top is 160 above the layout origin.
+  // The 9x9 lattice: 576 across, 288 down; its first tile's top is 144 above the world origin.
   expect(box.left).toBeLessThanOrEqual(1);
   expect(box.right).toBeGreaterThanOrEqual(574);
-  expect(box.top).toBe(canvasY(160));
-  expect(box.bottom).toBeGreaterThanOrEqual(canvasY(-128) - 3);
+  expect(box.top).toBe(canvasY(144));
+  expect(box.bottom).toBeGreaterThanOrEqual(canvasY(-144) - 3);
   expect(box.bottom).toBeLessThan(LOGICAL_SIZE.height);
   // Centred across the canvas, and the diamond's middle is a ground pixel.
   expect(box.left + box.right + 1).toBe(LOGICAL_SIZE.width);
-  expect(isBackground(painted, canvasX(0), canvasY(16))).toBe(false);
+  expect(isBackground(painted, canvasX(0), canvasY(0))).toBe(false);
   // The four canvas corners are outside the diamond, on the background.
   for (const [x, y] of [
     [2, 2],
@@ -172,7 +216,7 @@ test("the ground diamond lands whole and centred on the canvas: 576 wide from th
     expect(isBackground(painted, x, y), `${x},${y}`).toBe(true);
 });
 
-test("a building stands on the back half of the ground: the pixels it adds lie in its own cell, above the diamond's middle, on the canvas", async () => {
+test("a building stands on the back half of the ground: its foot is above the diamond's middle, the pixels it adds lie in its own cell on the canvas, and its plinth is on the ground", async () => {
   const view = withTerrain();
   const bare = await paint(
     ground(view, "mortal", PLACE.mortal),
@@ -195,16 +239,21 @@ test("a building stands on the back half of the ground: the pixels it adds lie i
 
   const added = extent(withBuilding, bare);
   expect(added.count).toBeGreaterThan(1000);
-  // The house is the 192x192 cell with its foot at (96, 136), the foot 80 above the layout origin.
-  const foot = { x: canvasX(0), y: canvasY(80) };
-  expect(added.left).toBeGreaterThanOrEqual(foot.x - 96);
-  expect(added.right).toBeLessThan(foot.x + 96);
-  expect(added.bottom).toBeLessThan(foot.y + 56);
-  // Its foot stands above the middle of the diamond (16 above the origin): the back half.
-  expect(foot.y).toBeLessThan(canvasY(16));
-  expect(added.bottom).toBeLessThan(canvasY(16));
+  // The slot of a lone building is the cell (3, 2): the house's 192x192 cell has its foot at (96, 136) on that cell's bottom vertex.
+  const foot = cellFoot(buildingCell(0, 1) as GridCell);
+  const at0 = { x: canvasX(foot.x), y: canvasY(foot.y) };
+  expect(added.left).toBeGreaterThanOrEqual(at0.x - 96);
+  expect(added.right).toBeLessThan(at0.x + 96);
+  expect(added.bottom).toBeLessThan(at0.y + 56);
+  // Its foot stands above the middle of the diamond: the back half.
+  expect(at0.y).toBeLessThan(canvasY(0));
   // And the whole of it is on the canvas.
   expect(added.top).toBeGreaterThanOrEqual(0);
+  // The art's plinth, the rows at its bottom, stands on ground: no pixel of it is over bare background.
+  for (let y = added.bottom - 24; y <= added.bottom; y += 1)
+    for (let x = added.left; x <= added.right; x += 1)
+      if (at(withBuilding, x, y).some((c, k) => c !== at(bare, x, y)[k]))
+        expect(isBackground(bare, x, y), `plinth pixel ${x},${y}`).toBe(false);
 });
 
 test("an actor stands on the front half of the ground: the pixels it adds lie in its cell, below the diamond's middle, on the canvas", async () => {
@@ -230,28 +279,90 @@ test("an actor stands on the front half of the ground: the pixels it adds lie in
 
   const added = extent(withActor, bare);
   expect(added.count).toBeGreaterThan(20);
-  // The first actor's foot is 28 left of and 48 below the layout origin; the placeholder is 16x16 on its foot.
-  const foot = { x: canvasX(-28), y: canvasY(-48) };
+  // The first actor stands on the first actor cell; the placeholder is 16x16 on its foot.
+  const cell = cellFoot(actorCell(0) as GridCell);
+  const foot = { x: canvasX(cell.x), y: canvasY(cell.y) };
   expect(added.left).toBeGreaterThanOrEqual(foot.x - 8);
   expect(added.right).toBeLessThanOrEqual(foot.x + 8);
   expect(added.bottom).toBeLessThanOrEqual(foot.y);
-  expect(foot.y).toBeGreaterThan(canvasY(16));
-  expect(added.top).toBeGreaterThanOrEqual(canvasY(16) - 8);
+  expect(foot.y).toBeGreaterThan(canvasY(0));
+  expect(added.top).toBeGreaterThanOrEqual(canvasY(0) - 8);
   expect(added.bottom).toBeLessThan(LOGICAL_SIZE.height);
 });
 
-test("an Olympus place draws its god on the bare background: Zeus, in his cell, on the canvas", async () => {
-  const painted = await paint(withTerrain(), "olympus", PLACE.olympus);
+test("a crowded place shows every actor's own pixels: each of 14 placeholders adds pixels inside its own cell's 16x16 box, and none is hidden", async () => {
+  const bare = await paint(
+    ground(crowded(MAX_ACTORS_PER_PLACE), "mortal", PLACE.mortal),
+    "mortal",
+    PLACE.mortal,
+  );
+  const crowd = await paint(
+    crowded(MAX_ACTORS_PER_PLACE),
+    "mortal",
+    PLACE.mortal,
+  );
 
-  const box = extent(painted);
-  expect(box.count).toBeGreaterThan(100);
-  // Zeus's first slot: the 64x80 cell with its foot at (32, 80), the foot 28 left of and 48 below the layout origin.
-  const foot = { x: canvasX(-28), y: canvasY(-48) };
-  expect(box.left).toBeGreaterThanOrEqual(foot.x - 32);
-  expect(box.right).toBeLessThan(foot.x + 32);
-  expect(box.top).toBeGreaterThanOrEqual(foot.y - 80);
-  expect(box.bottom).toBeLessThanOrEqual(foot.y);
-  // No ground under Olympus: the corners and the diamond's middle row away from Zeus are the background.
+  for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
+    const foot = cellFoot(actorCell(index) as GridCell);
+    const left = canvasX(foot.x) - 8;
+    const top = canvasY(foot.y) - 16;
+    const added = differing(crowd, bare, {
+      left,
+      right: left + 16,
+      top,
+      bottom: top + 16,
+    });
+    // The placeholder is a figure in a 16x16 cell; a good part of it is opaque.
+    expect(added, `actor ${index}`).toBeGreaterThan(40);
+  }
+});
+
+test("Olympus shows Zeus and Hera side by side on the bare background, each in its own cell", async () => {
+  const view = withTerrain();
+  const hera = {
+    id: "hera",
+    locationId: PLACE.olympus,
+    alive: true,
+    sprite: "placeholder-hera",
+    isDeity: true,
+    inventory: [],
+  };
+  const both: WorldViewModel = {
+    ...view,
+    realms: {
+      ...view.realms,
+      olympus: view.realms.olympus.map((l) =>
+        l.id === PLACE.olympus ? { ...l, actors: [...l.actors, hera] } : l,
+      ),
+    },
+  };
+  const painted = await paint(both, "olympus", PLACE.olympus);
+  const zeusOnly = await paint(withTerrain(), "olympus", PLACE.olympus);
+
+  // Zeus (the 64x80 cell, foot at (32, 80)) stands on the first cell, Hera (16x16) on the second.
+  const zeusFoot = cellFoot(actorCell(0) as GridCell);
+  const heraFoot = cellFoot(actorCell(1) as GridCell);
+  const zeusBox = extent(zeusOnly);
+  expect(zeusBox.count).toBeGreaterThan(100);
+  expect(zeusBox.left).toBeGreaterThanOrEqual(canvasX(zeusFoot.x) - 32);
+  expect(zeusBox.right).toBeLessThan(canvasX(zeusFoot.x) + 32);
+  expect(zeusBox.bottom).toBeLessThanOrEqual(canvasY(zeusFoot.y));
+  // Hera adds her own pixels, in her cell's box, beside Zeus and not under him.
+  const left = canvasX(heraFoot.x) - 8;
+  const top = canvasY(heraFoot.y) - 16;
+  expect(
+    differing(painted, zeusOnly, {
+      left,
+      right: left + 16,
+      top,
+      bottom: top + 16,
+    }),
+  ).toBeGreaterThan(40);
+  expect(left).toBeGreaterThanOrEqual(zeusBox.right);
+  // The same row, 64 apart: side by side.
+  expect(heraFoot.y).toBe(zeusFoot.y);
+  expect(heraFoot.x - zeusFoot.x).toBe(64);
+  // No ground under Olympus, and the corners are the background.
   expect(isBackground(painted, 4, 4)).toBe(true);
-  expect(isBackground(painted, canvasX(200), canvasY(16))).toBe(true);
+  expect(isBackground(painted, canvasX(200), canvasY(0))).toBe(true);
 });

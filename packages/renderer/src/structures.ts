@@ -4,7 +4,7 @@
 // one-shot effect is over. Presentation only: nothing here reads or changes
 // the world.
 
-import type { Point } from "./iso";
+import type { Footprint, Point } from "./iso";
 
 /** A structure is one of two published pieces of art: the Old Oak's tree, or the Greek building every other building draws. */
 export const STRUCTURE_ASSETS = {
@@ -12,6 +12,16 @@ export const STRUCTURE_ASSETS = {
   building: "greek-house",
 } as const;
 export type StructureArt = keyof typeof STRUCTURE_ASSETS;
+
+/**
+ * The footprint, in tiles, each piece of structure art declares: the house's 4 along x by 3 along y, the tree's one
+ * tile. A canon structure is placed by its manifest's own footprint; this is what a placeholder stands in with and
+ * what the layout reserves, so the game and the studio agree.
+ */
+export const STRUCTURE_FOOTPRINTS: Readonly<Record<StructureArt, Footprint>> = {
+  building: { w: 4, h: 3 },
+  tree: { w: 1, h: 1 },
+};
 
 /** The states a structure publishes, all facing south. */
 export const STRUCTURE_STATES = ["intact", "damaged", "ruin"] as const;

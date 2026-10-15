@@ -1,7 +1,7 @@
 // The followed place's ground: its authored 8x8 terrain grid drawn as the 9x9 lattice of tiles round it. Each tile
 // is the atlas cell its corner mask and its offset in the set's period name (the shared `tileMaskAt` and
-// `tileOffsetAt`; a lattice point off the grid takes the nearest grid cell), placed by the shared `composeScene` at
-// its lattice point and moved to the layout's anchor. The tiles are always the lowest thing drawn.
+// `tileOffsetAt`; a lattice point off the grid takes the nearest grid cell), a scene entity at its lattice point.
+// `composeScene` places them (./world) at the depth that is always the lowest drawn.
 
 import {
   type RegistrySnapshot,
@@ -10,20 +10,16 @@ import {
   tileOffsetAt,
 } from "@panthea/assets/browser";
 import type { Atlas } from "@panthea/contracts";
-import {
-  composeScene,
-  type Instance,
-  type SceneEntity,
-} from "@panthea/renderer";
+import type { SceneEntity } from "@panthea/renderer";
 
 import type { ViewLocation } from "../store";
-import { GROUND_ORIGIN, GROUND_POINTS } from "./layout";
+import { GROUND_POINTS } from "./layout";
 
 export type GroundPlan =
   | {
       readonly ok: true;
-      /** Every tile, in the target's pixel space (y down), lowest first. */
-      readonly instances: readonly Instance[];
+      /** One entity per lattice point, row by row. */
+      readonly entities: readonly SceneEntity[];
       /** The one atlas every tile is cut from. */
       readonly atlas: Atlas;
     }
@@ -76,21 +72,7 @@ export function planGround(
       resolution,
     });
   }
-  const composed = composeScene(entities);
-  if (composed.refused.length > 0 || atlas === undefined)
-    return {
-      ok: false,
-      reason: `the terrain set "${set}" does not compose: ${composed.refused.map((r) => `${r.id} ${r.reason}`).join(", ")}`,
-    };
-
-  // The lattice origin puts lattice point (0, 0) at the middle of the target's own origin; the layout moves it.
-  return {
-    ok: true,
-    atlas,
-    instances: composed.instances.map((instance) => ({
-      ...instance,
-      x: instance.x + GROUND_ORIGIN.x,
-      y: instance.y - GROUND_ORIGIN.y,
-    })),
-  };
+  if (atlas === undefined)
+    return { ok: false, reason: `the terrain set "${set}" draws no tiles` };
+  return { ok: true, atlas, entities };
 }

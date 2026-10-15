@@ -17,6 +17,7 @@ import {
   STRIKE_ASSET,
   STRUCTURE_ANCHORS,
   STRUCTURE_ASSETS,
+  STRUCTURE_FOOTPRINTS,
   type StructureArt,
   strikeAnimation,
 } from "@panthea/renderer";
@@ -462,11 +463,6 @@ export function harnessSubject(
     return chosen;
   return { source: chosen.source, id: chosen.id, realm: selected.realm };
 }
-
-/** The footprints the published structure art declares, in tiles: what a placeholder stands in with. */
-const STRUCTURE_FOOTPRINTS: Readonly<
-  Record<StructureArt, { readonly w: number; readonly h: number }>
-> = { building: { w: 4, h: 3 }, tree: { w: 1, h: 1 } };
 
 const STRUCTURE_FACING = "south";
 

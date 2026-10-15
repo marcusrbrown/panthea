@@ -10,7 +10,7 @@
 // so they are set as bytes (see `pixelColor`).
 
 import type { Realm } from "@panthea/contracts";
-import { DEPTH_Z_MAX } from "@panthea/renderer";
+import { DEPTH_Z_MAX, ENTITY_SLOTS } from "@panthea/renderer";
 import {
   BoxGeometry,
   Color,
@@ -23,9 +23,10 @@ import {
 
 import type { ViewBuilding, ViewLocation, WorldViewModel } from "../store";
 import {
-  buildingFoot,
+  buildingCell,
+  cellCentre,
+  cellFoot,
   EVENT_RING,
-  PLACE_ORIGIN,
   type WorldPoint,
 } from "./layout";
 import { type EffectTone, placeEvents } from "./presentation";
@@ -48,8 +49,9 @@ const FALLEN_COLOR = RUST;
 /** The scene's clear colour, as sRGB bytes. */
 export const BACKGROUND: readonly [number, number, number] = [238, 233, 220];
 
-// Depth, below every sprite and above the ground tiles (z 0): the repair bars.
-const Z_REPAIR = 5;
+// Depth, below every sprite and above the ground: the ground tiles take z 0 to 80 (the 81 of a place, all at the
+// least depth on the ground layer, one slot each), so the repair bars take the first z past the ground layer's slots.
+const Z_REPAIR = ENTITY_SLOTS;
 // Above every sprite.
 const Z_FALLEN = DEPTH_Z_MAX - 1;
 const Z_RING = DEPTH_Z_MAX;
@@ -177,18 +179,16 @@ export function buildDecor(
   if (place === undefined) return { objects, drawnEventIds };
 
   for (const [index, building] of place.buildings.entries()) {
+    const cell = buildingCell(index, place.buildings.length);
+    if (cell === undefined) continue;
     if (building.status === "repairing" && building.repair) {
-      objects.push(
-        repairBar(
-          building,
-          buildingFoot(PLACE_ORIGIN, index, place.buildings.length),
-        ),
-      );
+      objects.push(repairBar(building, cellFoot(cell)));
     }
   }
   for (const [id, foot] of fallen) objects.push(fallenMark(id, foot));
 
-  // An event ring stands beside the place for each event placed at it; events at other places are not drawn.
+  // An event ring stands on the grid's right corner cell for each event placed at it; events at other places are not drawn.
+  const ringAt = cellCentre(EVENT_RING.cell);
   const here = placeEvents(view, realm).filter(
     (placed) => placed.locationId === place.id,
   );
@@ -196,8 +196,8 @@ export function buildDecor(
     objects.push(
       eventRing(
         `ring:${placed.event.id}`,
-        PLACE_ORIGIN.x + EVENT_RING.dx,
-        PLACE_ORIGIN.y + EVENT_RING.dy,
+        ringAt.x,
+        ringAt.y,
         EFFECT_COLOR[placed.tone],
         EVENT_RING.radius + (index % EVENT_RING.sizes) * EVENT_RING.step,
       ),

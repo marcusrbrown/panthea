@@ -9,6 +9,7 @@ import {
   STRIKE_ASSET,
   STRUCTURE_ANCHORS,
   STRUCTURE_ASSETS,
+  STRUCTURE_FOOTPRINTS,
   STRUCTURE_STATES,
   strikeAnimation,
 } from "./structures";
@@ -22,6 +23,7 @@ interface Manifest {
   readonly id: string;
   readonly cell: { readonly w: number; readonly h: number };
   readonly pivot: { readonly x: number; readonly y: number };
+  readonly footprint: { readonly w: number; readonly h: number };
   readonly animations: readonly {
     readonly name?: string;
     readonly state?: string;
@@ -100,6 +102,21 @@ test("every published asset the game and the studio draw exists, with the animat
       strikeAnimation(mode),
     );
   }
+});
+
+test("a structure's footprint is the one its published art declares, so the placeholder and the layout stand in with what canon draws with", () => {
+  expect(STRUCTURE_FOOTPRINTS).toEqual({
+    building: { w: 4, h: 3 },
+    tree: { w: 1, h: 1 },
+  });
+  for (const art of ["tree", "building"] as const)
+    expect(STRUCTURE_FOOTPRINTS[art], art).toEqual(
+      committed(STRUCTURE_ASSETS[art]).footprint,
+    );
+  // The foot is the pivot, on the bottom vertex of the footprint's bottom cell: the house's (96, 136) on its
+  // 192x192 cell, the oak's (96, 164).
+  expect(committed(STRUCTURE_ASSETS.building).pivot).toEqual({ x: 96, y: 136 });
+  expect(committed(STRUCTURE_ASSETS.tree).pivot).toEqual({ x: 96, y: 164 });
 });
 
 test("each structure's fire and strike anchors lie inside its published cell, measured from its foot", () => {
