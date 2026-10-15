@@ -3,6 +3,8 @@
 // shape as a figure's.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { readLog as readBlenderLog } from "../../test/render/fake-blender";
 import {
   closeRigs,
@@ -105,7 +107,7 @@ describe("a structure render job", () => {
   );
 
   test(
-    "stages no kit file for a house, but still gives the script a staging directory",
+    "stages the kit files a house is built with, and records their licence as its input",
     async () => {
       const rig = await openRig({ launches: [{}] });
       const [id] = submitRender(rig, "house-staging", [south("intact")], {
@@ -114,24 +116,48 @@ describe("a structure render job", () => {
       });
       const result = await drain(rig);
       expect(result.results.map((r) => r.outcome)).toEqual(["rendered"]);
-      expect(jobsById(rig)[id as string]?.job.status).toBe("succeeded");
+      const record = jobsById(rig)[id as string];
+      expect(record?.job.status).toBe("succeeded");
       const staged = readBlenderLog(rig.fakeDir).find(
         (e) => e.event === "staging",
       );
-      expect(staged?.files).toEqual([]);
+      const named = house.kitFiles.map((f) => `${f.kit}/${f.path}`).sort();
+      expect(named.length).toBeGreaterThan(0);
+      expect(staged?.files).toEqual(named);
+      expect(record?.engine?.licences).toEqual([
+        {
+          subject: "quaternius-modular-ruins",
+          role: "input",
+          licence: "CC0-1.0",
+        },
+      ]);
     },
     T,
   );
 
   test(
-    "records only the licences of the kit files it reads: the script's own geometry adds none",
+    "a house built from script geometry alone stages nothing but still gets a staging directory, and records no input licence",
     async () => {
-      const rig = await openRig({ launches: [{}] });
-      const [id] = submitRender(rig, "house-licence", [south("intact")], {
+      const rig = await openRig({
+        launches: [{}],
+        mutateRenderRoot: (root) => {
+          const path = join(root, "profiles", "greek-house.json");
+          const profile = JSON.parse(readFileSync(path, "utf8"));
+          profile.kitFiles = [];
+          profile.build = { kind: "house" };
+          writeFileSync(path, JSON.stringify(profile));
+        },
+      });
+      const [id] = submitRender(rig, "house-bare", [south("intact")], {
         subject: "greek-house",
         pivot: HOUSE_PIVOT,
       });
       await drain(rig);
+      expect(jobsById(rig)[id as string]?.job.status).toBe("succeeded");
+      const staged = readBlenderLog(rig.fakeDir).find(
+        (e) => e.event === "staging",
+      );
+      expect(staged?.files).toEqual([]);
       expect(jobsById(rig)[id as string]?.engine?.licences).toEqual([]);
     },
     T,

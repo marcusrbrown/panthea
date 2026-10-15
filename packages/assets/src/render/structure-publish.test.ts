@@ -32,8 +32,8 @@ const HOUSE_PIVOT = { x: 96, y: 136 };
 const STATES = ["intact", "damaged", "ruin"] as const;
 
 /** The three states rendered, picked and packed as `greek-house`, then approved. */
-async function approvedHouse() {
-  const rig = await openRig({ launches: [{}] });
+async function approvedHouse(options: Parameters<typeof openRig>[0] = {}) {
+  const rig = await openRig({ launches: [{}], ...options });
   const ids = await renderCandidates(
     rig,
     "house",
@@ -103,8 +103,31 @@ describe("a house through pack, approve, publish and the render audit", () => {
       expect(provenance.method).toBe("rendered");
       expect(provenance.revisionRecipe.stamps).toBe(NO_STAMPS_HASH);
       expect(provenance.revisionRecipe.profile.id).toBe("greek-house");
-      // No kit is read, so the one record is the repository's own licence for the house itself.
+      // The kit models it is built with are its licensed input; nothing else is recorded.
       expect(provenance.licences).toEqual([
+        {
+          subject: "quaternius-modular-ruins",
+          role: "input",
+          licence: "CC0-1.0",
+        },
+      ]);
+    },
+    T,
+  );
+
+  test(
+    "a house built from script geometry alone records the repository's own licence for the work, with no flag and no assessment",
+    async () => {
+      const { manifest } = await approvedHouse({
+        mutateRenderRoot: (root) => {
+          const path = join(root, "profiles", "greek-house.json");
+          const profile = JSON.parse(readFileSync(path, "utf8"));
+          profile.kitFiles = [];
+          profile.build = { kind: "house" };
+          writeFileSync(path, JSON.stringify(profile));
+        },
+      });
+      expect((manifest.provenance as RenderedProvenance).licences).toEqual([
         {
           subject: "greek-house",
           role: "original-work",

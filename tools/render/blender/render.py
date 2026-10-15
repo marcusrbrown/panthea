@@ -768,6 +768,27 @@ def import_gltf(path: Path) -> list:
     return [o for o in bpy.data.objects if o not in before]
 
 
+def kit_template(staging: Staging, kit: str, path: str):
+    """A kit model's vertices (metres, Z up, in world space) and polygons, read once: the objects are removed again."""
+    objs = import_gltf(staging.file(kit, path))
+    try:
+        meshes = [o for o in objs if o.type == "MESH"]
+        if not meshes:
+            raise InputError(f"{path} holds no mesh")
+        co, polys, base = [], [], 0
+        for o in meshes:
+            o.data.transform(o.matrix_world)
+            flat = np.empty(len(o.data.vertices) * 3, dtype=np.float64)
+            o.data.vertices.foreach_get("co", flat)
+            co.append(flat.reshape(-1, 3))
+            polys.extend(tuple(base + i for i in p.vertices) for p in o.data.polygons)
+            base += len(o.data.vertices)
+        return np.concatenate(co), polys
+    finally:
+        for o in objs:
+            bpy.data.objects.remove(o, do_unlink=True)
+
+
 # --- the figure ----------------------------------------------------------------------------------------------------------
 
 
@@ -1202,6 +1223,41 @@ class MeshBuilder:
         faces.append(self.bm.faces.new(start))
         self.add(faces, role, part)
 
+    def model(self, template, centre, scale, turn: float, role: str, part: str, band=None, middle: bool = False, tilt=()):
+        """A kit model, scaled, turned about Z, then placed with its origin (or, with `middle`, its centre) on `centre`
+        and turned by `tilt` about that point. `band` keeps only (low, high) of its scaled height, cut flat and capped."""
+        co, polys = template
+        sx, sy, sz = scale
+        cut = bmesh.new()
+        used = sorted({i for poly in polys for i in poly})
+        made = {i: cut.verts.new((co[i][0] * sx, co[i][1] * sy, co[i][2] * sz)) for i in used}
+        for poly in polys:
+            cut.faces.new([made[i] for i in poly])
+        if band is not None:
+            for z, below in ((band[1], True), (band[0], False)):
+                if z is None:
+                    continue
+                geom = list(cut.verts) + list(cut.edges) + list(cut.faces)
+                result = bmesh.ops.bisect_plane(cut, geom=geom, dist=1e-6, plane_co=(0.0, 0.0, z), plane_no=(0.0, 0.0, 1.0), clear_outer=below, clear_inner=not below)
+                edges = [g for g in result["geom_cut"] if isinstance(g, bmesh.types.BMEdge)]
+                if edges:
+                    bmesh.ops.edgenet_fill(cut, edges=edges)
+        points = np.array([v.co[:] for v in cut.verts])
+        shift = (points.min(axis=0) + points.max(axis=0)) / 2 if middle else np.zeros(3)
+        turn_rot = mathutils.Matrix.Rotation(math.radians(turn), 3, "Z")
+        placed = {}
+        faces = []
+        for face in cut.faces:
+            ring = []
+            for v in face.verts:
+                if v not in placed:
+                    placed[v] = self.bm.verts.new(Vector(centre) + turn_rot @ (v.co - Vector(shift.tolist())))
+                ring.append(placed[v])
+            faces.append(self.bm.faces.new(ring))
+        cut.free()
+        self.turned(list(placed.values()), centre, tilt)
+        self.add(faces, role, part)
+
     def prism(self, axis: str, along0: float, along1: float, half_w: float, z0: float, rise: float, role: str, part: str):
         """Triangular prism, its ridge along `axis` ("x" or "y"): base at z0 spanning ±half_w across the ridge, apex at z0 + rise."""
         at = (lambda a, c, z: (a, c, z)) if axis == "x" else (lambda a, c, z: (c, a, z))
@@ -1301,7 +1357,18 @@ class House(Structure):
     EAVE, PITCH, COURSES, COURSE_T = 0.35, 20.0, 9, 0.09
     PORCH_W, PORCH_D, COLUMN_H = 2.3, 1.2, 2.25
     DOOR_W, DOOR_H = 0.95, 1.85
+    COLUMN_SCALE = (0.75, 0.75, 2.25 / 1.83)  # the kit's short column, fitted to the porch's height
     WINDOW_X, WINDOW_Z, WINDOW_W, WINDOW_H = 1.5, 1.5, 0.5, 0.8
+
+    def __init__(self, profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook):
+        super().__init__(profile, camera, staging, scene, axes, book)
+        # The kit models the profile names, by role.
+        self.parts = {role: kit_template(staging, ref["kit"], ref["path"]) for role, ref in profile["build"].get("parts", {}).items()}
+
+    def part(self, role: str):
+        if role not in self.parts:
+            raise InputError(f"the house profile names no kit model for {role!r}")
+        return self.parts[role]
 
     def build(self, state: str, clip: dict) -> None:
         if clip["ruin"]:
@@ -1452,7 +1519,7 @@ class House(Structure):
         p, cy = self.PORCH_D, self.DEPTH / 2 + self.PORCH_D - 0.2
         mb = MeshBuilder()
         self.plinth(mb)
-        mb.box((0, 0, P + 0.03), (L - 0.1, D - 0.1, 0.06), "rubble", "ground")  # the floor
+        mb.box((0, 0, P + 0.03), (L - 0.1, D - 0.1, 0.06), "floor", "ground")  # the floor, ash-dark under the rubble
         seg = 0.6
         index = 0
 
@@ -1475,27 +1542,34 @@ class House(Structure):
         course(D, -L / 2 + T / 2, "y", 1.3, 2.3)  # the far gable wall
         course(L, D / 2 - T / 2, "x", 0.3, 1.1, gap=(-self.DOOR_W / 2 - 0.1, self.DOOR_W / 2 + 0.1))
         course(D, L / 2 - T / 2, "y", 0.3, 1.2)
-        # A charred door post and what is left of the porch.
+        # A charred door post and what is left of the porch: a column broken off at its base, a drum, a capital and the architrave on the ground.
         mb.box((-self.DOOR_W / 2 - 0.12, D / 2, P + 0.85), (0.14, 0.16, 1.7), "timber", "door", tilt=[(4, "Y")])
-        mb.column((-self.PORCH_W / 2 + 0.15, cy, P + 0.1), 0.15, 1.1, "column", "column", taper=0.9, segments=10)
-        mb.box((-self.PORCH_W / 2 + 0.15, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
-        mb.box((self.PORCH_W / 2 - 0.15, cy, P + 0.05), (0.42, 0.42, 0.1), "column", "column")
-        mb.box((self.PORCH_W / 2 - 0.15, cy + 0.2, P + 0.25), (0.3, 0.3, 0.9), "column", "column", tilt=[(78, "X")])  # a shaft that fell forward
-        mb.box((0.5, cy + 0.85, 0.18), (1.2, 0.34, 0.24), "trim", "entablature", tilt=[(-8, "Z")])  # the architrave on the ground
-        mb.box((-0.4, cy + 0.9, 0.2), (0.44, 0.44, 0.12), "column", "column", tilt=[(12, "Z")])  # a capital
-        # Burnt roof timbers fallen into the house and slabs of tile on them.
-        mb.box((-0.7, -0.5, P + 0.7), (0.16, 3.0, 0.16), "timber", "entablature", tilt=[(34, "X")])
-        mb.box((0.7, 0.1, P + 0.45), (0.16, 2.6, 0.16), "timber", "entablature", tilt=[(-26, "X")])
+        sx, sy, sz = self.COLUMN_SCALE
+        short, tall = self.part("porch-column"), self.part("column-tall")
+        mb.model(short, (-self.PORCH_W / 2 + 0.15, cy, P), self.COLUMN_SCALE, 0.0, "column", "column", band=(None, 1.0))
+        mb.model(short, (self.PORCH_W / 2 - 0.15, cy, P), self.COLUMN_SCALE, 0.0, "column", "column", band=(None, 0.3))
+        # A drum from the tall column's shaft lying on its side, and the short column's capital beside it.
+        r = 0.33 * 0.55
+        mb.model(tall, (0.9, cy - 0.15, P + r), (0.55, 0.55, 0.55), 20.0, "column", "column", band=(0.9, 1.7), middle=True, tilt=[(90, "X")])
+        mb.model(short, (-0.35, cy - 0.2, P + 0.2), self.COLUMN_SCALE, 0.0, "column", "column", band=(1.95, None), middle=True, tilt=[(75, "Y")])
+        mb.box((0.1, cy + 0.2, P + 0.16), (1.3, 0.34, 0.22), "trim", "entablature", tilt=[(-8, "Z")])  # the architrave fallen on the porch floor
+        # Burnt roof timbers fallen into the house, leaning on the walls, and slabs of tile on them.
+        mb.box((-0.7, -0.2, P + 0.8), (0.16, 2.6, 0.16), "timber", "entablature", tilt=[(32.5, "X")])
+        mb.box((0.7, 0.1, P + 0.5), (0.16, 2.6, 0.16), "timber", "entablature", tilt=[(-26, "X")])
         mb.box((-0.2, -0.2, P + 0.8), (1.6, 1.3, 0.1), "roof", "roof", tilt=[(28, "X")])
         mb.box((1.3, 0.5, P + 0.24), (1.2, 0.9, 0.1), "roof", "roof", tilt=[(-14, "Y")])
-        # Rubble inside and about the plinth.
-        for k in range(18):
-            ux, uy = hash_unit(100 + k * 3), hash_unit(101 + k * 3)
-            size = 0.22 + 0.34 * hash_unit(102 + k * 3)
-            outside = k % 3 == 0
-            x = (ux - 0.5) * (L + 1.0 if outside else L - 0.7)
-            y = (uy - 0.5) * (D + 1.0 if outside else D - 0.7)
-            mb.box((x, y, P + size / 2 * 0.8), (size, size * (0.7 + hash_unit(k)), size * 0.8), "rubble", "prop", tilt=[(hash_unit(k + 40) * 40 - 20, "Z")])
+        # Wall chunks and rubble from the kit: the stone core spilled from the broken walls, inside the house and about its plinth.
+        chunk, low = self.part("wall-chunk"), self.part("wall-chunk-low")
+        mb.model(low, (-0.2, -1.05, P), (0.8, 0.8, 0.8), 3.0, "rubble", "wall")
+        mb.model(chunk, (1.5, 0.35, P), (0.45, 0.45, 0.45), 90.0, "rubble", "wall", tilt=[(0, "Z")])
+        mb.model(low, (-0.9, 2.55, P - 0.02), (0.55, 0.55, 0.55), 15.0, "rubble", "prop")
+        for k, (x, y, scale) in enumerate(((0.9, -0.5, 0.7), (-1.5, 0.3, 0.6), (0.2, 1.1, 0.55), (2.3, 1.2, 0.7), (-2.35, -0.9, 0.6), (1.7, -1.1, 0.5))):
+            mb.model(self.part("rubble"), (x, y, P + 0.02), (scale, scale, scale), 360 * hash_unit(k + 5), "rubble", "prop")
+        for k in range(8):
+            x = (hash_unit(120 + k) - 0.5) * (L - 0.3)
+            y = (hash_unit(150 + k) - 0.5) * (D - 0.2)
+            scale = 0.9 + 0.7 * hash_unit(180 + k)
+            mb.model(self.part("brick"), (x, y, P + 0.02), (scale, scale, scale), 360 * hash_unit(210 + k), "rubble", "prop")
         loose = mb.floating(0.0)
         if loose:
             raise InputError(f"the ruin has pieces in the air: {loose}")

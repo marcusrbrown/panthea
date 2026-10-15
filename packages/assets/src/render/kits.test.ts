@@ -595,6 +595,26 @@ describe("parseKitManifest", () => {
     expect(parseKitManifest(valid()).ok).toBe(true);
   });
 
+  it("keeps a kit's notes, and refuses notes that are not text", () => {
+    const noted = parseKitManifest(
+      patched((kit) => {
+        kit.notes = "Converted from OBJ to GLB by Blender.";
+      }),
+    );
+    expect(noted.ok && noted.value.kits[0]?.notes).toBe(
+      "Converted from OBJ to GLB by Blender.",
+    );
+    const plain = parseKitManifest(valid());
+    expect(plain.ok && plain.value.kits[0]?.notes).toBeUndefined();
+    expect(
+      parseKitManifest(
+        patched((kit) => {
+          kit.notes = 4;
+        }),
+      ).ok,
+    ).toBe(false);
+  });
+
   it("refuses a path that is absolute, climbs out, or uses backslashes", () => {
     for (const path of ["/etc/passwd", "../x.bin", "a\\b.bin", "a//b.bin"]) {
       const manifest = patched((_kit, file) => {

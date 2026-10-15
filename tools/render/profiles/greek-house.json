@@ -2,9 +2,66 @@
   "schemaVersion": 1,
   "kind": "structure",
   "id": "greek-house",
-  "kitFiles": [],
+  "kitFiles": [
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Brick.glb",
+      "sha256": "765b606af540d03d92ee8425b90cf68d4a89de538b22316bcc0876b76e4919f1"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Bricks.glb",
+      "sha256": "f944e65c469e6fee71c7e0e5438bc59ba185a63f57dee7eb67f322a05212cd0a"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Column_Round.glb",
+      "sha256": "4568b2338c26b838e479f6ffc8feff15a3ee39d9024f13bc549509e45f984dbe"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Column_Round_Short.glb",
+      "sha256": "0d00095d5682e6531d4e82cedead764b874e5b3bf43fa933f9d1bf02aebbc4e3"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Wall_Broken.glb",
+      "sha256": "115bcf3fb508571e5c2ab2fc4929ab5864280b6300c29aa99cee651f354268f1"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Wall_Double_Broken.glb",
+      "sha256": "2d4215d203cb773f22c41dda834e92bf48b6e74bfa4feafa23cd29b607d4fe9f"
+    }
+  ],
   "build": {
-    "kind": "house"
+    "kind": "house",
+    "parts": {
+      "brick": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Brick.glb"
+      },
+      "rubble": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Bricks.glb"
+      },
+      "column-tall": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Column_Round.glb"
+      },
+      "porch-column": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Column_Round_Short.glb"
+      },
+      "wall-chunk": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Wall_Broken.glb"
+      },
+      "wall-chunk-low": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Wall_Double_Broken.glb"
+      }
+    }
   },
   "cell": {
     "id": "structure",
@@ -65,7 +122,7 @@
     },
     "rubble": {
       "ramp": "stone-sky",
-      "bias": -0.1,
+      "bias": -0.3,
       "bandShades": [0, 1, 2, 2, 3]
     },
     "timber": {
@@ -117,6 +174,11 @@
       "ramp": "soil",
       "bias": 0.1,
       "bandShades": [2, 3, 3, 3, 4]
+    },
+    "floor": {
+      "ramp": "stone-sky",
+      "bias": -0.2,
+      "bandShades": [0, 1, 1, 2, 2]
     }
   },
   "clips": {

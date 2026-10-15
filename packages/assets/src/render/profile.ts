@@ -360,8 +360,14 @@ export interface Wind {
 }
 
 export type StructureBuild =
-  /** A Greek town house built from script geometry. */
-  | { readonly kind: "house" }
+  /**
+   * A Greek town house built from script geometry, with kit models for the parts it names
+   * (a role such as `column` or `rubble` to the model that draws it).
+   */
+  | {
+      readonly kind: "house";
+      readonly parts?: Readonly<Record<string, KitPath>>;
+    }
   /** A kit model, scaled to a height. */
   | {
       readonly kind: "tree";
@@ -1530,8 +1536,23 @@ function parseStructureBuild(
 ): ParseResult<StructureBuild> {
   if (!isRecord(value)) return fail(path, "expected an object");
   if (value.kind === "house") {
-    const record = strict(value, path, ["kind"]);
-    return record.ok ? ok({ kind: "house" }) : record;
+    const record = strict(value, path, ["kind", "parts"]);
+    if (!record.ok) return record;
+    if (record.value.parts === undefined) return ok({ kind: "house" });
+    if (!isRecord(record.value.parts))
+      return fail(`${path}.parts`, "expected an object of role to kit model");
+    const parts: Record<string, KitPath> = {};
+    for (const [role, entry] of Object.entries(record.value.parts)) {
+      const model = parseKitPath(entry, `${path}.parts.${role}`);
+      if (!model.ok) return model;
+      if (!listed.has(`${model.value.kit}/${model.value.path}`))
+        return fail(
+          `${path}.parts.${role}`,
+          `"${model.value.kit}/${model.value.path}" is not among kitFiles`,
+        );
+      parts[role] = model.value;
+    }
+    return ok({ kind: "house", parts });
   }
   if (value.kind !== "tree")
     return fail(`${path}.kind`, 'expected "house" or "tree"');

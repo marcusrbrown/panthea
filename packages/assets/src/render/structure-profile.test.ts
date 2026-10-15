@@ -300,6 +300,31 @@ describe("a structure profile", () => {
     ).toBe("profile.clips.damaged.decals[0].wall");
   });
 
+  it("names the kit models a house is built with, each among its kit files", () => {
+    const withParts = (parts: unknown) =>
+      edited(houseJson(), (j) => {
+        j.kitFiles = [KIT_FILE];
+        j.build = { kind: "house", parts };
+      });
+    const house = structure(
+      withParts({
+        column: { kit: KIT_FILE.kit, path: KIT_FILE.path },
+      }),
+    );
+    expect(house.build).toEqual({
+      kind: "house",
+      parts: { column: { kit: KIT_FILE.kit, path: KIT_FILE.path } },
+    });
+    expect(structure(houseJson()).build).toEqual({ kind: "house" });
+    expect(
+      failure(withParts({ column: { kit: KIT_FILE.kit, path: "other.glb" } }))
+        .path,
+    ).toBe("profile.build.parts.column");
+    expect(failure(withParts([])).path).toBe("profile.build.parts");
+    // The parts are part of what the hash covers.
+    expect(profileHash(house)).not.toBe(profileHash(structure(houseJson())));
+  });
+
   it("refuses wind that cannot loop", () => {
     expect(failure(edited(treeJson(), (j) => (j.wind.cycles = 0))).path).toBe(
       "profile.wind.cycles",
