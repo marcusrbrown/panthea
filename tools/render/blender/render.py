@@ -1735,8 +1735,8 @@ class Tree(Structure):
             out.append(((x, y, z * h), w * h, flat))
         return out
 
-    def add_cluster(self, mb: MeshBuilder, centre, width: float, flat: float, role: str, cap=None) -> None:
-        """A copy of the kit's crown, `width` wide and `flat` as tall as wide; with `cap` (a direction, a share of its faces) only the faces on that side."""
+    def add_cluster(self, mb: MeshBuilder, centre, width: float, flat: float, role: str) -> None:
+        """A copy of the kit's crown, `width` wide and `flat` as tall as wide."""
         co, polys = self.template
         scale = width / self.crown_width
         stretch = np.array([scale, scale, scale * flat])
@@ -1745,10 +1745,6 @@ class Tree(Structure):
         for idx, kind in polys:
             if kind != "leaf":
                 continue
-            if cap is not None:
-                face = co[list(idx)].mean(axis=0) - self.crown_centre
-                if float(np.dot(face / np.linalg.norm(face), cap[0])) < cap[1]:
-                    continue
             for i in idx:
                 if i not in verts:
                     verts[i] = mb.bm.verts.new(tuple((co[i] - self.crown_centre) * stretch + np.asarray(centre)))
@@ -1792,7 +1788,7 @@ class Tree(Structure):
                 length = (0.1 + 0.07 * hash_unit(k * 7 + j + 70)) * h
                 rise = (0.05 + 0.1 * hash_unit(k * 3 + j + 90)) * h
                 tip = (p[0] + length * math.cos(a), p[1] + length * math.sin(a), p[2] + rise)
-                mb.limb(p, tip, 0.016 * h, 0.006 * h, "trunk", "trunk", segments=5)
+                mb.limb(p, tip, 0.016 * h, 0.011 * h, "trunk", "trunk", segments=5)
                 tips.append(tip)
         return tips
 
@@ -1820,10 +1816,11 @@ class Tree(Structure):
                 tips = self.twigs(mb, [*ends, *middles[:3]])
                 keep = max(1, round(len(lobes) * clip["leaves"]))
                 for k in sorted(range(len(lobes)), key=lambda i: hash_unit(i * 11 + 5))[:keep]:
+                    # What the fire left of a lobe: a small whole clump sitting on the end of the limb that carried it.
                     centre, width, flat = lobes[k]
-                    angle = math.radians(360 * hash_unit(k * 13 + 2))
-                    direction = np.array([math.cos(angle) * 0.8, math.sin(angle) * 0.8, 0.6])
-                    self.add_cluster(mb, centre, width * 0.8, flat, "leaf" if k % 2 else "leaf-deep", cap=(direction / np.linalg.norm(direction), 0.3))
+                    small = width * 0.42
+                    base = ends[k]
+                    self.add_cluster(mb, (base[0], base[1], base[2] + 0.34 * flat * small), small, flat, "leaf" if k % 2 else "leaf-deep")
                 for k in sorted(range(len(tips)), key=lambda i: hash_unit(i * 3 + 8))[:5]:
                     self.add_cluster(mb, tips[k], 0.075 * h, 0.8, "leaf-deep")
         obj, roles = mb.finish("tree", Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)))
