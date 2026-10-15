@@ -21,7 +21,13 @@ import {
 } from "three";
 
 import type { ViewBuilding, ViewLocation, WorldViewModel } from "../store";
-import { buildingFoot, LOGICAL_SIZE, type WorldPoint } from "./layout";
+import {
+  buildingFoot,
+  CAMERA_ORIGIN,
+  EVENT_RING,
+  LOGICAL_SIZE,
+  type WorldPoint,
+} from "./layout";
 import { type EffectTone, placeEvents, realmPaths } from "./presentation";
 
 const INK = 0x273c35;
@@ -189,11 +195,9 @@ export function buildDecor(
   const objects: Object3D[] = [];
   const ink = REALM_TINT[realm];
 
-  for (
-    let y = -LOGICAL_SIZE.height / 2 + 8;
-    y < LOGICAL_SIZE.height / 2;
-    y += 48
-  ) {
+  const viewTop = -CAMERA_ORIGIN.y;
+  const viewBottom = viewTop - LOGICAL_SIZE.height;
+  for (let y = viewBottom + 8; y < viewTop; y += 48) {
     objects.push(
       block(`grid:${y}`, 0, y, GRID_COLOR, LOGICAL_SIZE.width, 2, Z_GRID),
     );
@@ -233,10 +237,10 @@ export function buildDecor(
     objects.push(
       eventRing(
         `ring:${placed.event.id}`,
-        point.x + 34,
-        point.y - 23,
+        point.x + EVENT_RING.dx,
+        point.y + EVENT_RING.dy,
         EFFECT_COLOR[placed.tone],
-        16 + (index % 3) * 4,
+        EVENT_RING.radius + (index % EVENT_RING.sizes) * EVENT_RING.step,
       ),
     );
     drawnEventIds.push(placed.event.id);

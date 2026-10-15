@@ -13,22 +13,24 @@
 //            (96, 136) and (96, 164): 96 left and right of the foot. A building's
 //            foot sits in a slot of a row of three, 60 apart and centred on the
 //            place (-60, 0, +60), 40 above it. The fire's cell is 64x88 (pivot at
-//            its bottom centre) and the strike's 64x128 (pivot at the impact, 116
-//            above the cell's bottom); each sits on the structure's anchor
-//            (STRUCTURE_ANCHORS: the strike 101 above the oak's foot, 75 above
-//            the house's)
+//            its bottom centre) and sits on the structure's anchor
+//            (STRUCTURE_ANCHORS: 79 above the oak's foot, 57 above the house's)
+//   rings  : an event ring is at most 24 px in radius, 34 right of and 23 below its place
 //   right  : 205 + 60 + 96 = 361 (a building slot; an actor's reach is 305)
 //   left   : -(205 + 60 + 96) = -361 (an actor's is -289)
-//   top    : 205 + 40 + 101 + 116 = 462, the top of a strike on the oak (the oak's
-//            own top is 205 + 40 + 164 = 409, its fire's 205 + 40 + 79 + 88 = 412)
+//   top    : 205 + 40 + 79 + 88 = 412, the oak's fire (the oak's own top is
+//            205 + 40 + 164 = 409)
 //   bottom : -(205 + the actor row at -48, a second row 15 lower, 18 below the pivot) = -286
-// A centred camera needs half the width >= 361 and half the height >= 462, so each
-// is doubled and rounded up to the 16 px grid: 2 x 361 = 722 -> 736 (half 368, 7 to
-// spare) and 2 x 462 = 924 -> 928 (half 464, 2 to spare). That is sized for up to 3
+// The camera fits that content, so it is off centre: the width is 2 x 361 = 722
+// rounded up to the 16 px grid, 736 (half 368, 7 to spare); the height is 412 + 286 =
+// 698 rounded up to 704, with the top edge on the grid at 416 (4 above the content)
+// and the bottom edge at -288 (2 below it). That fits a 1280x720 window at zoom 1.
+// A strike is exempt above the top edge only: its impact and everything below it are
+// inside (the oak's bolt is 116 above its impact, which is 346 above the layout
+// origin at the highest place, so its top leaves by 46). The target is sized for up to 3
 // buildings and 14 actors (two rows) per place and for the cells above. Authored worlds
 // hold at most 2 buildings and 8 inhabitants in a place. Anything beyond clips at the
-// target's edge. The target is taller than a 1280x720 window, which crops it equally
-// above and below (see `fitView`).
+// target's edge.
 
 import {
   type CanvasMetrics,
@@ -38,12 +40,26 @@ import {
 
 import type { ViewLocation } from "../store";
 
-export const LOGICAL_SIZE: LogicalSize = { width: 736, height: 928 };
+export const LOGICAL_SIZE: LogicalSize = { width: 736, height: 704 };
 
-/** Top-left of the viewport in the core's screen space (y down): the target centred on the origin. */
+/** The world row (y up) of the target's top edge: the content reaches 412 above the layout origin and 286 below it. */
+const VIEW_TOP = 416;
+
+/** Top-left of the viewport in the core's screen space (y down): centred across, and set to the content's rows down. */
 export const CAMERA_ORIGIN = {
   x: -LOGICAL_SIZE.width / 2,
-  y: -LOGICAL_SIZE.height / 2,
+  y: -VIEW_TOP,
+} as const;
+
+/** The scene's event rings: offset from their place, from the smallest radius in steps of 4. */
+export const EVENT_RING = {
+  dx: 34,
+  dy: -23,
+  radius: 16,
+  step: 4,
+  sizes: 3,
+  /** The largest radius a ring is drawn at. */
+  radiusMax: 24,
 } as const;
 
 export const PLACE_RADIUS_MAX = 205;

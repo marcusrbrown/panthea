@@ -492,37 +492,37 @@ test("a renderer disposed while its atlas loads renders nothing and hands back n
   expect(() => renderer.dispose()).not.toThrow();
 });
 
-test("the canvas backing store is the logical size times the largest whole zoom that fits, drawn from the centred camera", async () => {
+test("the canvas backing store is the logical size times the largest whole zoom that fits, drawn from the content-fit camera", async () => {
   const { canon } = setup();
   const { backend, element } = await mount(canon, {
-    available: { width: 1500, height: 1900 },
+    available: { width: 1500, height: 1500 },
   });
 
   expect(element.width).toBe(1472);
-  expect(element.height).toBe(1856);
+  expect(element.height).toBe(1408);
   expect(element.style.width).toBe("1472px");
-  expect(element.style.height).toBe("1856px");
+  expect(element.style.height).toBe("1408px");
   expect(element.style.left).toBe("14px");
-  expect(element.style.top).toBe("22px");
+  expect(element.style.top).toBe("46px");
   const view = backend.views.at(-1);
   expect(view?.zoom).toBe(2);
   expect(view?.camera).toEqual(CAMERA_ORIGIN);
   expect(view?.metrics).toMatchObject({
     backingWidth: 1472,
-    backingHeight: 1856,
+    backingHeight: 1408,
   });
 });
 
 test("at a device pixel ratio of 2 the CSS box is half the backing store", async () => {
   const { canon } = setup();
   const { element } = await mount(canon, {
-    available: { width: 736, height: 928 },
+    available: { width: 736, height: 704 },
     devicePixelRatio: 2,
   });
 
   expect(element.width).toBe(1472);
   expect(element.style.width).toBe("736px");
-  expect(element.style.height).toBe("928px");
+  expect(element.style.height).toBe("704px");
 });
 
 test("places and event rings are meshes in the decor group, redrawn without accumulating; buildings and flames are not meshes", async () => {
@@ -751,20 +751,24 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
   expect(bottom(tall.position.y, TALL_CELL.height)).toBe(tallFoot.y - 18);
 
   // Both cells lie inside the camera's view of the target.
-  const halfWidth = LOGICAL_SIZE.width / 2;
-  const halfHeight = LOGICAL_SIZE.height / 2;
+  const bounds = {
+    left: CAMERA_ORIGIN.x,
+    right: CAMERA_ORIGIN.x + LOGICAL_SIZE.width,
+    top: -CAMERA_ORIGIN.y,
+    bottom: -CAMERA_ORIGIN.y - LOGICAL_SIZE.height,
+  };
   for (const [sprite, w, h] of [
     [legacy, 64, 80],
     [tall, TALL_CELL.width, TALL_CELL.height],
   ] as const) {
-    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(-halfWidth);
-    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(halfWidth);
-    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(halfHeight);
-    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(-halfHeight);
+    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(bounds.left);
+    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(bounds.right);
+    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(bounds.top);
+    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(bounds.bottom);
   }
 });
 
-test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 736x928 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
+test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 736x704 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
   const { canon, problems } = setup({
     payload: retroPayload(),
     atlases: RETRO_ATLASES,
@@ -794,12 +798,12 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
   const retro = spriteOf(backend, "actor:zeus");
   const elder = spriteOf(backend, "actor:elder");
   expect(problems).toEqual([]);
-  // 1200x1300 available: integer zoom 1, so the canvas is the 736x928 target itself.
+  // 1200x1300 available: integer zoom 1, so the canvas is the 736x704 target itself.
   expect([element.width, element.height]).toEqual([
     LOGICAL_SIZE.width,
     LOGICAL_SIZE.height,
   ]);
-  expect(LOGICAL_SIZE).toEqual({ width: 736, height: 928 });
+  expect(LOGICAL_SIZE).toEqual({ width: 736, height: 704 });
   // The real atlas: 136 cells of 112x96 in one row, idle/south first.
   expect(retro.texture?.image).toMatchObject({ width: 15232, height: 96 });
   expect(retro.frame?.name).toBe("0,0,112,96");
@@ -818,17 +822,21 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
     elderFoot.y + 80 - 80 / 2,
   ]);
 
-  // Both cells lie inside the camera's view of the 736x928 target.
-  const halfWidth = LOGICAL_SIZE.width / 2;
-  const halfHeight = LOGICAL_SIZE.height / 2;
+  // Both cells lie inside the camera's view of the 736x704 target.
+  const bounds = {
+    left: CAMERA_ORIGIN.x,
+    right: CAMERA_ORIGIN.x + LOGICAL_SIZE.width,
+    top: -CAMERA_ORIGIN.y,
+    bottom: -CAMERA_ORIGIN.y - LOGICAL_SIZE.height,
+  };
   for (const [sprite, w, h] of [
     [retro, 112, 96],
     [elder, 64, 80],
   ] as const) {
-    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(-halfWidth);
-    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(halfWidth);
-    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(halfHeight);
-    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(-halfHeight);
+    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(bounds.left);
+    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(bounds.right);
+    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(bounds.top);
+    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(bounds.bottom);
   }
   // The retro atlas is the one the registry named, not a stand-in.
   expect(RETRO_ATLAS_HASH).toHaveLength(64);
