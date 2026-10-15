@@ -12,10 +12,6 @@ import {
   type LicenceRecord,
   type Sha256,
 } from "@panthea/contracts";
-import type { RgbaImage } from "../conformance";
-import { sha256Hex } from "../hash";
-import { encodeRgbaPng } from "../placeholder";
-import { readRevision } from "../registry";
 import {
   type AssetRig,
   assetRig,
@@ -25,7 +21,11 @@ import {
   paintFigure,
   removeTempRoots,
   runSlots,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import type { RgbaImage } from "../conformance";
+import { sha256Hex } from "../hash";
+import { encodeRgbaPng } from "../placeholder";
+import { readRevision } from "../registry";
 import { rampIndex, recomputeStep } from "./derivation";
 import { swapImage } from "./derive";
 import { type PackInput, packAsset } from "./packing";
@@ -341,7 +341,7 @@ describe("derive through pack and publish", () => {
     ]);
   });
 
-  test("a mirror of Zeus is refused: the subject declares a bolt hand", () => {
+  test("a mirror of Zeus is refused: the subject declares a left-shoulder himation", () => {
     const rig = assetRig();
     publishEast(rig, rig.content);
     const refused = rig.session.derive(
@@ -352,13 +352,13 @@ describe("derive through pack and publish", () => {
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
     expect(refused.reason).toBe("asymmetric");
-    expect(refused.message).toContain("bolt hand");
+    expect(refused.message).toContain("left-shoulder himation");
     // The asymmetry was written into the east asset's own manifest at pack.
     const found = rig.session.store.readAsset("east-pack");
     if (found.kind !== "found") throw new Error("no asset");
     const manifest = found.value.record.manifest;
     expect(manifest.kind === "sprite" && manifest.asymmetry).toEqual({
-      feature: "bolt hand",
+      feature: "left-shoulder himation",
     });
   });
 
@@ -555,7 +555,7 @@ describe("derive through pack and publish", () => {
       ),
     );
     must(approveDraft(rig, content, "west-pack"));
-    // The declaration arrives: the real content, with Zeus's bolt hand.
+    // The declaration arrives: the real content, with Zeus's left-shoulder himation.
     const refused = rig.session.publishAsset(
       "west-pack",
       rig.content,
@@ -565,7 +565,7 @@ describe("derive through pack and publish", () => {
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
     expect(refused.message).toContain("derived step mirror -> idle/west");
-    expect(refused.message).toContain("bolt hand");
+    expect(refused.message).toContain("left-shoulder himation");
   });
 
   test("a derived slot that fails conformance blocks plain approve, and an owner exception approves it", () => {
@@ -842,7 +842,7 @@ describe("derive through pack and publish", () => {
       expect(refused.ok).toBe(false);
       if (refused.ok) return;
       expect(refused.message).toContain("derived step mirror -> idle/west");
-      expect(refused.message).toContain("bolt hand");
+      expect(refused.message).toContain("left-shoulder himation");
     });
 
     test("a carried realm variant keeps its swap step on a generated revision, and publish recomputes it", () => {
@@ -966,7 +966,7 @@ describe("derive through pack and publish", () => {
     if (east.kind !== "found") throw new Error("no asset");
     const first = east.value.record.manifest;
     expect(first.kind === "sprite" && first.asymmetry?.feature).toBe(
-      "bolt hand",
+      "left-shoulder himation",
     );
 
     // The subject no longer declares it: the next revision says so too.
@@ -1362,7 +1362,7 @@ describe("derive through pack and publish", () => {
     );
     must(approveDraft(rig, content, "swap-pack"));
 
-    // The declaration arrives: the real content, with Zeus's bolt hand.
+    // The declaration arrives: the real content, with Zeus's left-shoulder himation.
     const refused = rig.session.publishAsset(
       "swap-pack",
       { ...rig.content, palettes: content.palettes },
@@ -1373,7 +1373,7 @@ describe("derive through pack and publish", () => {
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
     expect(refused.message).toContain("derived step mirror -> idle/west");
-    expect(refused.message).toContain("bolt hand");
+    expect(refused.message).toContain("left-shoulder himation");
   });
 
   test("a mirror canonized before an asymmetry declaration is refused at the next publish when it arrives by a carry", () => {
@@ -1419,7 +1419,7 @@ describe("derive through pack and publish", () => {
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
     expect(refused.message).toContain("derived step mirror -> idle/west");
-    expect(refused.message).toContain("bolt hand");
+    expect(refused.message).toContain("left-shoulder himation");
   });
 
   test("a tampered variant atlas is refused at publish, whether forged to match its hash or overwritten", () => {

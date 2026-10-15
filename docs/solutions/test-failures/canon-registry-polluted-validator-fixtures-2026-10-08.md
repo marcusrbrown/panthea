@@ -43,7 +43,7 @@ cpSync(join(COMMITTED, "assets"), join(dir, "assets"), { recursive: true });
 ## Solution
 
 - The fixture skips the committed registry, writes its own empty `index.json`, and strips `portrait` from each copied subject.
-- The same coupling came back when `zeus-sprite` was published (#188) and `gods/zeus.json` mapped `sprite` to it. The fixture now also gives every god whose sprite is in the committed registry its `placeholder-<id>` back. `apps/studio/src/source/_testkit.ts` copies only the `zeus-portrait` entry its tests expect, not the whole registry.
+- The same coupling came back when `zeus-sprite` was published (#188) and `gods/zeus.json` mapped `sprite` to it. The fixture now also gives every god whose sprite is in the committed registry its `placeholder-<id>` back. `apps/studio/test/source-kit.ts` copies only the `zeus-portrait` entry its tests expect, not the whole registry.
 - Three tests pin the boundary:
   - every mapped portrait in committed content resolves to canon;
   - every published god sprite resolves to canon;

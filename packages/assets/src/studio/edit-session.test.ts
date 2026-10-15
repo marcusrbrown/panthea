@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Sha256 } from "@panthea/contracts";
 import { parseConformanceReport } from "@panthea/contracts";
-import type { RgbaImage } from "../conformance";
-import { sha256Hex } from "../hash";
-import { encodeRgbaPng } from "../placeholder";
 import {
   authoredFrames,
   doneCandidate,
@@ -15,8 +12,11 @@ import {
   tempRoot,
   toneFrame,
   workingSet,
-} from "./_test-fixtures";
-import { grayscalePng } from "./_test-runtime";
+} from "../../test/studio/fixtures";
+import { grayscalePng } from "../../test/studio/runtime";
+import type { RgbaImage } from "../conformance";
+import { sha256Hex } from "../hash";
+import { encodeRgbaPng } from "../placeholder";
 import {
   applyFinish,
   buildPreview,
@@ -2512,7 +2512,7 @@ describe("a closed session", () => {
 // What counts as an edit, and what a revert leaves behind.
 // ---------------------------------------------------------------------------
 
-import { withAncillaryChunk } from "./_test-fixtures";
+import { withAncillaryChunk } from "../../test/studio/fixtures";
 
 /** An edit opened on four authored frames per slot, so a real change is a small one. */
 function authoredRig() {

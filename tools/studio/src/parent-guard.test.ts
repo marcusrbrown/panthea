@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { openStudioSession } from "@panthea/assets/studio";
-import { manualClock } from "../../../packages/assets/src/studio/_test-preview";
-import { assetRig, capture, parsed, pipe, removeTempRoots } from "./_testkit";
+import { manualClock } from "../../../packages/assets/test/studio/preview";
+import { assetRig, capture, parsed, pipe, removeTempRoots } from "../test/kit";
 import { exitOf } from "./format";
 import { PARENT_POLL_MS, startParentGuard } from "./guard";
 import { type Io, main, parseArgv, type Signals } from "./index";

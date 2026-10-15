@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { vocabulary } from "../../../../packages/assets/src/studio/_test-preview";
+import { vocabulary } from "../../../packages/assets/test/studio/preview";
 import {
   type AssetBridge,
   type BridgeOptions,
@@ -16,8 +16,8 @@ import {
   createAssetBridge,
   type Scheduler,
   type Watcher,
-} from "./dev-bridge";
-import type { SourceChange } from "./port";
+} from "../src/source/dev-bridge";
+import type { SourceChange } from "../src/source/port";
 
 // The fixtures the core's own tests use are shared, so the adapter and the core are tested on the same worlds.
 export {
@@ -30,17 +30,9 @@ export {
   vocabulary,
   withManifest,
   writeDraft,
-} from "../../../../packages/assets/src/studio/_test-preview";
+} from "../../../packages/assets/test/studio/preview";
 
-const COMMITTED = join(
-  import.meta.dir,
-  "..",
-  "..",
-  "..",
-  "..",
-  "content",
-  "greek",
-);
+const COMMITTED = join(import.meta.dir, "..", "..", "..", "content", "greek");
 
 const dirs: string[] = [];
 

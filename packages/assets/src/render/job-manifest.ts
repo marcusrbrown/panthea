@@ -45,6 +45,8 @@ export interface RenderJobManifest {
     readonly clip: string;
     readonly facing: string;
     readonly frames: number;
+    /** Whole milliseconds each frame is shown, one per frame: the profile's timing for the state. */
+    readonly frameMs: readonly number[];
     readonly seed: number;
     /** The profile's clip loops. */
     readonly loop: boolean;
@@ -62,25 +64,6 @@ function parseLocators(
   path: string,
 ): ParseResult<StampLocators> {
   if (!isRecord(value)) return fail(path, "expected locators");
-  let bolt: StampLocators["bolt"];
-  if (value.bolt !== undefined) {
-    if (!isRecord(value.bolt))
-      return fail(`${path}.bolt`, "expected an object");
-    const basePx = parseVec2(value.bolt.basePx, `${path}.bolt.basePx`);
-    if (!basePx.ok) return basePx;
-    const tipPx = parseVec2(value.bolt.tipPx, `${path}.bolt.tipPx`);
-    if (!tipPx.ok) return tipPx;
-    const baseDepth = parseFiniteNumber(
-      value.bolt.baseDepth,
-      `${path}.bolt.baseDepth`,
-    );
-    if (!baseDepth.ok) return baseDepth;
-    bolt = {
-      basePx: basePx.value,
-      tipPx: tipPx.value,
-      baseDepth: baseDepth.value,
-    };
-  }
   let eyes: NonNullable<StampLocators["eyes"]> | undefined;
   if (value.eyes !== undefined) {
     if (!isRecord(value.eyes))
@@ -102,10 +85,7 @@ function parseLocators(
     }
     eyes = sides;
   }
-  return ok({
-    ...(bolt === undefined ? {} : { bolt }),
-    ...(eyes === undefined ? {} : { eyes }),
-  });
+  return ok(eyes === undefined ? {} : { eyes });
 }
 
 function parseFrame(value: unknown, path: string): ParseResult<RenderJobFrame> {
@@ -169,6 +149,21 @@ export function parseRenderJobManifest(
     "manifest.slot.frames",
   );
   if (!frameCount.ok) return frameCount;
+  const frameMs = parseArray(
+    json.slot.frameMs,
+    "manifest.slot.frameMs",
+    (item, itemPath) => {
+      const ms = parseNonNegativeInteger(item, itemPath);
+      if (!ms.ok) return ms;
+      return ms.value < 1 ? fail(itemPath, "expected at least 1 ms") : ms;
+    },
+  );
+  if (!frameMs.ok) return frameMs;
+  if (frameMs.value.length !== frameCount.value)
+    return fail(
+      "manifest.slot.frameMs",
+      `lists ${frameMs.value.length} durations for ${frameCount.value} frames`,
+    );
   const seed = parseNonNegativeInteger(json.slot.seed, "manifest.slot.seed");
   if (!seed.ok) return seed;
   const loop = parseBoolean(json.slot.loop, "manifest.slot.loop");
@@ -203,6 +198,7 @@ export function parseRenderJobManifest(
       clip: clip.value,
       facing: facing.value,
       frames: frameCount.value,
+      frameMs: frameMs.value,
       seed: seed.value,
       loop: loop.value,
     },

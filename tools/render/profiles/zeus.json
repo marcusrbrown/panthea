@@ -9,36 +9,6 @@
     },
     {
       "kit": "universal-base-characters",
-      "path": "Hair_Beard.bin",
-      "sha256": "bf2f46ef5808665ef31082f787bc68c51ff063e81b76ca1a51ac86a9ae723be7"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_Beard.gltf",
-      "sha256": "80013b9791ce12c65fbe693cf669b02ef5c38091c653bf13b9415d2d8380e0ce"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_Long.bin",
-      "sha256": "268fd531d2c2ac321783d36fcf106d15c5c76e8923eec2c8704d5fe9de953589"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_Long.gltf",
-      "sha256": "27e2c63e8f98c79fb600268ffcc92b36c621b8653b5a7dcbadb08328f3f887a9"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_SimpleParted.bin",
-      "sha256": "ecd7c81959f3985d6254458a440daaaa18a8bfbb1dbe111c68a04a72374d54db"
-    },
-    {
-      "kit": "universal-base-characters",
-      "path": "Hair_SimpleParted.gltf",
-      "sha256": "fe0f354d7f95d83d38e15c60794dcc063fa4d60550706f3d7ba51491cdc07c56"
-    },
-    {
-      "kit": "universal-base-characters",
       "path": "Superhero_Male_FullBody.bin",
       "sha256": "459003f9745853ae562a85506a2b94dd56515c1f37728f9fa3d2ce1a3e4cd92f"
     },
@@ -58,57 +28,31 @@
       "path": "UAL1_Standard.glb"
     },
     "restAction": "A_TPose",
-    "hair": [
-      {
-        "model": {
-          "kit": "universal-base-characters",
-          "path": "Hair_Beard.gltf"
-        },
-        "role": "beard",
-        "part": "beard"
-      },
-      {
-        "model": {
-          "kit": "universal-base-characters",
-          "path": "Hair_SimpleParted.gltf"
-        },
-        "role": "hair",
-        "part": "hair",
-        "dropFrontBelow": [-0.02, 1.772]
-      },
-      {
-        "model": {
-          "kit": "universal-base-characters",
-          "path": "Hair_Long.gltf"
-        },
-        "role": "hair",
-        "part": "hair",
-        "keepSidesBack": [0.085, 0.02]
-      }
-    ]
+    "hair": []
   },
   "body": {
-    "scale": [1.22, 1.14, 0.97],
+    "scale": [1.16, 1.08, 1.0],
     "standingHeightPx": 60,
-    "headScale": 1.5,
+    "headScale": 1.75,
     "handScale": 1.1,
-    "footScale": 1.15,
+    "footScale": 1.0,
     "armLength": 1.0,
     "legs": {
-      "length": 1.1,
-      "thickness": 1.25
+      "length": 1.03,
+      "thickness": 1.07
     },
-    "fistDeg": 75,
-    "headPitchDeg": -25,
+    "headPitchDeg": -12,
     "stance": {
-      "thigh_l": [0, 0, 6],
-      "thigh_r": [0, 0, -6]
-    }
+      "spine_01": [-2, 0, 0],
+      "spine_02": [-2, 0, 0],
+      "spine_03": [-2, 0, 0]
+    },
+    "curlDeg": 38
   },
   "garment": {
     "name": "robe",
     "segments": 20,
-    "folds": 5,
+    "folds": 4,
     "belt": [1.0, 1.15],
     "skirtBelow": 1.0,
     "roles": ["robe", "trim"],
@@ -166,51 +110,405 @@
         "halfWidth": 0.236,
         "halfDepth": 0.188,
         "centreY": 0.02,
-        "fold": 0.05,
+        "fold": 0.04,
         "material": 0
       },
       {
         "z": 0.76,
-        "halfWidth": 0.232,
-        "halfDepth": 0.178,
+        "halfWidth": 0.245,
+        "halfDepth": 0.192,
+        "centreY": 0.02,
+        "fold": 0.05,
+        "material": 0
+      },
+      {
+        "z": 0.56,
+        "halfWidth": 0.25,
+        "halfDepth": 0.2,
+        "centreY": 0.02,
+        "fold": 0.06,
+        "material": 0
+      },
+      {
+        "z": 0.36,
+        "halfWidth": 0.255,
+        "halfDepth": 0.205,
         "centreY": 0.02,
         "fold": 0.07,
         "material": 0
       },
       {
-        "z": 0.56,
-        "halfWidth": 0.222,
-        "halfDepth": 0.186,
+        "z": 0.22,
+        "halfWidth": 0.258,
+        "halfDepth": 0.208,
         "centreY": 0.02,
-        "fold": 0.08,
-        "material": 0
-      },
-      {
-        "z": 0.33,
-        "halfWidth": 0.225,
-        "halfDepth": 0.188,
-        "centreY": 0.02,
-        "fold": 0.08,
+        "fold": 0.07,
         "material": 1
       },
       {
-        "z": 0.25,
-        "halfWidth": 0.227,
-        "halfDepth": 0.19,
+        "z": 0.15,
+        "halfWidth": 0.26,
+        "halfDepth": 0.21,
         "centreY": 0.02,
-        "fold": 0.08,
+        "fold": 0.07,
         "material": 1
       }
-    ]
+    ],
+    "pelvisShare": 0.15,
+    "seated": {
+      "keepRings": 7,
+      "legs": [
+        {
+          "z": 1.0,
+          "halfWidth": 0.125,
+          "halfDepth": 0.125,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "pelvis": 0.6,
+            "thigh": 0.4
+          }
+        },
+        {
+          "z": 0.9,
+          "halfWidth": 0.12,
+          "halfDepth": 0.118,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "thigh": 1
+          }
+        },
+        {
+          "z": 0.75,
+          "halfWidth": 0.115,
+          "halfDepth": 0.112,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "thigh": 1
+          }
+        },
+        {
+          "z": 0.62,
+          "halfWidth": 0.105,
+          "halfDepth": 0.102,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "thigh": 1
+          }
+        },
+        {
+          "z": 0.585,
+          "halfWidth": 0.1,
+          "halfDepth": 0.098,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "thigh": 0.85,
+            "calf": 0.15
+          }
+        },
+        {
+          "z": 0.542,
+          "halfWidth": 0.098,
+          "halfDepth": 0.096,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "thigh": 0.5,
+            "calf": 0.5
+          }
+        },
+        {
+          "z": 0.5,
+          "halfWidth": 0.095,
+          "halfDepth": 0.094,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "thigh": 0.15,
+            "calf": 0.85
+          }
+        },
+        {
+          "z": 0.45,
+          "halfWidth": 0.09,
+          "halfDepth": 0.09,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "calf": 1
+          }
+        },
+        {
+          "z": 0.3,
+          "halfWidth": 0.088,
+          "halfDepth": 0.088,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 0,
+          "weights": {
+            "calf": 1
+          }
+        },
+        {
+          "z": 0.2,
+          "halfWidth": 0.086,
+          "halfDepth": 0.088,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 1,
+          "weights": {
+            "calf": 1
+          }
+        },
+        {
+          "z": 0.17,
+          "halfWidth": 0.085,
+          "halfDepth": 0.088,
+          "centreX": 0.114,
+          "centreY": 0.036,
+          "fold": 0.02,
+          "material": 1,
+          "weights": {
+            "calf": 1
+          }
+        }
+      ]
+    }
+  },
+  "himation": {
+    "role": "himation",
+    "strips": [
+      {
+        "name": "mantle",
+        "folds": 3,
+        "rows": [
+          {
+            "z": 1.56,
+            "halfWidth": 0.17,
+            "halfDepth": 0.13,
+            "centreY": 0.02,
+            "fromDeg": -20,
+            "toDeg": 70,
+            "fold": 0.0
+          },
+          {
+            "z": 1.5,
+            "halfWidth": 0.385,
+            "halfDepth": 0.2,
+            "centreY": 0.02,
+            "fromDeg": -50,
+            "toDeg": 115,
+            "fold": 0.03
+          },
+          {
+            "z": 1.38,
+            "halfWidth": 0.405,
+            "halfDepth": 0.22,
+            "centreY": 0.02,
+            "fromDeg": -50,
+            "toDeg": 125,
+            "fold": 0.04
+          },
+          {
+            "z": 1.2,
+            "halfWidth": 0.42,
+            "halfDepth": 0.235,
+            "centreY": 0.02,
+            "fromDeg": -45,
+            "toDeg": 125,
+            "fold": 0.05
+          },
+          {
+            "z": 0.95,
+            "halfWidth": 0.435,
+            "halfDepth": 0.255,
+            "centreY": 0.02,
+            "fromDeg": -40,
+            "toDeg": 125,
+            "fold": 0.05
+          },
+          {
+            "z": 0.7,
+            "halfWidth": 0.425,
+            "halfDepth": 0.28,
+            "centreY": 0.02,
+            "fromDeg": -30,
+            "toDeg": 125,
+            "fold": 0.05
+          },
+          {
+            "z": 0.45,
+            "halfWidth": 0.385,
+            "halfDepth": 0.285,
+            "centreY": 0.02,
+            "fromDeg": -25,
+            "toDeg": 120,
+            "fold": 0.05
+          }
+        ],
+        "weights": [
+          {
+            "z": 1.56,
+            "bones": {
+              "clavicle_l": 0.7,
+              "spine_03": 0.3
+            }
+          },
+          {
+            "z": 1.4,
+            "bones": {
+              "clavicle_l": 0.35,
+              "spine_03": 0.65
+            }
+          },
+          {
+            "z": 1.15,
+            "bones": {
+              "spine_03": 0.4,
+              "spine_02": 0.3,
+              "spine_01": 0.3
+            }
+          },
+          {
+            "z": 0.95,
+            "bones": {
+              "spine_01": 0.3,
+              "pelvis": 0.7
+            }
+          },
+          {
+            "z": 0.55,
+            "bones": {
+              "pelvis": 1.0
+            }
+          }
+        ],
+        "creases": [
+          {
+            "at": 0.35,
+            "width": 0.14,
+            "depth": 0.04
+          },
+          {
+            "at": 0.7,
+            "width": 0.14,
+            "depth": 0.035
+          }
+        ]
+      },
+      {
+        "name": "chest-diagonal",
+        "folds": 2,
+        "rows": [
+          {
+            "z": 1.54,
+            "halfWidth": 0.23,
+            "halfDepth": 0.17,
+            "centreY": 0.02,
+            "fromDeg": -70,
+            "toDeg": -30,
+            "fold": 0.0
+          },
+          {
+            "z": 1.42,
+            "halfWidth": 0.26,
+            "halfDepth": 0.18,
+            "centreY": 0.02,
+            "fromDeg": -105,
+            "toDeg": -45,
+            "fold": 0.03
+          },
+          {
+            "z": 1.28,
+            "halfWidth": 0.26,
+            "halfDepth": 0.19,
+            "centreY": 0.02,
+            "fromDeg": -135,
+            "toDeg": -65,
+            "fold": 0.04
+          },
+          {
+            "z": 1.12,
+            "halfWidth": 0.265,
+            "halfDepth": 0.2,
+            "centreY": 0.02,
+            "fromDeg": -160,
+            "toDeg": -90,
+            "fold": 0.04
+          },
+          {
+            "z": 0.98,
+            "halfWidth": 0.27,
+            "halfDepth": 0.21,
+            "centreY": 0.02,
+            "fromDeg": -185,
+            "toDeg": -120,
+            "fold": 0.03
+          }
+        ],
+        "weights": [
+          {
+            "z": 1.54,
+            "bones": {
+              "clavicle_l": 0.6,
+              "spine_03": 0.4
+            }
+          },
+          {
+            "z": 1.2,
+            "bones": {
+              "spine_03": 0.5,
+              "spine_02": 0.5
+            }
+          },
+          {
+            "z": 0.98,
+            "bones": {
+              "spine_01": 0.5,
+              "pelvis": 0.5
+            }
+          }
+        ]
+      }
+    ],
+    "seated": {
+      "hemZ": 0.78,
+      "flare": 1.25,
+      "narrow": 0.72
+    }
   },
   "materials": {
     "skin": {
       "ramp": "pale-gold",
-      "bias": 0.0
+      "bias": 0.0,
+      "bandShades": [2, 3, 3, 4, 4]
     },
     "robe": {
       "ramp": "cloud",
-      "bias": 0.2
+      "bias": 0.1,
+      "bandShades": [2, 3, 4, 5, 5]
     },
     "trim": {
       "ramp": "pale-gold",
@@ -218,201 +516,611 @@
     },
     "hair": {
       "ramp": "marble",
-      "bias": 0.15
+      "bias": -0.2,
+      "bandShades": [2, 3, 3, 4, 4]
     },
     "beard": {
-      "ramp": "cloud",
-      "bias": 0.05
+      "ramp": "marble",
+      "bias": 0.0,
+      "bandShades": [2, 3, 3, 4, 4]
+    },
+    "himation": {
+      "ramp": "lapis",
+      "bias": 0.0,
+      "bandShades": [1, 1, 2, 2, 3]
+    },
+    "fillet": {
+      "ramp": "pale-gold",
+      "bias": 0.0,
+      "bandShades": [3, 3, 4, 4, 4]
     }
   },
   "stampSet": "zeus",
-  "shadow": { "ramp": "lapis" },
+  "shadow": {
+    "ramp": "lapis"
+  },
   "clips": {
     "idle": {
       "action": "Idle_Loop",
-      "loop": true
+      "loop": true,
+      "frames": 10,
+      "frameMs": 250
     },
     "walk": {
       "action": "Walk_Loop",
-      "loop": true
+      "loop": true,
+      "frames": 16,
+      "frameMs": 50
     },
     "seated": {
       "action": "Sitting_Idle_Loop",
-      "loop": true
-    },
-    "act": {
-      "action": "Spell_Simple_Shoot",
-      "loop": false,
-      "schedule": [
-        [0, 0, 0.0],
-        [0, 1, 1.0],
-        [1, 2, 1.0],
-        [2, 2, 0.0],
-        [2, 0, 0.5],
-        [0, 0, 0.0]
-      ]
+      "loop": true,
+      "frames": 8,
+      "frameMs": [209, 208, 208, 209, 208, 208, 209, 208]
     }
   },
   "pose": {
+    "seated": {
+      "rotations": {
+        "spine_02": [4, 0, 0],
+        "spine_03": [4, 0, 0],
+        "neck_01": [-4, 0, 0]
+      },
+      "groundFeet": true,
+      "aims": {
+        "upperarm_l": [0.08, -0.12, -1.0],
+        "lowerarm_l": [-0.05, -1.0, -0.35],
+        "hand_l": [-0.05, -1.0, -0.25],
+        "upperarm_r": [-0.08, -0.12, -1.0],
+        "lowerarm_r": [0.05, -1.0, -0.35],
+        "hand_r": [0.05, -1.0, -0.25]
+      }
+    },
     "idle": {
       "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.45, -0.05, 0.85],
-        "hand_r": [-0.45, -0.05, 0.85]
-      }
+        "thigh_l": [0.05, 0.0, -1.0],
+        "calf_l": [0.0, 0.05, -1.0],
+        "foot_l": [0.1, -0.88, -0.45],
+        "ball_l": [0.1, -1.0, 0.0],
+        "thigh_r": [-0.05, -0.1, -1.0],
+        "calf_r": [0.0, 0.05, -1.0],
+        "foot_r": [-0.1, -0.88, -0.45],
+        "ball_r": [-0.1, -1.0, 0.0]
+      },
+      "breath": {
+        "spine_02": [0, 0.014, 0],
+        "spine_03": [0, 0.024, 0],
+        "neck_01": [0, -0.024, 0]
+      },
+      "groundFeet": true
     },
     "walk": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.45, -0.05, 0.85],
-        "hand_r": [-0.45, -0.05, 0.85]
-      }
-    },
-    "seated": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.45, -0.05, 0.85],
-        "hand_r": [-0.45, -0.05, 0.85]
+      "damp": {
+        "thigh_l": 0.75,
+        "thigh_r": 0.75,
+        "calf_l": 0.75,
+        "calf_r": 0.75,
+        "upperarm_l": 0.6,
+        "upperarm_r": 0.6,
+        "lowerarm_l": 0.6,
+        "lowerarm_r": 0.6
       },
-      "rotations": {
-        "spine_02": [14, 0, 0],
-        "spine_03": [10, 0, 0],
-        "neck_01": [-8, 0, 0]
-      }
-    },
-    "act": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.45, -0.05, 0.85],
-        "hand_r": [-0.45, -0.05, 0.85]
+      "dampLocation": {
+        "pelvis": 0.5
       },
-      "mirror": true
-    },
-    "act:south:0": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.45, -0.05, 0.85],
-        "hand_r": [-0.45, -0.05, 0.85]
-      }
-    },
-    "act:south:1": {
-      "aims": {
-        "upperarm_r": [-0.7, 0.0, 0.2],
-        "lowerarm_r": [-0.55, -0.4, 0.15],
-        "hand_r": [-0.55, -0.4, 0.15]
-      }
-    },
-    "act:south:2": {
-      "aims": {
-        "upperarm_r": [-0.75, 0.1, 0.2],
-        "lowerarm_r": [-0.5, -0.3, 0.3],
-        "hand_r": [-0.5, -0.3, 0.3]
-      }
-    },
-    "act:north:0": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.55, 0.0, 0.75],
-        "hand_r": [-0.55, 0.0, 0.75]
-      }
-    },
-    "act:north:1": {
-      "aims": {
-        "upperarm_r": [-0.65, 0.0, 0.2],
-        "lowerarm_r": [-0.5, 0.4, 0.15],
-        "hand_r": [-0.5, 0.4, 0.15]
-      }
-    },
-    "act:north:2": {
-      "aims": {
-        "upperarm_r": [-0.7, -0.1, 0.2],
-        "lowerarm_r": [-0.45, 0.3, 0.3],
-        "hand_r": [-0.45, 0.3, 0.3]
-      }
-    },
-    "act:east:0": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.45, -0.05, 0.85],
-        "hand_r": [-0.45, -0.05, 0.85]
-      }
-    },
-    "act:east:1": {
-      "aims": {
-        "upperarm_r": [-0.3, 0.9, 0.3],
-        "lowerarm_r": [-0.2, 0.7, 0.7],
-        "hand_r": [-0.2, 0.7, 0.7]
-      }
-    },
-    "act:east:2": {
-      "aims": {
-        "upperarm_r": [-0.3, 0.95, 0.2],
-        "lowerarm_r": [-0.2, 0.6, 0.8],
-        "hand_r": [-0.2, 0.6, 0.8]
-      }
-    },
-    "act:west:0": {
-      "aims": {
-        "upperarm_r": [-0.3, -0.35, -0.88],
-        "lowerarm_r": [-0.3, -0.85, 0.4],
-        "hand_r": [-0.3, -0.85, 0.4]
-      }
-    },
-    "act:west:1": {
-      "aims": {
-        "upperarm_r": [-0.3, 0.9, -0.15],
-        "lowerarm_r": [-0.2, 0.9, 0.2],
-        "hand_r": [-0.2, 0.9, 0.2]
-      }
-    },
-    "act:west:2": {
-      "aims": {
-        "upperarm_r": [-0.3, 0.95, -0.1],
-        "lowerarm_r": [-0.2, 0.85, 0.25],
-        "hand_r": [-0.2, 0.85, 0.25]
-      }
-    },
-    "idle:west": {
-      "aims": {
-        "upperarm_r": [-0.3, -0.35, -0.88],
-        "lowerarm_r": [-0.3, -0.85, 0.4],
-        "hand_r": [-0.3, -0.85, 0.4]
-      }
-    },
-    "walk:west": {
-      "aims": {
-        "upperarm_r": [-0.3, -0.35, -0.88],
-        "lowerarm_r": [-0.3, -0.85, 0.4],
-        "hand_r": [-0.3, -0.85, 0.4]
-      }
-    },
-    "seated:west": {
-      "aims": {
-        "upperarm_r": [-0.3, -0.35, -0.88],
-        "lowerarm_r": [-0.3, -0.85, 0.4],
-        "hand_r": [-0.3, -0.85, 0.4]
-      }
-    },
-    "idle:north": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.55, 0.0, 0.75],
-        "hand_r": [-0.55, 0.0, 0.75]
-      }
-    },
-    "walk:north": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.55, 0.0, 0.75],
-        "hand_r": [-0.55, 0.0, 0.75]
-      }
-    },
-    "seated:north": {
-      "aims": {
-        "upperarm_r": [-0.4, -0.1, -0.91],
-        "lowerarm_r": [-0.55, 0.0, 0.75],
-        "hand_r": [-0.55, 0.0, 0.75]
-      }
+      "groundFeet": true
     }
+  },
+  "beard": {
+    "role": "beard",
+    "strips": [
+      {
+        "name": "cheek-r",
+        "folds": 0,
+        "rows": [
+          {
+            "z": 1.645,
+            "halfWidth": 0.088,
+            "halfDepth": 0.105,
+            "centreY": 0.005,
+            "fromDeg": -188,
+            "toDeg": -166,
+            "fold": 0.0
+          },
+          {
+            "z": 1.632,
+            "halfWidth": 0.084,
+            "halfDepth": 0.104,
+            "centreY": 0.005,
+            "fromDeg": -188,
+            "toDeg": -166,
+            "fold": 0.0
+          },
+          {
+            "z": 1.622,
+            "halfWidth": 0.078,
+            "halfDepth": 0.103,
+            "centreY": 0.005,
+            "fromDeg": -188,
+            "toDeg": -166,
+            "fold": 0.0
+          }
+        ],
+        "weights": [
+          {
+            "z": 1.7,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ]
+      },
+      {
+        "name": "cheek-l",
+        "folds": 0,
+        "rows": [
+          {
+            "z": 1.645,
+            "halfWidth": 0.088,
+            "halfDepth": 0.105,
+            "centreY": 0.005,
+            "fromDeg": -14,
+            "toDeg": 8,
+            "fold": 0.0
+          },
+          {
+            "z": 1.632,
+            "halfWidth": 0.084,
+            "halfDepth": 0.104,
+            "centreY": 0.005,
+            "fromDeg": -14,
+            "toDeg": 8,
+            "fold": 0.0
+          },
+          {
+            "z": 1.622,
+            "halfWidth": 0.078,
+            "halfDepth": 0.103,
+            "centreY": 0.005,
+            "fromDeg": -14,
+            "toDeg": 8,
+            "fold": 0.0
+          }
+        ],
+        "weights": [
+          {
+            "z": 1.7,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ]
+      },
+      {
+        "name": "chin",
+        "folds": 0,
+        "rows": [
+          {
+            "z": 1.625,
+            "halfWidth": 0.072,
+            "halfDepth": 0.105,
+            "centreY": 0.005,
+            "fromDeg": -152,
+            "toDeg": -28,
+            "fold": 0.0
+          },
+          {
+            "z": 1.6,
+            "halfWidth": 0.07,
+            "halfDepth": 0.102,
+            "centreY": 0.005,
+            "fromDeg": -152,
+            "toDeg": -28,
+            "fold": 0.0
+          },
+          {
+            "z": 1.572,
+            "halfWidth": 0.064,
+            "halfDepth": 0.1,
+            "centreY": 0.002,
+            "fromDeg": -150,
+            "toDeg": -30,
+            "fold": 0.0
+          },
+          {
+            "z": 1.545,
+            "halfWidth": 0.056,
+            "halfDepth": 0.098,
+            "centreY": 0.0,
+            "fromDeg": -150,
+            "toDeg": -30,
+            "fold": 0.0
+          },
+          {
+            "z": 1.515,
+            "halfWidth": 0.046,
+            "halfDepth": 0.094,
+            "centreY": -0.002,
+            "fromDeg": -148,
+            "toDeg": -32,
+            "fold": 0.0
+          },
+          {
+            "z": 1.485,
+            "halfWidth": 0.032,
+            "halfDepth": 0.084,
+            "centreY": -0.006,
+            "fromDeg": -145,
+            "toDeg": -35,
+            "fold": 0.0
+          },
+          {
+            "z": 1.462,
+            "halfWidth": 0.014,
+            "halfDepth": 0.06,
+            "centreY": -0.012,
+            "fromDeg": -140,
+            "toDeg": -40,
+            "fold": 0.0
+          },
+          {
+            "z": 1.445,
+            "halfWidth": 0.005,
+            "halfDepth": 0.03,
+            "centreY": -0.02,
+            "fromDeg": -135,
+            "toDeg": -45,
+            "fold": 0.0
+          }
+        ],
+        "weights": [
+          {
+            "z": 1.7,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "hair": {
+    "role": "hair",
+    "strips": [
+      {
+        "name": "crown",
+        "folds": 3,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.829,
+            "halfWidth": 0.002,
+            "halfDepth": 0.002,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.824,
+            "halfWidth": 0.015,
+            "halfDepth": 0.018,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.815,
+            "halfWidth": 0.052,
+            "halfDepth": 0.061,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.03
+          },
+          {
+            "z": 1.795,
+            "halfWidth": 0.08,
+            "halfDepth": 0.072,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.084
+          },
+          {
+            "z": 1.78,
+            "halfWidth": 0.094,
+            "halfDepth": 0.096,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.12
+          },
+          {
+            "z": 1.76,
+            "halfWidth": 0.104,
+            "halfDepth": 0.114,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.12
+          },
+          {
+            "z": 1.742,
+            "halfWidth": 0.1,
+            "halfDepth": 0.118,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.048
+          }
+        ],
+        "creases": [
+          {
+            "at": 0.5,
+            "width": 1,
+            "depth": 0
+          }
+        ],
+        "columns": 9
+      },
+      {
+        "name": "lock-l",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.745,
+            "halfWidth": 0.094,
+            "halfDepth": 0.108,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.0
+          },
+          {
+            "z": 1.72,
+            "halfWidth": 0.1,
+            "halfDepth": 0.116,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.01
+          },
+          {
+            "z": 1.69,
+            "halfWidth": 0.108,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.02
+          },
+          {
+            "z": 1.66,
+            "halfWidth": 0.108,
+            "halfDepth": 0.123,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.02
+          },
+          {
+            "z": 1.635,
+            "halfWidth": 0.098,
+            "halfDepth": 0.112,
+            "centreY": 0.007,
+            "fromDeg": -35,
+            "toDeg": 25,
+            "fold": 0.0
+          }
+        ]
+      },
+      {
+        "name": "lock-r",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.745,
+            "halfWidth": 0.094,
+            "halfDepth": 0.108,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.0
+          },
+          {
+            "z": 1.72,
+            "halfWidth": 0.1,
+            "halfDepth": 0.116,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.01
+          },
+          {
+            "z": 1.69,
+            "halfWidth": 0.108,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.02
+          },
+          {
+            "z": 1.66,
+            "halfWidth": 0.108,
+            "halfDepth": 0.123,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.02
+          },
+          {
+            "z": 1.635,
+            "halfWidth": 0.098,
+            "halfDepth": 0.112,
+            "centreY": 0.007,
+            "fromDeg": 155,
+            "toDeg": 215,
+            "fold": 0.0
+          }
+        ]
+      },
+      {
+        "name": "nape",
+        "folds": 2,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "creases": [
+          {
+            "at": 0.3,
+            "width": 0.18,
+            "depth": 0.008
+          },
+          {
+            "at": 0.5,
+            "width": 0.18,
+            "depth": 0.008
+          },
+          {
+            "at": 0.7,
+            "width": 0.18,
+            "depth": 0.008
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.745,
+            "halfWidth": 0.094,
+            "halfDepth": 0.108,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.0
+          },
+          {
+            "z": 1.72,
+            "halfWidth": 0.1,
+            "halfDepth": 0.116,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.01
+          },
+          {
+            "z": 1.69,
+            "halfWidth": 0.108,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.02
+          },
+          {
+            "z": 1.65,
+            "halfWidth": 0.112,
+            "halfDepth": 0.126,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.03
+          },
+          {
+            "z": 1.61,
+            "halfWidth": 0.106,
+            "halfDepth": 0.122,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.03
+          },
+          {
+            "z": 1.58,
+            "halfWidth": 0.092,
+            "halfDepth": 0.11,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.02
+          },
+          {
+            "z": 1.555,
+            "halfWidth": 0.07,
+            "halfDepth": 0.09,
+            "centreY": 0.007,
+            "fromDeg": 20,
+            "toDeg": 160,
+            "fold": 0.0
+          }
+        ]
+      }
+    ]
+  },
+  "fillet": {
+    "role": "fillet",
+    "strips": [
+      {
+        "name": "band",
+        "folds": 0,
+        "weights": [
+          {
+            "z": 1.9,
+            "bones": {
+              "Head": 1
+            }
+          }
+        ],
+        "rows": [
+          {
+            "z": 1.782,
+            "halfWidth": 0.093,
+            "halfDepth": 0.094,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          },
+          {
+            "z": 1.759,
+            "halfWidth": 0.102,
+            "halfDepth": 0.111,
+            "centreY": 0.007,
+            "fromDeg": 90,
+            "toDeg": 450,
+            "fold": 0.0
+          }
+        ]
+      }
+    ]
   }
 }

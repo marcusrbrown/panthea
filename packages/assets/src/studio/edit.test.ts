@@ -5,14 +5,14 @@ import {
   parseGenerationRequest,
   type Sha256,
 } from "@panthea/contracts";
-import type { RgbaImage } from "../conformance";
 import {
   type AssetRig,
   assetRig,
   pngOf,
   removeTempRoots,
   runSlots,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import type { RgbaImage } from "../conformance";
 import { editSettings, imgGenBody, resolveEdit } from "./edit";
 import { SELECTED_PROFILE } from "./provider";
 import { adapterInput, buildSpec, newRequestRecord, planJobs } from "./request";

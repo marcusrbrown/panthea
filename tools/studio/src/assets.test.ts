@@ -12,8 +12,8 @@ import {
   paintFigure,
   runSlots,
   spriteSet,
-} from "../../../packages/assets/src/studio/_test-fixtures";
-import { assetRig, removeTempRoots, run } from "./_testkit";
+} from "../../../packages/assets/test/studio/fixtures";
+import { assetRig, removeTempRoots, run } from "../test/kit";
 import type { StudioConfig } from "./config";
 import { exitOf, type Outcome } from "./format";
 

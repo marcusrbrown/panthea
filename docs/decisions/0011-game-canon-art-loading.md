@@ -77,6 +77,10 @@ The owner agreed each item on 2026-10-10. The same list goes into the foundation
 - Pixel exactness on the packaged WebGL2 path is shown for the committed canon on one host (see the evidence below). WebGPU, other hosts, and the packaged device-loss path are not covered.
 - Seated and strike art, the other gods and mortals stay placeholders until the studio publishes them.
 
+## Dated notes
+
+**2026-10-12.** The client logical target is now 624×592, widened from the 576×592 above for `god-tall` 112×96 cells per [ADR-0012](0012-pre-rendered-retro-art-direction.md) (the right extent grows from 281 to 305; the height is unchanged). The inspection fixture's 1x target (`INSPECT_SIZE`) is now 576×432, up from 576×288, so a 16-frame 112×96 clip places in four rows. The text above is the record of the original sizes and is not rewritten.
+
 ## Evidence/links
 
 [Plan](../plans/2026-10-10-002-feat-packaged-game-canon-art-plan.md), [packaged evidence](../evidence/asset-studio/unit8/README.md), [ADR-0008](0008-world-state-and-client-transport.md) (the frame carries the encoded state; the webview gets named commands only), [ADR-0009](0009-asset-registry-lifecycle-and-uris.md) (the registry and logical URIs; the browser sentence reversed above), [ADR-0010](0010-studio-app-host.md) (`ipc::Response` bytes, no custom URI scheme), [ADR-0002](0002-renderer-backend.md) (WebGL2 baseline), `apps/desktop/src-tauri/src/canon.rs`, `apps/client/src/assets/canon.test.ts`, `apps/client/src/inspect/inspector.test.ts`, `tools/scenarios/studio-zeus-scene/src/reference.test.ts`, `packages/assets/src/browser-bundle.test.ts`, [wkwebview WebGPU learning](../solutions/integration-issues/wkwebview-webgpu-unavailable-macos-15-2026-09-26.md), [device-loss learning](../solutions/integration-issues/three-webgpurenderer-device-loss-latch-2026-09-27.md).

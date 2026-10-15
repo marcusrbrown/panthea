@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { spriteFixture } from "@panthea/assets/fixtures";
-import { removeTempRoots, rig, world, writeDraft } from "./_testkit";
+import { removeTempRoots, rig, world, writeDraft } from "../../test/source-kit";
 import { createDevBridgeSource, type HotChannel, parseChange } from "./client";
 import type { AssetBridge } from "./dev-bridge";
 import { CHANGE_EVENT, type SourceChange } from "./port";

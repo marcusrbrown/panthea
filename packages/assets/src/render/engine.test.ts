@@ -29,7 +29,7 @@ import {
   submitSd,
   WATCHDOG_MS,
 } from "../../test/render/rig";
-import { readLog as readSdLog } from "../studio/_test-runtime";
+import { readLog as readSdLog } from "../../test/studio/runtime";
 import { decodePng } from "../studio/png/decode";
 import { RENDER_SCRIPT_SHA256 } from "./engine";
 import { loadRenderInputs } from "./load";
@@ -43,6 +43,14 @@ const events = (rig: Rig, name: string) =>
   readBlenderLog(rig.fakeDir).filter((e) => e.event === name);
 const startPids = (rig: Rig) => events(rig, "start").map((e) => e.pid);
 const west = (state: string) => ({ state, direction: "west" });
+/** The committed Zeus profile's clip for a state: the frames and timing the engine must use. */
+const zeusClip = (state: string) => {
+  const clip = loadRenderInputs(RENDER_ROOT).profiles.find(
+    (p) => p.id === "zeus",
+  )?.clips[state];
+  if (clip === undefined) throw new Error(`no ${state} clip in the profile`);
+  return clip;
+};
 const outcomes = (results: readonly { jobId: string; outcome: string }[]) =>
   results.map((r) => `${r.jobId}:${r.outcome}`);
 
@@ -63,11 +71,12 @@ describe("a render job through the runtime", () => {
 
       const jobs = jobsById(rig);
       const manifests: Record<string, unknown>[] = [];
-      for (const id of ids) {
+      for (const [slot, id] of ids.entries()) {
         const record = jobs[id];
         if (record?.job.status !== "succeeded")
           throw new Error(`${id} did not succeed`);
-        expect(record.job.outputs).toHaveLength(16);
+        const clip = zeusClip(["idle", "walk"][slot] as string);
+        expect(record.job.outputs).toHaveLength(clip.frames);
         expect(record.engine?.model).toBeNull();
         expect(record.engine?.runtime).toEqual({
           name: "blender",
@@ -86,7 +95,10 @@ describe("a render job through the runtime", () => {
           cell: string;
           cellPixels: string;
         }[];
-        expect(frames).toHaveLength(16);
+        expect(frames).toHaveLength(clip.frames);
+        expect((manifest.slot as { frameMs: number[] }).frameMs).toEqual([
+          ...clip.frameMs,
+        ]);
         for (const [index, frame] of frames.entries()) {
           for (const role of ["colour", "id", "depth"]) {
             const raw = rig.session.store.readBlob(frame.raw[role] as never);
@@ -118,7 +130,7 @@ describe("a render job through the runtime", () => {
       expect(idle.slotRecipeHash).toBe(
         slotRecipeHash(idle.revisionRecipeHash as never, {
           state: "idle",
-          clip: "idle16",
+          clip: `idle${zeusClip("idle").frames}`,
           facing: "west",
           seed: 0,
         }),
@@ -173,6 +185,87 @@ describe("a render job through the runtime", () => {
       expect(staged).toEqual(
         (profile?.kitFiles ?? []).map((f) => `${f.kit}/${f.path}`).sort(),
       );
+    },
+    T,
+  );
+});
+
+describe("frames and timing come from the profile", () => {
+  const editClip =
+    (state: string, change: (clip: Record<string, unknown>) => void) =>
+    (root: string) => {
+      const path = join(root, "profiles", "zeus.json");
+      const profile = JSON.parse(readFileSync(path, "utf8"));
+      change(profile.clips[state]);
+      writeFileSync(path, JSON.stringify(profile, null, 2));
+    };
+
+  test(
+    "the engine renders the profile's frame count and records its durations (a profile with 6 idle frames at 300 ms gives 6)",
+    async () => {
+      const rig = await openRig({
+        launches: [{}],
+        mutateRenderRoot: editClip("idle", (clip) => {
+          clip.frames = 6;
+          clip.frameMs = 300;
+        }),
+      });
+      const [id] = submitRender(rig, "zeus-retro", [west("idle")]);
+      await drain(rig);
+      const record = jobsById(rig)[id as string];
+      if (record?.job.status !== "succeeded")
+        throw new Error(`expected succeeded, got ${record?.job.status}`);
+      expect(record.job.outputs).toHaveLength(6);
+      const manifest = JSON.parse(
+        new TextDecoder().decode(
+          rig.session.store.readBlob(record.engine?.settings.manifest as never),
+        ),
+      ) as { slot: { frames: number; frameMs: number[]; clip: string } };
+      expect(manifest.slot).toMatchObject({
+        frames: 6,
+        frameMs: [300, 300, 300, 300, 300, 300],
+        clip: "idle6",
+      });
+    },
+    T,
+  );
+
+  test(
+    "a frame count outside the vocabulary's rule for the state, or a duration outside its rate bounds, fails the job before Blender starts (positive control: the committed profile renders)",
+    async () => {
+      for (const [state, change, pattern] of [
+        [
+          "walk",
+          (clip: Record<string, unknown>) => {
+            clip.frames = 12;
+            clip.frameMs = 50;
+          },
+          /walk.*12 frames.*16/,
+        ],
+        [
+          "idle",
+          (clip: Record<string, unknown>) => {
+            clip.frameMs = 30;
+          },
+          /idle.*30 ms/,
+        ],
+      ] as const) {
+        const rig = await openRig({
+          launches: [{}],
+          mutateRenderRoot: editClip(state, change),
+        });
+        const [id] = submitRender(rig, "zeus-retro", [west(state)]);
+        await drain(rig);
+        const job = jobsById(rig)[id as string]?.job;
+        if (job?.status !== "failed")
+          throw new Error(`expected failed, got ${job?.status}`);
+        expect(job.error).toMatch(pattern);
+        expect(events(rig, "start")).toHaveLength(0);
+      }
+      const control = await openRig({ launches: [{}] });
+      const [ok] = submitRender(control, "zeus-retro", [west("walk")]);
+      await drain(control);
+      expect(jobsById(control)[ok as string]?.job.status).toBe("succeeded");
     },
     T,
   );
@@ -341,7 +434,7 @@ describe("failures are failed, never unavailable", () => {
     async () => {
       const rig = await failedWith(
         { defaultMode: "short" },
-        /expects?|expected 16 frames|frames/i,
+        /expects?|expected \d+ frames|frames/i,
       );
       expect(blobCount(rig)).toBe(0);
     },
@@ -353,7 +446,7 @@ describe("failures are failed, never unavailable", () => {
     async () => {
       const rig = await failedWith(
         { defaultMode: "missing-file" },
-        /expected 48 frame files/,
+        new RegExp(`expected ${zeusClip("idle").frames * 3} frame files`),
       );
       expect(blobCount(rig)).toBe(0);
     },
@@ -542,7 +635,7 @@ describe("failures are failed, never unavailable", () => {
         throw new Error(`expected failed, got ${job?.status}`);
       expect(job.error).toMatch(/kit closure violation/);
       expect(job.error).toContain("Planted_Unlisted.bin");
-      expect(planted).toContain("Hair_Beard.gltf");
+      expect(planted).toContain("Superhero_Male_FullBody.gltf");
       expect(result.results.map((r) => r.outcome)).toEqual(["failed"]);
       expect(events(rig, "start")).toHaveLength(0);
       expect(scratchLeft(rig)).toEqual([]);
@@ -562,7 +655,9 @@ describe("failures are failed, never unavailable", () => {
       const job = jobsById(rig)[id as string]?.job;
       if (job?.status !== "failed")
         throw new Error(`expected failed, got ${job?.status}`);
-      expect(job.error).toMatch(/staging violation: .*Hair_Beard\.bin/);
+      expect(job.error).toMatch(
+        /staging violation: .*Superhero_Male_FullBody\.bin/,
+      );
       expect(events(rig, "start")).toHaveLength(0);
       expect(scratchLeft(rig)).toEqual([]);
     },

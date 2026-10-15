@@ -7,7 +7,7 @@ import {
   newRequestRecord,
   readStudioStatus,
 } from "@panthea/assets/studio";
-import { readLog } from "../../../packages/assets/src/studio/_test-runtime";
+import { readLog } from "../../../packages/assets/test/studio/runtime";
 import {
   alive,
   capture,
@@ -18,7 +18,7 @@ import {
   runtimeRig,
   sleep,
   waitFor,
-} from "./_testkit";
+} from "../test/kit";
 import { execute } from "./commands";
 import { exitOf, type Outcome } from "./format";
 import { Studio } from "./host";

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { fakeTransport, hostError } from "../host/_testkit";
+import { fakeTransport, hostError } from "../../test/host-kit";
 import { createStudioHost, HostError } from "../host/client";
 import type { ConformParams } from "../host/types";
 import * as workflowActions from "./actions";
@@ -152,6 +152,21 @@ describe("workflow host actions", () => {
         styleTag: "a".repeat(129),
         footprintWidth: "1",
         footprintHeight: "1",
+        originalWorkLicence: "",
+        originalWorkAttribution: "",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("pack arguments reject tile footprints wider than the studio scene supports", () => {
+    expect(
+      buildPackArgs({
+        selectedSet: { id: "w", kind: "sprite", authored: {} },
+        assets: [],
+        assetId: "zeus",
+        styleTag: "retro",
+        footprintWidth: "112",
+        footprintHeight: "96",
         originalWorkLicence: "",
         originalWorkAttribution: "",
       }),

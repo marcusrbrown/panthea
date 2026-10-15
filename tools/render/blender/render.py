@@ -49,11 +49,12 @@ SENTINEL_NAME = "done.json"
 ROLES = ("colour", "id", "depth")
 PART_IDS = (
     "head", "torso", "arm_l", "hand_l", "arm_r", "hand_r", "leg_l", "leg_r",
-    "robe_upper", "robe_skirt", "belt", "beard", "hair", "tunic", "tunic_skirt", "bolt",
+    "robe_upper", "robe_skirt", "belt", "beard", "hair", "tunic", "tunic_skirt", "reserved_15",
     "trunk", "foliage",
     "stylobate", "column", "entablature", "pediment", "cella", "roof",
     "wall", "door", "prop",
     "ground", "animal",
+    "himation",
 )  # fmt: skip
 ID_BASE, ID_STEP = 16, 8
 
@@ -69,7 +70,6 @@ FINGER_JOINT_SHARE = (0.55, 1.0, 0.8)  # share of the full curl at the knuckle, 
 FIST_AXIS = (1.0, 0.0, 0.0)  # finger curl axis in each finger bone's own space
 DIRECTIONS = ("south", "east", "north", "west")
 BODY_ROLE = "skin"  # the material role of the base body; the profile must define it
-BOLT_SEGMENTS, BOLT_STEP, BOLT_AMP, BOLT_THICK = 4, 0.10, 0.14, 0.085  # the locator the bolt stamp anchors to
 
 
 class InputError(Exception):
@@ -168,41 +168,21 @@ def part_for_bone(name: str) -> str:
 # --- pose policy (the same merge as `posePolicy` in profile.ts) -------------------------------------------------------
 
 
-def pose_policy(profile: dict, state: str, facing: str, key=None) -> dict:
-    """The state's entry refined by its facing entry and, for a key pose, by that key's entry; bones merge one by one."""
+def pose_policy(profile: dict, state: str, facing: str) -> dict:
+    """The state's entry refined by its facing entry; bones merge one by one."""
     if state not in profile["clips"]:
         raise InputError(f"{state!r} is not a semantic state of profile {profile['id']!r}; pose policy is keyed by state")
-    keys = [state, f"{state}:{facing}"]
-    if key is not None:
-        keys.append(f"{state}:{facing}:{key}")
     merged: dict = {}
-    for k in keys:
+    for k in (state, f"{state}:{facing}"):
         entry = profile["pose"].get(k)
         if entry is None:
             continue
-        for field in ("aims", "rotations"):
+        for field in ("aims", "rotations", "damp", "dampLocation", "breath"):
             if field in entry:
                 merged[field] = {**merged.get(field, {}), **entry[field]}
-        if "mirror" in entry:
-            merged["mirror"] = entry["mirror"]
+        if "groundFeet" in entry:
+            merged["groundFeet"] = entry["groundFeet"]
     return merged
-
-
-def blend_aims(a: dict, b: dict, t: float) -> dict:
-    out = {}
-    for bone in a:
-        va, vb = Vector(a[bone]).normalized(), Vector(b.get(bone, a[bone])).normalized()
-        out[bone] = list(va.lerp(vb, t).normalized())
-    return out
-
-
-def scheduled_aims(profile: dict, state: str, facing: str, index: int, count: int) -> dict:
-    """A one-shot's aims: its waypoints (key pose, key pose, blend) resampled over the frame count."""
-    schedule = profile["clips"][state]["schedule"]
-    a_key, b_key, t = schedule[min(len(schedule) - 1, index * len(schedule) // count)]
-    a = pose_policy(profile, state, facing, int(a_key)).get("aims", {})
-    b = pose_policy(profile, state, facing, int(b_key)).get("aims", {})
-    return blend_aims(a, b, t)
 
 
 # --- scene, camera, materials, passes ---------------------------------------------------------------------------------
@@ -314,24 +294,30 @@ def toon_material(name: str, shades_hex, starts, shade_indices, bias: float):
 
 
 class MaterialBook:
-    """Role -> (ramp, bias) from the profile, ramps from the recipe palette; one toon material per role."""
+    """Role -> (ramp, bias, band shades) from the profile, ramps from the recipe palette; one toon material per role.
+
+    A role may name its own `bandShades` (one ramp shade per camera band): hair and beard use fewer distinct tones than
+    the large surfaces, which keep the camera's five."""
 
     def __init__(self, profile: dict, palette: dict, camera: dict):
         ramps = {r["id"]: r["shades"] for r in palette["ramps"]}
+        self.starts = camera["shading"]["bandStarts"]
+        self.camera_shades = camera["shading"]["bandShades"]
         self.roles = {}
         for role, spec in profile["materials"].items():
             if spec["ramp"] not in ramps:
                 raise InputError(f"the palette has no ramp {spec['ramp']!r} (role {role!r})")
-            self.roles[role] = (ramps[spec["ramp"]], spec["bias"])
-        self.starts = camera["shading"]["bandStarts"]
-        self.shades = camera["shading"]["bandShades"]
+            shades = spec.get("bandShades", self.camera_shades)
+            if len(shades) != len(self.starts):
+                raise InputError(f"role {role!r} lists {len(shades)} band shades for the camera's {len(self.starts)} bands")
+            self.roles[role] = (ramps[spec["ramp"]], spec["bias"], shades)
         self.slots = []
         self.cache = {}
 
     def material(self, role: str):
         if role not in self.cache:
-            shades, bias = self.roles[role]
-            self.cache[role] = toon_material(f"toon_{role}", shades, self.starts, self.shades, bias)
+            shades, bias, band_shades = self.roles[role]
+            self.cache[role] = toon_material(f"toon_{role}", shades, self.starts, band_shades, bias)
         return self.cache[role]
 
     def bind(self, obj, role_per_slot) -> None:
@@ -509,20 +495,7 @@ def rotate_bones(arm, rotations: dict) -> None:
     bpy.context.view_layer.update()
 
 
-def mirror_pose(arm) -> None:
-    """Flip the current pose left for right (Blender's paste-flipped): the act clip uses the left hand, the bolt is in the right."""
-    view = bpy.context.view_layer
-    view.objects.active = arm
-    arm.select_set(True)
-    bpy.ops.object.mode_set(mode="POSE")
-    bpy.ops.pose.select_all(action="SELECT")
-    bpy.ops.pose.copy()
-    bpy.ops.pose.paste(flipped=True)
-    bpy.ops.object.mode_set(mode="OBJECT")
-    view.update()
-
-
-# --- lofted garment, hair, bolt -------------------------------------------------------------------------------------
+# --- lofted garment, draped himation -------------------------------------------------------------------------------------
 
 
 def ring_points(ring: dict, count: int, folds: int):
@@ -531,7 +504,7 @@ def ring_points(ring: dict, count: int, folds: int):
     for i in range(count):
         theta = 2 * math.pi * i / count
         radial = 1.0 + ring["fold"] * math.cos(folds * theta)
-        points.append((ring["halfWidth"] * radial * math.cos(theta), ring["centreY"] + ring["halfDepth"] * radial * math.sin(theta), ring["z"]))
+        points.append((ring.get("centreX", 0.0) + ring["halfWidth"] * radial * math.cos(theta), ring["centreY"] + ring["halfDepth"] * radial * math.sin(theta), ring["z"]))
     return points
 
 
@@ -564,9 +537,11 @@ def skin(obj, arm, weights: dict) -> None:
     obj.parent = arm
 
 
-def build_garment(arm, body, garment: dict):
-    """Lofted, bone-weighted garment: weights come from the nearest torso and leg vertices of the body."""
-    obj = loft(garment["name"], garment["rings"], garment["segments"], garment["folds"])
+def build_garment(arm, body, garment: dict, ring_count=None, name=None):
+    """Lofted, bone-weighted garment: weights come from the nearest torso and leg vertices of the body. With
+    `ring_count` only the first rings are lofted (the torso of the seated garment)."""
+    rings = garment["rings"] if ring_count is None else garment["rings"][:ring_count]
+    obj = loft(name or garment["name"], rings, garment["segments"], garment["folds"])
     groups = dominant_groups(body)
     tree = kdtree.KDTree(len(body.data.vertices))
     for i, v in enumerate(body.data.vertices):
@@ -581,7 +556,7 @@ def build_garment(arm, body, garment: dict):
         for _, idx, dist in tree.find_n(v.co, 4):
             for n, x in body_w[idx].items():
                 mix[n] = mix.get(n, 0.0) + x / (dist + 0.02)
-        t = min(1.0, max(0.0, (0.95 - v.co.z) / 0.5)) * 0.45  # below the hips the garment follows the pelvis more than the legs
+        t = min(1.0, max(0.0, (0.95 - v.co.z) / 0.5)) * garment["pelvisShare"]  # below the hips, the share that follows the pelvis rather than the nearest leg
         total = sum(mix.values())
         mix = {n: x / total * (1 - t) for n, x in mix.items()}
         mix["pelvis"] = mix.get("pelvis", 0.0) + t
@@ -598,42 +573,168 @@ def build_garment(arm, body, garment: dict):
     return obj
 
 
-def build_bolt(arm):
-    """Helical zigzag along the right hand's axis. Hidden: it only locates where the bolt stamp is anchored."""
-    hand = arm.data.bones["hand_r"]
-    start = hand.head_local + Vector((-0.07, 0.0, 0.0))
-    path = []
-    cos, sin = math.cos(math.radians(45.0)), math.sin(math.radians(45.0))
-    for i in range(BOLT_SEGMENTS + 1):
-        lateral = 0.0 if i in (0, BOLT_SEGMENTS) else BOLT_AMP * (1 if i % 2 else -1)
-        path.append(Vector((start.x - i * BOLT_STEP, start.y + lateral * cos, start.z + lateral * sin)))
+def crease_depth(u: float, creases: list) -> float:
+    """Total groove depth at a position across the arc: each crease a smooth cosine dip of its width."""
+    depth = 0.0
+    for crease in creases:
+        half = crease["width"] / 2.0
+        d = abs(u - crease["at"])
+        if d < half:
+            depth += crease["depth"] * 0.5 * (1.0 + math.cos(math.pi * d / half))
+    return depth
+
+
+def arc_points(row: dict, count: int, folds: int, creases=()):
+    """Points of one open arc of an ellipse about the torso axis, y negative toward the front. 0 degrees is the
+    character's left (+X), -90 the front, 90 the back; `count` points from `fromDeg` to `toDeg`, folded radially
+    and grooved by the creases (each pulls the point toward the arc's centre by its depth)."""
+    points = []
+    for j in range(count):
+        u = j / (count - 1)
+        theta = math.radians(row["fromDeg"] + (row["toDeg"] - row["fromDeg"]) * u)
+        radial = 1.0 + row["fold"] * math.cos(2 * math.pi * folds * u)
+        x = row["halfWidth"] * radial * math.cos(theta)
+        y = row["halfDepth"] * radial * math.sin(theta)
+        groove = crease_depth(u, creases)
+        if groove:
+            length = math.hypot(x, y)
+            shrink = max(0.0, length - groove) / length if length > 1e-9 else 1.0
+            x, y = x * shrink, y * shrink
+        points.append((x, row["centreY"] + y, row["z"]))
+    return points
+
+
+def weights_at(table: list, z: float) -> dict:
+    """Bone weights at a height from a top-to-bottom table: linear between two entries, clamped beyond the ends."""
+    if z >= table[0]["z"]:
+        return dict(table[0]["bones"])
+    for upper, lower in zip(table, table[1:]):
+        if z >= lower["z"]:
+            t = (upper["z"] - z) / (upper["z"] - lower["z"])
+            return {
+                b: upper["bones"].get(b, 0.0) * (1 - t) + lower["bones"].get(b, 0.0) * t
+                for b in set(upper["bones"]) | set(lower["bones"])
+            }
+    return dict(table[-1]["bones"])
+
+
+ROW_FIELDS = ("z", "halfWidth", "halfDepth", "centreY", "fromDeg", "toDeg", "fold")
+
+
+def seated_rows(rows: list, spec: dict) -> list:
+    """The rows of a mantle strip as it hangs over a seat: they end at `hemZ` in a lip that flares outward, and the rows
+    below the hips narrow toward the hem (linearly from 1 at z 1.0 to `narrow`), so the chiton shows at the sides."""
+    hem, flare, narrow = spec["hemZ"], spec["flare"], spec["narrow"]
+    kept = [r for r in rows if r["z"] > hem]
+    out = [dict(r) for r in kept]
+    if len(kept) < len(rows):
+        hi, lo = kept[-1], rows[len(kept)]
+        t = (hi["z"] - hem) / (hi["z"] - lo["z"])
+        out.append({k: hi[k] + (lo[k] - hi[k]) * t for k in ROW_FIELDS})
+        out[-1]["z"] = hem
+        out.append({**out[-1], "z": hem - 0.05})
+    for r in out:
+        shrink = 1.0 + (narrow - 1.0) * min(1.0, max(0.0, (1.0 - r["z"]) / max(1.0 - hem, 1e-6)))
+        r["halfWidth"] *= shrink
+        r["halfDepth"] *= shrink
+    if len(kept) < len(rows):
+        out[-1]["halfWidth"] *= flare
+        out[-1]["halfDepth"] *= flare
+    return out
+
+
+def build_himation(arm, himation: dict, default_columns: int = 14, name: str = "himation", part: str = "himation", seated: bool = False):
+    """An open draped mesh of strips of arcs (never a closed ring), each skinned to the bones its weight table names by
+    height. The himation hangs over the character's left shoulder; the beard is the same construction on the head. Faces
+    across a crease keep their own normals (a crisp facet); the rest of the strip shades smooth. One object, one part id,
+    one material."""
     bm = bmesh.new()
-    half = BOLT_THICK / 2
-    for i in range(len(path) - 1):
-        a, b = path[i], path[i + 1]
-        axis = (b - a).normalized()
-        side = axis.cross(Vector((0, 0, 1)) if abs(axis.z) < 0.9 else Vector((0, 1, 0))).normalized()
-        up = axis.cross(side).normalized()
-        k_end = 0.35 if i == len(path) - 2 else 1.0
-        ends = []
-        for centre, k in ((a - axis * half * 0.6, 1.0), (b + axis * half * 0.6, k_end)):
-            ends.append([bm.verts.new(centre + side * half * k * sx + up * half * k * sy) for sx, sy in ((1, 1), (-1, 1), (-1, -1), (1, -1))])
-        for j in range(4):
-            bm.faces.new((ends[0][j], ends[0][(j + 1) % 4], ends[1][(j + 1) % 4], ends[1][j]))
-        bm.faces.new(ends[0][::-1])
-        bm.faces.new(ends[1])
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    mesh = bpy.data.meshes.new("bolt")
+    weights: dict = {}
+    index = 0
+    for strip in himation["strips"]:
+        creases = strip.get("creases", [])
+        columns = strip.get("columns", default_columns)
+        strip_rows = seated_rows(strip["rows"], himation["seated"]) if seated else strip["rows"]
+        rows = [[bm.verts.new(p) for p in arc_points(row, columns, strip["folds"], creases)] for row in strip_rows]
+        for row, verts in zip(strip_rows, rows):
+            for _ in verts:
+                weights[index] = weights_at(strip["weights"], row["z"])
+                index += 1
+        for i in range(len(rows) - 1):
+            for j in range(columns - 1):
+                face = bm.faces.new((rows[i][j], rows[i + 1][j], rows[i + 1][j + 1], rows[i][j + 1]))
+                u0, u1 = j / (columns - 1), (j + 1) / (columns - 1)
+                grooved = any(abs((u0 + u1) / 2 - c["at"]) < c["width"] / 2 + 1e-9 for c in creases)
+                face.smooth = not grooved
+                face.material_index = 0
+    mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
     bm.free()
-    obj = bpy.data.objects.new("bolt", mesh)
+    obj = bpy.data.objects.new(name, mesh)
     bpy.context.scene.collection.objects.link(obj)
-    for poly in mesh.polygons:
-        poly.use_smooth = False
-    skin(obj, arm, {i: {"hand_r": 1.0} for i in range(len(mesh.vertices))})
-    set_ids(obj, "bolt")
-    obj.data.materials.append(None)
+    skin(obj, arm, weights)
+    set_ids(obj, part)
+    while len(obj.data.materials) < 1:
+        obj.data.materials.append(None)
     return obj
+
+
+def build_seated_legs(arm, garment: dict, side: str):
+    """One leg of the seated garment: a closed tube from the hip to the hem, skinned to the thigh, the shin and the
+    pelvis by its row weights (a lap over the thigh, a knee transition, a shin drape). `side` is `l` or `r`; the right
+    leg mirrors the left's offset from the centre line."""
+    sign = 1.0 if side == "l" else -1.0
+    seated = garment["seated"]
+    rings = [
+        {**row, "centreX": row["centreX"] * sign, "material": row["material"]}
+        for row in seated["legs"]
+    ]
+    obj = loft(f"{garment['name']}_leg_{side}", rings, garment["segments"], garment["folds"])
+    count = garment["segments"]
+    weights = {}
+    for ring_index, row in enumerate(seated["legs"]):
+        named = {(f"{b}_{side}" if b in ("thigh", "calf") else b): w for b, w in row["weights"].items()}
+        for k in range(count):
+            weights[ring_index * count + k] = named
+    skin(obj, arm, weights)
+    set_ids(obj, "robe_skirt")
+    while len(obj.data.materials) < 2:
+        obj.data.materials.append(None)
+    return obj
+
+
+def smooth_piece(mesh, iterations: int, taper, scale, offset) -> None:
+    """Smooths a hair piece's geometry and shading into one mass, optionally scaled about its top centre and tapered
+    in width toward the bottom."""
+    bm = bmesh.new()
+    bm.from_mesh(mesh.data)
+    if scale:
+        top = max(v.co.z for v in bm.verts)
+        mid_y = sum(v.co.y for v in bm.verts) / len(bm.verts)
+        for v in bm.verts:
+            v.co.x *= scale[0]
+            v.co.y = mid_y + (v.co.y - mid_y) * scale[1]
+            v.co.z = top + (v.co.z - top) * scale[2]
+    if iterations:
+        for _ in range(iterations):
+            bmesh.ops.smooth_vert(bm, verts=bm.verts, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    if taper:
+        zs = [v.co.z for v in bm.verts]
+        top, bottom = max(zs), min(zs)
+        for v in bm.verts:
+            t = (top - v.co.z) / max(top - bottom, 1e-6)
+            v.co.x *= taper[0] + (taper[1] - taper[0]) * t
+    if offset:
+        for v in bm.verts:
+            v.co.x += offset[0]
+            v.co.y += offset[1]
+            v.co.z += offset[2]
+    for f in bm.faces:
+        f.smooth = True
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bm.to_mesh(mesh.data)
+    bm.free()
+    mesh.data.update()
 
 
 # --- kit import (staging only) -----------------------------------------------------------------------------------------
@@ -671,7 +772,7 @@ def import_gltf(path: Path) -> list:
 
 
 class Figure:
-    """The profile's character: base body, garment, hair and a bolt locator, posed through `pose`."""
+    """The profile's character: base body, chiton, himation and hair, posed through `pose`."""
 
     def __init__(self, profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook):
         self.profile, self.camera, self.scene, self.axes, self.book = profile, camera, scene, axes, book
@@ -705,13 +806,44 @@ class Figure:
                     bone.inherit_scale = "NONE"
         self.render_objs = [self.body]
 
+        roles = list(profile["garment"]["roles"])
         garment = build_garment(self.arm, self.body, profile["garment"])
-        book.bind(garment, list(profile["garment"]["roles"]))
+        book.bind(garment, roles)
         self.render_objs.append(garment)
+        self.standing_garment = [garment]
+        self.seated_garment = []
+        seated = profile["garment"].get("seated")
+        if seated is not None:  # a garment of its own for the seated state: the torso, then a lap and the shin drapes
+            torso = build_garment(self.arm, self.body, profile["garment"], seated["keepRings"], f"{profile['garment']['name']}_seated")
+            self.seated_garment = [torso, *(build_seated_legs(self.arm, profile["garment"], side) for side in ("l", "r"))]
+            for piece in self.seated_garment:
+                book.bind(piece, roles)
+                piece.hide_render = True
+                self.render_objs.append(piece)
+        self.standing_mantle, self.seated_mantle = [], []
+        if "himation" in profile:
+            himation = build_himation(self.arm, profile["himation"])
+            book.bind(himation, [profile["himation"]["role"]])
+            self.render_objs.append(himation)
+            self.standing_mantle = [himation]
+            if "seated" in profile["himation"]:  # the same strips as they hang over a seat
+                lap = build_himation(self.arm, profile["himation"], 14, "himation_seated", "himation", True)
+                book.bind(lap, [profile["himation"]["role"]])
+                lap.hide_render = True
+                self.render_objs.append(lap)
+                self.seated_mantle = [lap]
+        if "beard" in profile:
+            beard = build_himation(self.arm, profile["beard"], 16, "beard_mesh", "beard")
+            book.bind(beard, [profile["beard"]["role"]])
+            self.render_objs.append(beard)
+        for key, name, columns in (("hair", "hair_mesh", 28), ("fillet", "fillet_mesh", 28)):  # built for the purpose, weighted to the head
+            if key in profile:
+                mesh = build_himation(self.arm, profile[key], columns, name, "hair")
+                book.bind(mesh, [profile[key]["role"]])
+                self.render_objs.append(mesh)
+        self.neutral = {}
         for piece in profile["models"]["hair"]:
             self.render_objs.append(self.add_hair(staging, piece))
-        self.bolt = build_bolt(self.arm)
-        self.bolt.hide_render = True
         book.bind(self.body, [BODY_ROLE] * max(1, len(self.body.data.materials)))
         set_ids(self.body, body_face_parts(self.body))
         self.calibrate()
@@ -742,6 +874,8 @@ class Figure:
             bmesh.ops.delete(bm, geom=doomed, context="FACES")
             bm.to_mesh(mesh.data)
             bm.free()
+        if piece.get("smooth") or piece.get("taper") or piece.get("scale") or piece.get("offset"):
+            smooth_piece(mesh, piece.get("smooth", 0), piece.get("taper"), piece.get("scale"), piece.get("offset"))
         mesh.parent = self.arm
         mesh.matrix_parent_inverse = mathutils.Matrix.Identity(4)
         set_ids(mesh, piece["part"])
@@ -751,6 +885,8 @@ class Figure:
     # --- calibration ---
 
     def calibrate(self) -> None:
+        """Facing, then the sole midpoint and ground height of the FINAL idle pose: the bearing, proportions and leg
+        policy are all applied, so the figure's feet stand on the pivot whatever the profile does to the legs."""
         profile = self.profile
         rest = profile["models"]["restAction"]
         set_action(self.arm, rest)
@@ -760,15 +896,21 @@ class Figure:
         arm_eval, _ = evaluated(self.arm, self.body)
         left = tuple(a - b for a, b in zip(bone_head(arm_eval, "thigh_l"), bone_head(arm_eval, "thigh_r"), strict=True))
         forward = (left[1], -left[0])  # the rest pose is symmetric, so the facing is exact
-        idle = set_action(self.arm, self.clip("idle")["action"])
-        go_to(self.scene, idle.frame_range[0])
-        place_armature(self.arm, 0.0, (0.0, 0.0), 0.0)
+        facing = facing_vectors(self.axes)
+        self.yaws = {d: yaw_to_face(forward, facing[d]) for d in DIRECTIONS}
+        idle = self.clip("idle")
+        start = bpy.data.actions[idle["action"]].frame_range[0]
+        self.scale = 1.0
+        self.apply_pose("idle", "south", start)
+        self.arm.rotation_mode = "XYZ"
+        self.arm.rotation_euler = (0.0, 0.0, 0.0)
+        self.arm.scale = (1.0, 1.0, 1.0)
+        self.arm.location = (0.0, 0.0, 0.0)
+        bpy.context.view_layer.update()
         arm_eval, _ = evaluated(self.arm, self.body)
         heads = [bone_head(arm_eval, n) for n in FOOT_BONES]
         self.sole_local = (sum(h[0] for h in heads) / 4, sum(h[1] for h in heads) / 4)
         self.ground_local = float(mesh_points(self.body)[:, 2].min())
-        facing = facing_vectors(self.axes)
-        self.yaws = {d: yaw_to_face(forward, facing[d]) for d in DIRECTIONS}
 
     def clip(self, state: str) -> dict:
         clip = self.profile["clips"].get(state)
@@ -780,8 +922,8 @@ class Figure:
         """The same camera scale for everyone: only the model is enlarged, to the profile's standing height."""
         self.scale = 1.0
         idle = self.clip("idle")
-        self.pose("idle", "south", bpy.data.actions[idle["action"]].frame_range[0], 0, 1)
-        pts = all_points([o for o in self.render_objs if o is not self.bolt])
+        self.pose("idle", "south", bpy.data.actions[idle["action"]].frame_range[0])
+        pts = all_points(self.render_objs)
         up = pts @ np.array(self.axes.up)
         self.fit_extent_px = float((up.max() - up.min()) * self.ppu)
         self.scale = target_px / self.fit_extent_px
@@ -814,22 +956,79 @@ class Figure:
                     out[f"{bone}_{side}"] = (1.0, body["armLength"], 1.0)
         return out
 
-    def pose(self, state: str, facing: str, frame: float, index: int, count: int) -> None:
+    def neutral_pose(self, action_name: str, bones) -> dict:
+        """Mean local rotation and location of each bone over the whole clip: the neutral pose a tempered gait scales
+        about. Sampled at 16 loop times, cached per action and bone."""
+        action = bpy.data.actions[action_name]
+        missing = [b for b in bones if (action_name, b) not in self.neutral]
+        if missing:
+            frames = sample_frames(*action.frame_range, 16, True)
+            quats = {b: [] for b in missing}
+            locs = {b: [] for b in missing}
+            for f in frames:
+                go_to(self.scene, f)
+                for b in missing:
+                    pb = self.arm.pose.bones[b]
+                    q = pb.rotation_quaternion.copy()
+                    if quats[b] and quats[b][0].dot(q) < 0:
+                        q.negate()  # one hemisphere, so the mean is not cancelled by a double cover
+                    quats[b].append(q)
+                    locs[b].append(pb.location.copy())
+            for b in missing:
+                total = mathutils.Quaternion((0.0, 0.0, 0.0, 0.0))
+                for q in quats[b]:
+                    total = mathutils.Quaternion((total.w + q.w, total.x + q.x, total.y + q.y, total.z + q.z))
+                total.normalize()
+                self.neutral[(action_name, b)] = (total, sum(locs[b], Vector((0.0, 0.0, 0.0))) / len(locs[b]))
+        return {b: self.neutral[(action_name, b)] for b in bones}
+
+    def apply_pose(self, state: str, facing: str, frame: float) -> None:
         """Pose every clip, sample variant and control: keyed by the semantic state, never by an output clip name."""
         profile = self.profile
         clip = self.clip(state)
         set_action(self.arm, clip["action"])
-        go_to(self.scene, frame)
         policy = pose_policy(profile, state, facing)
-        if policy.get("mirror"):
-            mirror_pose(self.arm)
-        aims = scheduled_aims(profile, state, facing, index, count) if "schedule" in clip else policy.get("aims", {})
+        damp, damp_location = policy.get("damp", {}), policy.get("dampLocation", {})
+        for name in [*damp, *damp_location]:
+            if name not in self.arm.pose.bones:
+                raise InputError(f"damp names bone {name!r}, which the rig does not have")
+        mean = self.neutral_pose(clip["action"], sorted({*damp, *damp_location})) if damp or damp_location else {}
+        go_to(self.scene, frame)
+        for name, factor in damp.items():
+            pb = self.arm.pose.bones[name]
+            pb.rotation_mode = "QUATERNION"
+            pb.rotation_quaternion = mean[name][0].slerp(pb.rotation_quaternion, factor)
+        for name, factor in damp_location.items():
+            pb = self.arm.pose.bones[name]
+            pb.location = mean[name][1] + (pb.location - mean[name][1]) * factor
+        seated = state == "seated" and bool(self.seated_garment)  # the seated garment replaces the standing one
+        for piece in self.standing_garment:
+            piece.hide_render = seated
+        for piece in self.seated_garment:
+            piece.hide_render = not seated
+        seated_cloak = state == "seated" and bool(self.seated_mantle)
+        for piece in self.standing_mantle:
+            piece.hide_render = seated_cloak
+        for piece in self.seated_mantle:
+            piece.hide_render = not seated_cloak
+        aims = policy.get("aims", {})
         order = sorted(aims, key=lambda b: AIM_ORDER.index(b) if b in AIM_ORDER else len(AIM_ORDER))
         for bone in order:
             if bone not in self.arm.pose.bones:
                 raise InputError(f"aim names bone {bone!r}, which the rig does not have")
         aim_bones(self.arm, {b: aims[b] for b in order})
-        rotate_bones(self.arm, {**profile["body"]["stance"], **policy.get("rotations", {})})
+        rotate_bones(self.arm, profile["body"]["stance"])  # the bearing, then the state's own refinement on top of it
+        rotate_bones(self.arm, policy.get("rotations", {}))
+        breath = policy.get("breath")
+        if breath:  # the chest lifts and settles once per loop, 0 at the seam; the pelvis and the legs are not named
+            start, end = bpy.data.actions[clip["action"]].frame_range
+            weight = 0.5 * (1.0 - math.cos(2.0 * math.pi * (frame - start) / (end - start)))
+            for bone, offset in breath.items():
+                pb = self.arm.pose.bones.get(bone)
+                if pb is None:
+                    raise InputError(f"breath names bone {bone!r}, which the rig does not have")
+                pb.location = pb.location + Vector(offset) * weight
+            bpy.context.view_layer.update()
         for name, scale in self.bone_scales().items():
             if name in self.arm.pose.bones:
                 self.arm.pose.bones[name].scale = scale
@@ -838,17 +1037,31 @@ class Figure:
         if pitch and head is not None:
             head.rotation_mode = "QUATERNION"
             head.rotation_quaternion = head.rotation_quaternion @ mathutils.Quaternion((1.0, 0.0, 0.0), math.radians(pitch))
-        fist = profile["body"]["fistDeg"]
-        if fist:
+        curl = profile["body"]["curlDeg"]
+        if curl:
             for finger in FINGER_CHAINS:
                 for side in ("l", "r"):
                     for joint, share in enumerate(FINGER_JOINT_SHARE, start=1):
-                        self.curl(f"{finger}_0{joint}_{side}", fist * share)
+                        self.curl(f"{finger}_0{joint}_{side}", curl * share)
             for side in ("l", "r"):
                 for joint, share in enumerate(FINGER_JOINT_SHARE, start=1):
-                    self.curl(f"thumb_0{joint}_{side}", fist * 0.5 * share)
+                    self.curl(f"thumb_0{joint}_{side}", curl * 0.5 * share)
         self.arm.animation_data.action = None  # freeze the pose; a render must not re-evaluate the action
+
+    def foot_mask(self):
+        if not hasattr(self, "_foot_mask"):
+            groups = dominant_groups(self.body)
+            self._foot_mask = np.array([g in FOOT_BONES for g in groups])
+        return self._foot_mask
+
+    def pose(self, state: str, facing: str, frame: float) -> None:
+        self.apply_pose(state, facing, frame)
         self.place(self.yaws[facing])
+        if pose_policy(self.profile, state, facing).get("groundFeet"):
+            # a tempered gait: this frame's lowest sole stands on the ground plane, so the figure never floats
+            lowest = float(mesh_points(self.body)[self.foot_mask()][:, 2].min())
+            self.arm.location = (self.arm.location.x, self.arm.location.y, self.arm.location.z - lowest)
+            bpy.context.view_layer.update()
 
     def curl(self, bone: str, degrees: float) -> None:
         pb = self.arm.pose.bones.get(bone)
@@ -868,7 +1081,7 @@ class Figure:
         return round(float((np.array(point, dtype=np.float64) - np.array(cam.location)) @ np.array(self.axes.view)), 4)
 
     def extent(self) -> dict:
-        pts = all_points([o for o in self.render_objs if o is not self.bolt])
+        pts = all_points(self.render_objs)
         cell = self.camera["cell"]
         ys = cell["pivot"][1] - pts @ np.array(self.axes.up) * self.ppu
         xs = cell["pivot"][0] + pts @ np.array(self.axes.right) * self.ppu
@@ -876,9 +1089,6 @@ class Figure:
 
     def locator_facts(self, cam) -> dict:
         facts: dict = {"points": {}}
-        pts = mesh_points(self.bolt)
-        b0, b1 = pts[:4].mean(axis=0), pts[-4:].mean(axis=0)
-        facts["bolt"] = {"basePx": self.project_px(b0), "tipPx": self.project_px(b1), "baseDepth": self.camera_depth(b0, cam)}
         for name, obj in self.locators.items():
             world = mesh_points(obj)
             rest = np.array([v.co for v in obj.data.vertices])
@@ -950,7 +1160,7 @@ def render_slot(slot: dict, figure: Figure, book: MaterialBook, recipe: dict, id
     extents, locators = [], []
     started = time.perf_counter()
     for index, frame in enumerate(sources):
-        figure.pose(state, facing, frame, index, count)
+        figure.pose(state, facing, frame)
         bpy.context.view_layer.update()  # the camera's matrix must be current before it is queried
         extents.append(figure.extent())
         locators.append(figure.locator_facts(scene.camera))

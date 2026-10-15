@@ -7,8 +7,6 @@ import {
   parseProvenance,
   type Sha256,
 } from "@panthea/contracts";
-import { sha256Hex } from "../hash";
-import { encodeRgbaPng } from "../placeholder";
 import {
   type AssetRig,
   assetRig,
@@ -23,7 +21,9 @@ import {
   succeedWithImage,
   upscale,
   withHiddenRgb,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import { sha256Hex } from "../hash";
+import { encodeRgbaPng } from "../placeholder";
 import { editSettings } from "./edit";
 import {
   type PackInput,

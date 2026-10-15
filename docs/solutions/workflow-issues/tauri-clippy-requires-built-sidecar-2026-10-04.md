@@ -1,7 +1,7 @@
 ---
 title: Build the Tauri sidecar before clippy
 date: 2026-10-04
-last_updated: 2026-10-11
+last_updated: 2026-10-13
 category: workflow-issues
 module: desktop-lifecycle
 problem_type: workflow_issue
@@ -45,6 +45,8 @@ Successful dependency installation does not create the generated sidecar. Treati
 ## When to Apply
 
 Apply this prerequisite to fresh checkouts and native CI jobs. Rebuild after changing the simulation source or compilation target.
+
+Also rebuild a packaged app after any change to content parsing. The compiled sidecar carries the content parser it was built with, and the parsers read strict key lists. A studio app built before a new subject field still runs, but it refuses the new content with `invalid-content: the content root does not load` (`tools/studio/src/host.ts`). Rebuild with `bash apps/studio/scripts/build-sidecar.sh` and then `bun run --cwd apps/studio tauri:build`. To check the packaged sidecar headless before opening the app, run `<app>/Contents/MacOS/panthea-studio-sidecar --config <file> source-keys`.
 
 ## Examples
 

@@ -13,7 +13,19 @@ import {
   ZEUS_ATLAS_HASH,
   zeusPayload,
 } from "../../test/canon-fixture";
+import {
+  decodeWithTall,
+  MIXED_CELL_ATLASES,
+  mixedCellPayload,
+  TALL_CELL,
+  TALL_SPRITE_ID,
+} from "../../test/god-tall-fixture";
 import { viewWithZeus } from "../../test/view-fixture";
+import {
+  RETRO_ATLAS_HASH,
+  RETRO_ATLASES,
+  retroPayload,
+} from "../../test/zeus-retro-fixture";
 import {
   type CanonClient,
   type CanonProblem,
@@ -21,7 +33,12 @@ import {
 } from "../assets/canon";
 import { previewView } from "../fixtures";
 import type { WorldViewModel } from "../store";
-import { CAMERA_ORIGIN } from "./layout";
+import {
+  actorFoot,
+  CAMERA_ORIGIN,
+  LOGICAL_SIZE,
+  locationPoints,
+} from "./layout";
 import { drawableEvents } from "./presentation";
 import { createWorldRenderer, type WorldRenderer } from "./scene";
 
@@ -474,20 +491,20 @@ test("a renderer disposed while its atlas loads renders nothing and hands back n
 test("the canvas backing store is the logical size times the largest whole zoom that fits, drawn from the centred camera", async () => {
   const { canon } = setup();
   const { backend, element } = await mount(canon, {
-    available: { width: 1200, height: 1300 },
+    available: { width: 1300, height: 1300 },
   });
 
-  expect(element.width).toBe(1152);
+  expect(element.width).toBe(1248);
   expect(element.height).toBe(1184);
-  expect(element.style.width).toBe("1152px");
+  expect(element.style.width).toBe("1248px");
   expect(element.style.height).toBe("1184px");
-  expect(element.style.left).toBe("24px");
+  expect(element.style.left).toBe("26px");
   expect(element.style.top).toBe("58px");
   const view = backend.views.at(-1);
   expect(view?.zoom).toBe(2);
   expect(view?.camera).toEqual(CAMERA_ORIGIN);
   expect(view?.metrics).toMatchObject({
-    backingWidth: 1152,
+    backingWidth: 1248,
     backingHeight: 1184,
   });
 });
@@ -495,12 +512,12 @@ test("the canvas backing store is the logical size times the largest whole zoom 
 test("at a device pixel ratio of 2 the CSS box is half the backing store", async () => {
   const { canon } = setup();
   const { element } = await mount(canon, {
-    available: { width: 600, height: 620 },
+    available: { width: 650, height: 620 },
     devicePixelRatio: 2,
   });
 
-  expect(element.width).toBe(1152);
-  expect(element.style.width).toBe("576px");
+  expect(element.width).toBe(1248);
+  expect(element.style.width).toBe("624px");
   expect(element.style.height).toBe("592px");
 });
 
@@ -541,4 +558,138 @@ test("pixel building colors use the shared palette without color conversion", as
   expect([color.r, color.g, color.b].map((v) => Math.round(v * 255))).toEqual([
     0xa5, 0x4d, 0x36,
   ]);
+});
+
+test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each placed by its own pivot, inside the target", async () => {
+  const { canon, problems } = setup({
+    payload: mixedCellPayload(),
+    atlases: MIXED_CELL_ATLASES,
+  });
+  const { renderer, backend } = await mount(canon, { decode: decodeWithTall });
+
+  const base = viewWithZeus();
+  const olympus = base.realms.olympus.map((location) => {
+    const zeus = location.actors.find((actor) => actor.id === "zeus");
+    if (zeus === undefined) return location;
+    return {
+      ...location,
+      actors: [
+        zeus,
+        { ...zeus, id: "tall", sprite: TALL_SPRITE_ID, isDeity: false },
+      ],
+    };
+  });
+  const view: WorldViewModel = {
+    ...base,
+    realms: { ...base.realms, olympus },
+  };
+  await renderer.draw(view, "olympus");
+
+  const place = locationPoints(olympus).get(olympus[0]?.id ?? "");
+  if (place === undefined) throw new Error("the fixture has no place");
+  const legacy = spriteOf(backend, "actor:zeus");
+  const tall = spriteOf(backend, "actor:tall");
+  expect(problems).toEqual([]);
+  expect(legacy.frame?.name).toBe("0,0,64,80");
+  expect(tall.frame?.name).toBe(`0,0,${TALL_CELL.width},${TALL_CELL.height}`);
+  expect(tall.texture?.image).toMatchObject({ width: 448, height: 96 });
+
+  // A sprite's centre is its foot moved to the pivot's centre-relative offset (y up).
+  const legacyFoot = actorFoot(place, 0);
+  const tallFoot = actorFoot(place, 1);
+  expect([legacy.position.x, legacy.position.y]).toEqual([
+    legacyFoot.x - 32 + 64 / 2,
+    legacyFoot.y + 80 - 80 / 2,
+  ]);
+  expect([tall.position.x, tall.position.y]).toEqual([
+    tallFoot.x - TALL_CELL.pivotX + TALL_CELL.width / 2,
+    tallFoot.y + TALL_CELL.pivotY - TALL_CELL.height / 2,
+  ]);
+  // The feet sit where the layout says; the tall cell reaches 18 px below its foot, the legacy one none.
+  const bottom = (centreY: number, height: number) => centreY - height / 2;
+  expect(bottom(legacy.position.y, 80)).toBe(legacyFoot.y);
+  expect(bottom(tall.position.y, TALL_CELL.height)).toBe(tallFoot.y - 18);
+
+  // Both cells lie inside the camera's view of the target.
+  const halfWidth = LOGICAL_SIZE.width / 2;
+  const halfHeight = LOGICAL_SIZE.height / 2;
+  for (const [sprite, w, h] of [
+    [legacy, 64, 80],
+    [tall, TALL_CELL.width, TALL_CELL.height],
+  ] as const) {
+    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(-halfWidth);
+    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(halfWidth);
+    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(halfHeight);
+    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(-halfHeight);
+  }
+});
+
+test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 624x592 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
+  const { canon, problems } = setup({
+    payload: retroPayload(),
+    atlases: RETRO_ATLASES,
+  });
+  const { renderer, backend, element } = await mount(canon);
+
+  const base = viewWithZeus({}, "zeus-retro");
+  const olympus = base.realms.olympus.map((location) => {
+    const zeus = location.actors.find((actor) => actor.id === "zeus");
+    if (zeus === undefined) return location;
+    return {
+      ...location,
+      actors: [
+        zeus,
+        { ...zeus, id: "elder", sprite: "zeus-sprite", isDeity: false },
+      ],
+    };
+  });
+  const view: WorldViewModel = {
+    ...base,
+    realms: { ...base.realms, olympus },
+  };
+  await renderer.draw(view, "olympus");
+
+  const place = locationPoints(olympus).get(olympus[0]?.id ?? "");
+  if (place === undefined) throw new Error("the fixture has no place");
+  const retro = spriteOf(backend, "actor:zeus");
+  const elder = spriteOf(backend, "actor:elder");
+  expect(problems).toEqual([]);
+  // 1200x1300 available: integer zoom 1, so the canvas is the 624x592 target itself.
+  expect([element.width, element.height]).toEqual([
+    LOGICAL_SIZE.width,
+    LOGICAL_SIZE.height,
+  ]);
+  expect(LOGICAL_SIZE).toEqual({ width: 624, height: 592 });
+  // The real atlas: 136 cells of 112x96 in one row, idle/south first.
+  expect(retro.texture?.image).toMatchObject({ width: 15232, height: 96 });
+  expect(retro.frame?.name).toBe("0,0,112,96");
+  expect(elder.frame?.name).toBe("0,0,64,80");
+  expect(elder.texture?.image).toMatchObject({ width: 704, height: 80 });
+
+  // Each is placed by its own pivot: (56,78) for the retro cell, (32,80) for the legacy one.
+  const retroFoot = actorFoot(place, 0);
+  const elderFoot = actorFoot(place, 1);
+  expect([retro.position.x, retro.position.y]).toEqual([
+    retroFoot.x - 56 + 112 / 2,
+    retroFoot.y + 78 - 96 / 2,
+  ]);
+  expect([elder.position.x, elder.position.y]).toEqual([
+    elderFoot.x - 32 + 64 / 2,
+    elderFoot.y + 80 - 80 / 2,
+  ]);
+
+  // Both cells lie inside the camera's view of the 624x592 target.
+  const halfWidth = LOGICAL_SIZE.width / 2;
+  const halfHeight = LOGICAL_SIZE.height / 2;
+  for (const [sprite, w, h] of [
+    [retro, 112, 96],
+    [elder, 64, 80],
+  ] as const) {
+    expect(sprite.position.x - w / 2).toBeGreaterThanOrEqual(-halfWidth);
+    expect(sprite.position.x + w / 2).toBeLessThanOrEqual(halfWidth);
+    expect(sprite.position.y + h / 2).toBeLessThanOrEqual(halfHeight);
+    expect(sprite.position.y - h / 2).toBeGreaterThanOrEqual(-halfHeight);
+  }
+  // The retro atlas is the one the registry named, not a stand-in.
+  expect(RETRO_ATLAS_HASH).toHaveLength(64);
 });

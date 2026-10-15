@@ -7,8 +7,8 @@ import {
   parseGenerationJob,
   parseGenerationRequest,
 } from "@panthea/contracts";
+import { loadContent } from "../../test/studio/fixtures";
 import type { Palette } from "../palette";
-import { loadContent } from "./_test-fixtures";
 import { PROVIDER, RENDER_PROVIDER, SELECTED_PROFILE } from "./provider";
 import {
   adapterInput,
@@ -785,7 +785,11 @@ describe("recipe requests for the render engine", () => {
         id: "greek-retro",
         family: "olympus",
         maxColours: 48,
-        approval: { status: "draft" },
+        approval: {
+          status: "approved",
+          digest:
+            "40f059ffae86409cd87d776492fd797f5efc6ad970114810fd97102e83e9c686",
+        },
       },
     });
     expect(spec.slots.map((s) => s.key)).toEqual(["walk/south"]);
@@ -1006,7 +1010,7 @@ describe("recipe requests for the render engine", () => {
     });
   });
 
-  test("slots follow the god-tall rules: seated and act/thunderbolt are drawn, hurt is not, pronouncement is deferred", () => {
+  test("slots follow the god-tall rules: idle, walk and seated are drawn, hurt is not, and act (thunderbolt and pronouncement) is deferred", () => {
     const slots = (...list: RequestInput["slots"][number][]) =>
       create({ ...walkSouth, slots: list });
     expect(
@@ -1014,22 +1018,23 @@ describe("recipe requests for the render engine", () => {
         { state: "idle", direction: "south" },
         { state: "walk", direction: "north" },
         { state: "seated", direction: "east" },
-        { state: "act", direction: "west", ability: "thunderbolt" },
       ).ok,
     ).toBe(true);
     expect(slots({ state: "hurt", direction: "south" })).toMatchObject({
       ok: false,
       error: { kind: "invalid-slot" },
     });
-    expect(
-      slots({ state: "act", direction: "south", ability: "pronouncement" }),
-    ).toMatchObject({
-      ok: false,
-      error: {
-        kind: "invalid-slot",
-        message: expect.stringContaining("deferred"),
-      },
-    });
+    for (const ability of ["pronouncement", "thunderbolt"]) {
+      expect(
+        slots({ state: "act", direction: "south", ability }),
+      ).toMatchObject({
+        ok: false,
+        error: {
+          kind: "invalid-slot",
+          message: expect.stringContaining("deferred"),
+        },
+      });
+    }
     expect(slots({ state: "act", direction: "south" })).toMatchObject({
       ok: false,
       error: { kind: "invalid-slot" },
@@ -1107,7 +1112,7 @@ describe("recipe requests for the render engine", () => {
           slots: [
             { state: "walk", direction: "south" },
             { state: "walk", direction: "north" },
-            { state: "act", direction: "south", ability: "thunderbolt" },
+            { state: "seated", direction: "south" },
           ],
           render,
         },
@@ -1143,7 +1148,7 @@ describe("recipe requests for the render engine", () => {
         { requestId: "zeus-retro", slotKey: "walk/north", ordinal: 1 },
         {
           requestId: "zeus-retro",
-          slotKey: "act/south/thunderbolt",
+          slotKey: "seated/south",
           ordinal: 2,
         },
       ]);

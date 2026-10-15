@@ -1,3 +1,4 @@
+export type { RenderedCandidate } from "../render/candidate";
 export {
   BLENDER_PIN,
   type Clock,

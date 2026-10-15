@@ -28,16 +28,17 @@ import {
   registryOf,
   renderCandidates,
 } from "../../test/render/rig";
+import { sheetOf } from "../../test/studio/fixtures";
+import { manualClock } from "../../test/studio/preview";
 import { sha256Hex } from "../hash";
 import { paletteDigest } from "../palette";
 import { encodeRgbaPng } from "../placeholder";
 import { readRevision } from "../registry";
-import { sheetOf } from "../studio/_test-fixtures";
-import { manualClock } from "../studio/_test-preview";
 import { decodePng } from "../studio/png/decode";
 import { createPreviewSource } from "../studio/preview-source";
 import { auditRendered } from "./audit";
-import { cellPixelHash } from "./post";
+import { loadRenderInputs } from "./load";
+import { cellPixelHash, POST_STEP_VERSION } from "./post";
 import { slotRecipeHash } from "./recipe";
 
 afterEach(closeRigs);
@@ -117,10 +118,10 @@ describe("render, pick, pack, approve and publish", () => {
       if (manifest.kind !== "sprite") throw new Error("not a sprite");
       expect(manifest.animations).toHaveLength(1);
       const idle = manifest.animations[0];
-      expect(idle?.frames).toHaveLength(16);
+      expect(idle?.frames).toHaveLength(10);
       expect(idle?.loopStart).toBe(0);
-      // Manifest timing: the state's fastest rate (idle 3-20 fps).
-      expect(idle?.frames.every((f) => f.durationMs === 50)).toBe(true);
+      // Manifest timing: the profile's own, idle 10 frames of 250 ms.
+      expect(idle?.frames.every((f) => f.durationMs === 250)).toBe(true);
 
       const provenance = manifest.provenance as RenderedProvenance;
       expect(provenance.method).toBe("rendered");
@@ -136,10 +137,10 @@ describe("render, pick, pack, approve and publish", () => {
         profile: { id: "zeus" },
         palette: { id: "greek-retro" },
         pivot: { x: 56, y: 78 },
-        postStep: 2,
+        postStep: POST_STEP_VERSION,
         blender: { version: "5.2.2", build: "d13f752e3b9c" },
       });
-      expect(provenance.slots[0]?.raw.colour).toHaveLength(16);
+      expect(provenance.slots[0]?.raw.colour).toHaveLength(10);
       // The kit licences are recorded; no generation is.
       expect(
         provenance.licences.map((l) => `${l.subject}:${l.licence}`).sort(),
@@ -173,7 +174,7 @@ describe("render, pick, pack, approve and publish", () => {
       expect(checks.checks.filter((c) => c.status === "fail")).toEqual([]);
       expect(
         checks.checks.filter((c) => c.check.endsWith(":palette")),
-      ).toHaveLength(16);
+      ).toHaveLength(10);
       expect(checks.status).toBe("pass");
       // Approval refuses a draft palette (positive control: the approved one passes, with no
       // exception, in approveAndPublish below).
@@ -201,7 +202,7 @@ describe("render, pick, pack, approve and publish", () => {
 
 describe("a rendered draft in the studio preview source", () => {
   test(
-    "resolves as a 112x96 sprite with its (56, 78) pivot and its 16 frames at manifest timing, and a rewrite of the record reloads it",
+    "resolves as a 112x96 sprite with its (56, 78) pivot and its 10 frames at manifest timing, and a rewrite of the record reloads it",
     async () => {
       const { rig } = await oneSlot();
       packOk(rig, "zeus-set");
@@ -223,8 +224,8 @@ describe("a rendered draft in the studio preview source", () => {
       });
       if (resolved.kind !== "frames")
         throw new Error(`expected frames, got ${resolved.kind}`);
-      expect(resolved.asset.frames).toHaveLength(16);
-      expect(resolved.asset.frames.every((f) => f.durationMs === 50)).toBe(
+      expect(resolved.asset.frames).toHaveLength(10);
+      expect(resolved.asset.frames.every((f) => f.durationMs === 250)).toBe(
         true,
       );
       expect(resolved.asset.loopStart).toBe(0);
@@ -434,7 +435,7 @@ describe("the contact shadow's palette", () => {
         profile.shadow = { ramp: "olive" };
         writeFileSync(path, JSON.stringify(profile, null, 2));
       });
-      expect(olive).toHaveLength(16);
+      expect(olive).toHaveLength(10);
       expect(olive.every((c) => c.check.endsWith(":palette"))).toBe(true);
     },
     T,
@@ -539,7 +540,7 @@ describe("the publish-time render audit", () => {
     [
       "a kit file whose bytes changed",
       (root) => void corruptKitFile(root),
-      /kit file .*Hair_Beard\.bin differs from its pinned hash/,
+      /kit file .*Superhero_Male_FullBody\.bin differs from its pinned hash/,
     ],
     [
       "a profile that changed",
@@ -566,7 +567,7 @@ describe("the publish-time render audit", () => {
       (root) => {
         const path = join(root, "stamps", "stamps.json");
         const stamps = JSON.parse(readFileSync(path, "utf8"));
-        const variant = stamps.sets[0].bolt.variants[0];
+        const variant = stamps.sets[0].face.variants[0];
         variant.anchor = [variant.anchor[0] + 1, variant.anchor[1]];
         writeFileSync(path, JSON.stringify(stamps, null, 2));
       },
@@ -606,14 +607,16 @@ describe("the publish-time render audit", () => {
           current: { script: "9".repeat(64) as Sha256 },
         }),
       ).toMatch(/script hash differs/);
-      // A v1-recorded revision checked under the current (v2) post step.
+      // A v1-recorded revision checked under the current (v3) post step.
       const v1 = structuredClone(manifest) as typeof manifest;
       (
         v1.provenance as { revisionRecipe: { postStep: number } }
       ).revisionRecipe.postStep = 1;
       expect(auditOf(rig, v1, atlas)).toMatch(/post-step version differs/);
       expect(
-        auditOf(rig, manifest, atlas, { current: { postStepVersion: 3 } }),
+        auditOf(rig, manifest, atlas, {
+          current: { postStepVersion: POST_STEP_VERSION + 1 },
+        }),
       ).toMatch(/post-step version differs/);
       expect(
         auditOf(rig, manifest, atlas, {
@@ -683,7 +686,7 @@ describe("the publish-time render audit", () => {
         ...slot,
         recipeHash: slotRecipeHash("7".repeat(64) as Sha256, {
           state: "idle",
-          clip: "idle16",
+          clip: "idle10",
           facing: "west",
           seed: 0,
         }),
@@ -920,32 +923,48 @@ describe("a rendered slot hand-edited to another frame count", () => {
 });
 
 describe("a complete Zeus matrix", () => {
-  const STATES = ["idle", "walk", "seated", "act"] as const;
+  const STATES = ["idle", "walk", "seated"] as const;
   const FACINGS = ["south", "east", "north", "west"] as const;
+  const clips = (() => {
+    const zeus = loadRenderInputs(RENDER_ROOT).profiles.find(
+      (p) => p.id === "zeus",
+    );
+    if (zeus === undefined) throw new Error("no zeus profile");
+    return zeus.clips;
+  })();
 
-  test("sixteen slots under one revision recipe pack, approve and publish through the audit", async () => {
+  test("twelve slots under one revision recipe pack, approve and publish through the audit, each at the profile's frames and timing", async () => {
     const rig = await openRig({ launches: [{}] });
     const slots = STATES.flatMap((state) =>
-      FACINGS.map((direction) => ({
-        state,
-        direction,
-        ...(state === "act" ? { ability: "thunderbolt" } : {}),
-      })),
+      FACINGS.map((direction) => ({ state, direction })),
     );
     const ids = await renderCandidates(rig, "zeus-retro", slots, "zeus-set");
-    expect(ids).toHaveLength(16);
+    expect(ids).toHaveLength(12);
     pickAll(rig, "zeus-set", ids);
     const packed = packOk(rig, "zeus-set");
     const manifest = manifestOf(packed.asset);
     const provenance = manifest.provenance as RenderedProvenance;
-    expect(provenance.slots).toHaveLength(16);
+    expect(provenance.slots).toHaveLength(12);
     // Every slot recipe hash differs; the revision recipe hash is one.
-    expect(new Set(provenance.slots.map((s) => s.recipeHash)).size).toBe(16);
+    expect(new Set(provenance.slots.map((s) => s.recipeHash)).size).toBe(12);
     expect(new Set(provenance.slots.map((s) => s.revisionRecipeHash))).toEqual(
       new Set([provenance.revisionRecipe.hash]),
     );
     if (manifest.kind !== "sprite") throw new Error("not a sprite");
-    expect(manifest.animations).toHaveLength(16);
+    expect(manifest.animations).toHaveLength(12);
+    expect(manifest.animations.some((a) => a.state === "act")).toBe(false);
+    for (const state of STATES) {
+      const clip = clips[state];
+      for (const animation of manifest.animations.filter(
+        (a) => a.state === state,
+      )) {
+        expect(animation.frames).toHaveLength(clip?.frames as number);
+        expect(animation.frames.map((f) => f.durationMs)).toEqual(
+          clip === undefined ? [] : [...clip.frameMs],
+        );
+        expect(animation.loopStart).toBe(0);
+      }
+    }
     expect(
       manifest.animations.find((a) => a.state === "walk")?.frames,
     ).toHaveLength(16);
@@ -953,10 +972,7 @@ describe("a complete Zeus matrix", () => {
       manifest.animations.find((a) => a.state === "walk")?.frames[0]
         ?.durationMs,
     ).toBe(50);
-    expect(
-      manifest.animations.find((a) => a.state === "act")?.loopStart,
-    ).toBeUndefined();
-    expect(manifest.asymmetry).toEqual({ feature: "bolt hand" });
+    expect(manifest.asymmetry).toEqual({ feature: "left-shoulder himation" });
 
     const published = approveAndPublish(rig);
     if (!published.ok) throw new Error(published.message);

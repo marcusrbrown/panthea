@@ -74,7 +74,12 @@ describe("the committed Greek content", () => {
     expect(master?.families.map((f) => f.id)).toEqual(
       expect.arrayContaining([...content.vocabulary.paletteFamilies]),
     );
-    expect(content.palettes.get("greek-retro")?.approval.status).toBe("draft");
+    // Approved on 2026-10-12 against the digest of its id, colours, ramps and limits.
+    expect(content.palettes.get("greek-retro")?.approval).toEqual({
+      status: "approved",
+      digest:
+        "40f059ffae86409cd87d776492fd797f5efc6ad970114810fd97102e83e9c686",
+    } as never);
     expect(content.palettes.get("greek-retro")?.limits?.colours.sprite).toBe(
       48,
     );
@@ -247,9 +252,12 @@ describe("the palette set", () => {
     });
     expect(files(damaged)).toEqual(["palette/greek-retro/palette.json"]);
 
+    // The committed palette is approved, and its digest covers the id: an id edit alone fails the
+    // digest. The id mismatch is reported once the copy is an explicit draft, which has no digest.
     const root = copyOfContent();
     edit(root, "palette/greek-retro/palette.json", (p) => {
       p.id = "greek-other";
+      p.approval = { status: "draft" };
     });
     expect(files(root)).toEqual(["palette/greek-retro/palette.json"]);
     expect(failures(root)[0]?.message).toContain('"greek-other"');
@@ -271,9 +279,18 @@ describe("the palette set", () => {
     const before = loadStudioPalettes(root, families);
     expect(
       before.ok && before.palettes.get("greek-retro")?.approval.status,
-    ).toBe("draft");
+    ).toBe("approved");
+    // An edit to the approved palette shows at once, as a digest mismatch.
     edit(root, "palette/greek-retro/palette.json", (p) => {
       p.limits.colours.sprite = 40;
+    });
+    expect(loadStudioPalettes(root, families)).toMatchObject({
+      ok: false,
+      diagnostics: [{ file: "palette/greek-retro/palette.json" }],
+    });
+    // The same edit on an explicit draft copy loads, and the new limit shows.
+    edit(root, "palette/greek-retro/palette.json", (p) => {
+      p.approval = { status: "draft" };
     });
     const after = loadStudioPalettes(root, families);
     expect(after.ok && after.palettes.get("greek-retro")?.limits).toEqual({

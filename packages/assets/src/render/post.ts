@@ -6,7 +6,7 @@
 // For each frame, in this order:
 //   1. mode downscale of the colour pass from 4x, each pixel snapped to the asset palette;
 //   2. selective overlap lines from the part-id and depth passes (far side, darkest of its ramp);
-//   3. authored stamps (face, bolt), occluded by part id and depth;
+//   3. authored face stamps, occluded by part id;
 //   4. one 1 px exterior outline over the combined silhouette, darkest of the local ramp;
 //   5. a solid contact shadow of one palette colour on empty pixels, never outlined.
 // Alpha is binary and the RGB of an alpha-0 pixel is zero. Height, width, outline, box and the
@@ -27,7 +27,7 @@ import { applyStamps, StampError } from "./stamp-composite";
 import type { LoadedStampSet } from "./stamps";
 
 /** Bumped with any change to the golden cells; the recipe pins it. */
-export const POST_STEP_VERSION = 2;
+export const POST_STEP_VERSION = 3;
 
 export type Facing = "south" | "east" | "north" | "west";
 
@@ -37,11 +37,6 @@ export interface EyeLocator {
 }
 
 export interface StampLocators {
-  readonly bolt?: {
-    readonly basePx: readonly [number, number];
-    readonly tipPx: readonly [number, number];
-    readonly baseDepth: number;
-  };
   readonly eyes?: { readonly l?: EyeLocator; readonly r?: EyeLocator };
 }
 
@@ -81,17 +76,6 @@ export interface StampRecord {
     readonly planned: number;
     readonly drawn: number;
     readonly skipped: number;
-  };
-  readonly bolt?: {
-    readonly angle: number;
-    readonly drawn: number;
-    readonly total: number;
-    readonly coreDrawn: number;
-    readonly coreTotal: number;
-    readonly occluded: number;
-    readonly protected: number;
-    readonly clipped: number;
-    readonly outlineOnBody: number;
   };
 }
 

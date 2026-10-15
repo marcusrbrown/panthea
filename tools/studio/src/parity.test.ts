@@ -10,15 +10,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { encodeRgbaPng } from "../../../packages/assets/src/placeholder";
-import { PROVISIONAL_TEST_PARAMS } from "../../../packages/assets/src/studio/_test-fixtures";
-import { testImage } from "../../../packages/assets/src/studio/_test-runtime";
+import { PROVISIONAL_TEST_PARAMS } from "../../../packages/assets/test/studio/fixtures";
+import { testImage } from "../../../packages/assets/test/studio/runtime";
 import {
   capture,
   depsFor,
   type RuntimeRig,
   removeTempRoots,
   runtimeRig,
-} from "./_testkit";
+} from "../test/kit";
 import { execute } from "./commands";
 import type { StudioConfig } from "./config";
 import { Studio } from "./host";

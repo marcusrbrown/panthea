@@ -13,8 +13,8 @@ import {
   type AssetRig,
   pngOf,
   runSlots,
-} from "../../../packages/assets/src/studio/_test-fixtures";
-import { assetRig, removeTempRoots, run } from "./_testkit";
+} from "../../../packages/assets/test/studio/fixtures";
+import { assetRig, removeTempRoots, run } from "../test/kit";
 import type { StudioConfig } from "./config";
 import type { Outcome } from "./format";
 import { parseArgv } from "./index";

@@ -2,6 +2,7 @@ import type {
   CandidateRecord,
   EditRecord,
   JobRecord,
+  RenderedCandidate,
   RequestRecord,
   StudioAssetRecord,
   StudioStatus,
@@ -165,6 +166,31 @@ export function candidateSummary(record: CandidateRecord): Json {
   };
 }
 
+export function renderedCandidateSummary(record: RenderedCandidate): Json {
+  return {
+    id: record.id,
+    jobId: record.id,
+    requestId: record.source.requestId,
+    slotKey: record.slotKey,
+    ordinal: record.source.ordinal,
+    status: "done",
+    rendered: true,
+    frameCount: record.frames.length,
+    revisionRecipeHash: record.revisionRecipeHash,
+    slotRecipeHash: record.slotRecipeHash,
+    report: {
+      status: record.frames.every((frame) => frame.report.status === "pass")
+        ? "pass"
+        : "fail",
+      failedChecks: record.frames.flatMap((frame) =>
+        frame.report.checks
+          .filter((check) => check.status === "fail")
+          .map((check) => check.check),
+      ),
+    },
+  };
+}
+
 export function setSummary(record: WorkingSetRecord): Json {
   return {
     id: record.id,
@@ -312,7 +338,9 @@ export function statusSummary(
     counts: {
       requests: status.requests.length,
       jobs: status.jobs.length,
-      candidates: status.candidates.length,
+      candidates:
+        status.candidates.length + (status.renderedCandidates?.length ?? 0),
+      renderedCandidates: status.renderedCandidates?.length ?? 0,
       workingSets: status.workingSets.length,
       edits: status.edits.length,
       assets: status.assets.length,

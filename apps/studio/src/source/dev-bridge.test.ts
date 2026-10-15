@@ -25,7 +25,7 @@ import {
   withManifest,
   world,
   writeDraft,
-} from "./_testkit";
+} from "../../test/source-kit";
 import { COALESCE_MS, fsWatcher } from "./dev-bridge";
 import {
   type AtlasBytes,

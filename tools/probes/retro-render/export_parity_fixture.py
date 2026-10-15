@@ -86,6 +86,7 @@ def main() -> int:
     ap.add_argument("--clip", default="cast")
     ap.add_argument("--facing", default="west")
     ap.add_argument("--palette", default=str(DEFAULT_PALETTE), help="a palette directory (palette.json, master.gpl, master.hex)")
+    ap.add_argument("--drop-bolt", action="store_true", help="remove the bolt locator from every frame, so the probe's own post step makes cells with no bolt stamp (the studio has no prop stamps)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--work", default=str(ROOT / "scratch/fixture-run"), help="where the probe writes its cells (inside the repository)")
     args = ap.parse_args()
@@ -98,6 +99,8 @@ def main() -> int:
         print(f"no frames for {args.clip}/{args.facing} in {source}", file=sys.stderr)
         return 1
     frames.sort(key=lambda f: f["index"])
+    if args.drop_bolt:
+        frames = [{**f, "locators": {k: v for k, v in f["locators"].items() if k != "bolt"}} for f in frames]
 
     # The probe reads one meta.json and the pass files next to it: give it a directory holding just this slot.
     render_dir, cells_dir = work / "render", work / "cells"

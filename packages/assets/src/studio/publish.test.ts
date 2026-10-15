@@ -17,11 +17,6 @@ import {
   parseAssetManifest,
   transitionAsset,
 } from "@panthea/contracts";
-import { paletteFixture, portraitFixture } from "../fixtures";
-import { sha256Hex } from "../hash";
-import { MASTER_PALETTE_ID, paletteDigest } from "../palette";
-import { encodeRgbaPng } from "../placeholder";
-import { loadRegistry, publishAsset as publishToRegistry } from "../registry";
 import {
   type AssetRig,
   assetRig,
@@ -34,7 +29,12 @@ import {
   selectedProfileFacts,
   sheetOf as sheetOfFrames,
   spriteSet,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import { paletteFixture, portraitFixture } from "../fixtures";
+import { sha256Hex } from "../hash";
+import { MASTER_PALETTE_ID, paletteDigest } from "../palette";
+import { encodeRgbaPng } from "../placeholder";
+import { loadRegistry, publishAsset as publishToRegistry } from "../registry";
 import type { PackInput } from "./packing";
 import { decodePng } from "./png/decode";
 import { SELECTED_PROFILE } from "./provider";

@@ -124,3 +124,100 @@ export function CandidatePixels({
     />
   );
 }
+
+export function RenderedCandidatePixels({
+  host,
+  candidateId,
+}: {
+  readonly host: StudioHost;
+  readonly candidateId: string;
+}) {
+  const [frames, setFrames] = useState<
+    | { readonly status: "loading" }
+    | {
+        readonly status: "loaded";
+        readonly width: number;
+        readonly height: number;
+        readonly frames: readonly {
+          readonly index: number;
+          readonly url: string;
+        }[];
+      }
+    | { readonly status: "failed" }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    let active = true;
+    setFrames({ status: "loading" });
+    void (async () => {
+      try {
+        const metadata = await host.candidateFrames(candidateId);
+        const loaded = await Promise.all(
+          metadata.frames.map(async (frame) => ({
+            index: frame.index,
+            url: pngDataUrl(
+              await host.previewBytes({
+                candidate: candidateId,
+                frame: frame.index,
+              }),
+            ),
+          })),
+        );
+        if (active)
+          setFrames({
+            status: "loaded",
+            width: metadata.width,
+            height: metadata.height,
+            frames: loaded,
+          });
+      } catch {
+        if (active) setFrames({ status: "failed" });
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [candidateId, host]);
+
+  if (frames.status === "loading")
+    return (
+      <div
+        className="rendered-frame-strip rendered-frame-strip-loading"
+        role="status"
+      >
+        Frame strip loading
+      </div>
+    );
+  if (frames.status === "failed")
+    return (
+      <div
+        className="rendered-frame-strip rendered-frame-strip-failed"
+        role="alert"
+      >
+        Rendered frames are unavailable.
+      </div>
+    );
+  return (
+    <figure
+      className="rendered-frame-preview"
+      aria-label={`Rendered frame strip, ${frames.frames.length} frames`}
+    >
+      <div className="rendered-frame-strip">
+        {frames.frames.map((frame) => (
+          <img
+            key={frame.index}
+            src={frame.url}
+            width={frames.width}
+            height={frames.height}
+            alt={`Frame ${frame.index + 1}`}
+            style={{ imageRendering: "pixelated" }}
+          />
+        ))}
+      </div>
+      <figcaption>
+        {frames.width} × {frames.height} px at 1× · {frames.frames.length}{" "}
+        frames
+      </figcaption>
+    </figure>
+  );
+}

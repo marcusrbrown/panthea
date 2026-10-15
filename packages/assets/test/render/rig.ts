@@ -18,10 +18,6 @@ import { join } from "node:path";
 import { sha256Hex } from "../../src/hash";
 import { type PaletteSet, paletteDigest } from "../../src/palette";
 import { type Clock, RENDER_ENGINE } from "../../src/render/engine";
-import {
-  type Behavior as SdBehavior,
-  stageFixtureRuntime,
-} from "../../src/studio/_test-runtime";
 import { loadStudioContent } from "../../src/studio/content";
 import type { SelectedProfile } from "../../src/studio/provider";
 import { newRequestRecord } from "../../src/studio/request";
@@ -35,6 +31,10 @@ import {
   type StudioSession,
 } from "../../src/studio/session";
 import { readStudioStatus } from "../../src/studio/store";
+import {
+  type Behavior as SdBehavior,
+  stageFixtureRuntime,
+} from "../studio/runtime";
 import {
   type LaunchBehavior,
   type StagedBlender,
@@ -347,7 +347,7 @@ export function copyRenderRoot(base: string): string {
  */
 export function plantUnlistedBuffer(renderRoot: string): string {
   const kit = "universal-base-characters";
-  const file = "Hair_Beard.gltf";
+  const file = "Superhero_Male_FullBody.gltf";
   const path = join(renderRoot, "kits", kit, file);
   const gltf = JSON.parse(readFileSync(path, "utf8")) as {
     buffers: { uri?: string; byteLength: number }[];
@@ -365,7 +365,7 @@ export function plantUnlistedBuffer(renderRoot: string): string {
  */
 export function plantMalformedBufferUri(renderRoot: string): string {
   const kit = "universal-base-characters";
-  const file = "Hair_Beard.gltf";
+  const file = "Superhero_Male_FullBody.gltf";
   const path = join(renderRoot, "kits", kit, file);
   const gltf = JSON.parse(readFileSync(path, "utf8")) as {
     buffers: { uri?: string; byteLength: number }[];
@@ -380,7 +380,7 @@ export function plantMalformedBufferUri(renderRoot: string): string {
 /** Changes a non-glTF kit file's bytes without re-pinning it: the closure check cannot see it. */
 export function corruptKitFile(renderRoot: string): string {
   const kit = "universal-base-characters";
-  const file = "Hair_Beard.bin";
+  const file = "Superhero_Male_FullBody.bin";
   const path = join(renderRoot, "kits", kit, file);
   const bytes = Buffer.from(readFileSync(path));
   bytes[0] = (bytes[0] as number) ^ 0xff;
@@ -439,8 +439,19 @@ export function approvedPalettes(): PaletteSet {
   ]);
 }
 
-/** The palettes as the content loaded them: `greek-retro` is a draft. */
-export const draftPalettes = (): PaletteSet => content.palettes;
+/**
+ * Every palette of the content with `greek-retro` an explicit draft, whatever the committed
+ * file's status: what a fixture needs to prove that approve and publish refuse a draft palette.
+ */
+export function draftPalettes(): PaletteSet {
+  const retro = content.palettes.get("greek-retro");
+  if (retro === undefined)
+    throw new Error("no greek-retro palette in the content");
+  return new Map([
+    ...content.palettes,
+    ["greek-retro", { ...retro, approval: { status: "draft" } }],
+  ]);
+}
 
 export const registryOf = (rig: Rig): string => {
   const root = join(rig.base, "registry");
@@ -460,7 +471,9 @@ export async function renderCandidates(
   const result = await drain(rig);
   for (const entry of result.results)
     if (entry.outcome !== "rendered")
-      throw new Error(`${entry.jobId}: ${entry.outcome}`);
+      throw new Error(
+        `${entry.jobId}: ${entry.outcome}${"error" in entry && entry.error !== undefined ? `: ${entry.error}` : ""}`,
+      );
   for (const id of ids) {
     const conformed = rig.session.conformRendered(id, content);
     if (!conformed.ok) throw new Error(`conform ${id}: ${conformed.message}`);

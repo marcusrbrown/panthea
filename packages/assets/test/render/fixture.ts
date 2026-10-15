@@ -28,6 +28,7 @@ export const RENDER_ROOT = join(
   "tools",
   "render",
 );
+export const PROBE_STAMP_ROOT = join(FIXTURE_DIR, "stamps-root");
 export const PALETTE_FAMILIES = ["town", "olympus", "underworld"] as const;
 
 interface FramesFile {
@@ -72,17 +73,6 @@ export interface ExpectedCell {
       readonly planned: number;
       readonly drawn: number;
       readonly skipped: number;
-    };
-    readonly bolt?: {
-      readonly angle: number;
-      readonly drawn: number;
-      readonly total: number;
-      readonly core_drawn: number;
-      readonly core_total: number;
-      readonly occluded: number;
-      readonly protected: number;
-      readonly clipped: number;
-      readonly outline_on_body: number;
     };
   };
 }
@@ -150,7 +140,9 @@ export function loadRenderFixture(): RenderFixture {
   if (!parsedPalette.ok) throw new Error(parsedPalette.message);
   const palette = postPaletteOf(parsedPalette.value);
   if (!palette.ok) throw new Error(palette.message);
-  const stamps = loadStampSet(RENDER_ROOT, "zeus");
+  // The stamps the probe's cells were made with, frozen beside the fixture: the product's own stamps have moved on
+  // (r7 re-authored the side-view brows), and parity with the probe is parity at the probe's settings.
+  const stamps = loadStampSet(PROBE_STAMP_ROOT, "zeus");
   if (!stamps.ok)
     throw new Error(stamps.problems.map((p) => p.message).join("; "));
 

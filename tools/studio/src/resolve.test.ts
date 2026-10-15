@@ -14,7 +14,7 @@ import {
   removeTempRoots,
   run,
   tempRoot,
-} from "./_testkit";
+} from "../test/kit";
 import { execute } from "./commands";
 import type { StudioConfig } from "./config";
 import { exitOf } from "./format";

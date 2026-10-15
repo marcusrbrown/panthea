@@ -43,6 +43,7 @@ import {
   jobSummary,
   type Outcome,
   refuse,
+  renderedCandidateSummary,
   requestSummary,
   safeMessage,
   setSummary,
@@ -668,6 +669,9 @@ const OPS: Record<string, OpDef> = {
             conformSets: Object.keys(studio.config.conform ?? {}).sort(),
             // The subjects that name a render profile: the app offers the recipe request for these.
             renderSubjects: renderSubjectsOf(studio),
+            renderedCandidates: status.renderedCandidates.map(
+              renderedCandidateSummary,
+            ),
           });
     },
   },
@@ -696,7 +700,10 @@ const OPS: Record<string, OpDef> = {
           return done(status.jobs.map((record) => jobSummary(record, kinds)));
         }
         case "candidates":
-          return done(status.candidates.map(candidateSummary));
+          return done([
+            ...status.candidates.map(candidateSummary),
+            ...status.renderedCandidates.map(renderedCandidateSummary),
+          ]);
         case "working-sets":
           return done(status.workingSets.map(setSummary));
         case "edits":

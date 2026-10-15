@@ -59,7 +59,7 @@ describe("acquireLock", () => {
 });
 
 describe("acquireLock: real subprocess launches", () => {
-  const HOLDER_SCRIPT = join(import.meta.dir, "_test-lock-holder.ts");
+  const HOLDER_SCRIPT = join(import.meta.dir, "..", "test", "lock-holder.ts");
 
   test("two real subprocess launches against one lock path yield exactly one owner and one refusal", async () => {
     const first = Bun.spawn(["bun", "run", HOLDER_SCRIPT, lockPath], {

@@ -87,48 +87,36 @@ export function postStepSettings(
 // --- locators ------------------------------------------------------------------------------
 
 /**
- * Maps a frame's `done.json` locators to the post step's. The script writes the bolt as the
- * post step wants it and the eyes among `points` keyed `<mesh>_<side>` (`eyes_l`, `eyes_r`, and
- * `eyebrows_l`, `eyebrows_r`, which the face stamp's own brow pixels make unnecessary). A frame
- * with no eye point gets no eyes, and one with no bolt gets no bolt; the post step then skips
- * that stamp, as it does on the north facing.
+ * Maps a frame's `done.json` locators to the post step's. The eyes are among `points` keyed
+ * `<mesh>_<side>` (`eyes_l`, `eyes_r`, and `eyebrows_l`, `eyebrows_r`, which the face stamp's own
+ * brow pixels make unnecessary). A frame with no eye point gets no eyes; the post step then skips
+ * the face stamp, as it does on the north facing.
  */
 export function stampLocatorsFrom(frame: FrameLocators): StampLocators {
   const eyeLeft = frame.points.eyes_l;
   const eyeRight = frame.points.eyes_r;
-  return {
-    ...(frame.bolt === undefined
-      ? {}
-      : {
-          bolt: {
-            basePx: [frame.bolt.basePx[0], frame.bolt.basePx[1]],
-            tipPx: [frame.bolt.tipPx[0], frame.bolt.tipPx[1]],
-            baseDepth: frame.bolt.baseDepth,
-          },
-        }),
-    ...(eyeLeft === undefined && eyeRight === undefined
-      ? {}
-      : {
-          eyes: {
-            ...(eyeLeft === undefined
-              ? {}
-              : {
-                  l: {
-                    px: [eyeLeft.px[0], eyeLeft.px[1]],
-                    depth: eyeLeft.depth,
-                  },
-                }),
-            ...(eyeRight === undefined
-              ? {}
-              : {
-                  r: {
-                    px: [eyeRight.px[0], eyeRight.px[1]],
-                    depth: eyeRight.depth,
-                  },
-                }),
-          },
-        }),
-  };
+  return eyeLeft === undefined && eyeRight === undefined
+    ? {}
+    : {
+        eyes: {
+          ...(eyeLeft === undefined
+            ? {}
+            : {
+                l: {
+                  px: [eyeLeft.px[0], eyeLeft.px[1]],
+                  depth: eyeLeft.depth,
+                },
+              }),
+          ...(eyeRight === undefined
+            ? {}
+            : {
+                r: {
+                  px: [eyeRight.px[0], eyeRight.px[1]],
+                  depth: eyeRight.depth,
+                },
+              }),
+        },
+      };
 }
 
 // --- hashes ------------------------------------------------------------------------------------

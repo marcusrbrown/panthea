@@ -13,12 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  BOLT_ANGLES,
-  checkStamps,
-  loadStampSet,
-  parseStampManifest,
-} from "./stamps";
+import { checkStamps, loadStampSet, parseStampManifest } from "./stamps";
 
 const COMMITTED_RENDER_ROOT = join(
   import.meta.dir,
@@ -54,7 +49,6 @@ const committedManifest = (): Record<string, unknown> =>
 
 type Variants = Record<string, unknown>[];
 interface EditableSet {
-  bolt: { variants: Variants };
   face: { variants: Variants };
 }
 
@@ -73,30 +67,23 @@ describe("the committed stamp set", () => {
     expect(checkStamps(COMMITTED_RENDER_ROOT).problems).toEqual([]);
   });
 
-  it("parses to a Zeus set with all eight bolt orientations and the face stamps", () => {
+  it("parses to a Zeus set with the face stamps and no prop stamp", () => {
     const parsed = parseStampManifest(committedManifest());
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     const zeus = parsed.value.sets.find((s) => s.id === "zeus");
     expect(zeus?.palette).toBe("greek-retro");
-    expect(zeus?.bolt?.variants.map((v) => v.angle)).toEqual([...BOLT_ANGLES]);
-    expect(zeus?.bolt?.outline).toEqual([0x76, 0x57, 0x2f]);
+    expect(Object.keys(zeus ?? {}).sort()).toEqual(["face", "id", "palette"]);
     expect(
       zeus?.face?.variants.map((v) => `${v.facing}/${v.slot}`).sort(),
     ).toEqual(["east/near", "south/l", "south/r", "west/near"]);
   });
 
-  it("loads: the bolt splits into core and outline pixels, the face stamps place their eye at the anchor", () => {
+  it("loads: the face stamps place their eye at the anchor, and there is nothing else to load", () => {
     const loaded = loadStampSet(COMMITTED_RENDER_ROOT, "zeus");
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    const up = loaded.set.bolt?.get(90);
-    expect(up?.anchor).toEqual([7, 15]);
-    expect(up?.core.length).toBe(46);
-    expect(up?.outline.length).toBe(44);
-    expect([...(loaded.set.bolt?.keys() ?? [])].sort((a, b) => a - b)).toEqual([
-      ...BOLT_ANGLES,
-    ]);
+    expect(Object.keys(loaded.set).sort()).toEqual(["face", "id"]);
     const south = loaded.set.face?.get("south/l");
     expect(south?.anchor).toEqual([0, 1]);
     const eye = south?.pixels.find(
@@ -104,6 +91,43 @@ describe("the committed stamp set", () => {
     );
     expect(eye?.rgb).toEqual([0x24, 0x3f, 0x63]);
     expect(south?.pixels).toHaveLength(3);
+  });
+
+  it("gives the side views their own brows: the ridge one pixel above the eye, running back from it, not the front stamp", () => {
+    const loaded = loadStampSet(COMMITTED_RENDER_ROOT, "zeus");
+    if (!loaded.ok) throw new Error("the committed set does not load");
+    const face = loaded.set.face;
+    const pixelsOf = (key: string) =>
+      (face?.get(key)?.pixels ?? []).map((p) => `${p.x},${p.y}`).sort();
+    const BROW = [0x52, 0x64, 0x71] as const;
+    for (const [key, eyeX] of [
+      ["east/near", 1],
+      ["west/near", 0],
+    ] as const) {
+      const stamp = face?.get(key);
+      expect(stamp?.pixels).toHaveLength(3);
+      // One dark eye pixel at the anchor, two brow pixels above it with a gap row between.
+      expect(stamp?.anchor).toEqual([eyeX, 2]);
+      const eye = stamp?.pixels.find(
+        (p) => p.x === eyeX && p.y === (stamp?.anchor[1] as number),
+      );
+      expect(eye?.rgb).toEqual([0x24, 0x3f, 0x63]);
+      const brow = (stamp?.pixels ?? []).filter((p) => p.y === 0);
+      expect(brow).toHaveLength(2);
+      for (const pixel of brow) expect([...pixel.rgb]).toEqual([...BROW]);
+      // Their placement is not the front stamp's.
+      expect(pixelsOf(key)).not.toEqual(pixelsOf("south/l"));
+      expect(pixelsOf(key)).not.toEqual(pixelsOf("south/r"));
+    }
+    // The front stamps stay: the eye directly under a two-pixel brow.
+    for (const key of ["south/l", "south/r"]) {
+      const brow = (face?.get(key)?.pixels ?? []).filter((p) => p.y === 0);
+      expect(brow).toHaveLength(2);
+      // The eye sits on the row right under the brow: two rows in all.
+      expect(Math.max(...(face?.get(key)?.pixels ?? []).map((p) => p.y))).toBe(
+        1,
+      );
+    }
   });
 
   it("refuses to load a set that is not in the manifest", () => {
@@ -116,11 +140,11 @@ describe("the stamp check", () => {
   it("refuses a missing stamp file, naming it (the unbroken copy passes)", () => {
     const root = renderRoot();
     expect(checkStamps(root).problems).toEqual([]);
-    rmSync(join(root, "stamps", "zeus", "bolt-090.png"));
+    rmSync(join(root, "stamps", "zeus", "face-south-r.png"));
     const { problems } = checkStamps(root);
     expect(problems).toEqual([
       {
-        file: "stamps/zeus/bolt-090.png",
+        file: "stamps/zeus/face-south-r.png",
         message: expect.stringContaining("missing"),
       },
     ]);
@@ -155,7 +179,7 @@ describe("the stamp check", () => {
   it("refuses a stamp that is not the PNG, size or anchor the manifest declares", () => {
     const root = renderRoot();
     const manifest = withSet((s) => {
-      first(s.bolt.variants).size = [16, 12];
+      first(s.face.variants).size = [3, 2];
     });
     writeFileSync(
       join(root, "stamps", "stamps.json"),
@@ -164,8 +188,8 @@ describe("the stamp check", () => {
     const { problems } = checkStamps(root);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toEqual({
-      file: "stamps/zeus/bolt-000.png",
-      message: expect.stringContaining("17x12"),
+      file: "stamps/zeus/face-south-l.png",
+      message: expect.stringContaining("2x2"),
     });
   });
 });
@@ -175,22 +199,24 @@ describe("parsing", () => {
     expect(parseStampManifest({ schemaVersion: 1, sets: [] }).ok).toBe(true);
   });
 
-  it("refuses a bolt set that lacks an orientation, repeats one, or names an unknown angle", () => {
-    const missing = parseStampManifest(
-      withSet((s) => s.bolt.variants.splice(3, 1)),
-    );
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.message).toContain("135");
-    const repeated = parseStampManifest(
-      withSet((s) => s.bolt.variants.push({ ...first(s.bolt.variants) })),
-    );
-    expect(repeated.ok).toBe(false);
-    const unknown = parseStampManifest(
+  it("refuses a stamp set that still declares a bolt (no props on characters), and any other unknown key", () => {
+    const bolted = parseStampManifest(
       withSet((s) => {
-        first(s.bolt.variants).angle = 20;
+        (s as unknown as Record<string, unknown>).bolt = {
+          outline: "#76572f",
+          variants: [],
+        };
       }),
     );
-    expect(unknown.ok).toBe(false);
+    expect(bolted.ok).toBe(false);
+    if (!bolted.ok) expect(bolted.path).toContain("bolt");
+    expect(
+      parseStampManifest(
+        withSet((s) => {
+          (s as unknown as Record<string, unknown>).prop = {};
+        }),
+      ).ok,
+    ).toBe(false);
   });
 
   it("refuses a face set missing a facing, an anchor outside the stamp and a bad hash or path", () => {
@@ -207,14 +233,14 @@ describe("parsing", () => {
     expect(
       parseStampManifest(
         withSet((s) => {
-          first(s.bolt.variants).sha256 = "abc";
+          first(s.face.variants).sha256 = "abc";
         }),
       ).ok,
     ).toBe(false);
     expect(
       parseStampManifest(
         withSet((s) => {
-          first(s.bolt.variants).file = "../kits.json";
+          first(s.face.variants).file = "../kits.json";
         }),
       ).ok,
     ).toBe(false);

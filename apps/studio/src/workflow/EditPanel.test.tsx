@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { fakeTransport } from "../host/_testkit";
+import { fakeTransport } from "../../test/host-kit";
 import { createStudioHost } from "../host/client";
 import type { EditReport } from "../host/types";
 import { EditPanel } from "./EditPanel";

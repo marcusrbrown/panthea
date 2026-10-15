@@ -1,3 +1,4 @@
+import { FOOTPRINT_MAX } from "@panthea/renderer";
 import {
   type Dispatch,
   type FormEvent,
@@ -9,7 +10,6 @@ import {
   useRef,
   useState,
 } from "react";
-
 import type { StudioHost } from "../host/client";
 import { tauriHost } from "../host/tauri";
 import type {
@@ -63,7 +63,7 @@ import {
   slotHint,
   subjectSlug,
 } from "./actions";
-import { CandidatePixels } from "./CandidatePixelCell";
+import { CandidatePixels, RenderedCandidatePixels } from "./CandidatePixelCell";
 import { EditPanel } from "./EditPanel";
 import {
   canMutate,
@@ -663,7 +663,7 @@ export function WorkflowView({
   const reportedCandidateCount = object(state.sheet).candidateCount;
   const sheetCandidateCount =
     typeof reportedCandidateCount === "number"
-      ? reportedCandidateCount
+      ? Math.max(reportedCandidateCount, sheetCandidates.length)
       : sheetCandidates.length;
   const mutationsEnabled = canMutate(state) && !busy;
   const readsEnabled =
@@ -1768,11 +1768,12 @@ export function WorkflowView({
                   {recordText(selectedSet, "kind") === "sprite" && (
                     <div className="footprint-fields">
                       <label className="workflow-field">
-                        Footprint width
+                        Footprint width (tiles)
                         <input
                           className="workflow-control"
                           type="number"
                           min={1}
+                          max={FOOTPRINT_MAX}
                           step={1}
                           required
                           value={footprintWidth}
@@ -1782,11 +1783,12 @@ export function WorkflowView({
                         />
                       </label>
                       <label className="workflow-field">
-                        Footprint height
+                        Footprint height (tiles)
                         <input
                           className="workflow-control"
                           type="number"
                           min={1}
+                          max={FOOTPRINT_MAX}
                           step={1}
                           required
                           value={footprintHeight}
@@ -1796,6 +1798,11 @@ export function WorkflowView({
                         />
                       </label>
                     </div>
+                  )}
+                  {recordText(selectedSet, "kind") === "sprite" && (
+                    <p className="field-hint footprint-hint">
+                      Tile coverage, not sprite pixel dimensions.
+                    </p>
                   )}
                   {packNeedsStillFrameMs(selectedSet) && (
                     <label className="workflow-field">
@@ -2191,6 +2198,7 @@ function CandidateRow({
   canPick: boolean;
 }) {
   const candidateStatus = recordText(candidate, "status");
+  const rendered = recordValue(candidate, "rendered") === true;
   const needsScale = candidateStatus === "needs-scale";
   const report = recordObject(candidate, "report");
   const reportStatus = needsScale
@@ -2223,23 +2231,57 @@ function CandidateRow({
       {needsScale && (
         <p className="queue-note">{recordText(candidate, "message")}</p>
       )}
-      {showPixels && !needsScale && (
+      {showPixels && rendered && (
+        <RenderedCandidatePixels host={host} candidateId={candidate.id} />
+      )}
+      {showPixels && !rendered && !needsScale && (
         <CandidatePixels host={host} candidateId={candidate.id} />
       )}
-      <dl>
-        <div>
-          <dt>Scale</dt>
-          <dd>{scale === undefined ? "not reported" : detailText(scale)}</dd>
-        </div>
-        <div>
-          <dt>Colours merged</dt>
-          <dd>{merged === undefined ? "not reported" : detailText(merged)}</dd>
-        </div>
-        <div>
-          <dt>Pixels changed</dt>
-          <dd>{pixels === undefined ? "not reported" : detailText(pixels)}</dd>
-        </div>
-      </dl>
+      {rendered ? (
+        <dl className="rendered-candidate-facts">
+          <div>
+            <dt>Animation</dt>
+            <dd>{detailText(recordValue(candidate, "frameCount"))} frames</dd>
+          </div>
+          <div>
+            <dt>Revision recipe</dt>
+            <dd>
+              <code title={recordText(candidate, "revisionRecipeHash")}>
+                {recordText(candidate, "revisionRecipeHash")?.slice(0, 12) ??
+                  "not reported"}
+              </code>
+            </dd>
+          </div>
+          <div>
+            <dt>Slot recipe</dt>
+            <dd>
+              <code title={recordText(candidate, "slotRecipeHash")}>
+                {recordText(candidate, "slotRecipeHash")?.slice(0, 12) ??
+                  "not reported"}
+              </code>
+            </dd>
+          </div>
+        </dl>
+      ) : (
+        <dl>
+          <div>
+            <dt>Scale</dt>
+            <dd>{scale === undefined ? "not reported" : detailText(scale)}</dd>
+          </div>
+          <div>
+            <dt>Colours merged</dt>
+            <dd>
+              {merged === undefined ? "not reported" : detailText(merged)}
+            </dd>
+          </div>
+          <div>
+            <dt>Pixels changed</dt>
+            <dd>
+              {pixels === undefined ? "not reported" : detailText(pixels)}
+            </dd>
+          </div>
+        </dl>
+      )}
       {checks.length > 0 && (
         <ul className="report-failures">
           {checks.map((check) => (

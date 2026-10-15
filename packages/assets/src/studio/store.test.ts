@@ -7,7 +7,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { sha256Hex } from "../hash";
 import {
   authoredFrames,
   doneCandidate,
@@ -25,7 +24,9 @@ import {
   TEST_PALETTE,
   tempRoot,
   workingSet,
-} from "./_test-fixtures";
+} from "../../test/studio/fixtures";
+import { sha256Hex } from "../hash";
+import { DEFAULT_CONFORM } from "./derivation";
 import type { EditRecord } from "./export-import";
 import { readStudioBlob, readStudioStatus } from "./index";
 import { openStore } from "./store";
@@ -51,6 +52,7 @@ describe("authoring root", () => {
       requests: [],
       jobs: [],
       candidates: [],
+      renderedCandidates: [],
       workingSets: [],
       edits: [],
       assets: [],
@@ -58,6 +60,52 @@ describe("authoring root", () => {
       invalid: [],
     });
     expect(existsSync(root)).toBe(false);
+  });
+
+  test("status lists rendered candidates separately from image candidates", () => {
+    const store = openStore(tempRoot());
+    const renderedCandidate = {
+      schemaVersion: 1,
+      id: "zeus-retro-idle-0000",
+      source: {
+        requestId: "zeus-retro-idle",
+        slotKey: "idle/south",
+        ordinal: 0,
+      },
+      subject: "zeus",
+      kind: "sprite",
+      slotKey: "idle/south",
+      manifest: sha256Hex(new Uint8Array([1])) as never,
+      revisionRecipeHash: sha256Hex(new Uint8Array([2])) as never,
+      slotRecipeHash: sha256Hex(new Uint8Array([3])) as never,
+      postStepVersion: 2,
+      frames: [
+        {
+          hash: sha256Hex(new Uint8Array([4])) as never,
+          durationMs: 100,
+          report: { schemaVersion: 1, status: "pass", checks: [] },
+        },
+      ],
+      loopStart: 0,
+      params: { ...DEFAULT_CONFORM },
+      target: {
+        cell: { id: "god-tall", w: 112, h: 96 },
+        pivot: { x: 56, y: 78 },
+        palette: {
+          id: "greek-retro",
+          family: "olympus",
+          digest: null,
+          colours: ["#243f63"],
+        },
+      },
+    } as const;
+
+    store.putRenderedCandidate(renderedCandidate);
+
+    const status = store.status();
+    expect(status.invalid).toEqual([]);
+    expect(status.candidates).toEqual([]);
+    expect(status.renderedCandidates).toEqual([renderedCandidate]);
   });
 });
 
@@ -121,6 +169,7 @@ describe("records", () => {
       requests: [requestRecord],
       jobs: [jobRecord],
       candidates: [candidate, stuck],
+      renderedCandidates: [],
       workingSets: [set],
       edits: [],
       assets: [],

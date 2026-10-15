@@ -12,15 +12,15 @@ import {
   type StudioRuntime,
   type StudioSession,
 } from "@panthea/assets/studio";
+import { frameHashOf } from "../../../packages/assets/src/studio/frame-ref";
 import {
   type AssetRig,
   paintFigure,
   pngOf,
   publishIdleEast,
   SPRITE_CELL,
-} from "../../../packages/assets/src/studio/_test-fixtures";
-import { frameHashOf } from "../../../packages/assets/src/studio/frame-ref";
-import { assetRig, heldBy, removeTempRoots, run } from "./_testkit";
+} from "../../../packages/assets/test/studio/fixtures";
+import { assetRig, heldBy, removeTempRoots, run } from "../test/kit";
 import type { StudioConfig } from "./config";
 import type { Outcome } from "./format";
 import { parseArgv } from "./index";
@@ -273,7 +273,7 @@ describe("deriving from Zeus on the command line", () => {
     );
 
     expect(code(outcome)).toBe("asymmetric");
-    expect(JSON.stringify(outcome)).toContain("bolt hand");
+    expect(JSON.stringify(outcome)).toContain("left-shoulder himation");
     expect(outcome.ok).toBe(false);
   });
 });

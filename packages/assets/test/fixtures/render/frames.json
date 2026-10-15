@@ -17,11 +17,6 @@
       "name": "cast_west_00",
       "facing": "west",
       "locators": {
-        "bolt": {
-          "basePx": [32.895, 34.9591],
-          "tipPx": [16.1921, 26.5699],
-          "baseDepth": 19.6985
-        },
         "eyes": {
           "l": {
             "px": [50.5384, 32.2145],
@@ -38,11 +33,6 @@
       "name": "cast_west_01",
       "facing": "west",
       "locators": {
-        "bolt": {
-          "basePx": [71.7521, 31.0306],
-          "tipPx": [90.239, 26.0889],
-          "baseDepth": 19.6872
-        },
         "eyes": {
           "l": {
             "px": [49.9769, 32.3306],
@@ -59,11 +49,6 @@
       "name": "cast_west_02",
       "facing": "west",
       "locators": {
-        "bolt": {
-          "basePx": [71.5513, 29.9036],
-          "tipPx": [89.6859, 24.0663],
-          "baseDepth": 19.6749
-        },
         "eyes": {
           "l": {
             "px": [49.9458, 32.3899],
@@ -80,11 +65,6 @@
       "name": "cast_west_03",
       "facing": "west",
       "locators": {
-        "bolt": {
-          "basePx": [70.6262, 30.2448],
-          "tipPx": [88.7608, 24.4074],
-          "baseDepth": 19.657
-        },
         "eyes": {
           "l": {
             "px": [50.1791, 32.5033],
@@ -101,11 +81,6 @@
       "name": "cast_west_04",
       "facing": "west",
       "locators": {
-        "bolt": {
-          "basePx": [54.1636, 27.1488],
-          "tipPx": [55.8235, 10.6555],
-          "baseDepth": 19.8524
-        },
         "eyes": {
           "l": {
             "px": [50.3823, 32.4077],
@@ -122,11 +97,6 @@
       "name": "cast_west_05",
       "facing": "west",
       "locators": {
-        "bolt": {
-          "basePx": [32.895, 34.9591],
-          "tipPx": [16.1921, 26.5699],
-          "baseDepth": 19.6985
-        },
         "eyes": {
           "l": {
             "px": [50.5384, 32.2145],

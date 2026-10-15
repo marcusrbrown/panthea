@@ -12,6 +12,11 @@ import {
   zeusPayload,
 } from "../../test/canon-fixture";
 import {
+  RETRO_ATLASES,
+  RETRO_REVISION,
+  retroPayload,
+} from "../../test/zeus-retro-fixture";
+import {
   type CanonProblem,
   createCanonClient,
   createTauriCanonSource,
@@ -399,4 +404,44 @@ test("with no vocabulary there is none to offer", async () => {
   const { canon } = client({ ...zeusPayload(), vocabulary: null });
 
   expect((await canon.load()).vocabulary).toBeUndefined();
+});
+
+test("the client resolves every published zeus-retro slot: idle and seated the way the game and inspector read them, walk in all four facings, at the manifest's own timing", async () => {
+  const { canon, problems } = client(retroPayload(), RETRO_ATLASES);
+  const { snapshot } = await canon.load();
+  expect(problems).toEqual([]);
+  const resolve = (state: string, direction: string) => {
+    const found = resolveAssetPixels(snapshot, {
+      spriteId: "zeus-retro",
+      state,
+      direction,
+    } as never);
+    if (found.source !== "canon") throw new Error(`${state}/${direction}`);
+    return found;
+  };
+  const idle = resolve("idle", "south");
+  expect(String(idle.revision)).toBe(RETRO_REVISION);
+  expect(idle.frames).toHaveLength(10);
+  const seated = resolve("seated", "south");
+  expect(seated.frames.map((frame) => frame.durationMs)).toEqual([
+    209, 208, 208, 209, 208, 208, 209, 208,
+  ]);
+  for (const direction of ["south", "east", "north", "west"]) {
+    expect(resolve("idle", direction).frames).toHaveLength(10);
+    expect(resolve("seated", direction).frames).toHaveLength(8);
+    const walk = resolve("walk", direction);
+    expect(walk.frames).toHaveLength(16);
+    expect(walk.frames.every((frame) => frame.durationMs === 50)).toBe(true);
+    for (const frame of [idle, seated, walk].flatMap((r) => r.frames))
+      expect([frame.rect.w, frame.rect.h]).toEqual([112, 96]);
+  }
+  // A slot that was never published is the placeholder, not another state's cells.
+  expect(
+    resolveAssetPixels(snapshot, {
+      spriteId: "zeus-retro",
+      state: "act",
+      direction: "south",
+      ability: "thunderbolt",
+    } as never).source,
+  ).toBe("placeholder");
 });
