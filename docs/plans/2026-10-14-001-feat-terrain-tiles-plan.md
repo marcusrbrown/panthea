@@ -3,6 +3,7 @@ title: "feat: Dual-grid terrain tiles in the studio and under the followed place
 type: feat
 status: active
 date: 2026-10-14
+deepened: 2026-10-14
 origin: docs/brainstorms/2026-10-03-asset-studio-requirements.md
 ---
 
@@ -86,7 +87,6 @@ Today the game draws its ground as horizontal paper rules and orders depth by sc
 - `docs/solutions/best-practices/studio-owned-isometric-projection-depth-2026-10-08.md`: placement and depth stay studio-owned. three-flatland `TileMap2D` places tiles orthogonally.
 - `docs/solutions/best-practices/size-render-target-to-its-container-2026-10-14.md`: fit to the scene area at DPR 1 and 2.
 - `docs/solutions/best-practices/procedural-effects-byte-exact-and-audited-2026-10-14.md`: use exact ops only, and audit by regeneration.
-- `docs/solutions/best-practices/third-party-kit-licence-gate-and-provenance-test-2026-10-12.md`: a new ground kit goes through the kit gate.
 
 ### External References
 
@@ -189,12 +189,20 @@ Today the game draws its ground as horizontal paper rules and orders depth by sc
   - The set holds 16 masks × N² offsets: 256 atlas cells in a 1024×512 atlas at N=4. The atlas frame index is `offset·16 + mask`.
   - N is a profile parameter. If the repetition reads badly, raise N and re-render.
 - **Mask and blend field.** For lattice point P(x,y), the corner grid cells are N=(x−1,y−1), E=(x,y−1), S=(x,y) and W=(x−1,y). The mask bits are N=1, E=2, S=4, W=8, and a set bit means `over`. In the first pair, base is grass and over is flagstone.
-  - The blend field is the bilinear blend of the four corners plus exact-op lattice noise. The noise uses `hash2` at integer nodes wrapped mod N and is seeded by a profile stamp parameter.
+  - The mask sets the silhouette, and noise only nudges it. The blend field is the bilinear blend of the four corners plus low-frequency, low-amplitude lattice noise, with a wavelength of about 1–3 tiles. High-frequency noise gives salt-and-pepper edges and narrow necks.
+  - The noise is `periodicValueNoise`: `hash2` at integer nodes, wrapped mod N on both axes, seeded by a profile stamp parameter.
+  - If the edge reads jagged at 1×, the continuous field is smoothed before the threshold, sampling the field across tile borders. That keeps the result palette-exact and seam-safe.
   - A pixel is `over` when the field is strictly greater than 0.5, so ties go to base. The noise amplitude stays below the margin that keeps the four diamond vertices pure.
+- **Edge treatment.** A narrow, broken band of the flagstone ramp's darkest shade sits on the flagstone side, driven by distance to the boundary in the continuous field. A few grass overhangs are placed deliberately from the seeded layout. There is no continuous rim with a highlight, which would read as an outline, and no side face, because the ground is flat.
 - **Seams come from continuity, and two exact gates check them.**
   - 64×31 diamonds tile the plane exactly, so neighbouring tiles share no pixels.
   - *Field gate:* any grid assembled from atlas cells is byte-identical to the same grid stamped directly from the patches and the blend field.
-  - *Patch gate:* the render is orthographic, with uniform light and periodic geometry instanced 3×3. After the post step, the patch's centre N×N crop therefore equals the crop shifted by one period along each lattice axis, byte for byte.
+  - *Patch gate:* after the post step, the patch's centre period equals the same period shifted by one period along each lattice axis, byte for byte. The comparison uses rhombus masks and colour only, because depth isn't periodic.
+  - The patch gate holds only when the render is translation-invariant and pixel-aligned.
+    - The tile side is `32√2/ppu`, so one lattice step is exactly 128×64 raw pixels and the camera origin sits on the 4×4 block grid.
+    - The geometry is periodic and instanced over at least 5×5 periods, because slabs overhang period edges.
+    - The sun is uniform with shadows off, the film filter is 0, TAA takes 1 sample, and AO, horizon scan and SSR are pinned off.
+  - The gate is proved first on flat colour, then the toon bands and geometry detail are added back one at a time. A feature that breaks exactness is redesigned to be periodic. Any weaker gate needs the owner's decision and is recorded in the plan.
 - **Ground takes no outline, and existing hashes stay put.**
   - A ground profile sets `outline: false`. When the key is absent the outline is on, and absent is what every existing profile and post setting carries.
   - The `profileHash` values of zeus, greek-house and oak-tree, and one published canon `revisionRecipe` hash, are pinned before `post.ts` changes.
@@ -217,12 +225,14 @@ Today the game draws its ground as horizontal paper rules and orders depth by sc
 - **Where tiles show:** in the studio and in the game.
 - **Terrain source:** an authored grid per place.
 - **First pair:** grass↔flagstone.
-- **Visible repetition:** handled by N×N variation.
+- **Visible repetition:** handled by N×N variation. The offset shapes stay subtle, and N rises if the repeat is conspicuous.
+- **Ground geometry:** script-built in `render.py`, with no kit. Flagstones are low-relief slabs and grass is sparse low tufts. The layout is keyed on lattice index mod N with a deterministic hash, so the geometry varies across the period.
+- **Stone colour:** the town family's `stone-sky` ramp (grey-green sage). The palette is unchanged.
 
 ### Deferred to Implementation
 
-- **Ground kit:** a flagstone candidate is Medieval Village `Path_Square` (OBJ, to be converted to glTF the way the Quaternius ruins were). Grass comes from Kenney Nature, KayKit Forest or script material, chosen after test renders through the post step.
-- **Noise parameters and transition shading inside the diamond:** tuned visually, then fixed in the profile.
+- **Noise parameters, the edge band width and the overhang count:** tuned visually against 1× crops, then fixed in the profile.
+- **Smoothing:** whether the field smoothing is needed, decided at 1×.
 - **Final `LOGICAL_SIZE` height:** computed from the manifests by the layout test.
 - **Frame seam:** where exactly the frame builder reads content. If it has no content access, carry the grid on `LocationState` and move the store version from 7 to 8.
 
@@ -232,7 +242,7 @@ Today the game draws its ground as horizontal paper rules and orders depth by sc
 
 ```mermaid
 flowchart LR
-  P[ground profile] --> B[Blender: periodic patch, 3x3 mosaic per terrain]
+  P[ground profile] --> B[Blender: periodic patch, 5x5 periods per terrain]
   B --> R[raw frames in studio store]
   R --> PS[post step, outline off, crop centre period]
   PS --> S[stamper: N^2 offsets x 16 masks]
@@ -276,7 +286,7 @@ flowchart LR
 
 **Verification:** `validate:assets` accepts the new vocabulary.
 
-- [ ] **Unit 2: Ground profile, outline opt-out and ground kit**
+- [ ] **Unit 2: Ground profile, outline opt-out and periodic patch**
 
 **Goal:** Blender renders a periodic patch for each terrain through the existing engine. The post step crops the centre period, with no outline.
 
@@ -285,25 +295,35 @@ flowchart LR
 **Dependencies:** Unit 1.
 
 **Files:**
-- Modify: `packages/assets/src/render/profile.ts` (a `ground` build variant with N, the mosaic size and the stamp parameters; `outline: false`).
+- Modify: `packages/assets/src/render/profile.ts` (a `ground` branch in `StructureBuild` with N, the slab and tuft parameters and the stamp parameters; `outline: false`).
 - Modify: `packages/assets/src/render/post.ts`, `packages/assets/src/render/recipe.ts`.
-- Modify: `tools/render/blender/render.py` (the ground build: periodic geometry, 3×3 instancing, uniform orthographic light).
-- Create: `tools/render/profiles/grass-flagstone.json`.
-- Modify: `tools/render/kits.json`, `tools/render/kits/` (the chosen ground kit, through the kit gate).
-- Test: `packages/assets/src/render/post.test.ts`, `packages/assets/src/render/profile.test.ts`, `packages/assets/src/render/structure-live.test.ts` (live ground case).
+- Modify: `tools/render/blender/render.py`:
+  - a `Ground` `Structure` subclass built with `MeshBuilder` and `MaterialBook`, plus a `ground` branch in `make_structure`;
+  - the tile side derived from `ppu`;
+  - a layout keyed on lattice index mod N with `hash_unit`;
+  - 5×5 period instancing;
+  - AO, horizon scan and SSR pinned off.
+- Create: `tools/render/profiles/grass-flagstone.json` (one `ground` part; the `olive` and `stone-sky` ramps).
+- Modify: `packages/assets/test/render/fake-blender.ts` (a `ground` branch that writes a generated periodic mosaic), `packages/assets/test/render/rig.ts` (`submitTile`).
+- Create: `packages/assets/test/render/ground-mosaic.ts` (a pure TypeScript generator of a periodic raw colour, id and depth mosaic).
+- Test: `packages/assets/src/render/post.test.ts`, `packages/assets/src/render/profile.test.ts`, `packages/assets/src/render/structure-profile.test.ts` (hash pins), a new `packages/assets/src/render/ground.test.ts`, `packages/assets/src/render/structure-live.test.ts` (live ground case).
 
 **Approach:**
-- The frame is the mosaic at supersample size. The crop to the centre period happens in TypeScript after `modeDownscale`, with its offset aligned to the 4×4 blocks.
-- Lattice (0,0) and the 32 px diamond halo around the N×N rhombus are defined in the profile.
+- **Geometry.** Flagstones are low-relief slabs and grass is sparse low tufts, all script-built. Flat tops render as one toon band, so the visible variation comes from slab edges, tufts and the stamper. Anything crossing a period edge is instanced with its wrapped copies.
+- **Frame and crop.** The frame is about 512×192 at 1× plus a margin, so the centre period and its shifts along each lattice axis all lie on fully rendered geometry. `modeDownscale` is local to each block, so cropping the centre period in TypeScript after the downscale is exact when the crop origin is on the 4×4 block grid. The profile defines lattice (0,0) and the 32 px diamond halo around the N×N rhombus.
+- **Palette.** Each ground colour must snap to itself, because the palette snap searches every family.
 
 **Execution note:** test-first. Pin the existing `profileHash` values and one canon `revisionRecipe` hash before touching `post.ts`.
 
 **Test scenarios:**
-- Regression: the zeus, greek-house and oak-tree `profileHash` values, the pinned canon recipe hash and the post-step goldens stay unchanged.
-- Happy path: two adjacent diamonds posted with `outline: false` have no outline pixel on their shared edge.
-- Patch gate (fixture raw frames plus a live opt-in case): after the post step, the centre crop equals the crop shifted one period along each lattice axis, byte for byte.
+- **Regression:** the zeus, greek-house and oak-tree `profileHash` values, one pinned canon `revisionRecipe` hash and the post-step goldens stay unchanged.
+- **Happy path:** two adjacent diamonds posted with `outline: false` have no outline pixel on their shared edge.
+- **Alignment:** with the side derived from `ppu`, one lattice step projects to exactly 128×64 raw pixels, and one period to 512×256.
+- **Patch gate in CI:** the generated periodic mosaic goes through `postProcessSlot`. The centre period equals itself shifted one period along each lattice axis, compared on rhombus masks for colour only.
+- **Patch gate, live (opt-in Blender):** the same comparison runs on the real render. It is proved on flat colour first, then with toon bands and full geometry. The test also dumps the EEVEE AO, horizon and SSR settings in use.
+- **Palette:** every colour in the ground profile snaps to itself.
 
-**Verification:** a real headless render produces both patches. The owner sees them saved as images before the noise is tuned.
+**Verification:** a real headless render produces both patches and passes the live patch gate. The owner sees them as 1× crops before the noise is tuned.
 
 - [ ] **Unit 3: Dual-grid stamper and tile audit**
 
@@ -318,11 +338,17 @@ flowchart LR
 - Modify: `packages/assets/src/render/audit.ts` (the tile branch), `packages/assets/src/render/candidate.ts` (pack builds the tile atlas from the two rendered slots).
 - Test: `packages/assets/src/tiles/stamp.test.ts`, `packages/assets/src/tiles/lattice-noise.test.ts`, `packages/assets/src/render/rendered.test.ts`.
 
+**Approach:**
+- `periodicValueNoise` follows `risingNoise`'s wrap and applies it to both axes.
+- The edge band and any field smoothing read the continuous field, never a tile-local raster, so they stay seam-safe.
+- Overhang positions come from the same seeded lattice hash, so they are periodic.
+
 **Execution note:** test-first. The field gate is the spec.
 
 **Test scenarios:**
-- Field gate: on a seeded random 12×12 two-terrain grid, assembling atlas cells is byte-identical to stamping the grid directly.
-- Periodicity: the noise at (u+N, v) and (u, v+N) equals the noise at (u, v), and a field value of exactly 0.5 gives base.
+- Field gate: on a seeded random 12×12 two-terrain grid, assembling atlas cells is byte-identical to stamping the grid directly, with the edge band and overhangs included.
+- Periodicity: on dyadic inputs (k/16), the noise at (u+N, v) and (u, v+N) equals the noise at (u, v). A field value of exactly 0.5 gives base.
+- Diagonals: masks 5 and 10 keep a connected bridge at every offset, with no isolated single-pixel islands of either terrain.
 - Purity: masks 0 and 15 are pure base and pure over, and every atlas cell's four diamond vertices take their corner's terrain.
 - Determinism and coverage: a synthetic patch pair gives a golden atlas hash with every (mask, offset) present.
 - Audit: a changed atlas byte and a changed recipe both refuse publish, and unchanged inputs publish.
@@ -426,7 +452,7 @@ flowchart LR
 
 **Test scenarios:**
 - Layout: footprints never overlap and everything lies inside the grid.
-- Depth: an actor on a cell in front of a house draws over it, and an actor behind it draws under it.
+- Depth: an actor on a grid cell in front of a house draws over it, and an actor behind it draws under it.
 - Effects: the fire sits on the roof anchor, and the strike plays once for new events at the followed place only.
 - Decor: the repair bar draws above the ground.
 
