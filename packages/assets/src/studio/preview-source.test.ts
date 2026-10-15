@@ -624,3 +624,79 @@ describe("parsePreviewResolve", () => {
     expect(isPreviewSourceKind("constructor")).toBe(false);
   });
 });
+
+describe("an effect's animation", () => {
+  const committed = () => {
+    const base = mkdtempSync(join(tmpdir(), "preview-effects-"));
+    dirs.push(base);
+    const studioRoot = join(base, "studio");
+    mkdirSync(studioRoot);
+    const clock = manualClock();
+    const source = createPreviewSource({
+      registryRoot: new URL(
+        "../../../../content/greek/assets/registry",
+        import.meta.url,
+      ).pathname,
+      studioRoot,
+      vocabulary: { ok: true, vocabulary },
+      watch: clock.watch,
+      schedule: clock.schedule,
+    });
+    return source;
+  };
+
+  test("parsePreviewResolve accepts an animation slug and refuses a malformed one", () => {
+    expect(
+      parsePreviewResolve({
+        source: "canon",
+        id: "lightning-strike",
+        animation: "calm",
+      }),
+    ).toEqual({ source: "canon", id: "lightning-strike", animation: "calm" });
+    expect(
+      typeof parsePreviewResolve({
+        source: "canon",
+        id: "lightning-strike",
+        animation: "../x",
+      }),
+    ).toBe("string");
+  });
+
+  test("resolve answers the named animation of a published effect, calm and full apart", () => {
+    const source = committed();
+    const calm = source.resolve({
+      source: "canon",
+      id: "lightning-strike",
+      animation: "calm",
+    });
+    const full = source.resolve({
+      source: "canon",
+      id: "lightning-strike",
+      animation: "full",
+    });
+    if (calm.kind !== "frames" || full.kind !== "frames")
+      throw new Error("expected frames");
+    expect(calm.asset.kind).toBe("effect");
+    expect(calm.asset.frames.map((frame) => frame.durationMs)).toEqual([
+      150, 130, 130, 130,
+    ]);
+    expect(full.asset.frames).toHaveLength(8);
+    // One atlas holds both animations: the bytes are the same selection's.
+    expect(calm.bytes.pixelKey).toBe(full.bytes.pixelKey);
+    expect(source.bytes(calm.selection, calm.bytes.pixelKey).ok).toBe(true);
+  });
+
+  test("an animation the effect does not publish, or on a sprite, answers the placeholder", () => {
+    const source = committed();
+    expect(
+      source.resolve({ source: "canon", id: "fire", animation: "smoulder" }),
+    ).toMatchObject({ kind: "placeholder", reason: "missing-state" });
+    expect(
+      source.resolve({
+        source: "canon",
+        id: "greek-house",
+        animation: "burn",
+      }),
+    ).toMatchObject({ kind: "placeholder", reason: "wrong-kind" });
+  });
+});

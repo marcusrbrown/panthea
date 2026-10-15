@@ -18,6 +18,7 @@ import {
   type Instance,
   type Layer,
   type LogicalSize,
+  oneShotFrameAt,
   type PixelBuffer,
   type Point,
   type PreviewView,
@@ -90,6 +91,24 @@ export type PreviewItem =
       /** Declared footprint for a placeholder, which has none. */
       readonly footprint?: Footprint;
       readonly request: ResolveRequest;
+    }
+  | {
+      /**
+       * An effect (the fire, the strike) standing on a cell, moved by a
+       * whole-pixel offset from where its pivot lands on that cell's bottom
+       * vertex. Without `elapsedMs` it loops on the preview clock. With it, it
+       * is a one-shot: `elapsedMs` reads how long the effect has been playing
+       * on its own clock, or `undefined` while it is not playing, and the
+       * effect shows nothing before it starts, the frame that time names while
+       * it plays, and nothing once its last frame has had its time.
+       */
+      readonly kind: "effect";
+      readonly id: string;
+      readonly layer: Layer;
+      readonly cell: Cell;
+      readonly offset: Point;
+      readonly request: ResolveRequest;
+      readonly elapsedMs?: () => number | undefined;
     }
   | {
       /** A panel at a screen position, outside the iso scene. */
@@ -173,6 +192,34 @@ function sceneResolution(resolution: SourceResolution): SceneResolution {
   };
 }
 
+function entityOf(
+  item: Exclude<PreviewItem, { kind: "diamond" }>,
+  resolution: SceneResolution,
+): SceneEntity {
+  switch (item.kind) {
+    case "flat":
+      return { kind: "flat", id: item.id, at: item.at, resolution };
+    case "effect":
+      return {
+        kind: "sprite",
+        id: item.id,
+        layer: item.layer,
+        cell: item.cell,
+        offset: item.offset,
+        resolution,
+      };
+    case "sprite":
+      return {
+        kind: "sprite",
+        id: item.id,
+        layer: item.layer,
+        cell: item.cell,
+        ...(item.footprint === undefined ? {} : { footprint: item.footprint }),
+        resolution,
+      };
+  }
+}
+
 const sameSpec = (a: AtlasSpec, b: AtlasSpec): boolean =>
   a.pixelKey === b.pixelKey && a.width === b.width && a.height === b.height;
 
@@ -204,6 +251,10 @@ export function createPreview(options: PreviewOptions): Preview {
     keys: new Map(),
   };
   const reported = new Set<string>();
+  // The one-shot effects on show, by id, each with its own clock.
+  const clocks = new Map<string, () => number | undefined>();
+  // What the layer was last given for them, so a tick redraws only on a change.
+  let shownKey = "";
 
   let live: Live | undefined;
   let ready = false;
@@ -325,11 +376,58 @@ export function createPreview(options: PreviewOptions): Preview {
     await present();
   }
 
+  /**
+   * The instances to draw now: every composed one, except a one-shot effect
+   * shows only the frame its clock names, as a one-frame view of its art, and
+   * nothing before it starts, after it ends, or when its art is a placeholder
+   * (whose length is not known).
+   */
+  function visible(): readonly Instance[] {
+    if (clocks.size === 0) return drawn.instances;
+    return drawn.instances.flatMap((instance) => {
+      const clock = clocks.get(instance.id);
+      if (clock === undefined) return [instance];
+      if (instance.art.source !== "canon") return [];
+      const played = clock();
+      if (played === undefined) return [];
+      const index = oneShotFrameAt(
+        instance.art.frames.map((frame) => frame.durationMs),
+        played,
+      );
+      const frame =
+        index === undefined ? undefined : instance.art.frames[index];
+      return frame === undefined
+        ? []
+        : [{ ...instance, art: { ...instance.art, frames: [frame] } }];
+    });
+  }
+
+  const shownKeyOf = (shown: readonly Instance[]): string =>
+    shown
+      .flatMap((instance) =>
+        clocks.has(instance.id) && instance.art.source === "canon"
+          ? [`${instance.id}@${instance.art.frames[0]?.rect.x ?? ""}`]
+          : [],
+      )
+      .join("|");
+
   function place(layer: SceneLayer): void {
-    const entries = drawn.instances.flatMap((instance) => {
+    const shown = visible();
+    shownKey = shownKeyOf(shown);
+    const entries = shown.flatMap((instance) => {
       const atlasKey = drawn.keys.get(instance.id);
       return atlasKey === undefined ? [] : [{ instance, atlasKey }];
     });
+    // The layer drops an atlas when its last sprite goes, as a one-shot's does
+    // when it ends: the next play puts the retained pixels back.
+    for (const { atlasKey } of entries) {
+      const payload = payloads.get(atlasKey);
+      if (
+        payload !== undefined &&
+        layer.plan(atlasKey, payload.spec) !== "keep"
+      )
+        layer.commit(atlasKey, payload.spec, payload.image);
+    }
     const result = layer.apply(entries);
     for (const id of result.skipped) report(id, "its atlas could not be drawn");
   }
@@ -394,25 +492,7 @@ export function createPreview(options: PreviewOptions): Preview {
       } else {
         const resolution = resolutions.get(item.id);
         if (resolution === undefined) continue;
-        entities.push(
-          item.kind === "flat"
-            ? {
-                kind: "flat",
-                id: item.id,
-                at: item.at,
-                resolution: sceneResolution(resolution),
-              }
-            : {
-                kind: "sprite",
-                id: item.id,
-                layer: item.layer,
-                cell: item.cell,
-                ...(item.footprint === undefined
-                  ? {}
-                  : { footprint: item.footprint }),
-                resolution: sceneResolution(resolution),
-              },
-        );
+        entities.push(entityOf(item, sceneResolution(resolution)));
         key = atlasKeyOf(resolution);
         specOfKey.set(key, specOf(resolution));
       }
@@ -502,7 +582,7 @@ export function createPreview(options: PreviewOptions): Preview {
       return { items, zoom, camera };
     },
     get drawn() {
-      return drawn.instances;
+      return visible();
     },
     backendName: () => live?.backend.name,
     setItems(next) {
@@ -510,6 +590,11 @@ export function createPreview(options: PreviewOptions): Preview {
       const ids = new Set(items.map((item) => item.id));
       for (const id of [...resolutions.keys()]) {
         if (!ids.has(id)) resolutions.delete(id);
+      }
+      clocks.clear();
+      for (const item of items) {
+        if (item.kind === "effect" && item.elapsedMs !== undefined)
+          clocks.set(item.id, item.elapsedMs);
       }
       reported.clear();
       return enqueue(() => refresh());
@@ -540,6 +625,8 @@ export function createPreview(options: PreviewOptions): Preview {
       elapsed = elapsedMs;
       if (!ready || recovering || live === undefined) return;
       live.backend.layer.tick(elapsedMs);
+      if (clocks.size > 0 && shownKeyOf(visible()) !== shownKey)
+        place(live.backend.layer);
       render();
     },
     async idle() {

@@ -2,9 +2,13 @@ import { describe, expect, it } from "bun:test";
 import {
   bottomVertex,
   canvasMetrics,
+  composeScene,
+  type SceneEntity,
+  STRUCTURE_ANCHORS,
   spriteOrigin,
   ZOOMS,
 } from "@panthea/renderer";
+import { canon } from "../../test/canon-kit";
 import {
   LOGICAL_HEIGHT,
   LOGICAL_SIZE,
@@ -160,16 +164,22 @@ describe("harnessItems", () => {
     expect(without.some((item) => item.id === "seated")).toBe(false);
   });
 
-  it("draws a placeholder mortal for scale and a 2x2 placeholder structure two depth steps behind the subject", () => {
+  it("draws a placeholder mortal for scale, and the published house two depth steps behind the subject", () => {
     expect(byId(items, "mortal")).toMatchObject({
       layer: "actor",
       request: MISSING_SPRITE,
     });
     expect(byId(items, "structure")).toMatchObject({
+      kind: "sprite",
       layer: "structure",
-      cell: { x: 0, y: 0, z: 0 },
-      footprint: { w: 2, h: 2 },
-      request: MISSING_SPRITE,
+      cell: { x: -3, y: 0, z: 0 },
+      footprint: { w: 4, h: 3 },
+      request: {
+        source: "canon",
+        id: "greek-house",
+        state: "intact",
+        direction: "south",
+      },
     });
     expect(byId(items, "subject")).toMatchObject({
       cell: { x: 2, y: 2, z: 0 },
@@ -197,7 +207,7 @@ describe("harnessItems", () => {
     expect(empty.some((item) => item.id === "portrait")).toBe(false);
   });
 
-  it("swaps the layers and shares the subject's bottom cell when the structure is to draw in front", () => {
+  it("swaps the layers and shares the subject's bottom cell when the house is to draw in front", () => {
     const swapped = harnessItems({
       subject: zeus,
       portrait,
@@ -209,8 +219,8 @@ describe("harnessItems", () => {
     });
     expect(byId(swapped, "structure")).toMatchObject({
       layer: "actor",
-      cell: { x: 1, y: 1, z: 0 },
-      footprint: { w: 2, h: 2 },
+      cell: { x: -1, y: 0, z: 0 },
+      footprint: { w: 4, h: 3 },
     });
     expect(byId(swapped, "subject")).toMatchObject({
       layer: "structure",
@@ -921,7 +931,7 @@ describe("a rendered god-tall sprite in the preview (R16, R17)", () => {
     expect(top + CELL.h).toBeLessThanOrEqual(LOGICAL_HEIGHT);
   });
 
-  it("draws at integer zoom only, so the 112x96 cell is 112z x 96z device pixels, with the placeholder mortal and structure for scale", () => {
+  it("draws at integer zoom only, so the 112x96 cell is 112z x 96z device pixels, with the mortal and the house for scale", () => {
     expect([...ZOOMS]).toEqual([2, 3, 4]);
     for (const zoom of ZOOMS) {
       expect(Number.isInteger(zoom)).toBe(true);
@@ -934,9 +944,11 @@ describe("a rendered god-tall sprite in the preview (R16, R17)", () => {
         (CELL.w * metrics.backingWidth) / LOGICAL_WIDTH,
       );
     }
-    // The placeholder context is still there around a rendered subject.
+    // The context is still there around a rendered subject.
     expect(byId(items, "mortal")).toMatchObject({ request: MISSING_SPRITE });
-    expect(byId(items, "structure")).toMatchObject({ request: MISSING_SPRITE });
+    expect(byId(items, "structure")).toMatchObject({
+      request: { id: "greek-house" },
+    });
     expect(items.filter((item) => item.kind === "diamond")).toHaveLength(16);
   });
 
@@ -1016,5 +1028,199 @@ describe("a rendered god-tall sprite in the preview (R16, R17)", () => {
     expect(playback.frame()).toBe(5);
     stop();
     expect(listeners.size).toBe(0);
+  });
+});
+
+describe("the structures in the scene", () => {
+  const scene = (extra: Partial<Parameters<typeof harnessItems>[0]> = {}) =>
+    harnessItems({
+      subject: zeus,
+      portrait: undefined,
+      state: "idle",
+      direction: "south",
+      expression: "neutral",
+      companion: false,
+      ...extra,
+    });
+  const ids = (list: readonly PreviewItem[]) => list.map((item) => item.id);
+
+  it("draws the published Greek house and Old Oak, both intact, with no fire and no bolt until asked", () => {
+    const list = scene();
+
+    expect(byId(list, "structure")).toMatchObject({
+      request: { source: "canon", id: "greek-house", state: "intact" },
+    });
+    expect(byId(list, "tree")).toMatchObject({
+      kind: "sprite",
+      layer: "structure",
+      cell: { x: 3, y: 0, z: 0 },
+      footprint: { w: 1, h: 1 },
+      request: {
+        source: "canon",
+        id: "oak-tree",
+        state: "intact",
+        direction: "south",
+      },
+    });
+    expect(ids(list)).not.toContain("structure-fire");
+    expect(ids(list)).not.toContain("tree-fire");
+    expect(ids(list)).not.toContain("strike");
+  });
+
+  it("gives the chosen state to the chosen structure only; the other stays intact", () => {
+    const burningTree = scene({ structure: { art: "tree", state: "burning" } });
+    expect(byId(burningTree, "tree")).toMatchObject({
+      request: { id: "oak-tree", state: "damaged" },
+    });
+    expect(byId(burningTree, "structure")).toMatchObject({
+      request: { id: "greek-house", state: "intact" },
+    });
+    expect(ids(burningTree)).toContain("tree-fire");
+    expect(ids(burningTree)).not.toContain("structure-fire");
+
+    const ruinedHouse = scene({
+      structure: { art: "building", state: "ruin" },
+    });
+    expect(byId(ruinedHouse, "structure")).toMatchObject({
+      request: { state: "ruin" },
+    });
+    expect(byId(ruinedHouse, "tree")).toMatchObject({
+      request: { state: "intact" },
+    });
+    expect(ids(ruinedHouse).filter((id) => id.endsWith("-fire"))).toEqual([]);
+  });
+
+  it("stands the fire on the burning structure's anchor, on the structure's layer, sorting after it", () => {
+    const list = scene({ structure: { art: "building", state: "burning" } });
+    const house = byId(list, "structure");
+    const fire = byId(list, "structure-fire");
+
+    expect(fire).toMatchObject({
+      kind: "effect",
+      layer: "structure",
+      // The house's bottom cell: its origin cell moved by the footprint.
+      cell: { x: 0, y: 2, z: 0 },
+      offset: STRUCTURE_ANCHORS.building.fire,
+      request: { source: "canon", id: "fire", animation: "burn" },
+    });
+    expect(fire?.kind === "effect" && fire.elapsedMs).toBeFalsy();
+    expect((house?.id ?? "") < (fire?.id ?? "")).toBe(true);
+  });
+
+  it("puts the fire and the bolt on whichever layer and cell the structure is on when it draws in front", () => {
+    const list = scene({
+      occlusion: "structure-front",
+      structure: { art: "building", state: "burning" },
+      bolt: { animation: "calm", elapsedMs: () => 0 },
+    });
+
+    expect(byId(list, "structure-fire")).toMatchObject({
+      layer: "actor",
+      cell: { x: 2, y: 2, z: 0 },
+    });
+    expect(byId(list, "strike")).toMatchObject({
+      kind: "effect",
+      layer: "effect",
+      cell: { x: 2, y: 2, z: 0 },
+      offset: STRUCTURE_ANCHORS.building.strike,
+      request: { source: "canon", id: "lightning-strike", animation: "calm" },
+    });
+  });
+
+  it("aims the bolt at the chosen structure, with the clock it was given", () => {
+    const clock = () => 42;
+    const list = scene({
+      structure: { art: "tree", state: "intact" },
+      bolt: { animation: "full", elapsedMs: clock },
+    });
+    const bolt = byId(list, "strike");
+
+    expect(bolt).toMatchObject({
+      cell: { x: 3, y: 0, z: 0 },
+      offset: STRUCTURE_ANCHORS.tree.strike,
+      request: { animation: "full" },
+    });
+    expect(bolt?.kind === "effect" && bolt.elapsedMs).toBe(clock);
+  });
+
+  it("declares the footprints the published art has, for the placeholder when the art is missing", () => {
+    for (const [id, item] of [
+      ["greek-house", byId(scene(), "structure")],
+      ["oak-tree", byId(scene(), "tree")],
+    ] as const) {
+      const resolved = canon({ spriteId: id, state: "intact" });
+      if (resolved.source !== "canon") throw new Error("not canon");
+      expect(item.kind === "sprite" && item.footprint).toEqual(
+        resolved.footprint,
+      );
+    }
+  });
+
+  it("composes every item without a refusal, the house behind the subject and the fire and bolt over their structure", () => {
+    const list = scene({
+      structure: { art: "building", state: "burning" },
+      bolt: { animation: "full", elapsedMs: () => 0 },
+    });
+    const { instances, refused } = composeScene(
+      list.flatMap((item): SceneEntity[] => {
+        if (item.kind === "diamond") return [item];
+        if (item.kind === "flat" || item.request.source !== "canon") return [];
+        if (item.id === "subject" || item.id === "mortal") return [];
+        const resolution = canon({
+          spriteId: item.request.id,
+          ...(item.request.state === undefined
+            ? {}
+            : { state: item.request.state }),
+          ...(item.request.direction === undefined
+            ? {}
+            : { direction: item.request.direction }),
+          ...(item.request.animation === undefined
+            ? {}
+            : { animation: item.request.animation }),
+        });
+        return [
+          item.kind === "effect"
+            ? {
+                kind: "sprite",
+                id: item.id,
+                layer: item.layer,
+                cell: item.cell,
+                offset: item.offset,
+                resolution,
+              }
+            : {
+                kind: "sprite",
+                id: item.id,
+                layer: item.layer,
+                cell: item.cell,
+                ...(item.footprint === undefined
+                  ? {}
+                  : { footprint: item.footprint }),
+                resolution,
+              },
+        ];
+      }),
+    );
+
+    expect(refused).toEqual([]);
+    const order = instances
+      .filter((instance) => instance.layer !== "ground")
+      .map((instance) => instance.id);
+    expect(order.indexOf("structure")).toBeLessThan(
+      order.indexOf("structure-fire"),
+    );
+    expect(order.indexOf("structure-fire")).toBeLessThan(
+      order.indexOf("strike"),
+    );
+    // Every drawn cell of the scene's art lies inside the 480x270 viewport.
+    for (const instance of instances) {
+      if (instance.layer === "ground") continue;
+      const left = instance.x - HARNESS_CAMERA.x;
+      const top = instance.y - HARNESS_CAMERA.y;
+      expect(left, instance.id).toBeGreaterThanOrEqual(0);
+      expect(left + instance.w, instance.id).toBeLessThanOrEqual(LOGICAL_WIDTH);
+      expect(top, instance.id).toBeGreaterThanOrEqual(0);
+      expect(top + instance.h, instance.id).toBeLessThanOrEqual(LOGICAL_HEIGHT);
+    }
   });
 });

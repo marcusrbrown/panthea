@@ -69,6 +69,8 @@ export interface PreviewResolveRequest extends PreviewSelection {
   readonly direction?: string;
   readonly ability?: string;
   readonly expression?: string;
+  /** The named animation of an effect (`full`, `calm`, `burn`); an effect has no state or direction. */
+  readonly animation?: string;
 }
 
 export interface PreviewAtlas {
@@ -199,6 +201,7 @@ const RESOLVE_FIELDS = [
   "direction",
   "ability",
   "expression",
+  "animation",
 ] as const;
 
 /** Checks a resolve request that came from outside: known fields only, a source and id, and slugs throughout. Returns the reason when it is refused. */
@@ -220,6 +223,7 @@ export function parsePreviewResolve(
     "direction",
     "ability",
     "expression",
+    "animation",
   ] as const) {
     const value = input[name];
     if (value === undefined || value === null) continue;
@@ -669,6 +673,9 @@ export function createPreviewSource(
         ...(request.expression === undefined
           ? {}
           : { expression: request.expression }),
+        ...(request.animation === undefined
+          ? {}
+          : { animation: request.animation }),
       });
       if (resolved.source === "placeholder")
         return missing(resolved.reason, []);
