@@ -39,9 +39,12 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 - Sample counts are set per clip. The default walk is 16 frames over 800 ms.
 - Real per-frame durations and event timing are kept in the manifest.
 - A semantic animation state (walk, idle, cast) is separate from its sample variants (8 or 16 frames). Pose overrides, facing overrides and stamp policy are keyed by the state, never by the variant, and a check proves that a coarse variant's frames equal the fine variant's frames at identical source times. The probe's fix for exactly this bug is the reference (`tools/probes/retro-render/check_resample.py`).
-- Four facings stay. A subject that declares an asymmetry (Zeus's bolt hand) is rendered, not mirrored.
+- Retro Zeus declares these per-state frame counts and durations in its model profile, and the engine, the role manifest and the packed manifest use them: idle 10 × 250 ms, seated 8 frames of 208–209 ms, walk 16 × 50 ms, all looping. The vocabulary's frame and rate rules still bound them.
+- Four facings stay. A subject that declares an asymmetry (Zeus's left-shoulder himation) is rendered, not mirrored: east and west are rendered independently.
 
-**Stamps.** Small reusable authored pixel stamps are allowed for the face (eyes and brow, none facing north) and for a signature prop (Zeus's bolt, eight orientations), composited by script with correct occlusion from the part and depth passes. They are authored art, recorded as such in provenance, and not rendered. No other frame is hand-edited by default; hand edits remain a recorded exception, as today.
+**Stamps.** Small reusable authored pixel stamps are allowed for the face (eyes and brow, none facing north), composited by script with correct occlusion from the part and depth passes. They are authored art, recorded as such in provenance, and not rendered. The stamp set holds face stamps only. No other frame is hand-edited by default; hand edits remain a recorded exception, as today.
+
+**No props on characters.** Until attachments and special moves are designed and built, a character carries no props. Identity comes from costume and bearing, never from ability iconography (Zeus: a himation over the left shoulder, a regal stance).
 
 **Blender.** Blender 5.2.2 LTS (hash `d13f752e3b9c`) is approved as a pinned local studio tool. It is an authoring dependency only: players need nothing new, and CI does not need it, because the tests cover the pure post-step helpers and the Blender runs are not unit-tested. A different Blender version is a new approval and a recipe change.
 
@@ -51,7 +54,7 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 
 **D14.** D14 is not amended. A dated note records that CC0 kit bodies count as appropriately sourced material under [content-direction.md](../product/content-direction.md).
 
-**Canon transition.** The hand-pixel Zeus and its provenance stay as a legacy revision and as a reference; nothing overwrites or retrofits it. A retro Zeus is a new asset record promoted **as one complete revision covering idle, walk, seated and act**, approved through the existing gates. Until that revision is promoted, hand-pixel Zeus ships unchanged, with its idle, seated and act states as published. Styles and sizes are never mixed within one character: no retro idle beside a hand-pixel seated sprite, and no state of one in the other's cell. The same holds for any later character. A registry republish selects the new revision and leaves the old bytes in place ([ADR-0009](0009-asset-registry-lifecycle-and-uris.md)), so until promotion the game keeps resolving `zeus-sprite` at its current revision and everything that loads it keeps working. Retro assets use the new cell class and palette version beside the existing ones, so old and new coexist in one registry and one scene. The code that assumes the old cell is listed under Consequences.
+**Canon transition.** The hand-pixel Zeus and its provenance stay as a legacy revision and as a reference; nothing overwrites or retrofits it. A retro Zeus is a new asset record promoted **as one complete revision covering idle, walk and seated on four facings** (12 slots), approved through the existing gates. `act/thunderbolt` is deferred beside `pronouncement` under the owner's no-props rule; this narrows the visual matrix only, and the shared `act` state contract in the vocabulary and Zeus's gameplay thunderbolt are unchanged. That revision is promoted: Zeus's god profile names `zeus-retro`, and `zeus-sprite` stays published as a legacy sprite. Styles and sizes are never mixed within one character: no retro idle beside a hand-pixel seated sprite, and no state of one in the other's cell. The same holds for any later character. A registry republish selects the new revision and leaves the old bytes in place ([ADR-0009](0009-asset-registry-lifecycle-and-uris.md)), so saves and anything else that names `zeus-sprite` keep resolving it. Retro assets use the new cell class and palette version beside the existing ones, so old and new coexist in one registry and one scene. The code that assumes the old cell is listed under Consequences.
 
 ## Consequences
 
@@ -66,7 +69,7 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 **Stays:**
 - The sole-midpoint pivot rule (placed at the tile's bottom vertex), the 64×32 tile and its 16 px elevation step, depth ordering, four directions, the declared-asymmetry rule, the key light from the upper left.
 - The master-palette approval gate and digest, realm families and realm variants as palette swaps, the no-pure-black-or-white rule.
-- Binary alpha; portraits (96×96, six expressions; they are not part of this decision and stay as published); effects and their tiers; the interface rules.
+- Binary alpha; portraits (96×96, six expressions; they are not part of this decision and stay as published); effects, each with a full and a calm version; the interface rules.
 - D19 and D25: Tauri, Three.js, Three Flatland, and the pixel-exact shared renderer; nothing here changes the runtime.
 
 **Requirements.**
@@ -108,14 +111,6 @@ An owner decision about presentation, with the owner's agreement of 2026-10-12 r
 - **Paper doll or sprite layering.** Cheap for variants, but it needs hand-drawn parts per direction and animation, so it repeats the hand-pixel cost and gives no new range of motion.
 
 ## Dated notes
-
-**2026-10-12 (retro Zeus makeover).** The owner rejected the first studio render of Zeus ("a step down in quality from the retro probes": noise on the lower face, a hidden right foot, a bolt not held upright). Three rules follow, and the text above is not rewritten:
-
-- **Retro Zeus is idle, walk and seated.** The required visual matrix is those three states by four facings, 12 slots. `act/thunderbolt` moves to `deferred` beside `pronouncement`. This changes the visual matrix only: the shared `act` state contract in the vocabulary and Zeus's gameplay thunderbolt are unchanged, and the Stamps paragraph's "signature prop (Zeus's bolt, eight orientations)" is withdrawn for now.
-- **No props on characters** until attachments and special moves are designed and built. A character's identity comes from costume and bearing (Zeus: a himation over the left shoulder, a regal stance), never from ability iconography. The bolt, its eight stamps, its locator and its post-step compositing are deleted; the post step is version 3. The stamp set holds face stamps only, and the part-ID slot the bolt used stays reserved so later IDs do not move.
-- **The asymmetry is the left-shoulder himation**, replacing "bolt hand". East and west are still rendered independently.
-
-Frames and timing are also per state now: the model profile declares each state's frame count and per-frame durations, and the engine, the role manifest and the packed manifest use them (idle 10 × 250 ms, seated 8 frames of 208–209 ms, walk 16 × 50 ms, all looping). Those are proposals for the owner to critique from the animated preview. The vocabulary's frame and rate rules still bound them.
 
 **2026-10-13.** The owner approved retro Zeus at the visual gate, which used timed playback. `zeus-retro` is published and is Zeus's sprite. Packaged check: [evidence](../evidence/asset-studio/retro-zeus/README.md).
 
