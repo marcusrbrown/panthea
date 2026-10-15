@@ -123,7 +123,7 @@ const j = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
 function parseSlots(value: unknown): RequestInput["slots"] | Outcome {
   if (!Array.isArray(value) || value.length === 0)
     return refuse("invalid-arguments", "slots must be a non-empty array");
-  const allowed = ["state", "direction", "ability", "expression"];
+  const allowed = ["state", "direction", "ability", "expression", "role"];
   for (const slot of value)
     if (
       typeof slot !== "object" ||
@@ -134,7 +134,7 @@ function parseSlots(value: unknown): RequestInput["slots"] | Outcome {
     )
       return refuse(
         "invalid-arguments",
-        "each slot is an object of state, direction, ability or expression strings",
+        "each slot is an object of state, direction, ability, expression or role strings",
       );
   return value as RequestInput["slots"];
 }
@@ -312,7 +312,7 @@ function readFiles(
 
 interface Shape {
   readonly slots: RequestInput["slots"];
-  readonly kind: "sprite" | "portrait";
+  readonly kind: "sprite" | "portrait" | "tile";
   /** Present on a recipe request: the palette and declared pivot for the render engine. */
   readonly render?: NonNullable<RequestInput["render"]>;
 }
@@ -326,8 +326,11 @@ interface Shape {
 function requestShape(a: Args): Shape | Outcome {
   const slots = parseSlots(a.slots);
   if (isOutcome(slots)) return slots;
-  if (a.kind !== "sprite" && a.kind !== "portrait")
-    return refuse("invalid-request", 'kind must be "sprite" or "portrait"');
+  if (a.kind !== "sprite" && a.kind !== "portrait" && a.kind !== "tile")
+    return refuse(
+      "invalid-request",
+      'kind must be "sprite", "portrait" or "tile"',
+    );
   if (a.palette === undefined && a.pivot === undefined)
     return { slots, kind: a.kind };
   if (a.palette === undefined || a.pivot === undefined)
@@ -335,8 +338,8 @@ function requestShape(a: Args): Shape | Outcome {
       "invalid-arguments",
       "a recipe request needs both --palette and --pivot",
     );
-  if (a.kind !== "sprite")
-    return refuse("invalid-request", "only a sprite is rendered");
+  if (a.kind === "portrait")
+    return refuse("invalid-request", "only a sprite or a tile is rendered");
   for (const taken of ["batch", "seed", "styleNote"] as const)
     if (a[taken] !== undefined)
       return refuse(
@@ -358,7 +361,7 @@ function requestShape(a: Args): Shape | Outcome {
     );
   return {
     slots,
-    kind: "sprite",
+    kind: a.kind,
     render: {
       palette: a.palette as string,
       pivot: { x: pivot.x as number, y: pivot.y as number },
@@ -833,6 +836,8 @@ const OPS: Record<string, OpDef> = {
       ...str("ability"),
       ...str("expression"),
       ...str("animation"),
+      ...str("mask"),
+      ...str("offset"),
     },
     run: async (studio, a) => {
       const request = parsePreviewResolve(a);
@@ -1411,7 +1416,13 @@ const OPS: Record<string, OpDef> = {
             : { attribution: w.attribution as string }),
         };
       }
-      const result = session.pack(input, content, palettes, registry);
+      const result = session.pack(
+        input,
+        content,
+        palettes,
+        registry,
+        studio.renderAudit(),
+      );
       return result.ok
         ? done(assetSummary(result.asset))
         : refuse(result.reason, safeMessage(result.message));

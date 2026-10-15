@@ -208,10 +208,13 @@ def fresh_scene(camera: dict):
     scene.view_settings.gamma = 1.0
     scene.display_settings.display_device = "sRGB"
     ev = scene.eevee
+    # Every screen-space or shadowed term is off, so a pixel depends on its own surface alone: SSR (ray tracing),
+    # horizon scan and ambient occlusion (both are Fast GI) and shadows. A ground patch is exact only because of this.
     for attr, value in (
         ("taa_render_samples", 1),
         ("taa_samples", 1),
         ("use_raytracing", False),
+        ("use_fast_gi", False),
         ("use_shadows", False),
         ("use_volumetric_shadows", False),
     ):
@@ -1365,6 +1368,82 @@ class Structure:
         return {"points": {}}
 
 
+class Ground(Structure):
+    """One terrain of a dual-grid ground set, drawn flat and periodic: a plane of the terrain's own colour with its
+    relief on top, flagstone slabs on the mortar plane (state `over`) or sparse grass tufts on the grass plane (state
+    `base`). Lattice point (i, j) is at (i, j) tile sides along the ground axes and the world origin is lattice (0, 0).
+
+    The layout of a lattice cell is a function of (i mod N, j mod N) alone, and the cells are instanced over REPEAT
+    periods each way, so what crosses a period's edge has its wrapped copies and the picture a period apart is the same
+    picture, to the pixel. That needs a tile side of 32 sqrt(2) / ppu, so one lattice step is exactly 32x16 px."""
+    REPEAT = 5  # periods instanced each way, centred on the origin's period
+
+    def __init__(self, profile: dict, camera: dict, staging: Staging, scene, axes: Axes, book: MaterialBook):
+        super().__init__(profile, camera, staging, scene, axes, book)
+        build = profile["build"]
+        self.n = build["period"]
+        self.slab, self.tuft = build["slab"], build["tuft"]
+        ppu = self.ppu
+        self.side = 32.0 * math.sqrt(2.0) / ppu  # metres along a ground axis for one 32x16 px lattice step
+
+    def cells(self):
+        """Lattice cells (i, j, i mod N, j mod N) of the instanced periods, in a fixed order."""
+        low = -(self.REPEAT // 2) * self.n
+        high = low + self.REPEAT * self.n
+        return [(i, j, i % self.n, j % self.n) for i in range(low, high) for j in range(low, high)]
+
+    def unit(self, ci: int, cj: int, k: int) -> float:
+        """The k-th number (k < 64) of lattice cell (ci, cj) of the period."""
+        return hash_unit((ci * self.n + cj) * 64 + k)
+
+    def build(self, state: str, clip: dict) -> None:
+        if state not in ("base", "over"):
+            raise InputError(f"a ground set has the states base and over, not {state!r}")
+        mb = MeshBuilder()
+        cells = self.cells()
+        reach = (max(i for i, _, _, _ in cells) + 1.0) * self.side
+        low = (min(i for i, _, _, _ in cells) - 1.0) * self.side
+        plane = [mb.bm.verts.new((u, v, 0.0)) for u, v in ((low, low), (reach, low), (reach, reach), (low, reach))]
+        mb.add([mb.bm.faces.new(plane)], "plane", "ground")
+        for i, j, ci, cj in cells:
+            if state == "over":
+                self.slabs(mb, i, j, ci, cj)
+            else:
+                self.tufts(mb, i, j, ci, cj)
+        self.attach(mb, f"ground_{state}", clip)
+
+    def slabs(self, mb: MeshBuilder, i: int, j: int, ci: int, cj: int) -> None:
+        """Four slabs to a lattice cell, split at jittered lines and inset by the gap; the bare plane between is mortar."""
+        height, gap, jitter = self.slab["heightM"], self.slab["gap"], self.slab["jitter"]
+        if height <= 0.0:
+            return
+        side = self.side
+        u0, v0 = (i - 0.5) * side, (j - 0.5) * side
+        split_u = 0.5 + (self.unit(ci, cj, 1) - 0.5) * 2.0 * jitter
+        for column, (a0, a1) in enumerate(((0.0, split_u), (split_u, 1.0))):
+            split_v = 0.5 + (self.unit(ci, cj, 2 + column) - 0.5) * 2.0 * jitter
+            for row, (b0, b1) in enumerate(((0.0, split_v), (split_v, 1.0))):
+                rise = height * (0.7 + 0.6 * self.unit(ci, cj, 4 + column * 2 + row))
+                size_u, size_v = (a1 - a0 - gap) * side, (b1 - b0 - gap) * side
+                centre = (u0 + (a0 + a1) / 2.0 * side, v0 + (b0 + b1) / 2.0 * side, rise / 2.0)
+                mb.box(centre, (size_u, size_v, rise), "slab", "ground")
+
+    def tufts(self, mb: MeshBuilder, i: int, j: int, ci: int, cj: int) -> None:
+        """Low four-sided pyramids at hashed positions; one may stand over its cell's edge, and the next period has its copy."""
+        count, rise, radius = self.tuft["perTile"], self.tuft["heightM"], self.tuft["radiusM"]
+        side = self.side
+        u0, v0 = (i - 0.5) * side, (j - 0.5) * side
+        for k in range(count):
+            u = u0 + self.unit(ci, cj, 8 + 4 * k) * side
+            v = v0 + self.unit(ci, cj, 9 + 4 * k) * side
+            turn = math.radians(90.0 * self.unit(ci, cj, 10 + 4 * k))
+            r = radius * (0.8 + 0.4 * self.unit(ci, cj, 11 + 4 * k))
+            h = rise * (0.7 + 0.6 * self.unit(ci, cj, 12 + 4 * k))
+            base = [mb.bm.verts.new((u + r * math.cos(turn + q * math.pi / 2.0), v + r * math.sin(turn + q * math.pi / 2.0), 0.0)) for q in range(4)]
+            apex = mb.bm.verts.new((u, v, h))
+            mb.solid(base + [apex], ((3, 2, 1, 0), (0, 1, 4), (1, 2, 4), (2, 3, 4), (3, 0, 4)), "tuft", "ground")
+
+
 class House(Structure):
     """A Greek town house built from kit pieces: Kenney wall panels (with the door and window openings) on a plinth of
     Kenney floor slabs, corner pilasters, and a porch of Quaternius round columns on the +Y front (the door side). The
@@ -1854,6 +1933,8 @@ def make_structure(profile: dict, camera: dict, staging: Staging, scene, axes: A
         return House(profile, camera, staging, scene, axes, book)
     if kind == "tree":
         return Tree(profile, camera, staging, scene, axes, book)
+    if kind == "ground":
+        return Ground(profile, camera, staging, scene, axes, book)
     raise InputError(f"unknown structure build {kind!r}")
 
 

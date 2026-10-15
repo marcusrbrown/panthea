@@ -75,6 +75,8 @@ pub const OPS: &[OpSpec] = &[
             "ability",
             "expression",
             "animation",
+            "mask",
+            "offset",
         ],
         Read,
     ),
@@ -383,6 +385,19 @@ mod tests {
         assert!(check(
             "source-resolve",
             &json!({ "source": "canon", "id": "lightning-strike", "animation": "calm" })
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn source_resolve_takes_a_tile_cell_by_mask_and_offset() {
+        let row = lookup("source-resolve").unwrap();
+        assert!(row.args.contains(&"mask"));
+        assert!(row.args.contains(&"offset"));
+        assert_eq!(row.class, Read);
+        assert!(check(
+            "source-resolve",
+            &json!({ "source": "canon", "id": "grass-flagstone", "mask": "6", "offset": "9" })
         )
         .is_ok());
     }

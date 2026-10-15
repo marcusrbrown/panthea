@@ -32,7 +32,8 @@ export type Layer = (typeof LAYERS)[number];
 /** Distinct stable-order slots per (depth, layer). */
 export const ENTITY_SLOTS = 256;
 
-const DEPTH_MIN = 2 * COORD_MIN - ELEVATION_MAX;
+/** The least depth key: where the ground draws, under everything. */
+export const DEPTH_MIN = 2 * COORD_MIN - ELEVATION_MAX;
 const DEPTH_MAX = 2 * COORD_MAX - ELEVATION_MIN;
 const DEPTH_COUNT = DEPTH_MAX - DEPTH_MIN + 1;
 
@@ -165,6 +166,21 @@ export function diamondOrigin(cell: Cell): Checked<Point> {
     x: (cell.x - cell.y) * (TILE_W / 2) - TILE_W / 2,
     y: (cell.x + cell.y) * (TILE_H / 2) - cell.z * ELEVATION_STEP,
   });
+}
+
+/**
+ * Top-left of the 64x32 box of the ground tile at lattice point (x, y), the corner where four
+ * grid cells meet: the diamond origin raised 16 px, which centres the box on (x - y) * 32 by
+ * (x + y) * 16. The tiles at the four lattice points round one grid cell meet at its centre.
+ */
+export function latticeOrigin(x: number, y: number): Checked<Point> {
+  const lattice = checkAxis("x", x, COORD_MIN, COORD_MAX);
+  if (!lattice.ok) return lattice;
+  const row = checkAxis("y", y, COORD_MIN, COORD_MAX);
+  if (!row.ok) return row;
+  const origin = diamondOrigin({ x, y, z: 0 });
+  if (!origin.ok) return origin;
+  return ok({ x: origin.value.x, y: origin.value.y - TILE_H / 2 });
 }
 
 /**

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { TILE_DIAMOND_H, tileDiamondRow } from "@panthea/assets";
 import { DataTexture, type InstancedMesh } from "three";
 import { TileMap2D, type TileMapData } from "three-flatland";
 import {
@@ -7,6 +8,7 @@ import {
   COORD_MIN,
   DEPTH_CAMERA_Z,
   DEPTH_FAR,
+  DEPTH_MIN,
   DEPTH_NEAR,
   DEPTH_Z_MAX,
   DEPTH_Z_MIN,
@@ -21,6 +23,7 @@ import {
   ENTITY_SLOTS,
   FOOTPRINT_MAX,
   LAYERS,
+  latticeOrigin,
   spriteOrigin,
   TILE_H,
   TILE_W,
@@ -363,5 +366,65 @@ describe("TileMap2D (three-flatland 0.1.0-alpha.10)", () => {
       dx: -TILE_W / 2,
       dy: TILE_H / 2,
     });
+  });
+});
+
+describe("the diamond the asset conformance checks", () => {
+  it("is the diamond this projection draws, row for row, and 31 rows high", () => {
+    expect(TILE_DIAMOND_H).toBe(DIAMOND_H);
+    for (let row = -1; row <= TILE_H; row += 1) {
+      expect(tileDiamondRow(row), `row ${row}`).toEqual(diamondRow(row));
+    }
+  });
+});
+
+describe("the lattice point's tile", () => {
+  it("sits at the diamond origin raised 16 px, so its box is centred on the lattice point", () => {
+    for (const [x, y] of [
+      [0, 0],
+      [3, 1],
+      [1, 3],
+      [-2, 5],
+      [8, 8],
+    ] as const) {
+      const lattice = unwrap(latticeOrigin(x, y));
+      const diamond = unwrap(diamondOrigin(cell(x, y)));
+      expect(lattice).toEqual({ x: diamond.x, y: diamond.y - 16 });
+      expect(lattice).toEqual({
+        x: (x - y) * 32 - 32,
+        y: (x + y) * 16 - 16,
+      });
+    }
+  });
+
+  it("puts the box centre on the lattice point's screen position, (x - y) * 32 by (x + y) * 16", () => {
+    const at = unwrap(latticeOrigin(4, 2));
+    expect({ x: at.x + TILE_W / 2, y: at.y + TILE_H / 2 }).toEqual({
+      x: 64,
+      y: 96,
+    });
+  });
+
+  it("refuses a point outside the supported coordinates and a point that is not whole, never clamping", () => {
+    expect(latticeOrigin(COORD_MAX + 1, 0)).toMatchObject({
+      ok: false,
+      reason: "out-of-range",
+    });
+    expect(latticeOrigin(0, COORD_MIN - 1)).toMatchObject({
+      ok: false,
+      reason: "out-of-range",
+    });
+    expect(latticeOrigin(0.5, 0)).toMatchObject({
+      ok: false,
+      reason: "non-integer",
+    });
+    expect(latticeOrigin(COORD_MAX, COORD_MIN).ok).toBe(true);
+  });
+
+  it("exports the depth a ground tile draws at: the least a depth key can be", () => {
+    expect(DEPTH_MIN).toBe(2 * COORD_MIN - ELEVATION_MAX);
+    expect(
+      unwrap(depthZ({ depth: DEPTH_MIN, layer: "ground", order: 0 })),
+    ).toBe(DEPTH_Z_MIN);
   });
 });

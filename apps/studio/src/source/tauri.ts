@@ -53,6 +53,11 @@ const list = (value: unknown, path: string): readonly unknown[] =>
 const KEY = /^[0-9A-Za-z_-]{1,128}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
+const wholeCount = (value: unknown, path: string): number =>
+  isNumber(value) && Number.isInteger(value) && value >= 1
+    ? value
+    : refuse(path, "not a positive whole number");
+
 const rect = (value: unknown, path: string) => {
   const o = object(value, path);
   return {
@@ -106,7 +111,7 @@ function expressions(value: unknown, path: string): string[] {
   });
 }
 
-const ENTRY_KINDS = ["sprite", "portrait", "unknown"] as const;
+const ENTRY_KINDS = ["sprite", "portrait", "tile", "unknown"] as const;
 
 function entry(value: unknown, path: string): ListingEntry {
   const o = object(value, path);
@@ -127,6 +132,9 @@ function entry(value: unknown, path: string): ListingEntry {
     animations: animationKeys(o.animations, `${path}.animations`),
     expressions: expressions(o.expressions, `${path}.expressions`),
     realms: expressions(o.realms ?? [], `${path}.realms`),
+    ...(o.period === undefined
+      ? {}
+      : { period: wholeCount(o.period, `${path}.period`) }),
     ok: o.ok as boolean,
   };
 }
@@ -150,9 +158,12 @@ const PLACEHOLDER_REASONS = [
 function asset(value: unknown) {
   const o = object(value, "resolution.asset");
   const kind =
-    o.kind === "sprite" || o.kind === "portrait" || o.kind === "effect"
+    o.kind === "sprite" ||
+    o.kind === "portrait" ||
+    o.kind === "effect" ||
+    o.kind === "tile"
       ? o.kind
-      : refuse("resolution.asset.kind", "not sprite, portrait or effect");
+      : refuse("resolution.asset.kind", "not sprite, portrait, effect or tile");
   const atlas = object(o.atlas, "resolution.asset.atlas");
   const frames = list(o.frames, "resolution.asset.frames").map((item, i) => {
     const f = object(item, `resolution.asset.frames[${i}]`);
@@ -340,7 +351,7 @@ export function createTauriSource(
   async function resolve(request: ResolveRequest): Promise<SourceResolution> {
     const args: Record<string, string> = {};
     for (const [name, value] of Object.entries(request)) {
-      if (value !== undefined) args[name] = value;
+      if (value !== undefined) args[name] = String(value);
     }
     return parse(await host.call("source-resolve", args), readResolution);
   }

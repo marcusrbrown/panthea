@@ -139,6 +139,41 @@ describe("kinds and media", () => {
   });
 });
 
+describe("a tile render job", () => {
+  const tileJob = (role: string) => ({
+    schemaVersion: 1,
+    id: `grass-flagstone-${role}`,
+    request: {
+      schemaVersion: 1,
+      subject: "grass-flagstone",
+      kind: "tile",
+      slots: [{ role }],
+      batch: 1,
+      seed: 0,
+      recipe: {
+        profile: "grass-flagstone",
+        palette: "greek-retro",
+        pivot: { x: 32, y: 16 },
+      },
+    },
+    provider: { id: "blender-eevee", medium: "image", hosting: "local" },
+    status: "queued",
+  });
+
+  it("parses queued, one role per job, and keeps the request as written", () => {
+    for (const role of ["base", "over"]) {
+      const parsed = parseGenerationJob(tileJob(role));
+      expect(parsed.ok, role).toBe(true);
+      if (parsed.ok)
+        expect(parsed.value).toEqual(JSON.parse(JSON.stringify(tileJob(role))));
+    }
+  });
+
+  it("refuses a role outside base and over", () => {
+    expect(parseGenerationJob(tileJob("under")).ok).toBe(false);
+  });
+});
+
 describe("generation jobs", () => {
   const image = { id: "local-image", medium: "image", hosting: "local" };
   const base = { schemaVersion: 1, id: "job-1", request, provider: image };

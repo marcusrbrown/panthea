@@ -12,7 +12,14 @@ import {
   profileHash,
   type StructureProfile,
 } from "./profile";
-import { effectiveCamera, frameOf, NO_STAMPS_HASH } from "./recipe";
+import {
+  effectiveCamera,
+  frameOf,
+  NO_STAMPS_HASH,
+  postSettingsFor,
+  revisionRecipe,
+  shadowRampOf,
+} from "./recipe";
 
 const RENDER_ROOT = join(
   import.meta.dir,
@@ -130,6 +137,85 @@ describe("parseProfile dispatches on kind", () => {
     expect(String(profileHash(zeus.value))).toBe(
       "bd157caf8e723ccc246d81a40e1459c8fd1bbe62f07d93db779900c3ccb00715",
     );
+  });
+
+  it("pins the greek-house and oak-tree profile hashes, so a structure's revision recipe does not move", () => {
+    for (const [id, hash] of [
+      [
+        "greek-house",
+        "595a45bb05c3f2702d994329c238c2f6a22f1a3716a0fb02a891744e3cde3ee0",
+      ],
+      [
+        "oak-tree",
+        "2449de195bb58d8d138844082a7a9794283df43d9aeb467451180778b6eba6cd",
+      ],
+    ] as const) {
+      const parsed = parseProfile(readJson(`profiles/${id}.json`));
+      if (!parsed.ok) throw new Error(parsed.message);
+      expect(String(profileHash(parsed.value)), id).toBe(hash);
+    }
+  });
+
+  it("pins published canon revision recipe hashes: the recipe recomputed from the manifest's recorded inputs is the recorded hash", () => {
+    // zeus-retro (a figure), greek-house and oak-tree (structures), as published. The post settings
+    // are the part this code builds; every other input is the manifest's own record.
+    for (const [id, revision, hash] of [
+      [
+        "zeus",
+        "f254faa3c1fc6fe0ca2ac2b1f88d9556f9dfdd134b4ad9241f77a5fb37369fa6",
+        "284c046bb69bd055450e64292a518460f67eb9c17a8ee4fb25232bd65cb67057",
+      ],
+      [
+        "greek-house",
+        "ddbfc20b4b6fccac32906a706982874d6852ed6d1a35fb5153781048834a03dc",
+        "b658992ea6084ae88925e4cda268a4135cc37bb48e7632d1bca4461afefb301f",
+      ],
+      [
+        "oak-tree",
+        "8a1c461e1609d3bc972ed0d3bdbb22d10caf5f6b6277b88c7ccac38ba7338b45",
+        "3688cf67dc1556d107fe3568c9fdc83d2d8164f2f5c2c23664788eb27f09022f",
+      ],
+    ] as const) {
+      const manifest = JSON.parse(
+        readFileSync(
+          join(
+            RENDER_ROOT,
+            "..",
+            "..",
+            "content",
+            "greek",
+            "assets",
+            "registry",
+            "manifests",
+            `${revision}.json`,
+          ),
+          "utf8",
+        ),
+      );
+      const recorded = manifest.provenance.revisionRecipe;
+      expect(recorded.hash, id).toBe(hash);
+      const parsed = parseProfile(readJson(`profiles/${id}.json`));
+      if (!parsed.ok) throw new Error(parsed.message);
+      const recomputed = revisionRecipe({
+        profile: profileHash(parsed.value),
+        camera: recorded.camera,
+        palette: recorded.palette,
+        pivot: recorded.pivot,
+        script: recorded.script,
+        postStep: {
+          version: recorded.postStep,
+          settings: postSettingsFor(shadowRampOf(parsed.value)),
+        },
+        blender: {
+          version: recorded.blender.version,
+          buildHash: recorded.blender.build,
+          binarySha256: recorded.blender.sha256,
+        },
+        kit: recorded.kit,
+        stamps: recorded.stamps,
+      });
+      expect(String(recomputed.hash), id).toBe(hash);
+    }
   });
 
   it("parses kind structure with its own parser", () => {
@@ -348,5 +434,122 @@ describe("frameOf", () => {
 describe("the no-stamps hash", () => {
   it("is a constant 64-character digest", () => {
     expect(NO_STAMPS_HASH).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("a ground profile", () => {
+  const ground = (): Json => readJson("profiles/grass-flagstone.json");
+  const refusal = (value: Json) => {
+    const parsed = parseProfile(value);
+    if (parsed.ok) throw new Error("expected a refusal");
+    return `${parsed.path} ${parsed.message}`;
+  };
+
+  it("parses the committed set: N=4, outline off, the 544x256 frame, no kit files", () => {
+    const parsed = parseProfile(ground());
+    if (!parsed.ok) throw new Error(parsed.message);
+    const profile = parsed.value as StructureProfile;
+    expect(profile.build.kind).toBe("ground");
+    if (profile.build.kind === "ground") expect(profile.build.period).toBe(4);
+    expect(profile.outline).toBe(false);
+    expect(profile.kitFiles).toEqual([]);
+    expect(Object.keys(profile.clips).sort()).toEqual(["base", "over"]);
+    expect(profile.cell).toMatchObject({ width: 544, height: 256 });
+  });
+
+  it("round-trips: the recipe parses the profile it parsed", () => {
+    const once = parseProfile(ground());
+    if (!once.ok) throw new Error(once.message);
+    const twice = parseProfile(JSON.parse(JSON.stringify(once.value)));
+    expect(twice).toEqual(once);
+  });
+
+  it("hashes the period, the layout and the stamp parameters", () => {
+    const hash = (edit: (v: Json) => void) => {
+      const value = ground();
+      edit(value);
+      const parsed = parseProfile(value);
+      if (!parsed.ok) throw new Error(parsed.message);
+      return String(profileHash(parsed.value));
+    };
+    const base = hash(() => undefined);
+    for (const edit of [
+      (v: Json) => {
+        v.build.period = 2;
+      },
+      (v: Json) => {
+        v.build.slab.gap = 0.1;
+      },
+      (v: Json) => {
+        v.build.tuft.perTile = 4;
+      },
+      (v: Json) => {
+        v.build.stamp.noiseSeed = 12;
+      },
+    ])
+      expect(hash(edit)).not.toBe(base);
+  });
+
+  it("allows outline false on a ground profile only, and requires it there", () => {
+    const house = houseJson();
+    house.outline = false;
+    expect(refusal(house)).toMatch(/outline/);
+    const noOutline = ground();
+    delete noOutline.outline;
+    expect(refusal(noOutline)).toMatch(/outline/);
+    const on = ground();
+    on.outline = true;
+    expect(refusal(on)).toMatch(/outline/);
+  });
+
+  it("takes a period that is a positive integer, and a frame that holds the patch", () => {
+    for (const period of [0, 1.5, -1, "4"]) {
+      const value = ground();
+      value.build.period = period;
+      expect(refusal(value), String(period)).toMatch(/build\.period/);
+    }
+    const small = ground();
+    small.cell.width = 300;
+    small.cell.pivot = [150, 64];
+    expect(refusal(small)).toMatch(/cell/);
+    const high = ground();
+    high.cell.pivot = [272, 20];
+    expect(refusal(high)).toMatch(/cell/);
+  });
+
+  it("names two different terrains, and a noise wavelength that divides the period", () => {
+    const parsed = parseProfile(ground());
+    if (!parsed.ok) throw new Error(parsed.message);
+    const build = (parsed.value as StructureProfile).build;
+    if (build.kind === "ground")
+      expect(build.terrain).toEqual({ base: "grass", over: "flagstone" });
+    const same = ground();
+    same.build.terrain.over = "grass";
+    expect(refusal(same)).toMatch(/terrain/);
+    const bad = ground();
+    bad.build.terrain.base = "Grass";
+    expect(refusal(bad)).toMatch(/terrain\.base/);
+    for (const wavelength of [3, 0, 1.5, 8]) {
+      const value = ground();
+      value.build.stamp.wavelengthTiles = wavelength;
+      expect(refusal(value), String(wavelength)).toMatch(/wavelengthTiles/);
+    }
+    for (const wavelength of [1, 2, 4]) {
+      const value = ground();
+      value.build.stamp.wavelengthTiles = wavelength;
+      expect(parseProfile(value).ok, String(wavelength)).toBe(true);
+    }
+  });
+
+  it("refuses parameters out of range and keys it does not know", () => {
+    const gap = ground();
+    gap.build.slab.gap = 0.5;
+    expect(refusal(gap)).toMatch(/slab\.gap/);
+    const unknown = ground();
+    unknown.build.tuft.blades = 3;
+    expect(refusal(unknown)).toMatch(/blades/);
+    const seed = ground();
+    seed.build.stamp.noiseSeed = 1.5;
+    expect(refusal(seed)).toMatch(/noiseSeed/);
   });
 });

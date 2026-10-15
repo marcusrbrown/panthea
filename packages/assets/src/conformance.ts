@@ -14,7 +14,24 @@ export interface RgbaImage {
   readonly height: number;
 }
 
-export type ConformanceKind = "sprite" | "portrait" | "effect";
+export type ConformanceKind = "sprite" | "portrait" | "effect" | "tile";
+
+/**
+ * The diamond of a 64x32 tile cell, as the isometric projection draws it
+ * (packages/renderer/src/iso.ts, which a test holds this equal to): rows 0 to
+ * 30 carry it and row 31 belongs to the neighbours, so adjacent tiles abut
+ * without a seam row. This package cannot import the renderer, which depends on it.
+ */
+export const TILE_DIAMOND_H = 31;
+const TILE_CELL_W = 64;
+const TILE_CELL_H = 32;
+
+/** Pixel span of the diamond on `row`, x1 exclusive, or null when the row carries none. */
+export function tileDiamondRow(row: number): { x0: number; x1: number } | null {
+  if (!Number.isInteger(row) || row < 0 || row >= TILE_DIAMOND_H) return null;
+  const half = 2 * (1 + Math.min(row, TILE_DIAMOND_H - 1 - row));
+  return { x0: TILE_CELL_W / 2 - half, x1: TILE_CELL_W / 2 + half };
+}
 
 /** How the background is removed: by existing alpha, or by an explicit key colour. */
 export type BackgroundSpec =
@@ -213,10 +230,10 @@ function validate(input: ConformanceInput): InvalidInput | undefined {
       message: `rgba must hold width x height x 4 = ${input.width * input.height * 4} bytes`,
     };
   }
-  if (!["sprite", "portrait", "effect"].includes(input.kind)) {
+  if (!["sprite", "portrait", "effect", "tile"].includes(input.kind)) {
     return {
       field: "kind",
-      message: "kind must be sprite, portrait or effect",
+      message: "kind must be sprite, portrait, effect or tile",
     };
   }
   if (input.mode !== "auto" && input.mode !== "report-only") {
@@ -225,6 +242,15 @@ function validate(input: ConformanceInput): InvalidInput | undefined {
   const cell = input.cell;
   if (!isInt(cell?.w) || cell.w < 1 || !isInt(cell.h) || cell.h < 1) {
     return { field: "cell", message: "cell must be positive integers" };
+  }
+  if (
+    input.kind === "tile" &&
+    (cell.w !== TILE_CELL_W || cell.h !== TILE_CELL_H)
+  ) {
+    return {
+      field: "cell",
+      message: `a tile cell is ${TILE_CELL_W}x${TILE_CELL_H}`,
+    };
   }
   if (
     input.pivot !== undefined &&
@@ -844,6 +870,49 @@ function shapeParts(
   return parts;
 }
 
+/**
+ * The checks of one atlas cell: the diamond is fully opaque, nothing else in
+ * rows 0 to 30 is, and row 31 is empty. Alpha is judged as it stands, so a
+ * partial-alpha pixel in the diamond fails binary-alpha and still counts as covered.
+ */
+function tileChecks(image: RgbaImage): Check[] {
+  const { rgba, width, height } = image;
+  const holes: string[] = [];
+  const stray: string[] = [];
+  const row31: string[] = [];
+  for (let y = 0; y < height; y += 1) {
+    const span = tileDiamondRow(y);
+    for (let x = 0; x < width; x += 1) {
+      const opaque = (rgba[(y * width + x) * 4 + 3] as number) !== 0;
+      if (span !== null && x >= span.x0 && x < span.x1) {
+        if (!opaque) holes.push(at(x, y));
+      } else if (opaque) {
+        (y === TILE_DIAMOND_H ? row31 : stray).push(at(x, y));
+      }
+    }
+  }
+  return [
+    verdict(
+      "diamond-coverage",
+      holes.length === 0,
+      "the whole 64x31 diamond is opaque",
+      `${holes.length} diamond pixels are transparent: ${listed(holes)}`,
+    ),
+    verdict(
+      "outside-diamond",
+      stray.length === 0,
+      "no pixel lies outside the diamond",
+      `${stray.length} opaque pixels lie outside the diamond: ${listed(stray)}`,
+    ),
+    verdict(
+      "row-31",
+      row31.length === 0,
+      "row 31 is empty",
+      `${row31.length} opaque pixels on row 31: ${listed(row31)}`,
+    ),
+  ];
+}
+
 function buildChecks(
   input: ConformanceInput,
   grid: GridEvidence,
@@ -944,6 +1013,8 @@ function buildChecks(
       ),
     );
   }
+
+  if (kind === "tile") checks.push(...tileChecks(evaluated));
 
   if (input.pivot !== undefined) {
     const { x, y } = input.pivot;

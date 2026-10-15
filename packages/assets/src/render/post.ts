@@ -7,10 +7,15 @@
 //   1. mode downscale of the colour pass from 4x, each pixel snapped to the asset palette;
 //   2. selective overlap lines from the part-id and depth passes (far side, darkest of its ramp);
 //   3. authored face stamps, occluded by part id;
-//   4. one 1 px exterior outline over the combined silhouette, darkest of the local ramp;
+//   4. one 1 px exterior outline over the combined silhouette, darkest of the local ramp (a
+//      ground profile sets `outline: false` and gets none);
 //   5. a solid contact shadow of one palette colour on empty pixels, never outlined.
 // Alpha is binary and the RGB of an alpha-0 pixel is zero. Height, width, outline, box and the
 // envelope are measured on the figure of step 4 (no shadow); colours on the final cell.
+//
+// A ground profile also names a `crop`: the patch is cut from the downscaled cell, after step 2 and
+// before step 4, so the block grid the downscale ran on is the frame's. Both keys are absent on
+// every other profile and the recipe hash does not see them there.
 //
 // `POST_STEP_VERSION` is pinned in the recipe. Bump it with any change to the golden cells.
 
@@ -61,6 +66,17 @@ export interface PostStepSettings {
     readonly ramp: string;
     readonly shade: number;
   } | null;
+  /** `false` draws no outline (ground). Absent, the outline is on. */
+  readonly outline?: false;
+  /** The part of the cell that is kept, in cell pixels (ground). Absent, the whole cell. */
+  readonly crop?: Crop;
+}
+
+export interface Crop {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
 }
 
 export interface PostStepInput {
@@ -190,6 +206,15 @@ export function cellPixelHash(image: RgbaImage): Sha256 {
   return sha256Hex(bytes);
 }
 
+function cropImage(image: RgbaImage, crop: Crop): RgbaImage {
+  const rgba = new Uint8Array(crop.w * crop.h * 4);
+  for (let y = 0; y < crop.h; y += 1) {
+    const from = ((crop.y + y) * image.width + crop.x) * 4;
+    rgba.set(image.rgba.subarray(from, from + crop.w * 4), y * crop.w * 4);
+  }
+  return { width: crop.w, height: crop.h, rgba };
+}
+
 function processFrame(
   frame: RawFrame,
   input: PostStepInput,
@@ -200,6 +225,20 @@ function processFrame(
   const { settings, palette, stamps } = input;
   const { colour, id, depth } = checkPasses(frame, settings.cell);
   const { w, h } = settings.cell;
+  const { crop } = settings;
+  if (
+    crop !== undefined &&
+    (crop.x < 0 ||
+      crop.y < 0 ||
+      crop.w < 1 ||
+      crop.h < 1 ||
+      crop.x + crop.w > w ||
+      crop.y + crop.h > h)
+  )
+    throw new FrameError(
+      "frame-size",
+      `the crop ${crop.w}x${crop.h} at (${crop.x},${crop.y}) is not inside the ${w}x${h} cell`,
+    );
 
   const maps = blockMaps(id, depth, settings.cell, depthByte);
   const downscaled = modeDownscale(colour, settings.cell, palette);
@@ -213,6 +252,7 @@ function processFrame(
     palette,
   );
   let interior: RgbaImage = { width: w, height: h, rgba: lined.rgba };
+  if (crop !== undefined) interior = cropImage(interior, crop);
   let record: StampRecord = { face: { planned: 0, drawn: 0, skipped: 0 } };
   if (stamps !== undefined) {
     const stamped = applyStamps(
@@ -225,7 +265,8 @@ function processFrame(
     interior = stamped.cell;
     record = stamped.record;
   }
-  const figure = addOutline(interior, palette);
+  const figure =
+    settings.outline === false ? interior : addOutline(interior, palette);
   const image =
     shadowColour === undefined
       ? figure
@@ -260,7 +301,8 @@ function processFrame(
       outline: onFigure.outline,
       binaryAlpha,
       box: onFigure.box,
-      clipped: x0 === 0 || y0 === 0 || x1 === w || y1 === h,
+      clipped:
+        x0 === 0 || y0 === 0 || x1 === figure.width || y1 === figure.height,
       overlapPx: lined.drawn.length,
       unknownIdPx: maps.unknown,
       stamps: record,
@@ -330,7 +372,9 @@ export function postProcessSlot(input: PostStepInput): PostStepResult {
     envelope: envelopeOf(
       cells.map((c) => c.facts.box),
       settings.pivotPx,
-      settings.cell,
+      settings.crop === undefined
+        ? settings.cell
+        : { w: settings.crop.w, h: settings.crop.h },
     ),
   };
 }

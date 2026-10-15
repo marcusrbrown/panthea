@@ -20,6 +20,8 @@ import {
   type ResolveQuery,
 } from "./resolve-core";
 
+// The tile placement maths is the contracts'; the renderer, the studio and the client reach it here.
+export { tileMaskAt, tileOffsetAt } from "@panthea/contracts";
 export {
   type PlaceholderInput,
   type PlaceholderParts,

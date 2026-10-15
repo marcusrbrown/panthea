@@ -1,13 +1,17 @@
 import { describe, expect, it } from "bun:test";
+import { resolveAsset } from "@panthea/assets";
+import { tileMaskAt, tileOffsetAt } from "@panthea/assets/browser";
 import {
   bottomVertex,
   canvasMetrics,
   composeScene,
+  latticeOrigin,
   type SceneEntity,
   STRUCTURE_ANCHORS,
   spriteOrigin,
   ZOOMS,
 } from "@panthea/renderer";
+import { tileFixture } from "../../../../packages/assets/test/fixtures/tile";
 import { canon } from "../../test/canon-kit";
 import {
   LOGICAL_HEIGHT,
@@ -22,9 +26,12 @@ import {
   expressionAfterListing,
   expressionKeyMessage,
   followClipTiming,
+  GROUND_GRID,
+  GROUND_ORIGIN,
   HARNESS_CAMERA,
   harnessItems,
   harnessSubject,
+  MISSING_GROUND,
   MISSING_SPRITE,
   PORTRAIT_PANEL_AT,
   pickIn,
@@ -99,10 +106,10 @@ describe("harnessItems", () => {
     companion: true,
   });
 
-  it("lays a 4x4 ground patch of diamonds", () => {
-    const ground = items.filter((item) => item.kind === "diamond");
-    expect(ground).toHaveLength(16);
-    expect(new Set(ground.map((item) => item.id)).size).toBe(16);
+  it("lays no flat ground of its own: with no tile set chosen it asks for one missing set, once", () => {
+    const ground = items.filter((item) => item.kind === "tile");
+    expect(ground).toHaveLength(1);
+    expect(ground[0]).toMatchObject({ request: MISSING_GROUND });
   });
 
   it("asks for the chosen state and published direction of the companion", () => {
@@ -949,7 +956,7 @@ describe("a rendered god-tall sprite in the preview (R16, R17)", () => {
     expect(byId(items, "structure")).toMatchObject({
       request: { id: "greek-house" },
     });
-    expect(items.filter((item) => item.kind === "diamond")).toHaveLength(16);
+    expect(items.filter((item) => item.kind === "tile")).toHaveLength(1);
   });
 
   it("plays the 16-frame clip at the manifest's timing: frame n at 50 n ms, wrapping to the loop start after 800 ms", () => {
@@ -1163,8 +1170,8 @@ describe("the structures in the scene", () => {
     });
     const { instances, refused } = composeScene(
       list.flatMap((item): SceneEntity[] => {
-        if (item.kind === "diamond") return [item];
-        if (item.kind === "flat" || item.request.source !== "canon") return [];
+        if (item.kind === "tile" || item.kind === "flat") return [];
+        if (item.request.source !== "canon") return [];
         if (item.id === "subject" || item.id === "mortal") return [];
         const resolution = canon({
           spriteId: item.request.id,
@@ -1222,5 +1229,183 @@ describe("the structures in the scene", () => {
       expect(top, instance.id).toBeGreaterThanOrEqual(0);
       expect(top + instance.h, instance.id).toBeLessThanOrEqual(LOGICAL_HEIGHT);
     }
+  });
+});
+
+describe("the harness ground", () => {
+  const ground = { source: "draft", id: "grass-flagstone-pack" } as const;
+  const choice = { selection: ground, period: 4 };
+  const scene = (over: Partial<Parameters<typeof harnessItems>[0]> = {}) =>
+    harnessItems({
+      subject: zeus,
+      portrait: undefined,
+      state: "idle",
+      direction: "south",
+      ability: undefined,
+      expression: "neutral",
+      companion: false,
+      ground: choice,
+      ...over,
+    });
+  const tiles = (items: readonly PreviewItem[]) =>
+    items.flatMap((item) => (item.kind === "tile" ? [item] : []));
+
+  it("is a 6x6 grid of terrain, so 7x7 lattice points are drawn, each a tile of the chosen set", () => {
+    expect(GROUND_GRID).toHaveLength(6);
+    for (const row of GROUND_GRID) expect(row).toHaveLength(6);
+    const ground = tiles(scene());
+    expect(ground).toHaveLength(49);
+    expect(new Set(ground.map((item) => item.id)).size).toBe(49);
+    for (const tile of ground)
+      expect(tile.request).toMatchObject({
+        source: "draft",
+        id: "grass-flagstone-pack",
+      });
+    expect(ground.map((tile) => [tile.point.x, tile.point.y]).sort()).toEqual(
+      Array.from({ length: 49 }, (_, i) => [
+        GROUND_ORIGIN + (i % 7),
+        GROUND_ORIGIN + Math.floor(i / 7),
+      ]).sort(),
+    );
+  });
+
+  it("uses all 16 masks, each lattice point's mask read from the grid by the shared maths", () => {
+    const ground = tiles(scene());
+    const seen = new Set<number>();
+    for (const tile of ground) {
+      const gx = tile.point.x - GROUND_ORIGIN;
+      const gy = tile.point.y - GROUND_ORIGIN;
+      expect(tile.request.mask).toBe(tileMaskAt(GROUND_GRID, gx, gy));
+      seen.add(tile.request.mask as number);
+    }
+    expect([...seen].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 16 }, (_, i) => i),
+    );
+  });
+
+  it("cycles the offset by translating the lattice: at every cycle, lattice neighbours show neighbouring offsets, so every shared edge is continuous", () => {
+    const period = 4;
+    for (let cycle = 0; cycle < period * period; cycle += 1) {
+      const placed = new Map<string, number>();
+      for (const tile of tiles(scene({ groundCycle: cycle })))
+        placed.set(
+          `${tile.point.x},${tile.point.y}`,
+          tile.request.offset as number,
+        );
+      let pairs = 0;
+      for (const [key, offset] of placed) {
+        const [x, y] = key.split(",").map(Number) as [number, number];
+        const row = Math.floor(offset / period);
+        const column = offset % period;
+        // The next point along x is the next column of the same row of the period; along y, the next row.
+        const east = placed.get(`${x + 1},${y}`);
+        if (east !== undefined) {
+          pairs += 1;
+          expect(
+            [Math.floor(east / period), east % period],
+            `cycle ${cycle}: (${x},${y}) -> (${x + 1},${y})`,
+          ).toEqual([row, (column + 1) % period]);
+        }
+        const south = placed.get(`${x},${y + 1}`);
+        if (south !== undefined) {
+          pairs += 1;
+          expect(
+            [Math.floor(south / period), south % period],
+            `cycle ${cycle}: (${x},${y}) -> (${x},${y + 1})`,
+          ).toEqual([(row + 1) % period, column]);
+        }
+      }
+      expect(pairs).toBe(2 * 7 * 6);
+    }
+  });
+
+  it("sixteen cycles show every tile every offset of its set, and the first cycle is the one with none given", () => {
+    const seen = new Map<string, Set<number>>();
+    for (let cycle = 0; cycle < 16; cycle += 1)
+      for (const tile of tiles(scene({ groundCycle: cycle }))) {
+        const offset = tile.request.offset as number;
+        expect(offset).toBeGreaterThanOrEqual(0);
+        expect(offset).toBeLessThan(16);
+        seen.set(tile.id, (seen.get(tile.id) ?? new Set()).add(offset));
+      }
+    for (const offsets of seen.values()) expect(offsets.size).toBe(16);
+    expect(tiles(scene()).map((t) => t.request.offset)).toEqual(
+      tiles(scene({ groundCycle: 0 })).map((t) => t.request.offset),
+    );
+    // Cycle 0 is the lattice untranslated.
+    for (const tile of tiles(scene()))
+      expect(tile.request.offset).toBe(
+        tileOffsetAt(tile.point.x, tile.point.y, 4),
+      );
+  });
+
+  it("takes the offsets from the set's own period", () => {
+    for (const period of [1, 2, 3]) {
+      for (const tile of tiles(
+        scene({ ground: { selection: ground, period }, groundCycle: 5 }),
+      ))
+        expect(tile.request.offset as number).toBeLessThan(period * period);
+    }
+  });
+
+  it("fits the 480x270 viewport: every tile's box lies inside it, at the camera the scene is built for", () => {
+    for (const tile of tiles(scene())) {
+      const box = latticeOrigin(tile.point.x, tile.point.y);
+      if (!box.ok) throw new Error(box.detail);
+      expect(box.value.x - HARNESS_CAMERA.x, tile.id).toBeGreaterThanOrEqual(0);
+      expect(box.value.x + 64 - HARNESS_CAMERA.x, tile.id).toBeLessThanOrEqual(
+        LOGICAL_WIDTH,
+      );
+      expect(box.value.y - HARNESS_CAMERA.y, tile.id).toBeGreaterThanOrEqual(0);
+      expect(box.value.y + 32 - HARNESS_CAMERA.y, tile.id).toBeLessThanOrEqual(
+        LOGICAL_HEIGHT,
+      );
+    }
+  });
+
+  it("asks for one missing set, which fails in the scene, when no tile set is chosen; the rest of the scene is unchanged", () => {
+    const missing = scene({ ground: undefined });
+    expect(tiles(missing)).toHaveLength(1);
+    expect(tiles(missing)[0]).toMatchObject({
+      id: "ground",
+      request: MISSING_GROUND,
+    });
+    expect(missing.filter((item) => item.kind !== "tile")).toEqual(
+      scene().filter((item) => item.kind !== "tile"),
+    );
+  });
+
+  it("composes against a real tile set with no refusal, every tile on the ground layer under the actors", () => {
+    const tile = tileFixture();
+    const snapshot = {
+      entries: new Map([
+        [
+          tile.manifest.id,
+          {
+            assetId: tile.manifest.id,
+            revision: tile.manifest.atlas.blob,
+            manifest: tile.manifest,
+          },
+        ],
+      ]),
+    };
+    const entities = tiles(scene({ groundCycle: 3 })).map(
+      (item): SceneEntity => {
+        const resolution = resolveAsset(snapshot, {
+          spriteId: "grass-flagstone",
+          tile: {
+            mask: item.request.mask as number,
+            offset: item.request.offset as number,
+          },
+        });
+        if (resolution.source !== "canon")
+          throw new Error(`${item.id} did not resolve`);
+        return { kind: "tile", id: item.id, point: item.point, resolution };
+      },
+    );
+    const { instances, refused } = composeScene(entities);
+    expect(refused).toEqual([]);
+    expect(instances).toHaveLength(49);
+    expect(instances.every((i) => i.layer === "ground")).toBe(true);
   });
 });

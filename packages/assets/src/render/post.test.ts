@@ -14,7 +14,7 @@ import {
   PALETTE_FAMILIES,
 } from "../../test/render/fixture";
 import type { RgbaImage } from "../conformance";
-import { conformImage } from "../conformance";
+import { conformImage, tileDiamondRow } from "../conformance";
 import { loadStudioPalettes } from "../studio/content";
 import { candidateLines } from "./overlap";
 import { decodePartId, encodeDepth, idByte, type PartId } from "./parts";
@@ -558,5 +558,136 @@ describe("rules inherited from the probe", () => {
     expect(decodePartId(13)).toBeNull();
     expect(decodePartId(24)).toBe("torso");
     expect(decodePartId(255)).toBeNull();
+  });
+});
+
+describe("a ground frame: no outline, cropped to the patch", () => {
+  const GROUND_CELL: PostStepSettings = {
+    cell: { w: 112, h: 64 },
+    originPx: [56, 24],
+    pivotPx: [32, 16],
+    depthRange: [18, 22],
+    overlapThresholdM: 0.05,
+    shadow: null,
+  };
+  const OLIVE = fixture.palette.ramps.get("marble")?.[3] as readonly [
+    number,
+    number,
+    number,
+  ];
+  const STONE = fixture.palette.ramps.get("lapis")?.[3] as readonly [
+    number,
+    number,
+    number,
+  ];
+
+  /** Two diamonds one lattice step apart (32, 16), drawn as the `ground` part on one flat depth. */
+  function twoDiamonds(settings: PostStepSettings): RawFrame {
+    const blocks: Block[] = [];
+    for (const [dx, dy, rgb] of [
+      [8, 8, OLIVE],
+      [40, 24, STONE],
+    ] as const) {
+      for (let row = 0; row < 31; row += 1) {
+        const span = tileDiamondRow(row);
+        if (span === null) continue;
+        blocks.push({
+          x0: dx + span.x0,
+          x1: dx + span.x1,
+          y0: dy + row,
+          y1: dy + row + 1,
+          part: "ground",
+          depthM: 20,
+          rgb,
+        });
+      }
+    }
+    return syntheticFrame(blocks, undefined, settings);
+  }
+  const post = (settings: PostStepSettings) =>
+    run({
+      slot: "base",
+      settings,
+      palette: fixture.palette,
+      frames: [twoDiamonds(settings)],
+    }).cells[0] as ReturnType<typeof run>["cells"][number];
+  const opaque = (image: RgbaImage) => {
+    let n = 0;
+    for (let at = 3; at < image.rgba.length; at += 4)
+      if (image.rgba[at]) n += 1;
+    return n;
+  };
+  const diamondArea = () => {
+    let n = 0;
+    for (let row = 0; row < 31; row += 1) {
+      const span = tileDiamondRow(row);
+      if (span !== null) n += span.x1 - span.x0;
+    }
+    return n;
+  };
+
+  it("draws an outline round the figure when the setting is absent, which is every existing profile", () => {
+    const cell = post(GROUND_CELL);
+    expect(opaque(cell.image)).toBeGreaterThan(2 * diamondArea());
+    expect(cell.facts.outline).toBe(true);
+  });
+
+  it("outline false draws only the two diamonds: no pixel on their shared edge is an outline pixel", () => {
+    const cell = post({ ...GROUND_CELL, outline: false });
+    expect(opaque(cell.image)).toBe(2 * diamondArea());
+    const w = cell.image.width;
+    for (let y = 0; y < cell.image.height; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        const at = (y * w + x) * 4;
+        if (!cell.image.rgba[at + 3]) continue;
+        const rgb = [
+          cell.image.rgba[at],
+          cell.image.rgba[at + 1],
+          cell.image.rgba[at + 2],
+        ];
+        const ownedByA =
+          x >= 8 && x < 72 && y >= 8 && y < 39 && inside(x - 8, y - 8);
+        const colour = ownedByA ? OLIVE : STONE;
+        expect(rgb, `(${x},${y})`).toEqual([...colour]);
+      }
+    }
+    function inside(x: number, y: number) {
+      const span = tileDiamondRow(y);
+      return span !== null && x >= span.x0 && x < span.x1;
+    }
+  });
+
+  it("crops after the downscale: the cell is the crop's size and its pixels are the uncropped cell's", () => {
+    const whole = post({ ...GROUND_CELL, outline: false });
+    const crop = { x: 12, y: 6, w: 70, h: 40 };
+    const cropped = post({ ...GROUND_CELL, outline: false, crop });
+    expect([cropped.image.width, cropped.image.height]).toEqual([70, 40]);
+    for (let y = 0; y < crop.h; y += 1) {
+      for (let x = 0; x < crop.w; x += 1) {
+        const from = ((crop.y + y) * whole.image.width + crop.x + x) * 4;
+        const to = (y * crop.w + x) * 4;
+        expect([...cropped.image.rgba.subarray(to, to + 4)]).toEqual([
+          ...whole.image.rgba.subarray(from, from + 4),
+        ]);
+      }
+    }
+  });
+
+  it("refuses a crop that leaves the cell, naming the slot", () => {
+    const result = postProcessSlot({
+      slot: "over",
+      settings: {
+        ...GROUND_CELL,
+        outline: false,
+        crop: { x: 100, y: 0, w: 40, h: 40 },
+      },
+      palette: fixture.palette,
+      frames: [twoDiamonds(GROUND_CELL)],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "frame-size",
+      slot: "over",
+    });
   });
 });

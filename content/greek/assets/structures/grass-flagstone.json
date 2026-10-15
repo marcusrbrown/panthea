@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "grass-flagstone",
+  "name": "Grass and flagstone ground",
+  "paletteFamily": "town",
+  "render": {
+    "profile": "grass-flagstone",
+    "matrix": {
+      "cellClass": "tile",
+      "directions": ["south"],
+      "required": [{ "state": "base" }, { "state": "over" }],
+      "deferred": []
+    }
+  }
+}

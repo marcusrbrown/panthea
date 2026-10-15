@@ -55,8 +55,8 @@ export interface RenderedCandidate {
   readonly id: string;
   readonly source: JobSource;
   readonly subject: string;
-  readonly kind: "sprite";
-  /** `state/facing[/ability]`. */
+  readonly kind: "sprite" | "tile";
+  /** `state/facing[/ability]`, or a tile's role. */
   readonly slotKey: string;
   /** The job's role manifest blob. */
   readonly manifest: Sha256;
@@ -128,6 +128,7 @@ export function parseRenderedCandidate(
       if (!subject.ok) return subject;
       const kind = parseEnum(r.kind, "renderedCandidate.kind", [
         "sprite",
+        "tile",
       ] as const);
       if (!kind.ok) return kind;
       const slotKey = parseString(r.slotKey, "renderedCandidate.slotKey");
@@ -301,13 +302,18 @@ export function buildRenderedCandidate(args: {
         "corrupt-blob",
         `cell ${index} of job ${job.job.id} is not the pixels its manifest recorded`,
       );
+    // A tile's frame is the patch the stamper reads, not a tile cell: it is measured as a picture of
+    // its own size, and the tile conformance runs on every atlas cell at pack.
+    const tile = spec.value.kind === "tile";
     const result = conformImage({
       rgba: decoded.image.rgba,
       width: decoded.image.width,
       height: decoded.image.height,
       kind: "sprite",
       mode: "report-only",
-      cell: { w: spec.value.cell.w, h: spec.value.cell.h },
+      cell: tile
+        ? { w: decoded.image.width, h: decoded.image.height }
+        : { w: spec.value.cell.w, h: spec.value.cell.h },
       ...(spec.value.pivot === undefined ? {} : { pivot: spec.value.pivot }),
       paletteRgb: colours,
       colourLimit: spec.value.palette.maxColours,
@@ -334,7 +340,7 @@ export function buildRenderedCandidate(args: {
       id: job.job.id,
       source: job.source,
       subject: request.request.subject,
-      kind: "sprite",
+      kind: spec.value.kind === "tile" ? "tile" : "sprite",
       slotKey: job.source.slotKey,
       manifest: manifestHash as Sha256,
       revisionRecipeHash: m.revisionRecipeHash,

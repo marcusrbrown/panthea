@@ -18,7 +18,8 @@ import {
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
 import type { Camera, CameraCell } from "./camera";
-import type { PostStepSettings, StampLocators } from "./post";
+import { groundCrop } from "./ground";
+import type { Crop, PostStepSettings, StampLocators } from "./post";
 import type { KitFileRef, ModelProfile } from "./profile";
 import type { FrameLocators } from "./script-contract";
 import type { StampSet } from "./stamps";
@@ -45,15 +46,21 @@ export type PostFixedSettings = {
     readonly ramp: string;
     readonly shade: number;
   } | null;
+  /** Ground only: no outline. Absent on every other profile, so their recipe hashes do not move. */
+  readonly outline?: false;
+  /** Ground only: the patch the post step keeps. Absent on every other profile. */
+  readonly crop?: Crop;
 };
 
 /**
  * The fixed settings with the profile's shadow ramp resolved: the shadow is shade 0 of that ramp in
  * the asset's palette, so it is a colour of the asset's own family. A profile with no shadow ramp
- * (a structure) draws none. This is what the revision recipe records and the post step runs.
+ * (a structure) draws none. A ground profile adds its patch: no outline, and the crop. This is
+ * what the revision recipe records and the post step runs.
  */
 export function postSettingsFor(
   shadowRamp: string | undefined,
+  ground?: { readonly outline: false; readonly crop: Crop },
 ): PostFixedSettings {
   return {
     overlapThresholdM: POST_SETTINGS.overlapThresholdM,
@@ -61,6 +68,21 @@ export function postSettingsFor(
       shadowRamp === undefined
         ? null
         : { ...POST_SETTINGS.shadow, ramp: shadowRamp },
+    ...(ground === undefined
+      ? {}
+      : { outline: ground.outline, crop: ground.crop }),
+  };
+}
+
+/** A ground profile's post settings: no outline, and the patch cropped from its frame. */
+export function groundPostOf(
+  profile: ModelProfile,
+): { readonly outline: false; readonly crop: Crop } | undefined {
+  if (profile.kind !== "structure" || profile.build.kind !== "ground")
+    return undefined;
+  return {
+    outline: false,
+    crop: groundCrop(profile.build.period, profile.cell.pivot),
   };
 }
 
@@ -109,6 +131,8 @@ export function postStepSettings(
     depthRange: [camera.depthRange[0], camera.depthRange[1]],
     overlapThresholdM: fixed.overlapThresholdM,
     shadow: fixed.shadow,
+    ...(fixed.outline === undefined ? {} : { outline: fixed.outline }),
+    ...(fixed.crop === undefined ? {} : { crop: fixed.crop }),
   };
 }
 

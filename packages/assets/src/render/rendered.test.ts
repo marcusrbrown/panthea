@@ -27,6 +27,8 @@ import {
   type Rig,
   registryOf,
   renderCandidates,
+  renderTile,
+  TILE_PACK_INPUT,
 } from "../../test/render/rig";
 import { sheetOf } from "../../test/studio/fixtures";
 import { manualClock } from "../../test/studio/preview";
@@ -37,6 +39,7 @@ import { readRevision } from "../registry";
 import { decodePng } from "../studio/png/decode";
 import { createPreviewSource } from "../studio/preview-source";
 import { auditRendered } from "./audit";
+import { groundCrop } from "./ground";
 import { loadRenderInputs } from "./load";
 import { cellPixelHash, POST_STEP_VERSION } from "./post";
 import { slotRecipeHash } from "./recipe";
@@ -978,4 +981,254 @@ describe("a complete Zeus matrix", () => {
     if (!published.ok) throw new Error(published.message);
     expect(published.asset.record.state).toBe("canon");
   }, 600_000);
+});
+
+describe("a ground tile set: render, pick, pack, approve and publish", () => {
+  async function tileSet(over: Parameters<typeof openRig>[0] = {}) {
+    const rig = await openRig({ launches: [{}], ...over });
+    const ids = await renderTile(rig, "grass-flagstone-set", "tile-set");
+    pickAll(rig, "tile-set", ids);
+    return { rig, ids };
+  }
+  const packTile = (rig: Rig) =>
+    rig.session.pack(
+      { ...TILE_PACK_INPUT, workingSetId: "tile-set" },
+      content,
+      approvedPalettes(),
+      registryOf(rig),
+      { renderRoot: RENDER_ROOT },
+    );
+  async function packedTile(over: Parameters<typeof openRig>[0] = {}) {
+    const { rig, ids } = await tileSet(over);
+    const packed = packTile(rig);
+    if (!packed.ok) throw new Error(packed.message);
+    const manifest = manifestOf(packed.asset);
+    return {
+      rig,
+      ids,
+      packed,
+      manifest,
+      atlas: rig.session.store.readBlob(manifest.atlas.blob) as Uint8Array,
+    };
+  }
+  const publishTile = (rig: Rig, palettes = approvedPalettes()) =>
+    rig.session.publishAsset(
+      TILE_PACK_INPUT.id,
+      content,
+      palettes,
+      registryOf(rig),
+      cfg(rig),
+    );
+
+  test(
+    "two rendered patches are picked and packed to a tile manifest and the 16 by 16 atlas, every atlas cell conforming",
+    async () => {
+      const { rig, packed, manifest } = await packedTile();
+      const status = rig.session.store.readWorkingSet("tile-set");
+      if (status.kind !== "found") throw new Error("no set");
+      expect(status.value.status).toBe("complete");
+      expect(Object.keys(status.value.rendered ?? {}).sort()).toEqual([
+        "base",
+        "over",
+      ]);
+      if (manifest.kind !== "tile") throw new Error("not a tile");
+      expect(manifest).toMatchObject({
+        id: "grass-flagstone",
+        cell: { w: 64, h: 32 },
+        paletteId: "greek-retro",
+        paletteFamily: "town",
+        terrain: { base: "grass", over: "flagstone" },
+        period: 4,
+        atlas: { width: 1024, height: 512 },
+      });
+      if (manifest.provenance.method !== "rendered")
+        throw new Error("not rendered");
+      expect(manifest.provenance.slots.map((slot) => slot.slotKey)).toEqual([
+        "base",
+        "over",
+      ]);
+      expect(manifest.provenance.revisionRecipe.pivot).toEqual({
+        x: 32,
+        y: 16,
+      });
+
+      // Tile conformance ran on every one of the 256 atlas cells.
+      const { record } = packed.asset;
+      const report = "report" in record ? record.report : undefined;
+      if (report === undefined) throw new Error("no report");
+      const checks = report.checks;
+      expect(report.status).toBe("pass");
+      for (const name of [
+        "binary-alpha",
+        "palette",
+        "diamond-coverage",
+        "outside-diamond",
+        "row-31",
+      ])
+        expect(
+          checks.filter((c: { check: string }) => c.check.endsWith(`:${name}`))
+            .length,
+        ).toBe(256);
+      expect(checks.every((c: { status: string }) => c.status === "pass")).toBe(
+        true,
+      );
+      expect(
+        checks.some(
+          (c: { check: string }) => c.check === "0/0:diamond-coverage",
+        ),
+      ).toBe(true);
+      expect(
+        checks.some((c: { check: string }) => c.check === "15/15:row-31"),
+      ).toBe(true);
+    },
+    T,
+  );
+
+  test(
+    "the atlas is the stamp of the two stored patches, and approving and publishing it passes the audit",
+    async () => {
+      const { rig, manifest, atlas } = await packedTile();
+      const approvedAsset = rig.session.approveAsset(
+        TILE_PACK_INPUT.id,
+        {},
+        content,
+        approvedPalettes(),
+      );
+      if (!approvedAsset.ok) throw new Error(approvedAsset.message);
+      expect(
+        auditOf(rig, approvedAsset.asset.record.manifest, atlas),
+      ).toBeUndefined();
+      const published = publishTile(rig);
+      if (!published.ok) throw new Error(published.message);
+      const revision = published.asset.published?.revision;
+      if (revision === undefined) throw new Error("not published");
+      const loaded = readRevision(
+        registryOf(rig),
+        manifest.id,
+        revision,
+        content.vocabulary,
+      );
+      expect(loaded.ok).toBe(true);
+      if (loaded.ok) expect(loaded.value.manifest.kind).toBe("tile");
+    },
+    T,
+  );
+
+  test(
+    "pack refuses with one patch missing, naming the slot",
+    async () => {
+      const rig = await openRig({ launches: [{}] });
+      const ids = await renderTile(rig, "grass-flagstone-set", "tile-set");
+      pickAll(rig, "tile-set", [ids[0] as string]);
+      const packed = packTile(rig);
+      expect(packed.ok).toBe(false);
+      if (!packed.ok) expect(packed.message).toMatch(/not complete|over/);
+    },
+    T,
+  );
+
+  test(
+    "audit refuses a changed atlas byte, naming the cell, and a changed recipe, each beside the control that passes",
+    async () => {
+      const { rig, manifest, atlas } = await packedTile();
+      const approvedAsset = rig.session.approveAsset(
+        TILE_PACK_INPUT.id,
+        {},
+        content,
+        approvedPalettes(),
+      );
+      if (!approvedAsset.ok) throw new Error(approvedAsset.message);
+      const approvedManifest = approvedAsset.asset.record.manifest;
+      expect(auditOf(rig, approvedManifest, atlas)).toBeUndefined();
+
+      const decoded = decodePng(atlas);
+      if (!decoded.ok) throw new Error("atlas");
+      const rgba = new Uint8Array(decoded.image.rgba);
+      // One opaque pixel of cell (mask 6, offset 9) takes another colour.
+      const at = ((9 * 32 + 15) * 1024 + 6 * 64 + 32) * 4;
+      expect(rgba[at + 3]).toBe(255);
+      rgba[at] = 255 - (rgba[at] as number);
+      const changed = encodeRgbaPng(rgba, 1024, 512);
+      const refusal = auditOf(rig, approvedManifest, changed);
+      expect(refusal).toMatch(/tile atlas cell \(mask 6, offset 9\)/);
+      expect(refusal).toMatch(/differs from the stamp/);
+
+      expect(
+        auditOf(rig, approvedManifest, atlas, {
+          current: {
+            blender: rig.blender.pin as never,
+            script: "0".repeat(64) as Sha256,
+          },
+        }),
+      ).toMatch(/script hash differs/);
+      expect(
+        auditOf(rig, approvedManifest, atlas, {
+          current: { blender: rig.blender.pin as never, postStepVersion: 99 },
+        }),
+      ).toMatch(/post-step version differs/);
+      expect(manifest.kind).toBe("tile");
+    },
+    T,
+  );
+
+  test(
+    "audit refuses a render whose patches do not repeat every N, naming the gate",
+    async () => {
+      const { rig, atlas } = await packedTile({
+        launches: [{ groundPeriod: 3 }],
+      });
+      const approvedAsset = rig.session.approveAsset(
+        TILE_PACK_INPUT.id,
+        {},
+        content,
+        approvedPalettes(),
+      );
+      if (!approvedAsset.ok) throw new Error(approvedAsset.message);
+      const refusal = auditOf(rig, approvedAsset.asset.record.manifest, atlas);
+      expect(refusal).toMatch(/patch gate/);
+      expect(refusal).toMatch(/slot (base|over)/);
+      const published = publishTile(rig);
+      expect(published.ok).toBe(false);
+      if (!published.ok)
+        expect(published.message).toMatch(/render audit:.*patch gate/);
+    },
+    T,
+  );
+
+  test(
+    "audit refuses a stored raw frame that is missing, as it does for a sprite",
+    async () => {
+      const { rig, manifest, atlas } = await packedTile();
+      if (manifest.provenance.method !== "rendered") throw new Error("x");
+      const hash = manifest.provenance.slots[1]?.raw.colour[0] as Sha256;
+      rmSync(join(rig.root, "blobs", `${hash}.png`));
+      expect(auditOf(rig, manifest, atlas)).toMatch(
+        /slot over: the raw colour frame 0 .* is missing from the store/,
+      );
+    },
+    T,
+  );
+
+  test(
+    "the patch is the cropped cell: 320x192, lattice (0,0) at (160,48)",
+    async () => {
+      const { rig, ids } = await tileSet();
+      const crop = groundCrop(4, [272, 64]);
+      for (const id of ids) {
+        const candidate = rig.session.store.readRenderedCandidate(id);
+        if (candidate.kind !== "found") throw new Error("no candidate");
+        expect(candidate.value.kind).toBe("tile");
+        expect(candidate.value.frames).toHaveLength(1);
+        const png = decodePng(
+          rig.session.store.readBlob(
+            candidate.value.frames[0]?.hash as Sha256,
+          ) as Uint8Array,
+        );
+        if (!png.ok) throw new Error("cell");
+        expect([png.image.width, png.image.height]).toEqual([crop.w, crop.h]);
+      }
+      expect([160, 48]).toEqual([272 - crop.x, 64 - crop.y]);
+    },
+    T,
+  );
 });

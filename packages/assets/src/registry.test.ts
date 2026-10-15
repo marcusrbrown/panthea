@@ -26,6 +26,7 @@ import {
   type SpriteManifest,
   transitionAsset,
 } from "@panthea/contracts";
+import { tileFixture } from "../test/fixtures/tile";
 import {
   committedVocabulary,
   type FixtureAsset,
@@ -1133,5 +1134,69 @@ describe("the published legacy manifests", () => {
         throw new Error(`${name}: ${parsed.path}: ${parsed.message}`);
       expect(canonicalManifestText(parsed.value), name).toBe(text);
     }
+  });
+});
+
+describe("tile assets in the registry", () => {
+  it("publishes a tile, loads it back as a tile, and keeps its manifest canonical", () => {
+    const dir = root();
+    const asset = tileFixture();
+    const { revision } = publish(dir, asset);
+    const loaded = loadRegistry(dir, vocabulary);
+    expect(loaded.problems).toEqual([]);
+    const entry = loaded.snapshot.entries.get(asset.manifest.id);
+    expect(entry?.manifest.kind).toBe("tile");
+    expect(String(entry?.revision)).toBe(revision);
+    expect(textOf(join(dir, "manifests", `${revision}.json`))).toBe(
+      canonicalManifestText(asset.manifest),
+    );
+  });
+
+  it("refuses atlas bytes that do not hash to the manifest's atlas hash, before writing anything", () => {
+    const dir = root();
+    const asset = tileFixture();
+    const other = tileFixture("grass-flagstone", 4, 2);
+    const [bytes] = [...other.blobs.values()];
+    const result = writeRevision(
+      dir,
+      asset.manifest,
+      new Map([[asset.manifest.atlas.blob, bytes as Uint8Array]]),
+      vocabulary,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("hash-mismatch");
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("refuses a PNG whose size is not the atlas the manifest declares for its period", () => {
+    const dir = root();
+    const small = tileFixture("grass-flagstone", 2);
+    const [bytes] = [...small.blobs.values()];
+    const declared = tileFixture("grass-flagstone", 4);
+    const manifest = {
+      ...declared.manifest,
+      atlas: { ...declared.manifest.atlas, blob: small.manifest.atlas.blob },
+    } as AssetManifest;
+    const result = writeRevision(
+      dir,
+      manifest,
+      new Map([[small.manifest.atlas.blob, bytes as Uint8Array]]),
+      vocabulary,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("corrupt-blob");
+  });
+
+  it("refuses a manifest whose atlas size is not 16 columns by N squared rows", () => {
+    const asset = tileFixture();
+    const wrong = {
+      ...asset.manifest,
+      atlas: { ...asset.manifest.atlas, height: 8 * 32 },
+    };
+    const parsed = parseAssetManifest(
+      JSON.parse(JSON.stringify(wrong)),
+      vocabulary,
+    );
+    expect(parsed.ok).toBe(false);
   });
 });

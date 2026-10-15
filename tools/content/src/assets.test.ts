@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -40,6 +41,7 @@ import {
   type Sha256,
   transitionAsset,
 } from "@panthea/contracts";
+import { tileFixture } from "../../../packages/assets/test/fixtures/tile";
 import { validateAssets } from "./assets";
 
 const COMMITTED = join(import.meta.dir, "..", "..", "..", "content", "greek");
@@ -1250,7 +1252,7 @@ describe("structures", () => {
     expect(found.map((d) => d.file)).toEqual([
       "assets/structures/greek-house.json",
     ]);
-    expect(found[0]?.message).toContain("does not hold sprites");
+    expect(found[0]?.message).toContain("neither sprites nor tiles");
   });
 
   it("refuses a profile that does not exist, and a figure profile", () => {
@@ -1283,6 +1285,41 @@ describe("structures", () => {
     expect(found[0]?.file).toBe("tools/render/profiles/greek-house.json");
     expect(found[0]?.message).toContain("cell");
     expect(found[0]?.message).toContain("192x192");
+  });
+
+  it("accepts the ground set's profile with no kit files, and holds a ground build to the tile cell", () => {
+    const root = contentRoot();
+    const ground = join(root, "assets", "structures", "grass-flagstone.json");
+    expect(existsSync(ground)).toBe(true);
+    expect(diagnostics(root, renderCopy())).toEqual([]);
+    const groundProfile = JSON.parse(
+      readFileSync(
+        join(REPO_ROOT, "tools", "render", "profiles", "grass-flagstone.json"),
+        "utf8",
+      ),
+    );
+    expect(groundProfile.kitFiles).toEqual([]);
+
+    const onSprites = contentRoot();
+    editJson(
+      join(onSprites, "assets", "structures", "grass-flagstone.json"),
+      (s) => {
+        s.render.matrix.cellClass = "structure";
+        s.render.matrix.required = [{ state: "intact" }];
+      },
+    );
+    const refused = diagnostics(onSprites, renderCopy());
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.message).toContain("ground build");
+
+    const house = contentRoot();
+    editJson(subjectFile(house), (s) => {
+      s.render.matrix.cellClass = "tile";
+      s.render.matrix.required = [{ state: "base" }];
+    });
+    const other = diagnostics(house, renderCopy());
+    expect(other).toHaveLength(1);
+    expect(other[0]?.message).toContain("ground build");
   });
 
   it("refuses a profile with no clip for a state its subject requires, or with frames the vocabulary does not allow", () => {
@@ -1724,5 +1761,37 @@ describe("the retro matrix completeness rule", () => {
         expect(found[0]?.message).toContain(text);
       });
     }
+  });
+});
+
+describe("tile assets", () => {
+  it("accepts a published tile alongside the other kinds, with no diagnostics", () => {
+    const root = contentRoot();
+    publish(root, tileFixture());
+    expect(diagnosticsOf(root)).toEqual([]);
+    const { snapshot } = loadRegistry(registryOf(root), vocabulary);
+    expect(snapshot.entries.get("grass-flagstone")?.manifest.kind).toBe("tile");
+  });
+
+  it("still holds a tile to the palette it names", () => {
+    const root = contentRoot();
+    publish(root, tileFixture());
+    writePalette(root, paletteFixture("approved", "another-master").files);
+    const [diagnostic] = diagnosticsOf(root);
+    expect(diagnostic?.file).toMatch(
+      /^assets\/registry\/manifests\/[0-9a-f]{64}\.json$/,
+    );
+    expect(diagnostic?.message).toContain("fixture-master");
+  });
+
+  it("refuses an inhabitant whose sprite id is a published tile", () => {
+    const root = contentRoot();
+    publish(root, tileFixture("grass-flagstone"));
+    writeInhabitants(root, [
+      { id: "woodcutter", sprite: "grass-flagstone" },
+      { id: "zeus", deity: true },
+    ]);
+    const [diagnostic] = diagnosticsOf(root);
+    expect(diagnostic?.message).toContain("published as a tile, not a sprite");
   });
 });

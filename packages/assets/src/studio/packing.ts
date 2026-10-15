@@ -46,6 +46,7 @@ import {
 import { derivationRuntime } from "./derive";
 import { type EditRecord, handStepOf } from "./export-import";
 import { cutFrame } from "./frame-ref";
+import { packTile } from "./packing-tile";
 import { decodePng } from "./png/decode";
 import { buildSpec, type StudioContent } from "./request";
 import type { CommandRecord, JobRecord, RequestRecord } from "./store";
@@ -94,6 +95,8 @@ export interface PackSources {
   /** The content to pack against: the palette of the request is looked up in `content.palettes`, so the caller passes the palettes as they are on disk now. */
   readonly content: StudioContent;
   readonly prior?: PriorRevision;
+  /** `tools/render`: where a tile set reads the committed ground profile it is stamped with. */
+  readonly renderRoot?: string;
 }
 
 export interface Packed {
@@ -397,6 +400,7 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     );
   const { spec } = { spec: built.value };
   const { kind } = spec;
+  if (kind === "tile") return packTile(input, sources, spec, request);
   const palette = content.palettes.get(spec.palette.id);
   if (palette === undefined)
     return refuse(`the palette ${spec.palette.id} is not loaded`);

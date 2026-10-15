@@ -38,6 +38,7 @@ import {
   renderDoneJson,
   SENTINEL_NAME,
 } from "../../src/render/script-contract";
+import { type Colour, groundMosaic } from "./ground-mosaic";
 
 export type SlotMode =
   /** All frames, then the sentinel. */
@@ -79,6 +80,8 @@ export interface LaunchBehavior {
   holdAfterSlots?: number;
   /** Exits 0 after the first line without rendering anything. */
   exitEarly?: boolean;
+  /** A ground mosaic that repeats every this many lattice steps, whatever the profile's period says. */
+  groundPeriod?: number;
 }
 
 export interface Behavior {
@@ -244,10 +247,30 @@ function main(): void {
   const recipe = readJson<{
     blender: { version: string; buildHash: string };
     stagingRoot: string;
-    camera: { supersample: number; cell: { width: number; height: number } };
-    profile: { kind?: string };
-    slots: { id: string; facing: string; frames: number; outDir: string }[];
+    camera: {
+      supersample: number;
+      depthRange: [number, number];
+      cell: { width: number; height: number; pivot: [number, number] };
+    };
+    profile: { kind?: string; build?: { kind?: string; period?: number } };
+    palette: { ramps: { id: string; shades: string[] }[] };
+    slots: {
+      id: string;
+      state: string;
+      facing: string;
+      frames: number;
+      outDir: string;
+    }[];
   }>(recipePath);
+  // A ground set's frames are the periodic mosaic of its terrain (src: test/render/ground-mosaic.ts).
+  const ground = recipe.profile.build?.kind === "ground";
+  const ramp = (id: string): Colour[] =>
+    (recipe.palette.ramps.find((r) => r.id === id)?.shades ?? []).map(
+      (hex) =>
+        [1, 3, 5].map((at) =>
+          Number.parseInt(hex.slice(at, at + 2), 16),
+        ) as unknown as Colour,
+    );
   // A structure's frames are drawn to the recipe's own cell; a figure's are the committed fixture's.
   const structure = recipe.profile.kind === "structure";
   const rawWidth = recipe.camera.cell.width * recipe.camera.supersample;
@@ -333,6 +356,22 @@ function main(): void {
       id: [],
       depth: [],
     };
+    const mosaic = ground
+      ? groundMosaic({
+          role: slot.state as "base" | "over",
+          period:
+            launch.groundPeriod ?? (recipe.profile.build?.period as number),
+          width: rawWidth,
+          height: rawHeight,
+          origin: [
+            recipe.camera.cell.pivot[0] * recipe.camera.supersample,
+            recipe.camera.cell.pivot[1] * recipe.camera.supersample,
+          ],
+          depthRange: recipe.camera.depthRange,
+          olive: ramp("olive"),
+          stone: ramp("stone-sky"),
+        })
+      : undefined;
     for (let index = 0; index < frames; index += 1) {
       for (const role of RENDER_ROLES) {
         const name = `${role}/${String(index).padStart(2, "0")}.png`;
@@ -347,7 +386,13 @@ function main(): void {
           hang();
           return;
         }
-        if (structure)
+        if (mosaic !== undefined) {
+          const pass = mosaic[role];
+          writeFileSync(
+            join(partial, name),
+            encodeRgbaPng(pass.rgba, pass.width, pass.height),
+          );
+        } else if (structure)
           writeFileSync(
             join(partial, name),
             syntheticPass(role, rawWidth, rawHeight, block),

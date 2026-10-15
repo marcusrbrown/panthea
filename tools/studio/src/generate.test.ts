@@ -653,7 +653,7 @@ describe("a recipe request through the CLI generate", () => {
       { pivot: { x: -1, y: 4 } },
       /non-negative integer/,
     ],
-    ["a portrait", { kind: "portrait" }, /only a sprite is rendered/],
+    ["a portrait", { kind: "portrait" }, /only a sprite or a tile is rendered/],
   ];
   for (const [name, change, message] of refused)
     test(`refuses ${name}, and stores nothing`, async () => {
@@ -668,6 +668,37 @@ describe("a recipe request through the CLI generate", () => {
       expect(JSON.stringify(outcome)).toMatch(message);
       expect(readStudioStatus(rig.root).requests).toEqual([]);
     });
+
+  test("resolve takes a tile recipe request: roles for slots, the diamond centre for pivot, the tile cell for spec", async () => {
+    const rig = await runtimeRig();
+    const tile = {
+      id: "grass-flagstone-set",
+      subject: "grass-flagstone",
+      kind: "tile",
+      slots: [{ role: "base" }, { role: "over" }],
+      palette: "greek-retro",
+      pivot: { x: 32, y: 16 },
+    };
+    const { outcome } = await run(rig.config, "resolve", tile, rig.deps);
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        request: {
+          kind: "tile",
+          batch: 1,
+          seed: 0,
+          slots: [{ role: "base" }, { role: "over" }],
+          recipe: { profile: "grass-flagstone" },
+        },
+        spec: { cell: { id: "tile", w: 64, h: 32 } },
+      },
+    });
+    const { palette: _palette, pivot: _pivot, ...bare } = tile;
+    const refusal = await run(rig.config, "resolve", bare, rig.deps);
+    expect(refusal.outcome.ok).toBe(false);
+    expect(JSON.stringify(refusal.outcome)).toMatch(/recipe/);
+    expect(readStudioStatus(rig.root).requests).toEqual([]);
+  });
 
   test("an image request is unchanged: the same arguments without a palette and pivot build an image request", async () => {
     const rig = await runtimeRig();

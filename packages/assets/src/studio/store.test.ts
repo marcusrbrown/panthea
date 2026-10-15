@@ -178,6 +178,31 @@ describe("records", () => {
     });
   });
 
+  test("a tile recipe request reads back as written, with its role slots and recipe", () => {
+    const store = openStore(tempRoot());
+    const tileRequest = {
+      schemaVersion: 1,
+      id: "grass-flagstone-set",
+      request: {
+        schemaVersion: 1,
+        subject: "grass-flagstone",
+        kind: "tile",
+        slots: [{ role: "base" }, { role: "over" }],
+        batch: 1,
+        seed: 0,
+        recipe: {
+          profile: "grass-flagstone",
+          palette: "greek-retro",
+          pivot: { x: 32, y: 16 },
+        },
+      },
+      nextOrdinal: 0,
+    } as const;
+    store.putRequest(tileRequest);
+    expect(store.status().requests).toEqual([tileRequest]);
+    expect(store.status().invalid).toEqual([]);
+  });
+
   test("a malformed record of each kind is reported by file; valid neighbours still read", () => {
     const root = tempRoot();
     const store = openStore(root);
@@ -568,9 +593,9 @@ describe("candidate and working-set records are strict", () => {
       },
     ],
     [
-      "a kind that is not sprite or portrait",
+      "a kind that is not sprite, portrait or tile",
       (w) => {
-        w.kind = "tile";
+        w.kind = "effect";
       },
     ],
     [

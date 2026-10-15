@@ -17,6 +17,7 @@ import {
   type Layer,
   type SceneEntity,
 } from "@panthea/renderer";
+import { tileFixture } from "../../../../packages/assets/test/fixtures/tile";
 
 const cell = (x: number, y: number, z = 0): Cell => ({ x, y, z });
 
@@ -71,6 +72,16 @@ function sprite(
     ...(state === undefined ? {} : { state }),
   });
   return { kind: "sprite", id, layer, cell: at, resolution };
+}
+
+/** A ground tile at a lattice point, resolved by the real resolver from a tile set. */
+function tile(id: string, x: number, y: number): SceneEntity {
+  const resolution = resolveAsset(snapshot(tileFixture()), {
+    spriteId: "grass-flagstone",
+    tile: { mask: 6, offset: 9 },
+  });
+  if (resolution.source !== "canon") throw new Error("tile did not resolve");
+  return { kind: "tile", id, point: { x, y }, resolution };
 }
 
 function find(instances: readonly Instance[], id: string): Instance {
@@ -146,17 +157,21 @@ describe("composeScene: resolver results", () => {
     expect([ghost.x + ghost.w / 2, ghost.y + ghost.h]).toEqual([0, 63]);
   });
 
-  it("draws ground diamonds procedurally on the ground layer", () => {
+  it("draws a ground tile from its set's atlas on the ground layer", () => {
     const scene = composeScene([
-      { kind: "diamond", id: "g0", cell: cell(0, 0) },
+      tile("g0", 0, 0),
       sprite("zeus", "actor", cell(0, 0), "placeholder-zeus"),
     ]);
     const ground = find(scene.instances, "g0");
-    expect(ground.art).toEqual({ source: "diamond" });
+    expect(ground.art).toMatchObject({
+      source: "canon",
+      assetId: "grass-flagstone",
+    });
     expect(ground.layer).toBe("ground");
     expect(ground.w).toBe(64);
     expect(ground.h).toBe(32);
-    expect({ x: ground.x, y: ground.y }).toEqual({ x: -32, y: 0 });
+    // The lattice point (0, 0): the tile's box is centred on the world origin.
+    expect({ x: ground.x, y: ground.y }).toEqual({ x: -32, y: -16 });
     expect(ground.z).toBeLessThan(find(scene.instances, "zeus").z);
   });
 });
@@ -242,12 +257,13 @@ describe("composeScene: depth", () => {
   it("returns instances back to front", () => {
     const scene = composeScene([
       sprite("c", "speech", cell(1, 1), "placeholder-zeus"),
-      { kind: "diamond", id: "a", cell: cell(6, 6) },
+      tile("a", 6, 6),
       sprite("b", "actor", cell(0, 0), "placeholder-zeus"),
     ]);
     const zs = scene.instances.map((i) => i.z);
     expect([...zs].sort((p, q) => p - q)).toEqual(zs);
-    expect(scene.instances.map((i) => i.id)).toEqual(["b", "c", "a"]);
+    // The ground is always first, whatever its coordinates.
+    expect(scene.instances.map((i) => i.id)).toEqual(["a", "b", "c"]);
   });
 });
 

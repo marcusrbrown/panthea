@@ -22,7 +22,6 @@ import {
   Sprite2DMaterial,
   type SpriteFrame,
 } from "three-flatland";
-import { diamondRow, TILE_H, TILE_W } from "./iso";
 
 /** Alpha is binary, so any cutoff in (0, 1) is exact. */
 export const ALPHA_CUTOFF = 0.5;
@@ -172,21 +171,6 @@ export function atlasFrame(
     sourceWidth: rect.w,
     sourceHeight: rect.h,
   };
-}
-
-const DIAMOND_FILL = [138, 154, 112, 255] as const;
-
-/** The ground diamond: the 64x31 art-guide shape in a 64x32 box, binary alpha, no RGB under alpha 0. */
-export function diamondImage(): DecodedImage {
-  const rgba = new Uint8Array(TILE_W * TILE_H * 4);
-  for (let y = 0; y < TILE_H; y += 1) {
-    const span = diamondRow(y);
-    if (span === null) continue;
-    for (let x = span.x0; x < span.x1; x += 1) {
-      rgba.set(DIAMOND_FILL, (y * TILE_W + x) * 4);
-    }
-  }
-  return rgbaImage(TILE_W, TILE_H, rgba);
 }
 
 export interface AtlasEntry {

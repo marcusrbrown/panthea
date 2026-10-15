@@ -18,6 +18,7 @@ test("the root exports lookup, placeholder and helpers", () => {
       "EMPTY_SNAPSHOT",
       "LEGACY_PALETTE_LIMITS",
       "MASTER_PALETTE_ID",
+      "TILE_DIAMOND_H",
       "colourLimit",
       "conformImage",
       "encodeRgbaPng",
@@ -30,6 +31,7 @@ test("the root exports lookup, placeholder and helpers", () => {
       "resolveAsset",
       "sha256Hex",
       "shadeBounds",
+      "tileDiamondRow",
     ].sort(),
   );
 });

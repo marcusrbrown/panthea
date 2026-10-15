@@ -42,6 +42,7 @@ import {
   parseAssetManifest,
   parseAssetVocabulary,
   parseRegistryIndex,
+  type TileManifest,
 } from "@panthea/contracts";
 import { decodePng } from "../../../../packages/assets/src/studio/png/decode";
 
@@ -113,7 +114,7 @@ const byKey = (a: ReferenceSelection, b: ReferenceSelection): number =>
   a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 
 function selectionsOf(
-  manifest: AssetManifest,
+  manifest: Exclude<AssetManifest, TileManifest>,
   atlas: Rgba,
 ): ReferenceSelection[] {
   const selection = (
@@ -195,6 +196,9 @@ export function buildReference(files: RegistryFiles): Reference {
         `blobs/${manifest.atlas.blob}.png: bytes do not hash to its name`,
       );
     }
+    // A tile set is ground, not a figure the inspection scene draws by selection: its 16 x N squared
+    // cells are held by the studio's pixel check and the publish audit. It is checked, then left out.
+    if (manifest.kind === "tile") continue;
     const decoded = decodePng(bytes);
     if (!decoded.ok) {
       throw new Error(`blobs/${manifest.atlas.blob}.png: ${decoded.message}`);

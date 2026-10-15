@@ -7,13 +7,11 @@ import {
   NoColorSpace,
   type Texture,
 } from "three";
-import { DIAMOND_H, diamondRow, TILE_H, TILE_W } from "./iso";
 import {
   type AtlasSpec,
   atlasFrame,
   createTextureStore,
   decideReload,
-  diamondImage,
   pixelTexture,
   placeholderImage,
   type RawImage,
@@ -155,33 +153,6 @@ describe("atlasFrame", () => {
     expect(() =>
       atlasFrame({ x: 200, y: 0, w: 64, h: 80 }, { width: 256, height: 80 }),
     ).toThrow(/outside/);
-  });
-});
-
-describe("diamondImage", () => {
-  const diamond = diamondImage();
-  const raw = diamond.image as RawImage;
-
-  it("is a 64x32 box with the diamond rows opaque, row 31 clear and alpha strictly binary", () => {
-    expect([diamond.width, diamond.height]).toEqual([TILE_W, TILE_H]);
-    for (let y = 0; y < TILE_H; y += 1) {
-      const span = diamondRow(y);
-      for (let x = 0; x < TILE_W; x += 1) {
-        const inside = span !== null && x >= span.x0 && x < span.x1;
-        const alpha = topDown(raw, x, y)[3];
-        expect(alpha).toBe(inside ? 255 : 0);
-      }
-    }
-    expect(topDown(raw, 32, DIAMOND_H)[3]).toBe(0);
-  });
-
-  it("leaves no RGB under alpha zero", () => {
-    for (let y = 0; y < TILE_H; y += 1) {
-      for (let x = 0; x < TILE_W; x += 1) {
-        const pixel = topDown(raw, x, y);
-        if (pixel[3] === 0) expect(pixel.slice(0, 3)).toEqual([0, 0, 0]);
-      }
-    }
   });
 });
 

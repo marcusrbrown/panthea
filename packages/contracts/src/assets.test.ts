@@ -91,6 +91,19 @@ describe("asset vocabulary", () => {
       ["god-tall", 112, 96],
       ["portrait", 96, 96],
       ["structure", 192, 192],
+      ["tile", 64, 32],
+    ]);
+    expect(parsed.value.cells.find((c) => c.id === "tile")?.kinds).toEqual([
+      "tile",
+    ]);
+    expect(parsed.value.version).toBe(5);
+    expect(
+      parsed.value.states
+        .filter((rule) => rule.cellClasses?.includes("tile"))
+        .map((rule) => [rule.id, rule.frames]),
+    ).toEqual([
+      ["base", { min: 1, max: 1 }],
+      ["over", { min: 1, max: 1 }],
     ]);
     expect(parsed.value.cells.find((c) => c.id === "god-tall")?.kinds).toEqual([
       "sprite",
@@ -173,6 +186,8 @@ describe("asset vocabulary", () => {
         "intact",
         "damaged",
         "ruin",
+        "base",
+        "over",
         "hurt",
         "down",
       ]);
@@ -294,7 +309,7 @@ describe("asset vocabulary", () => {
       [
         "unknown cell kind",
         (v) => {
-          v.cells[0].kinds = ["tile"];
+          v.cells[0].kinds = ["sound"];
         },
         /cells\[0\]\.kinds/,
       ],

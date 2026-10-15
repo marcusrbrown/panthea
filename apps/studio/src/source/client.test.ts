@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { spriteFixture } from "@panthea/assets/fixtures";
+import { tileFixture } from "../../../../packages/assets/test/fixtures/tile";
 import { removeTempRoots, rig, world, writeDraft } from "../../test/source-kit";
 import { createDevBridgeSource, type HotChannel, parseChange } from "./client";
 import type { AssetBridge } from "./dev-bridge";
@@ -70,6 +71,35 @@ describe("the browser side of the dev bridge", () => {
     expect(resolved.kind).toBe("frames");
     const bytes = await source.fetchBytes(resolved.bytes);
     expect([...bytes.slice(0, 4)]).toEqual([137, 80, 78, 71]);
+  });
+
+  test("a tile cell is asked for by mask and offset, and the bridge answers that cell", async () => {
+    const w = world();
+    writeDraft(w.studioRoot, "grass-flagstone-pack", tileFixture());
+    const r = rig(w);
+    const source = createDevBridgeSource({
+      fetch: fetchVia(r.bridge),
+      hot: undefined,
+    });
+    const resolved = await source.resolve({
+      source: "draft",
+      id: "grass-flagstone-pack",
+      mask: 6,
+      offset: 9,
+    });
+    if (resolved.kind !== "frames") throw new Error("expected frames");
+    expect(resolved.asset.kind).toBe("tile");
+    expect(resolved.asset.frames[0]?.rect).toEqual({
+      x: 384,
+      y: 288,
+      w: 64,
+      h: 32,
+    });
+    expect((await source.fetchBytes(resolved.bytes)).length).toBeGreaterThan(8);
+    const listing = await source.list();
+    expect(
+      listing.entries.find((e) => e.id === "grass-flagstone-pack")?.kind,
+    ).toBe("tile");
   });
 
   test("an unknown selection resolves to the placeholder and its bytes still fetch", async () => {

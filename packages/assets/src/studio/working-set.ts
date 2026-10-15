@@ -22,6 +22,7 @@ import {
   parseString,
   type Sha256,
   stateRuleFor,
+  TILE_ROLES,
 } from "@panthea/contracts";
 import type { RenderedCandidate } from "../render/candidate";
 import {
@@ -165,7 +166,7 @@ export interface WorkingSetRecord {
   readonly schemaVersion: 1;
   readonly id: string;
   readonly subject: string;
-  readonly kind: "sprite" | "portrait";
+  readonly kind: "sprite" | "portrait" | "tile";
   /** The request whose candidates the sheet currently shows; replaceable. */
   readonly sheetRequestId: string;
   readonly required: readonly string[];
@@ -188,7 +189,7 @@ export interface WorkingSetRecord {
  * frame limits. Picks alone never complete a sprite.
  */
 export function deriveStatus(
-  kind: "sprite" | "portrait",
+  kind: "sprite" | "portrait" | "tile",
   required: readonly string[],
   picks: Readonly<Record<string, Keyframe>>,
   frames: Readonly<Record<string, AuthoredFrames>>,
@@ -740,6 +741,7 @@ export function parseWorkingSetRecord(
       const kind = parseEnum(record.kind, "workingSet.kind", [
         "sprite",
         "portrait",
+        "tile",
       ] as const);
       if (!kind.ok) return kind;
       const sheet = parseSlug(
@@ -948,7 +950,7 @@ export function newWorkingSet(
   content: StudioContent,
 ): WorkingSetResult {
   const { kind, subject, slots } = request.request;
-  if (kind !== "sprite" && kind !== "portrait")
+  if (kind !== "sprite" && kind !== "portrait" && kind !== "tile")
     return refuse(`a ${kind} request has no working set`);
   const chosen = slots.map(slotKey);
   const unknown =
@@ -964,6 +966,13 @@ export function newWorkingSet(
   const limits: Record<string, FrameLimits> = {};
   for (const slot of required) {
     if (kind === "portrait") {
+      limits[slot] = { min: 1, max: 1 };
+      continue;
+    }
+    if (kind === "tile") {
+      // A tile set is two rendered patches, one frame each, whatever a state rule says.
+      if (!TILE_ROLES.some((role) => role === slot))
+        return refuse(`slot ${slot} is not a tile role`);
       limits[slot] = { min: 1, max: 1 };
       continue;
     }
@@ -1107,7 +1116,11 @@ export function pickRendered(
   set: WorkingSetRecord,
   candidate: RenderedCandidate,
 ): WorkingSetResult {
-  if (set.kind !== "sprite" || candidate.subject !== set.subject)
+  if (
+    (set.kind !== "sprite" && set.kind !== "tile") ||
+    candidate.kind !== set.kind ||
+    candidate.subject !== set.subject
+  )
     return refuse(
       `candidate ${candidate.id} is a ${candidate.kind} for ${candidate.subject}, not a ${set.kind} for ${set.subject}`,
     );

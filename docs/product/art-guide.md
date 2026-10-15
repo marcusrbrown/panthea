@@ -64,10 +64,12 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 
 ## Tiles, structures, and decals
 
+- Ground tiles take no outline. The 1 px silhouette outline is for figures and structures; a ground tile has no silhouette of its own, because neighbouring diamonds abut.
 - Ground tiles use dual-grid (16-tile) autotiling for terrain transitions; blob (47-tile) sets only where a material needs inner corners (walls, water edges).
+- A ground transition set holds the 16 corner masks for each of the N×N offsets of a periodic field, so a long run of one terrain does not visibly repeat. A transition is a broken, darker band on the raised (`over`) material's side, in the darkest shade of its ramp, with sparse overhangs of the base material across the boundary. There is no continuous rim or highlight, which would read as an outline.
 - Structures declare footprint, height in elevation steps, door tiles, and three states: `intact`, `damaged`, `burning`. Damage and fire are overlay layers on the intact sprite so the silhouette never changes mid-scene.
 - Decals (scorch, rubble, blood, offerings) are 1-tile ground-layer sprites with binary alpha and no outline.
-- Repeating textures must be seamless at tile boundaries; the conformance step checks edge pixels against neighbours in the set.
+- Repeating textures must be seamless at tile boundaries. A terrain set is held seamless by two exact checks: any grid assembled from the set's cells is byte-identical to the same grid stamped directly, and at publish each terrain's rendered patch repeats every N lattice steps.
 
 ## Effects
 
@@ -85,7 +87,7 @@ One place that says what a Panthea asset looks like so that a generated, hand-dr
 
 ## Metadata every asset carries
 
-From content-direction.md, made concrete: `id`, `kind`, `pixelScale`, `cell` (w×h), `pivot` (x, y), `footprint` (tiles), `directions`, `states` with frame lists and per-frame durations, `paletteFamily`, `paletteId`, `styleTag`, `realmVariants`, and for portraits `characterId` and `expressions`; for tiles `orientation`, `layer`, `occlusion`, `wangId`; for effects `glowColours` (the colours it draws outside the master palette, empty by default). Provenance fields live beside this in the manifest (creation method, inputs, model, seed, hashes, hand-edit steps, licences).
+From content-direction.md, made concrete: `id`, `kind`, `pixelScale`, `cell` (w×h), `pivot` (x, y), `footprint` (tiles), `directions`, `states` with frame lists and per-frame durations, `paletteFamily`, `paletteId`, `styleTag`, `realmVariants`, and for portraits `characterId` and `expressions`; for tiles `terrain` (`{base, over}`) and `period` (N), where the atlas is 16 columns × N² rows of 64×32 cells, the cell for a mask and offset is frame `offset·16 + mask`, and the mask bits are N=1, E=2, S=4, W=8, a set bit meaning `over`; for effects `glowColours` (the colours it draws outside the master palette, empty by default). Provenance fields live beside this in the manifest (creation method, inputs, model, seed, hashes, hand-edit steps, licences).
 
 ## Conformance checks (what the studio measures)
 
@@ -95,7 +97,7 @@ From content-direction.md, made concrete: `id`, `kind`, `pixelScale`, `cell` (w�
 - Silhouette threshold test produces a connected shape with no stray pixels.
 - Directions present and east/west mirror consistent unless asymmetry declared.
 - Frame counts and durations within the state's declared range.
-- Tiles: edges seamless with declared neighbours.
+- Tiles: the whole 64×31 diamond is opaque, nothing lies outside it, row 31 is empty, and alpha is binary. Seams are held by the checks under Tiles, structures, and decals.
 - Effects: no colour outside the master palette and the declared glow colours. Full-screen fills and flashing are judged on the animated preview.
 
 ## Do and don't

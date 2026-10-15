@@ -152,6 +152,8 @@ export interface StudioSession {
     content: StudioContent,
     palettes: PaletteSet,
     registryRoot: string,
+    /** Where the committed `tools/render` is, which a tile set is stamped from. */
+    render?: RenderAuditConfig,
   ): AssetOpResult;
   /**
    * Runs the effect generator into a draft effect asset record; never approves.

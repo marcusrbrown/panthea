@@ -4,6 +4,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { TILE_CELL } from "@panthea/contracts";
 import { type Camera, parseCamera } from "./camera";
 import { parseKitManifest } from "./kits";
 import { type ModelProfile, parseProfile, profileKitProblems } from "./profile";
@@ -113,7 +114,11 @@ export function renderCellsOf(
   if (camera === undefined) return [];
   const cells: { w: number; h: number }[] = [];
   for (const profile of inputs.profiles) {
-    const { width: w, height: h } = frameOf(profile, camera);
+    // A ground set is rendered on a wide frame but drawn on the tile cell it is cut to.
+    const { width: w, height: h } =
+      profile.kind === "structure" && profile.build.kind === "ground"
+        ? { width: TILE_CELL.w, height: TILE_CELL.h }
+        : frameOf(profile, camera);
     if (!cells.some((cell) => cell.w === w && cell.h === h))
       cells.push({ w, h });
   }

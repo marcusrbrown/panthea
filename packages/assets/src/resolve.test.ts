@@ -2,11 +2,13 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   type AssetId,
+  type AssetManifest,
   assetUri,
   parseAssetManifest,
   parseAssetVocabulary,
   type Sha256,
 } from "@panthea/contracts";
+import { tileFixture } from "../test/fixtures/tile";
 import { portraitFixture, spriteFixture } from "./fixtures";
 import { sha256Hex } from "./hash";
 import { renderPlaceholder } from "./placeholder";
@@ -15,9 +17,7 @@ import type { SnapshotEntry } from "./resolve-core";
 
 const REVISION = "r".repeat(1) as string;
 
-function snapshot(
-  ...assets: ReturnType<typeof spriteFixture | typeof portraitFixture>[]
-): RegistrySnapshot {
+function snapshot(...assets: { manifest: AssetManifest }[]): RegistrySnapshot {
   return {
     entries: new Map(
       assets.map((a) => [
@@ -230,5 +230,80 @@ describe("resolveAsset for effects", () => {
     expect(
       resolveAsset(snap, { spriteId: "missing", animation: "burn" }),
     ).toMatchObject({ source: "placeholder", reason: "missing-id" });
+  });
+});
+
+describe("resolveAsset for tiles", () => {
+  const tile = tileFixture();
+  const sprite = spriteFixture();
+  const snap = snapshot(tile, sprite);
+  const query = (mask: number, offset: number, id = "grass-flagstone") => ({
+    spriteId: id,
+    tile: { mask, offset },
+  });
+
+  it("resolves a (mask, offset) to the one atlas cell: frame index offset * 16 + mask", () => {
+    for (const [mask, offset] of [
+      [0, 0],
+      [15, 0],
+      [0, 15],
+      [15, 15],
+      [5, 7],
+    ] as const) {
+      const result = resolveAsset(snap, query(mask, offset));
+      expect(result, `${mask},${offset}`).toMatchObject({
+        source: "canon",
+        kind: "tile",
+        assetId: "grass-flagstone",
+        cell: { w: 64, h: 32 },
+      });
+      if (result.source !== "canon") return;
+      const index = offset * 16 + mask;
+      expect(result.frames).toHaveLength(1);
+      expect(result.frames[0]?.rect).toEqual({
+        x: (index % 16) * 64,
+        y: Math.floor(index / 16) * 32,
+        w: 64,
+        h: 32,
+      });
+      expect(result.atlas).toEqual(tile.manifest.atlas);
+      expect(result.pivot).toBeUndefined();
+      expect(result.footprint).toBeUndefined();
+    }
+  });
+
+  it("refuses a mask or offset outside the set as a missing state, and an id that is not there", () => {
+    for (const [mask, offset] of [
+      [16, 0],
+      [-1, 0],
+      [0, 16],
+      [0, -1],
+      [1.5, 0],
+    ] as const)
+      expect(resolveAsset(snap, query(mask, offset))).toMatchObject({
+        source: "placeholder",
+        reason: "missing-state",
+      });
+    expect(resolveAsset(snap, query(0, 0, "nowhere"))).toMatchObject({
+      source: "placeholder",
+      reason: "missing-id",
+    });
+  });
+
+  it("keeps the kinds apart: a tile is not a sprite, a sprite or portrait is not a tile", () => {
+    expect(resolveAsset(snap, { spriteId: "grass-flagstone" })).toMatchObject({
+      source: "placeholder",
+      reason: "wrong-kind",
+    });
+    expect(resolveAsset(snap, query(0, 0, "placeholder-zeus"))).toMatchObject({
+      source: "placeholder",
+      reason: "wrong-kind",
+    });
+    expect(
+      resolveAsset(snap, { spriteId: "grass-flagstone", expression: "awed" }),
+    ).toMatchObject({ source: "placeholder", reason: "wrong-kind" });
+    expect(
+      resolveAsset(snap, { spriteId: "grass-flagstone", animation: "burn" }),
+    ).toMatchObject({ source: "placeholder", reason: "wrong-kind" });
   });
 });

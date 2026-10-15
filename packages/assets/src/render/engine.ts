@@ -83,6 +83,7 @@ import { type ModelProfile, profileHash } from "./profile";
 import {
   type BlenderBinaryPin,
   effectiveCamera,
+  groundPostOf,
   kitHash,
   NO_STAMPS_HASH,
   postSettingsFor,
@@ -407,22 +408,22 @@ function prepare(
   const slots: PreparedSlot[] = [];
   for (const record of batch) {
     const slot = record.job.request.slots[0];
-    if (
-      slot === undefined ||
-      slot.state === undefined ||
-      slot.direction === undefined
-    )
-      return problem(`job ${record.job.id} has no sprite slot`);
+    // A tile slot names its role, which the ground profile poses as a still state facing south.
+    const tile = record.job.request.kind === "tile";
+    const state = tile ? slot?.role : slot?.state;
+    const direction = tile ? "south" : slot?.direction;
+    if (slot === undefined || state === undefined || direction === undefined)
+      return problem(
+        `job ${record.job.id} has no ${tile ? "tile" : "sprite"} slot`,
+      );
     const rule = stateRuleFor(
       config.content.vocabulary,
-      slot.state,
+      state,
       spec.value.cell.id,
     );
     if (rule === undefined)
-      return problem(
-        `${slot.state} is not drawn on the ${spec.value.cell.id} cell`,
-      );
-    const facing = slot.direction;
+      return problem(`${state} is not drawn on the ${spec.value.cell.id} cell`);
+    const facing = direction;
     if (
       facing !== "south" &&
       facing !== "east" &&
@@ -432,15 +433,15 @@ function prepare(
       return problem(
         `direction ${facing} is not a facing the render script knows`,
       );
-    const clipSpec = profile.clips[slot.state];
+    const clipSpec = profile.clips[state];
     if (clipSpec === undefined)
       return problem(
-        `profile ${profile.id} has no clip for ${slot.state} (it poses ${Object.keys(profile.clips).join(", ")})`,
+        `profile ${profile.id} has no clip for ${state} (it poses ${Object.keys(profile.clips).join(", ")})`,
       );
     const frames = clipSpec.frames;
     if (frames < rule.frames.min || frames > rule.frames.max)
       return problem(
-        `profile ${profile.id} renders ${slot.state} at ${frames} frames; the ${spec.value.cell.id} rule allows ${rule.frames.min === rule.frames.max ? rule.frames.max : `${rule.frames.min} to ${rule.frames.max}`}`,
+        `profile ${profile.id} renders ${state} at ${frames} frames; the ${spec.value.cell.id} rule allows ${rule.frames.min === rule.frames.max ? rule.frames.max : `${rule.frames.min} to ${rule.frames.max}`}`,
       );
     if (rule.fps !== undefined) {
       const bounds = durationBounds(rule.fps);
@@ -449,19 +450,19 @@ function prepare(
       );
       if (bad !== undefined)
         return problem(
-          `profile ${profile.id} shows a ${slot.state} frame for ${bad} ms; the ${spec.value.cell.id} rule allows ${bounds.min} to ${bounds.max} ms (${rule.fps.min} to ${rule.fps.max} fps)`,
+          `profile ${profile.id} shows a ${state} frame for ${bad} ms; the ${spec.value.cell.id} rule allows ${bounds.min} to ${bounds.max} ms (${rule.fps.min} to ${rule.fps.max} fps)`,
         );
     }
     slots.push({
       record,
       recipe: {
         id: record.job.id,
-        state: slot.state,
+        state,
         facing,
         frames,
         outDir: "",
       },
-      clip: `${slot.state}${frames}`,
+      clip: `${state}${frames}`,
       seed: record.job.request.seed ?? 0,
       frameMs: clipSpec.frameMs,
     });
@@ -480,7 +481,7 @@ function prepare(
     script: RENDER_SCRIPT_SHA256,
     postStep: {
       version: POST_STEP_VERSION,
-      settings: postSettingsFor(shadowRamp),
+      settings: postSettingsFor(shadowRamp, groundPostOf(profile)),
     },
     blender: render.pin,
     kit: kitHash(profile.kitFiles),
@@ -575,7 +576,7 @@ function prepare(
       settings: postStepSettings(
         camera,
         recipeRequest.pivot,
-        postSettingsFor(shadowRamp),
+        postSettingsFor(shadowRamp, groundPostOf(profile)),
       ),
       palette: postPalette,
       stamps,

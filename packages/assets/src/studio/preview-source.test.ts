@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { tileFixture } from "../../test/fixtures/tile";
 import {
   fakeWatchFs,
   firstBlob,
@@ -698,5 +699,133 @@ describe("an effect's animation", () => {
         animation: "burn",
       }),
     ).toMatchObject({ kind: "placeholder", reason: "wrong-kind" });
+  });
+});
+
+describe("a tile set", () => {
+  test("parsePreviewResolve takes a mask and an offset together, as whole numbers, and refuses the rest", () => {
+    expect(
+      parsePreviewResolve({
+        source: "canon",
+        id: "grass-flagstone",
+        mask: "5",
+        offset: "12",
+      }),
+    ).toEqual({ source: "canon", id: "grass-flagstone", mask: 5, offset: 12 });
+    expect(
+      parsePreviewResolve({
+        source: "draft",
+        id: "grass-flagstone-pack",
+        mask: 0,
+        offset: 0,
+      }),
+    ).toEqual({
+      source: "draft",
+      id: "grass-flagstone-pack",
+      mask: 0,
+      offset: 0,
+    });
+    for (const bad of [
+      { mask: "5" },
+      { offset: "5" },
+      { mask: "-1", offset: "0" },
+      { mask: "1.5", offset: "0" },
+      { mask: "0x5", offset: "0" },
+      { mask: "05", offset: "0" },
+      { mask: "99999", offset: "0" },
+      { mask: "", offset: "0" },
+      { mask: "a", offset: "0" },
+    ])
+      expect(
+        typeof parsePreviewResolve({
+          source: "canon",
+          id: "grass-flagstone",
+          ...bad,
+        }),
+        JSON.stringify(bad),
+      ).toBe("string");
+  });
+
+  test("a published tile lists as a tile, with no animations or expressions, and resolves a cell by mask and offset", () => {
+    const r = rig();
+    const tile = tileFixture();
+    publishCanon(r.registryRoot, tile);
+    r.clock.touch(r.registryRoot, "index.json");
+    r.clock.tick();
+    const entry = r.source
+      .list()
+      .entries.find((e) => e.id === "grass-flagstone");
+    expect(entry).toMatchObject({
+      kind: "tile",
+      source: "canon",
+      ok: true,
+      animations: [],
+      expressions: [],
+      realms: [],
+      period: 4,
+    });
+    // Only a tile has a period.
+    expect(
+      r.source.list().entries.find((e) => e.id === "placeholder-zeus"),
+    ).not.toHaveProperty("period");
+    const resolved = r.source.resolve({
+      source: "canon",
+      id: "grass-flagstone",
+      mask: 6,
+      offset: 9,
+    });
+    if (resolved.kind !== "frames") throw new Error("expected frames");
+    expect(resolved.asset.kind).toBe("tile");
+    expect(resolved.asset.frames.map((f) => f.rect)).toEqual([
+      { x: 6 * 64, y: 9 * 32, w: 64, h: 32 },
+    ]);
+    expect(resolved.bytes).toMatchObject({ width: 1024, height: 512 });
+    expect(r.source.bytes(resolved.selection, resolved.bytes.pixelKey).ok).toBe(
+      true,
+    );
+    // A cell outside the set, a tile asked for as a sprite, and a sprite asked for as a tile.
+    expect(
+      r.source.resolve({
+        source: "canon",
+        id: "grass-flagstone",
+        mask: 6,
+        offset: 16,
+      }),
+    ).toMatchObject({ kind: "placeholder", reason: "missing-state" });
+    expect(
+      r.source.resolve({ source: "canon", id: "grass-flagstone" }),
+    ).toMatchObject({ kind: "placeholder", reason: "wrong-kind" });
+    expect(
+      r.source.resolve({
+        source: "canon",
+        id: "placeholder-zeus",
+        mask: 0,
+        offset: 0,
+      }),
+    ).toMatchObject({ kind: "placeholder", reason: "wrong-kind" });
+  });
+
+  test("a draft tile previews after pack: its record lists as a tile and resolves the same cells", () => {
+    const r = rig();
+    writeDraft(r.studioRoot, "grass-flagstone-pack", tileFixture());
+    r.clock.touch(r.studioRoot, "assets/grass-flagstone-pack.json");
+    r.clock.tick();
+    const entry = r.source
+      .list()
+      .entries.find((e) => e.id === "grass-flagstone-pack");
+    expect(entry).toMatchObject({ kind: "tile", source: "draft", ok: true });
+    const resolved = r.source.resolve({
+      source: "draft",
+      id: "grass-flagstone-pack",
+      mask: 15,
+      offset: 15,
+    });
+    if (resolved.kind !== "frames") throw new Error("expected frames");
+    expect(resolved.asset.frames[0]?.rect).toEqual({
+      x: 15 * 64,
+      y: 15 * 32,
+      w: 64,
+      h: 32,
+    });
   });
 });

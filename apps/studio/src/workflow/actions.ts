@@ -671,12 +671,14 @@ export function buildPackArgs(
 export function routePreviewSelection(selection: {
   readonly source: "canon" | "draft" | "approved";
   readonly id: string;
-  readonly kind: "portrait" | "sprite";
+  readonly kind: "portrait" | "sprite" | "tile";
 }): Record<string, string> {
   const key = `${selection.source}:${selection.id}`;
-  return selection.kind === "portrait"
-    ? { source: selection.source, portraitKey: key }
-    : { source: selection.source, subjectKey: key };
+  if (selection.kind === "portrait")
+    return { source: selection.source, portraitKey: key };
+  if (selection.kind === "tile")
+    return { source: selection.source, groundKey: key };
+  return { source: selection.source, subjectKey: key };
 }
 
 /** What the preview is asked to draw for the record selected in the asset list. */

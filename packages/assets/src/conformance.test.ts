@@ -68,7 +68,8 @@ describe("input validation", () => {
     invalid("width", { width: 0 });
     invalid("height", { height: 1.5 });
     invalid("rgba", { rgba: new Uint8Array(10) });
-    invalid("kind", { kind: "tile" as never });
+    invalid("kind", { kind: "sound" as never });
+    invalid("cell", { kind: "tile", cell: { w: 64, h: 64 }, pivot: undefined });
     invalid("mode", { mode: "dry-run" as never });
     invalid("cell", { cell: { w: 0, h: 80 } });
     invalid("pivot", { pivot: { x: 1.5, y: 2 } });
@@ -1471,5 +1472,117 @@ describe("the colour limit a palette declares", () => {
     const portrait = sprite(40, { kind: "portrait", colourLimit: 32 });
     expect(check(portrait, "colour-count")).toMatchObject({ status: "fail" });
     expect(check(portrait, "colour-count")?.message).toContain("limit 32");
+  });
+});
+
+describe("tile conformance, one atlas cell at a time", () => {
+  // The diamond of a 64x32 cell, derived here from the art guide: rows 0..30
+  // are drawn, row r spans 2 * (1 + min(r, 30 - r)) pixels either side of x = 32,
+  // and row 31 belongs to the neighbours.
+  const inDiamond = (x: number, y: number) => {
+    if (y < 0 || y > 30) return false;
+    const half = 2 * (1 + Math.min(y, 30 - y));
+    return x >= 32 - half && x < 32 + half;
+  };
+  const cell = (
+    pixel: (x: number, y: number) => readonly [number, number, number, number],
+    overrides: Partial<ConformanceInput> = {},
+  ) =>
+    input({
+      ...image(64, 32, pixel),
+      kind: "tile",
+      mode: "report-only",
+      cell: { w: 64, h: 32 },
+      pivot: undefined,
+      paletteRgb: [A, B],
+      ...overrides,
+    });
+  const solid = (x: number, y: number): [number, number, number, number] =>
+    inDiamond(x, y) ? [...A, 255] : T;
+  const withPixel =
+    (at: [number, number], value: [number, number, number, number]) =>
+    (x: number, y: number) =>
+      x === at[0] && y === at[1] ? value : solid(x, y);
+
+  it("passes a full opaque diamond on the palette, in both modes, with the tile checks in a fixed order", () => {
+    for (const mode of ["report-only", "auto"] as const) {
+      const result = done(cell(solid, { mode }));
+      expect(ids(result)).toEqual([
+        "grid",
+        "canvas",
+        "binary-alpha",
+        "palette",
+        "diamond-coverage",
+        "outside-diamond",
+        "row-31",
+      ]);
+      expect(result.report.status, mode).toBe("pass");
+      expect(parseConformanceReport(result.report).ok).toBe(true);
+    }
+  });
+
+  it("covers the diamond with two palette terrains and passes", () => {
+    const result = done(
+      cell((x, y) => (inDiamond(x, y) ? [...(x < 32 ? A : B), 255] : T)),
+    );
+    expect(result.report.status).toBe("pass");
+  });
+
+  it("fails a partial-alpha pixel as binary-alpha", () => {
+    const result = done(cell(withPixel([32, 15], [...A, 128])));
+    expect(check(result, "binary-alpha")).toMatchObject({ status: "fail" });
+    expect(check(result, "binary-alpha")?.message).toContain("32,15");
+    expect(result.report.status).toBe("fail");
+  });
+
+  it("fails a pixel outside the diamond, naming it", () => {
+    const result = done(cell(withPixel([0, 0], [...A, 255])));
+    expect(check(result, "outside-diamond")).toMatchObject({ status: "fail" });
+    expect(check(result, "outside-diamond")?.message).toContain("0,0");
+    expect(check(result, "diamond-coverage")).toMatchObject({ status: "pass" });
+    expect(check(result, "row-31")).toMatchObject({ status: "pass" });
+  });
+
+  it("fails a pixel just outside a row's span, and one in the corner of the box", () => {
+    // Row 0 spans x 30..33; x = 34 is one past it.
+    for (const at of [
+      [34, 0],
+      [29, 0],
+      [63, 30],
+      [0, 16],
+    ] as [number, number][]) {
+      const result = done(cell(withPixel(at, [...A, 255])));
+      expect(check(result, "outside-diamond"), String(at)).toMatchObject({
+        status: "fail",
+      });
+    }
+  });
+
+  it("fails an opaque pixel on row 31 as row-31, not as outside the diamond", () => {
+    const result = done(cell(withPixel([32, 31], [...A, 255])));
+    expect(check(result, "row-31")).toMatchObject({ status: "fail" });
+    expect(check(result, "row-31")?.message).toContain("32,31");
+    expect(check(result, "outside-diamond")).toMatchObject({ status: "pass" });
+  });
+
+  it("fails a hole in the diamond, and an empty cell, as coverage", () => {
+    const hole = done(cell(withPixel([20, 15], T)));
+    expect(check(hole, "diamond-coverage")).toMatchObject({ status: "fail" });
+    expect(check(hole, "diamond-coverage")?.message).toContain("20,15");
+    const empty = done(cell(() => T));
+    expect(check(empty, "diamond-coverage")).toMatchObject({ status: "fail" });
+  });
+
+  it("fails a colour outside the palette, in report-only mode", () => {
+    const result = done(cell(withPixel([32, 15], [250, 10, 10, 255])));
+    expect(check(result, "palette")).toMatchObject({ status: "fail" });
+    expect(check(result, "palette")?.message).toContain("#fa0a0a");
+  });
+
+  it("gives a tile no colour limit and no sprite checks", () => {
+    const result = done(cell(solid));
+    expect(check(result, "colour-count")).toBeUndefined();
+    expect(check(result, "silhouette")).toBeUndefined();
+    expect(check(result, "pure-black-white")).toBeUndefined();
   });
 });

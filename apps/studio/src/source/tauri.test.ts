@@ -224,6 +224,72 @@ describe("list, resolve, fetchBytes", () => {
     expect(r.problems).toEqual([]);
   });
 
+  test("a tile resolves by mask and offset: the numbers go to the host as text, and the tile asset kind is read", async () => {
+    const tile = {
+      ...frames(KEY_A, "grass-flagstone", "canon"),
+      asset: {
+        ...frames(KEY_A).asset,
+        kind: "tile",
+        assetId: "grass-flagstone",
+        cell: { w: 64, h: 32 },
+        frames: [{ rect: { x: 384, y: 288, w: 64, h: 32 }, durationMs: 1000 }],
+        pivot: undefined,
+        footprint: undefined,
+        loopStart: undefined,
+      },
+    };
+    const r = rig({ "source-resolve": () => tile });
+
+    const resolved = await r.source.resolve({
+      source: "canon",
+      id: "grass-flagstone",
+      mask: 6,
+      offset: 9,
+    });
+
+    expect(resolved).toMatchObject({
+      kind: "frames",
+      asset: { kind: "tile", assetId: "grass-flagstone" },
+    });
+    expect(r.transport.to("studio_call").map((c) => c.args)).toEqual([
+      {
+        op: "source-resolve",
+        args: {
+          source: "canon",
+          id: "grass-flagstone",
+          mask: "6",
+          offset: "9",
+        },
+      },
+    ]);
+    expect(r.problems).toEqual([]);
+  });
+
+  test("a listing entry of kind tile is read as a tile, not refused as unknown", async () => {
+    const r = rig({
+      "source-list": () => ({
+        entries: [
+          {
+            source: "draft",
+            id: "grass-flagstone-pack",
+            assetId: "grass-flagstone",
+            kind: "tile",
+            state: "draft",
+            animations: [],
+            expressions: [],
+            realms: [],
+            period: 4,
+            ok: true,
+          },
+        ],
+        problems: [],
+      }),
+    });
+    const listing = await r.source.list();
+    expect(listing.entries.map((e) => e.kind)).toEqual(["tile"]);
+    expect(listing.entries[0]?.period).toBe(4);
+  });
+
   test("the resolution's bytes name no file: the url is an opaque in-app reference", async () => {
     const r = rig();
     const resolved = await r.source.resolve({
@@ -758,7 +824,11 @@ describe("untrusted payloads", () => {
     ],
     [
       "an entry with an unknown kind",
-      { entries: [{ ...listing.entries[0], kind: "tile" }], problems: [] },
+      { entries: [{ ...listing.entries[0], kind: "sound" }], problems: [] },
+    ],
+    [
+      "an entry with a period that is not a positive whole number",
+      { entries: [{ ...listing.entries[0], period: 1.5 }], problems: [] },
     ],
     [
       "an entry whose ok is not a boolean",
@@ -850,8 +920,8 @@ describe("untrusted payloads", () => {
     ["a missing manifest key", { ...frames(KEY_A), manifestKey: undefined }],
     ["an asset that is not an object", { ...frames(KEY_A), asset: "x" }],
     [
-      "an asset kind that is not sprite, portrait or effect",
-      withAsset({ kind: "tile" }),
+      "an asset kind that is not sprite, portrait, effect or tile",
+      withAsset({ kind: "sound" }),
     ],
     ["frames that are not a list", withAsset({ frames: {} })],
     [

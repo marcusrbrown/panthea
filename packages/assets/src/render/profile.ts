@@ -18,8 +18,10 @@ import {
   parseBoolean,
   parseFiniteNumber,
   parseNonNegativeInteger,
+  parsePositiveInteger,
   parseSchemaVersion,
   parseSha256,
+  parseSlug,
   parseString,
   type Sha256,
 } from "@panthea/contracts";
@@ -32,6 +34,7 @@ import {
   type Vec2,
   type Vec3,
 } from "./camera";
+import { groundCrop } from "./ground";
 import type { KitManifest, ProfileKitRefs } from "./kits";
 
 const SUPPORTED_SCHEMA_VERSIONS = [1] as const;
@@ -357,6 +360,42 @@ export interface Wind {
   readonly swirl: number;
 }
 
+/** How a ground set is laid out. Lengths are metres or fractions of a tile side, as each key says. */
+export interface GroundBuild {
+  readonly kind: "ground";
+  /** N: the field repeats every N lattice steps along each axis. */
+  readonly period: number;
+  /** The two terrains: `base` where a mask bit is clear, `over` where it is set. */
+  readonly terrain: { readonly base: string; readonly over: string };
+  /** Flagstone slabs: four to a lattice cell, split at jittered lines and inset by the gap. */
+  readonly slab: {
+    /** Relief of the slabs above the mortar plane; 0 lays none, which leaves the terrain a flat colour. */
+    readonly heightM: number;
+    /** Fraction of a tile side left bare between neighbouring slabs. */
+    readonly gap: number;
+    /** Fraction of a tile side a split line may move off the middle. */
+    readonly jitter: number;
+  };
+  /** Grass tufts: low pyramids at hashed positions in each lattice cell. */
+  readonly tuft: {
+    readonly perTile: number;
+    readonly heightM: number;
+    readonly radiusM: number;
+  };
+  /** What the stamper (not the render) reads to cut the masks from the patches. */
+  readonly stamp: {
+    readonly noiseSeed: number;
+    /** Wavelength of the blend-field noise, in tiles: a whole number that divides the period, so the noise repeats with it. */
+    readonly wavelengthTiles: number;
+    /** Peak of the noise added to the 0..1 blend field. */
+    readonly amplitude: number;
+    /** Width, in pixels, of the darkest-shade band on the flagstone side of a boundary. */
+    readonly edgeBandPx: number;
+    /** Grass overhangs placed on the boundary of a period. */
+    readonly overhangs: number;
+  };
+}
+
 export type StructureBuild =
   /**
    * A Greek town house built from script geometry, with kit models for the parts it names
@@ -371,7 +410,9 @@ export type StructureBuild =
       readonly kind: "tree";
       readonly model: KitPath;
       readonly heightM: number;
-    };
+    }
+  /** One terrain of a dual-grid set, script-built and periodic. */
+  | GroundBuild;
 
 /**
  * A tree or a building. It owns its frame (the cell class it is drawn on and where the world
@@ -389,6 +430,8 @@ export interface StructureProfile {
   readonly materials: Readonly<Record<string, MaterialRole>>;
   readonly clips: Readonly<Record<string, StructureClip>>;
   readonly wind?: Wind;
+  /** `false`: the post step draws no outline. Present, and only, on a ground profile. */
+  readonly outline?: false;
 }
 
 export type ModelProfile = FigureProfile | StructureProfile;
@@ -1527,12 +1570,158 @@ function parseWind(value: unknown, path: string): ParseResult<Wind> {
   });
 }
 
+function parseFraction(
+  value: unknown,
+  path: string,
+  below: number,
+): ParseResult<number> {
+  const number = parseFiniteNumber(value, path);
+  if (!number.ok) return number;
+  if (number.value < 0 || number.value >= below)
+    return fail(path, `expected a number from 0 up to ${below}`);
+  return number;
+}
+
+function parseGroundBuild(
+  value: Record<string, unknown>,
+  path: string,
+): ParseResult<GroundBuild> {
+  const record = strict(value, path, [
+    "kind",
+    "period",
+    "terrain",
+    "slab",
+    "tuft",
+    "stamp",
+  ]);
+  if (!record.ok) return record;
+  const period = parsePositiveInteger(record.value.period, `${path}.period`);
+  if (!period.ok) return period;
+  const terrainRecord = strict(record.value.terrain, `${path}.terrain`, [
+    "base",
+    "over",
+  ]);
+  if (!terrainRecord.ok) return terrainRecord;
+  const terrainBase = parseSlug(
+    terrainRecord.value.base,
+    `${path}.terrain.base`,
+  );
+  if (!terrainBase.ok) return terrainBase;
+  const terrainOver = parseSlug(
+    terrainRecord.value.over,
+    `${path}.terrain.over`,
+  );
+  if (!terrainOver.ok) return terrainOver;
+  if (terrainBase.value === terrainOver.value)
+    return fail(`${path}.terrain`, "expected two different terrains");
+  const slabRecord = strict(record.value.slab, `${path}.slab`, [
+    "heightM",
+    "gap",
+    "jitter",
+  ]);
+  if (!slabRecord.ok) return slabRecord;
+  const slabHeight = parseFiniteNumber(
+    slabRecord.value.heightM,
+    `${path}.slab.heightM`,
+  );
+  if (!slabHeight.ok) return slabHeight;
+  if (slabHeight.value < 0)
+    return fail(`${path}.slab.heightM`, "expected a number from 0 up");
+  const gap = parseFraction(slabRecord.value.gap, `${path}.slab.gap`, 0.5);
+  if (!gap.ok) return gap;
+  const jitter = parseFraction(
+    slabRecord.value.jitter,
+    `${path}.slab.jitter`,
+    0.5,
+  );
+  if (!jitter.ok) return jitter;
+  const tuftRecord = strict(record.value.tuft, `${path}.tuft`, [
+    "perTile",
+    "heightM",
+    "radiusM",
+  ]);
+  if (!tuftRecord.ok) return tuftRecord;
+  const perTile = parseNonNegativeInteger(
+    tuftRecord.value.perTile,
+    `${path}.tuft.perTile`,
+  );
+  if (!perTile.ok) return perTile;
+  const tuftHeight = parsePositive(
+    tuftRecord.value.heightM,
+    `${path}.tuft.heightM`,
+  );
+  if (!tuftHeight.ok) return tuftHeight;
+  const radius = parsePositive(
+    tuftRecord.value.radiusM,
+    `${path}.tuft.radiusM`,
+  );
+  if (!radius.ok) return radius;
+  const stampRecord = strict(record.value.stamp, `${path}.stamp`, [
+    "noiseSeed",
+    "wavelengthTiles",
+    "amplitude",
+    "edgeBandPx",
+    "overhangs",
+  ]);
+  if (!stampRecord.ok) return stampRecord;
+  const noiseSeed = parseNonNegativeInteger(
+    stampRecord.value.noiseSeed,
+    `${path}.stamp.noiseSeed`,
+  );
+  if (!noiseSeed.ok) return noiseSeed;
+  const wavelength = parsePositiveInteger(
+    stampRecord.value.wavelengthTiles,
+    `${path}.stamp.wavelengthTiles`,
+  );
+  if (!wavelength.ok) return wavelength;
+  if (period.value % wavelength.value !== 0)
+    return fail(
+      `${path}.stamp.wavelengthTiles`,
+      `expected a divisor of the period ${period.value}, so the noise repeats with it`,
+    );
+  const amplitude = parseFraction(
+    stampRecord.value.amplitude,
+    `${path}.stamp.amplitude`,
+    0.5,
+  );
+  if (!amplitude.ok) return amplitude;
+  const edgeBand = parseNonNegativeInteger(
+    stampRecord.value.edgeBandPx,
+    `${path}.stamp.edgeBandPx`,
+  );
+  if (!edgeBand.ok) return edgeBand;
+  const overhangs = parseNonNegativeInteger(
+    stampRecord.value.overhangs,
+    `${path}.stamp.overhangs`,
+  );
+  if (!overhangs.ok) return overhangs;
+  return ok({
+    kind: "ground",
+    period: period.value,
+    terrain: { base: terrainBase.value, over: terrainOver.value },
+    slab: { heightM: slabHeight.value, gap: gap.value, jitter: jitter.value },
+    tuft: {
+      perTile: perTile.value,
+      heightM: tuftHeight.value,
+      radiusM: radius.value,
+    },
+    stamp: {
+      noiseSeed: noiseSeed.value,
+      wavelengthTiles: wavelength.value,
+      amplitude: amplitude.value,
+      edgeBandPx: edgeBand.value,
+      overhangs: overhangs.value,
+    },
+  });
+}
+
 function parseStructureBuild(
   value: unknown,
   path: string,
   listed: ReadonlySet<string>,
 ): ParseResult<StructureBuild> {
   if (!isRecord(value)) return fail(path, "expected an object");
+  if (value.kind === "ground") return parseGroundBuild(value, path);
   if (value.kind === "house") {
     const record = strict(value, path, ["kind", "parts"]);
     if (!record.ok) return record;
@@ -1553,7 +1742,7 @@ function parseStructureBuild(
     return ok({ kind: "house", parts });
   }
   if (value.kind !== "tree")
-    return fail(`${path}.kind`, 'expected "house" or "tree"');
+    return fail(`${path}.kind`, 'expected "house", "tree" or "ground"');
   const record = strict(value, path, ["kind", "model", "heightM"]);
   if (!record.ok) return record;
   const model = parseKitPath(record.value.model, `${path}.model`);
@@ -1678,6 +1867,7 @@ function parseStructureProfile(
     "materials",
     "clips",
     "wind",
+    "outline",
   ]);
   if (!record.ok) return record;
   const version = parseSchemaVersion(
@@ -1711,6 +1901,23 @@ function parseStructureProfile(
   if (!build.ok) return build;
   const cell = parseCell(record.value.cell, `${path}.cell`);
   if (!cell.ok) return cell;
+  // Outline false belongs to ground, which takes none; no other build may carry the key.
+  if (build.value.kind === "ground") {
+    if (record.value.outline !== false)
+      return fail(`${path}.outline`, "a ground profile sets outline to false");
+    const crop = groundCrop(build.value.period, cell.value.pivot);
+    if (
+      crop.x < 0 ||
+      crop.y < 0 ||
+      crop.x + crop.w > cell.value.width ||
+      crop.y + crop.h > cell.value.height
+    )
+      return fail(
+        `${path}.cell`,
+        `the ${crop.w}x${crop.h} patch at (${crop.x},${crop.y}) is not inside the ${cell.value.width}x${cell.value.height} cell`,
+      );
+  } else if (record.value.outline !== undefined)
+    return fail(`${path}.outline`, "only a ground profile takes outline");
   const materials = parseMaterials(record.value.materials, `${path}.materials`);
   if (!materials.ok) return materials;
   let wind: Wind | undefined;
@@ -1737,6 +1944,7 @@ function parseStructureProfile(
     materials: materials.value,
     clips: clips.value,
     ...(wind === undefined ? {} : { wind }),
+    ...(build.value.kind === "ground" ? { outline: false as const } : {}),
   });
 }
 

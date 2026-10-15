@@ -122,7 +122,7 @@ async function atlasPixels(
 
 function requestOf(items: readonly PreviewItem[], id: string): ResolveRequest {
   const item = items.find((candidate) => candidate.id === id);
-  if (item === undefined || item.kind === "diamond") {
+  if (item === undefined || !("request" in item)) {
     throw new Error(`scene has no sourced item "${id}"`);
   }
   return item.request;
@@ -185,7 +185,6 @@ async function composite(
   const ordered = [...env.preview.drawn].sort((a, b) => a.z - b.z);
   const layers: Placed[] = [];
   for (const instance of ordered) {
-    if (instance.art.source === "diamond") continue;
     layers.push(await placedOf(env, items, instance, cache));
   }
   return renderExpected(
