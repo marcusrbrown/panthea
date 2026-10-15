@@ -133,6 +133,46 @@ describe("a strike (AE7)", () => {
     });
   }
 
+  for (const mode of EFFECTS_MODES) {
+    it(`in ${mode} mode a strike on a ruin plays the bolt for its frames' durations and the building stays a ruin`, () => {
+      const { scene, advance } = rig("ruin");
+      const durations = published(mode);
+      scene.setMode(mode);
+
+      scene.strike(durations);
+
+      expect(scene.striking()).toBe(true);
+      expect(byId(items(scene), "strike")).toMatchObject({
+        kind: "effect",
+        request: { source: "canon", id: "lightning-strike", animation: mode },
+      });
+      advance(total(durations) - 1);
+      expect(scene.settle()).toBe(false);
+      expect(scene.building()).toBe("ruin");
+
+      advance(1);
+      expect(scene.settle()).toBe(true);
+      expect(scene.building()).toBe("ruin");
+      expect(scene.striking()).toBe(false);
+      expect(scene.bolt().elapsedMs()).toBeUndefined();
+      expect(byId(items(scene), "structure-fire")).toBeUndefined();
+      expect(byId(items(scene), "structure")).toMatchObject({
+        request: { state: "ruin" },
+      });
+    });
+  }
+
+  it("any state other than ruin resolves to burning when the bolt ends", () => {
+    for (const state of BUILDING_STATES) {
+      if (state === "ruin") continue;
+      const { scene, advance } = rig(state);
+      scene.strike([100]);
+      advance(100);
+      expect(scene.settle()).toBe(true);
+      expect(scene.building()).toBe("burning");
+    }
+  });
+
   it("full and calm are different animations of one asset, and both end in the same state", () => {
     expect(published("calm").length).toBeLessThan(published("full").length);
     const ends = EFFECTS_MODES.map((mode) => {

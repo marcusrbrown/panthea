@@ -2,7 +2,7 @@
 // one: which state the struck building is in, the effects toggle, and a strike
 // in flight. A strike plays its bolt once on a playback clock; when the bolt
 // is over the strike has resolved and the building is burning, whichever
-// animation played. Nothing here draws: `harnessItems` turns it into items.
+// animation played, except a ruin, which stays a ruin. Nothing here draws: `harnessItems` turns it into items.
 
 import {
   EFFECTS_MODES,
@@ -32,7 +32,7 @@ export interface StrikeScene {
    * or `undefined` while no strike is in flight.
    */
   bolt(): BoltChoice;
-  /** Resolves a strike whose bolt is over: the building burns. True when it did. */
+  /** Resolves a strike whose bolt is over: the building burns, unless it is a ruin. True when a strike resolved. */
   settle(): boolean;
 }
 
@@ -78,7 +78,8 @@ export function createStrikeScene(input: {
         return false;
       flight = undefined;
       clock.pause();
-      building = "burning";
+      // A ruin has nothing left to burn: the bolt played, the building stays.
+      if (building !== "ruin") building = "burning";
       return true;
     },
   };
