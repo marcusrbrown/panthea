@@ -3,6 +3,11 @@
 // it and its actors in rows below, in render-target pixel space: whole pixels,
 // x right, y UP (three's convention, which the shared camera uses). The core
 // draws the scene at 1x into a fixed-size target and enlarges it by a whole zoom.
+// Under them lies the place's ground, an 8x8 grid of terrain drawn as a 9x9 lattice
+// of 64x32 tiles: 576 across and 288 down, centred across the view, with its top
+// vertex (lattice point (0, 0)) 144 above the layout origin. Its middle, 16 above
+// the origin, divides the buildings' back rows (feet 80 above the origin) from the
+// actors' front rows (feet 48 and 63 below it).
 //
 // Logical size, by arithmetic (the layout test recomputes every extent from the
 // published manifests):
@@ -16,15 +21,18 @@
 //               three at -192, 0 and +192. The fire's cell is 64x88 (pivot at its
 //               bottom centre) and sits on the structure's anchor (STRUCTURE_ANCHORS:
 //               79 above the oak's foot, 57 above the house's)
+//   ground    : the tiles' boxes run from x = -288 to +288, from 160 above the layout origin
+//               (the first tile's top, 16 above the grid's top vertex) to 128 below it
+//               (the last tile's bottom), so the ground is the deepest content
 //   rings     : an event ring is at most 24 px in radius, 128 right of and 23 below the place,
 //               clear of the actors (the widest cell in the last column ends at x = 100)
 //   right     : 192 + 96 = 288, the third building's cell (an actor's reach is 100)
 //   left      : -(192 + 96) = -288
 //   top       : 80 + 79 + 88 = 247, the oak's fire (the oak's own top is 80 + 164 = 244)
-//   bottom    : -(48 + 15 + 18) = -81, the second actor row
+//   bottom    : -128, the ground's last tile (the second actor row ends at -81)
 // The camera fits that content, so it is off centre: the width is 2 x 288 = 576, on
-// the 16 px grid already; the height is 247 + 81 = 328 rounded up to 336, with the top
-// edge at 252 (5 above the content) and the bottom edge at -84 (3 below it). That is
+// the 16 px grid already; the height is 247 + 128 = 375 rounded up to 384, with the top
+// edge at 252 (5 above the content) and the bottom edge at -132 (4 below it). That is
 // inside the scene area of the default 1280x720 window (714x635, see the layout
 // test), so the canvas is shown whole at zoom 1 at a device pixel ratio of 1 and at
 // zoom 2 at 2. A strike is exempt above the top edge only: its impact and everything
@@ -40,9 +48,9 @@ import {
   type LogicalSize,
 } from "@panthea/renderer";
 
-export const LOGICAL_SIZE: LogicalSize = { width: 576, height: 336 };
+export const LOGICAL_SIZE: LogicalSize = { width: 576, height: 384 };
 
-/** The world row (y up) of the target's top edge: the content reaches 247 above the layout origin and 81 below it. */
+/** The world row (y up) of the target's top edge: the content reaches 247 above the layout origin and 128 below it. */
 const VIEW_TOP = 252;
 
 /** Top-left of the viewport in the core's screen space (y down): centred across, and set to the content's rows down. */
@@ -50,6 +58,21 @@ export const CAMERA_ORIGIN = {
   x: -LOGICAL_SIZE.width / 2,
   y: -VIEW_TOP,
 } as const;
+
+/**
+ * Where lattice point (0, 0) of the ground is centred, in world space (y up): the top vertex of the 8x8 grid's
+ * diamond. The tile of lattice point (x, y) is the shared `latticeOrigin(x, y)` box moved to here.
+ */
+export const GROUND_ORIGIN: WorldPoint = { x: 0, y: 144 };
+
+/** The lattice points the ground draws: 0 to 8 on each axis, the grid's 8 cells and the half tile round them, row by row. */
+export const GROUND_POINTS: readonly {
+  readonly x: number;
+  readonly y: number;
+}[] = Array.from({ length: 81 }, (_, index) => ({
+  x: index % 9,
+  y: Math.floor(index / 9),
+}));
 
 /** The scene's event rings: offset from their place, from the smallest radius in steps of 4. */
 export const EVENT_RING = {

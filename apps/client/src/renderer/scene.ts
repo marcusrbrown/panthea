@@ -49,6 +49,7 @@ import {
   spriteInstances,
 } from "./actors";
 import { BACKGROUND, buildDecor, clearDecor } from "./decor";
+import { planGround } from "./ground";
 import {
   CAMERA_ORIGIN,
   fitView,
@@ -401,20 +402,31 @@ export function createWorldRenderer(
             !seen.has(placed.event.id),
         )
       : [];
-    const [settled, settledStructures, striking] = await Promise.all([
-      Promise.all(
-        planActors(place, snapshot).map((item) =>
-          settle(item, item.actor.sprite),
+    // The ground: a place with no terrain is bare background. A set that is not a published tile set is bare
+    // background too, reported once; one whose atlas cannot be had was reported by the fetch or the decode.
+    const groundPlan = planGround(place, snapshot);
+    const [settled, settledStructures, striking, groundPayload] =
+      await Promise.all([
+        Promise.all(
+          planActors(place, snapshot).map((item) =>
+            settle(item, item.actor.sprite),
+          ),
         ),
-      ),
-      Promise.all(
-        planStructures(place, snapshot).map((item) =>
-          settle(item, item.assetId),
+        Promise.all(
+          planStructures(place, snapshot).map((item) =>
+            settle(item, item.assetId),
+          ),
         ),
-      ),
-      fresh.length > 0 ? strikeArt(snapshot, effects()) : undefined,
-    ]);
+        fresh.length > 0 ? strikeArt(snapshot, effects()) : undefined,
+        groundPlan?.ok === true ? canonPayload(groundPlan.atlas) : undefined,
+      ]);
     if (stale()) return [];
+    if (groundPlan?.ok === false) {
+      canon.report({
+        scope: `terrain:${place?.id ?? ""}`,
+        message: groundPlan.reason,
+      });
+    }
 
     // This draw presents: every event of the window is now seen, whatever its
     // place or realm, so following another place replays nothing, and the
@@ -458,10 +470,26 @@ export function createWorldRenderer(
         message: "no depth slot is left for this actor",
       });
     }
-    base = instances.flatMap((instance) => {
-      const atlasKey = keys.get(instance.id);
-      return atlasKey === undefined ? [] : [{ instance, atlasKey }];
-    });
+    // The ground first: its tiles share the one atlas, and nothing else shares their depth.
+    const ground: LayerEntry[] = [];
+    if (groundPlan?.ok === true && groundPayload !== undefined) {
+      if (layer.plan(groundPayload.key, groundPayload.spec) !== "keep") {
+        layer.commit(
+          groundPayload.key,
+          groundPayload.spec,
+          groundPayload.image,
+        );
+      }
+      for (const instance of groundPlan.instances)
+        ground.push({ instance, atlasKey: groundPayload.key });
+    }
+    base = [
+      ...ground,
+      ...instances.flatMap((instance) => {
+        const atlasKey = keys.get(instance.id);
+        return atlasKey === undefined ? [] : [{ instance, atlasKey }];
+      }),
+    ];
     strikeTargets = new Map(
       settledStructures.flatMap(({ item }) => {
         if (item.role !== "building") return [];

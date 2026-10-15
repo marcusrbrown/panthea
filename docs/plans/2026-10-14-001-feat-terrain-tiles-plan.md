@@ -386,7 +386,7 @@ flowchart LR
 
 ### Stage B: terrain in the game (PR 2)
 
-- [ ] **Unit 5: Place terrain grids from content**
+- [x] **Unit 5: Place terrain grids from content**
 
 **Goal:** each mortal place carries an authored 8×8 grid, and the grid reaches the client view.
 
@@ -411,7 +411,7 @@ flowchart LR
 
 **Verification:** the content checks pass on all 16 places, and the owner approves the grid preview.
 
-- [ ] **Unit 6: Draw terrain under the followed place**
+- [x] **Unit 6: Draw terrain under the followed place**
 
 **Goal:** the game draws the followed place's terrain under the current layout.
 

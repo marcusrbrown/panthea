@@ -1,8 +1,9 @@
-// Everything in the scene that is not a sprite: the ground grid, repair bars,
-// event rings and the mark on a fallen actor. They are
+// Everything in the scene that is not a sprite: repair bars, event rings and
+// the mark on a fallen actor. (The ground is tiles, ./ground.) They are
 // square-edged mesh clusters in render-target pixel space (whole pixels, x
 // right, y up), using the same palette and depth ordering as the sprite layer.
-// Rings and the fallen mark sit above the sprites; the rest sit below them.
+// Rings and the fallen mark sit above the sprites; the repair bars sit below them,
+// above the ground.
 // Actors, buildings, fire and the strike are sprites (./actors, ./structures).
 //
 // Colours are authored sRGB bytes and the target does no colour management,
@@ -23,9 +24,7 @@ import {
 import type { ViewBuilding, ViewLocation, WorldViewModel } from "../store";
 import {
   buildingFoot,
-  CAMERA_ORIGIN,
   EVENT_RING,
-  LOGICAL_SIZE,
   PLACE_ORIGIN,
   type WorldPoint,
 } from "./layout";
@@ -43,15 +42,13 @@ const EFFECT_COLOR: Record<EffectTone, number> = {
   neutral: MOSS,
 };
 
-const GRID_COLOR = PAPER_DEEP;
 const REPAIR_COLOR = MOSS;
 const FALLEN_COLOR = RUST;
 
 /** The scene's clear colour, as sRGB bytes. */
 export const BACKGROUND: readonly [number, number, number] = [238, 233, 220];
 
-// Depth, below every sprite: the grid and repair bars.
-const Z_GRID = 0;
+// Depth, below every sprite and above the ground tiles (z 0): the repair bars.
 const Z_REPAIR = 5;
 // Above every sprite.
 const Z_FALLEN = DEPTH_Z_MAX - 1;
@@ -176,13 +173,6 @@ export function buildDecor(
 ): Decor {
   const objects: Object3D[] = [];
 
-  const viewTop = -CAMERA_ORIGIN.y;
-  const viewBottom = viewTop - LOGICAL_SIZE.height;
-  for (let y = viewBottom + 8; y < viewTop; y += 48) {
-    objects.push(
-      block(`grid:${y}`, 0, y, GRID_COLOR, LOGICAL_SIZE.width, 2, Z_GRID),
-    );
-  }
   const drawnEventIds: string[] = [];
   if (place === undefined) return { objects, drawnEventIds };
 

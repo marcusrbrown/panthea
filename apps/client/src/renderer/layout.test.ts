@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { canvasMetrics, STRUCTURE_ANCHORS } from "@panthea/renderer";
+import {
+  canvasMetrics,
+  latticeOrigin,
+  STRUCTURE_ANCHORS,
+} from "@panthea/renderer";
 
 import {
   FIRE_MANIFEST_TEXT,
@@ -16,6 +20,8 @@ import {
   CAMERA_ORIGIN,
   EVENT_RING,
   fitView,
+  GROUND_ORIGIN,
+  GROUND_POINTS,
   LOGICAL_SIZE,
   MAX_ACTOR_CELL,
   MAX_ACTORS_PER_PLACE,
@@ -212,17 +218,19 @@ test("the view holds every actor slot, every structure at its tallest, its fire,
       }
     }
   }
+  extents.push(...groundBoxes());
   for (const extent of extents) {
     inside(extent);
     widest = Math.max(widest, Math.abs(extent.left), Math.abs(extent.right));
     tallest = Math.max(tallest, extent.top);
     deepest = Math.max(deepest, -extent.bottom);
   }
-  // The header's arithmetic: 192 + 96 = 288 across (three buildings, a cell apart); 80 + 79 + 88 = 247 up (the fire
-  // on the oak, above the oak's own 80 + 164 = 244); 286 - 205 = 81 down (the second actor row).
+  // The header's arithmetic: 192 + 96 = 288 across (three buildings, a cell apart, and the 9x9 ground's 576); 80 + 79 +
+  // 88 = 247 up (the fire on the oak, above the oak's own 80 + 164 = 244); 128 down (the ground's last tile, below the
+  // second actor row's 81).
   expect(widest).toBe(288);
   expect(tallest).toBe(247);
-  expect(deepest).toBe(81);
+  expect(deepest).toBe(128);
   // The size is not slack: the view's edge is within 8 px of the extent on every side.
   expect(VIEW.right - widest).toBeLessThan(8);
   expect(-VIEW.left - widest).toBeLessThan(8);
@@ -250,13 +258,59 @@ test("the highest strike's top leaves the view, and only its top", () => {
   expect(impact).toBeLessThan(VIEW.top);
 });
 
-test("the camera is off centre to fit the content: 576x336 on the 16 px grid, from 252 above the layout origin to 84 below", () => {
-  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 336 });
+test("the camera is off centre to fit the content: 576x384 on the 16 px grid, from 252 above the layout origin to 132 below", () => {
+  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 384 });
   expect(LOGICAL_SIZE.width % 16).toBe(0);
   expect(LOGICAL_SIZE.height % 16).toBe(0);
   expect(CAMERA_ORIGIN).toEqual({ x: -288, y: -252 });
   expect(VIEW.top).toBe(252);
-  expect(VIEW.bottom).toBe(-84);
+  expect(VIEW.bottom).toBe(-132);
+});
+
+/** The boxes of the 9x9 ground tiles in world space (y up): the shared lattice origin, moved to the layout's anchor. */
+function groundBoxes(): Extent[] {
+  return GROUND_POINTS.map(({ x, y }) => {
+    const box = latticeOrigin(x, y);
+    if (!box.ok) throw new Error(box.detail);
+    // latticeOrigin is screen space (y down) from the lattice's own origin; the anchor is where lattice (0, 0) is centred.
+    const left = box.value.x + GROUND_ORIGIN.x;
+    const top = GROUND_ORIGIN.y - box.value.y;
+    return { left, right: left + 64, top, bottom: top - 32 };
+  });
+}
+
+test("the ground is the 9x9 lattice of tiles round an 8x8 grid: 576 across, 288 down, centred across the view", () => {
+  expect(GROUND_POINTS).toHaveLength(81);
+  const boxes = groundBoxes();
+  expect(Math.min(...boxes.map((b) => b.left))).toBe(-288);
+  expect(Math.max(...boxes.map((b) => b.right))).toBe(288);
+  expect(
+    Math.max(...boxes.map((b) => b.top)) -
+      Math.min(...boxes.map((b) => b.bottom)),
+  ).toBe(288);
+  for (const box of boxes) inside(box);
+});
+
+/** The 8x8 grid's diamond in world space: lattice (0,0) is its top vertex, 512 across and 256 down. */
+function insideGrid(point: { x: number; y: number }): boolean {
+  const centre = GROUND_ORIGIN.y - 128;
+  return Math.abs(point.x) / 256 + Math.abs(point.y - centre) / 128 <= 1;
+}
+
+test("buildings stand on the grid's back rows and actors on its front rows: every slot's foot is on the grid, buildings above its middle, actors below", () => {
+  const middle = GROUND_ORIGIN.y - 128;
+  for (let count = 1; count <= 2; count += 1) {
+    for (let index = 0; index < count; index += 1) {
+      const foot = buildingFoot(PLACE_ORIGIN, index, count);
+      expect(insideGrid(foot), `building ${index} of ${count}`).toBe(true);
+      expect(foot.y).toBeGreaterThan(middle);
+    }
+  }
+  for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
+    const foot = actorFoot(PLACE_ORIGIN, index);
+    expect(insideGrid(foot), `actor ${index}`).toBe(true);
+    expect(foot.y).toBeLessThan(middle);
+  }
 });
 
 test("a building's foot is its slot: centred on the place, a cell apart, in one row above the actors", () => {
@@ -337,11 +391,11 @@ test("zoom is the largest whole number that fits the canvas, never below 1", () 
   const fit = (width: number, height: number, ratio = 1) =>
     fitView({ width, height }, ratio);
 
-  expect(fit(576, 336).zoom).toBe(1);
-  expect(fit(1151, 671, 1).zoom).toBe(1);
-  expect(fit(1152, 672, 1).zoom).toBe(2);
-  expect(fit(1152, 671, 1).zoom).toBe(1);
-  expect(fit(5000, 1100, 1).zoom).toBe(3);
+  expect(fit(576, 384).zoom).toBe(1);
+  expect(fit(1151, 767, 1).zoom).toBe(1);
+  expect(fit(1152, 768, 1).zoom).toBe(2);
+  expect(fit(1152, 767, 1).zoom).toBe(1);
+  expect(fit(5000, 1200, 1).zoom).toBe(3);
   expect(fit(10, 10).zoom).toBe(1);
   expect(fit(0, 0).zoom).toBe(1);
   // The canvas is measured in device pixels: a 1000x1000 CSS box at 2x is 2000x2000.
@@ -353,23 +407,23 @@ test("a box too small for the target crops it rather than scaling it fractionall
 
   expect(fitted.zoom).toBe(1);
   expect(fitted.left).toBe(-38);
-  expect(fitted.top).toBe(-18);
+  expect(fitted.top).toBe(-42);
 });
 
 test("the backing store is exactly logical size x zoom and the CSS box is that over the pixel ratio", () => {
-  const fitted = fitView({ width: 576, height: 336 }, 2);
+  const fitted = fitView({ width: 576, height: 384 }, 2);
 
   expect(fitted.metrics).toEqual(canvasMetrics(LOGICAL_SIZE, 2, 2));
   expect(fitted.metrics.backingWidth).toBe(1152);
-  expect(fitted.metrics.backingHeight).toBe(672);
+  expect(fitted.metrics.backingHeight).toBe(768);
   expect(fitted.metrics.cssWidth).toBe(576);
-  expect(fitted.metrics.cssHeight).toBe(336);
+  expect(fitted.metrics.cssHeight).toBe(384);
 });
 
 test("the canvas is centred on a whole device pixel", () => {
-  const fitted = fitView({ width: 581, height: 341 }, 2);
+  const fitted = fitView({ width: 581, height: 389 }, 2);
 
-  // 1162x682 device pixels hold 1152x672: 10 spare on each axis, 5 on each side.
+  // 1162x778 device pixels hold 1152x768: 10 spare on each axis, 5 on each side.
   expect(fitted.left).toBe(5 / 2);
   expect(fitted.top).toBe(5 / 2);
   expect(Number.isInteger(fitted.left * 2)).toBe(true);

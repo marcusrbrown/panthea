@@ -1,7 +1,16 @@
 import { afterEach, expect, test } from "bun:test";
-import { EMPTY_SNAPSHOT, resolveAssetPixels } from "@panthea/assets/browser";
-import { parseSyncFrame, type Realm } from "@panthea/contracts";
-import { type DecodedImage, placeholderImage } from "@panthea/renderer";
+import {
+  EMPTY_SNAPSHOT,
+  resolveAssetPixels,
+  tileMaskAt,
+  tileOffsetAt,
+} from "@panthea/assets/browser";
+import { parseSyncFrame, type Realm, tileAtlasRect } from "@panthea/contracts";
+import {
+  type DecodedImage,
+  latticeOrigin,
+  placeholderImage,
+} from "@panthea/renderer";
 import { testBackend } from "@panthea/testkit/renderer";
 import { decode, type WorldState } from "@panthea/world";
 import type { Sprite2D, SpriteGroup } from "three-flatland";
@@ -9,8 +18,10 @@ import {
   decodeFixture,
   type FakeSource,
   fakeSource,
+  indexText,
   ZEUS_ATLAS_BYTES,
   ZEUS_ATLAS_HASH,
+  ZEUS_REVISION,
   zeusPayload,
 } from "../../test/canon-fixture";
 import {
@@ -21,6 +32,7 @@ import {
   TALL_SPRITE_ID,
 } from "../../test/god-tall-fixture";
 import { FIRE_ATLAS_HASH } from "../../test/structure-fixture";
+import { tilePayload } from "../../test/tile-fixture";
 import { PLACE, viewWithZeus } from "../../test/view-fixture";
 import {
   COMMITTED_CANON_ATLASES,
@@ -37,7 +49,14 @@ import {
 import { baseState, framePayload, movedActor, previewView } from "../fixtures";
 import { createObserver, followedPlace } from "../observer";
 import { toViewModel, type WorldViewModel } from "../store";
-import { actorFoot, CAMERA_ORIGIN, LOGICAL_SIZE, PLACE_ORIGIN } from "./layout";
+import {
+  actorFoot,
+  CAMERA_ORIGIN,
+  GROUND_ORIGIN,
+  GROUND_POINTS,
+  LOGICAL_SIZE,
+  PLACE_ORIGIN,
+} from "./layout";
 import { drawableEvents } from "./presentation";
 import { createWorldRenderer, type WorldRenderer } from "./scene";
 
@@ -284,6 +303,8 @@ test("three device-loss remounts rebuild from cached bytes: no refetch, no leake
     // The followed place: its inhabitant, the tavern and its fire, all on the one placeholder texture.
     expect(backend.layer.stats).toEqual({ sprites: 3, textures: 1 });
     expect(spriteGroups(backend)).toEqual([backend.layer.group]);
+    // A place with events holds decor meshes (event rings); the ground is tiles, not meshes.
+    await renderer.draw(previewView(), "mortal", PLACE.mortal);
     expect(backend.decor.children.length).toBeGreaterThan(0);
 
     backend.triggerLost();
@@ -299,7 +320,7 @@ test("three device-loss remounts rebuild from cached bytes: no refetch, no leake
   expect(source.atlasCalls()).toEqual([ZEUS_ATLAS_HASH]);
   // Each remount drew canon again, from the cached bytes.
   const last = backends[3];
-  expect(last?.log.filter((entry) => entry === "render")).toHaveLength(2);
+  expect(last?.log.filter((entry) => entry === "render")).toHaveLength(3);
 });
 
 test("repeated renderer replacement never exhausts the sprite-group world limit", async () => {
@@ -506,30 +527,30 @@ test("the canvas backing store is the logical size times the largest whole zoom 
   });
 
   expect(element.width).toBe(1152);
-  expect(element.height).toBe(672);
+  expect(element.height).toBe(768);
   expect(element.style.width).toBe("1152px");
-  expect(element.style.height).toBe("672px");
+  expect(element.style.height).toBe("768px");
   expect(element.style.left).toBe("174px");
-  expect(element.style.top).toBe("414px");
+  expect(element.style.top).toBe("366px");
   const view = backend.views.at(-1);
   expect(view?.zoom).toBe(2);
   expect(view?.camera).toEqual(CAMERA_ORIGIN);
   expect(view?.metrics).toMatchObject({
     backingWidth: 1152,
-    backingHeight: 672,
+    backingHeight: 768,
   });
 });
 
 test("at a device pixel ratio of 2 the CSS box is half the backing store", async () => {
   const { canon } = setup();
   const { element } = await mount(canon, {
-    available: { width: 576, height: 336 },
+    available: { width: 576, height: 384 },
     devicePixelRatio: 2,
   });
 
   expect(element.width).toBe(1152);
   expect(element.style.width).toBe("576px");
-  expect(element.style.height).toBe("336px");
+  expect(element.style.height).toBe("384px");
 });
 
 test("event rings are meshes in the decor group, redrawn without accumulating; buildings and flames are not meshes", async () => {
@@ -767,7 +788,7 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
   }
 });
 
-test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 576x336 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
+test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 576x384 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
   const { canon, problems } = setup({
     payload: retroPayload(),
     atlases: RETRO_ATLASES,
@@ -796,12 +817,12 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
   const retro = spriteOf(backend, "actor:zeus");
   const elder = spriteOf(backend, "actor:elder");
   expect(problems).toEqual([]);
-  // The default mount's 1200x1300 fits zoom 2, so the canvas is the 576x336 target at twice its size.
+  // The default mount's 1200x1300 fits zoom 2, so the canvas is the 576x384 target at twice its size.
   expect([element.width, element.height]).toEqual([
     LOGICAL_SIZE.width * 2,
     LOGICAL_SIZE.height * 2,
   ]);
-  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 336 });
+  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 384 });
   // The real atlas: 136 cells of 112x96 in one row, idle/south first.
   expect(retro.texture?.image).toMatchObject({ width: 15232, height: 96 });
   expect(retro.frame?.name).toBe("0,0,112,96");
@@ -820,7 +841,7 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
     elderFoot.y + 80 - 80 / 2,
   ]);
 
-  // Both cells lie inside the camera's view of the 576x336 target.
+  // Both cells lie inside the camera's view of the 576x384 target.
   const bounds = {
     left: CAMERA_ORIGIN.x,
     right: CAMERA_ORIGIN.x + LOGICAL_SIZE.width,
@@ -960,7 +981,7 @@ test("in the default window the canvas is shown whole: zoom 1 at a device pixel 
   const { canon } = setup();
 
   const atOne = await mount(canon, { available: DEFAULT_SCENE_AREA });
-  expect([atOne.element.width, atOne.element.height]).toEqual([576, 336]);
+  expect([atOne.element.width, atOne.element.height]).toEqual([576, 384]);
   expect(atOne.backend.views.at(-1)?.zoom).toBe(1);
   expect(atOne.element.style.left).toBe("69px");
 
@@ -968,11 +989,194 @@ test("in the default window the canvas is shown whole: zoom 1 at a device pixel 
     available: DEFAULT_SCENE_AREA,
     devicePixelRatio: 2,
   });
-  expect([atTwo.element.width, atTwo.element.height]).toEqual([1152, 672]);
+  expect([atTwo.element.width, atTwo.element.height]).toEqual([1152, 768]);
   expect(atTwo.backend.views.at(-1)?.zoom).toBe(2);
-  // The CSS box is the same 576x336 on either screen: the extra device pixels are detail, not a bigger canvas.
+  // The CSS box is the same 576x384 on either screen: the extra device pixels are detail, not a bigger canvas.
   expect([atTwo.element.style.width, atTwo.element.style.height]).toEqual([
     "576px",
-    "336px",
+    "384px",
   ]);
+});
+
+// --- the ground ---------------------------------------------------------------------------------------------------
+
+const SQUARE_ROWS = [
+  "ggggfggg",
+  "gfffffgg",
+  "gffffffg",
+  "ffffffff",
+  "gffffffg",
+  "gffffffg",
+  "gfffffgg",
+  "ggggfggg",
+] as const;
+
+/** A registry with Zeus and the grass-flagstone tile set, as the shell would hand it over. */
+function groundSetup() {
+  const tile = tilePayload();
+  const zeus = zeusPayload();
+  const payload = {
+    ...tile.payload,
+    index: indexText([
+      { assetId: "grass-flagstone", revision: tile.revision },
+      { assetId: "zeus-sprite", revision: ZEUS_REVISION },
+    ]),
+    manifests: [...tile.payload.manifests, ...zeus.manifests],
+  };
+  const atlases = new Map([
+    ...tile.atlases,
+    [ZEUS_ATLAS_HASH, ZEUS_ATLAS_BYTES],
+  ]);
+  return { ...setup({ payload, atlases }), tile };
+}
+
+const squareView = (
+  rows: readonly string[] = SQUARE_ROWS,
+  set = "grass-flagstone",
+) => viewWithZeus({ terrain: { [PLACE.mortal]: { set, rows } } });
+
+const groundIds = (backend: ReturnType<typeof testBackend>) =>
+  GROUND_POINTS.map(({ x, y }) => `ground:${x}-${y}`).filter(
+    (id) => backend.layer.spriteFor(id) !== undefined,
+  );
+
+test("a mortal place with terrain draws 81 ground tiles, each the atlas cell its mask and offset name, at its lattice point under the layout", async () => {
+  const { canon, problems, source } = groundSetup();
+  const { renderer, backend } = await mount(canon);
+
+  await renderer.draw(squareView(), "mortal", PLACE.mortal);
+
+  expect(groundIds(backend)).toHaveLength(81);
+  const grid = SQUARE_ROWS.map((row) =>
+    [...row].map((c) => (c === "f" ? 1 : 0)),
+  );
+  const seenMasks = new Set<number>();
+  for (const { x, y } of GROUND_POINTS) {
+    const mask = tileMaskAt(grid, x, y);
+    seenMasks.add(mask);
+    const rect = tileAtlasRect(mask, tileOffsetAt(x, y, 4), 4);
+    const sprite = spriteOf(backend, `ground:${x}-${y}`);
+    expect(sprite.frame?.name, `${x},${y}`).toBe(
+      `${rect.x},${rect.y},${rect.w},${rect.h}`,
+    );
+    // The lattice origin, moved to the layout's anchor: the sprite's centre in the target's y-up pixels.
+    const box = latticeOrigin(x, y);
+    if (!box.ok) throw new Error(box.detail);
+    expect([sprite.position.x + 0, sprite.position.y + 0]).toEqual([
+      box.value.x + GROUND_ORIGIN.x + 32,
+      GROUND_ORIGIN.y - box.value.y - 16,
+    ]);
+  }
+  expect(seenMasks.size).toBeGreaterThan(8);
+  // One atlas fetch serves every tile of the place, and nothing is reported.
+  expect(source.atlasCalls()).toEqual([tile81Hash(groundSetup().tile)]);
+  expect(problems).toEqual([]);
+});
+
+function tile81Hash(tile: ReturnType<typeof tilePayload>): string {
+  return tile.atlasHash;
+}
+
+test("the ground draws under every sprite: a tile sorts below an actor, a building and its fire, whatever the lattice point", async () => {
+  const { canon } = groundSetup();
+  const { renderer, backend } = await mount(canon);
+
+  await renderer.draw(squareView(), "mortal", PLACE.mortal);
+
+  const groundTop = Math.max(
+    ...GROUND_POINTS.map(
+      ({ x, y }) => spriteOf(backend, `ground:${x}-${y}`).position.z,
+    ),
+  );
+  const others = [
+    "actor:woodcutter",
+    "structure:the-tavern",
+    "structure:the-tavern:fire",
+  ].map((id) => spriteOf(backend, id).position.z);
+  for (const z of others) expect(z).toBeGreaterThan(groundTop);
+});
+
+test("a place with no terrain, an Olympus place, and a frame with no ground draw bare background: no tiles, nothing reported", async () => {
+  const { canon, problems } = groundSetup();
+  const { renderer, backend } = await mount(canon);
+
+  // The ground belongs to the mortal place it is authored for; the followed Olympus place has none.
+  await renderer.draw(squareView(), "olympus", PLACE.olympus);
+  expect(groundIds(backend)).toEqual([]);
+  expect(backend.layer.stats.sprites).toBe(1);
+
+  await renderer.draw(viewWithZeus(), "mortal", PLACE.mortal);
+  expect(groundIds(backend)).toEqual([]);
+
+  // Following no place draws no ground either.
+  await renderer.draw(squareView(), "mortal", undefined);
+  expect(groundIds(backend)).toEqual([]);
+  expect(problems).toEqual([]);
+});
+
+test("a mortal place whose set does not resolve draws bare background and reports it once, however often it is drawn", async () => {
+  for (const [set, setup_] of [
+    ["nowhere", groundSetup],
+    ["zeus-sprite", groundSetup],
+  ] as const) {
+    const { canon, problems } = setup_();
+    const { renderer, backend } = await mount(canon);
+    const view = squareView(SQUARE_ROWS, set);
+
+    await renderer.draw(view, "mortal", PLACE.mortal);
+    await renderer.draw(view, "mortal", PLACE.mortal);
+
+    expect(groundIds(backend), set).toEqual([]);
+    // The place's own sprites still draw.
+    expect(backend.layer.spriteFor("actor:woodcutter")).toBeDefined();
+    expect(problems, set).toHaveLength(1);
+    expect(problems[0]?.scope).toBe(`terrain:${PLACE.mortal}`);
+    expect(problems[0]?.message).toContain(set);
+  }
+});
+
+test("a set whose atlas cannot be fetched draws bare background, and is reported once as an atlas problem", async () => {
+  const { canon, problems } = setup({
+    ...(() => {
+      const tile = tilePayload();
+      return { payload: tile.payload, atlases: new Map<string, Uint8Array>() };
+    })(),
+  });
+  const { renderer, backend } = await mount(canon);
+  const view = squareView();
+
+  await renderer.draw(view, "mortal", PLACE.mortal);
+  await renderer.draw(view, "mortal", PLACE.mortal);
+
+  expect(groundIds(backend)).toEqual([]);
+  expect(problems).toHaveLength(1);
+  expect(problems[0]?.scope).toMatch(/^atlas:/);
+});
+
+test("the ground follows the place: changing the followed place replaces its tiles, and an edited grid redraws", async () => {
+  const { canon } = groundSetup();
+  const { renderer, backend } = await mount(canon);
+  const edited = SQUARE_ROWS.map((row) => row.replace(/f/g, "g"));
+
+  await renderer.draw(squareView(), "mortal", PLACE.mortal);
+  const before = spriteOf(backend, "ground:3-3").frame?.name;
+  await renderer.draw(squareView(edited), "mortal", PLACE.mortal);
+  const after = spriteOf(backend, "ground:3-3").frame?.name;
+  expect(after).not.toBe(before);
+  expect(groundIds(backend)).toHaveLength(81);
+
+  await renderer.draw(squareView(), "olympus", PLACE.olympus);
+  expect(groundIds(backend)).toEqual([]);
+  expect(backend.layer.stats.textures).toBe(1);
+});
+
+test("the decor no longer draws paper rules: only rings, repair bars and the fallen mark remain", async () => {
+  const { canon } = groundSetup();
+  const { renderer, backend } = await mount(canon);
+
+  await renderer.draw(squareView(), "mortal", PLACE.mortal);
+  await renderer.draw(previewView(), "mortal", PLACE.mortal);
+
+  for (const child of backend.decor.children)
+    expect(child.name).not.toMatch(/^grid:/);
 });
