@@ -1639,8 +1639,8 @@ class House(Structure):
 
 class Tree(Structure):
     """One kit model made into an old oak: its trunk and roots, forked limbs added by the script, and its crown copied
-    into a few wide lobes with gaps between them. It sways in a seamless wind loop; damaged is fire-stripped, bare
-    black limbs and twigs with scraps of scorched foliage; the ruin is the trunk cut down to a
+    into a few wide lobes with gaps between them. It sways in a seamless wind loop; damaged is fire-stripped: the same
+    limbs, black and bare, with a few scraps of scorched foliage inside the lobes' own volume; the ruin is the trunk cut down to a
     charred stump with broken limb stubs."""
 
     # Leaf lobes as fractions of the tree's height: across the screen, toward the viewer, up, the width, and how flat they are.
@@ -1752,8 +1752,8 @@ class Tree(Structure):
         mb.add(faces, role, "foliage")
 
     def limbs(self, mb: MeshBuilder) -> tuple:
-        """The forked skeleton: three main limbs from the trunk's top to the big lobes, secondary limbs to the rest.
-        Returns the points the twigs hang from: (limb middles, limb ends)."""
+        """The forked skeleton: three main limbs from the trunk's top to the big lobes, secondary limbs to the rest. It is
+        the same in every state. Returns where each limb ends, which is the foot of the lobe it carried."""
         h = self.height
         top = self.TRUNK_TOP * h
         lobes = self.lobes()
@@ -1776,21 +1776,7 @@ class Tree(Structure):
                 mb.limb(mid, base, 0.03 * h, 0.02 * h, "trunk", "trunk", segments=7)
                 middles.append(mid)
             ends.append(base)
-        return middles, ends
-
-    def twigs(self, mb: MeshBuilder, points: list) -> list:
-        """Thin bare twigs fanning out of each point; returns their tips."""
-        h = self.height
-        tips = []
-        for k, p in enumerate(points):
-            for j in range(3):
-                a = math.radians(120 * j + 360 * hash_unit(k * 5 + j + 40))
-                length = (0.1 + 0.07 * hash_unit(k * 7 + j + 70)) * h
-                rise = (0.05 + 0.1 * hash_unit(k * 3 + j + 90)) * h
-                tip = (p[0] + length * math.cos(a), p[1] + length * math.sin(a), p[2] + rise)
-                mb.limb(p, tip, 0.016 * h, 0.011 * h, "trunk", "trunk", segments=5)
-                tips.append(tip)
-        return tips
+        return ends
 
     def build(self, state: str, clip: dict) -> None:
         h = self.height
@@ -1805,15 +1791,14 @@ class Tree(Structure):
                 mb.limb(start, end, 0.17, 0.11, "trunk", "trunk")
         else:
             self.add_trunk(mb, None)
-            middles, ends = self.limbs(mb)
+            ends = self.limbs(mb)
             burnt = clip.get("leaves", 1.0) < 1.0
             lobes = self.lobes()
             if not burnt:
                 for k, (centre, width, flat) in enumerate(lobes):
                     self.add_cluster(mb, centre, width, flat, "leaf" if k % 3 else "leaf-deep")
             else:
-                # Fire-stripped: bare twigs on every limb, a few scraps of scorched foliage on some lobes, and small clumps on twig tips.
-                tips = self.twigs(mb, [*ends, *middles[:3]])
+                # Fire-stripped: the intact tree's own limbs, bare, and a few small scorched clumps where some of its lobes were.
                 keep = max(1, round(len(lobes) * clip["leaves"]))
                 for k in sorted(range(len(lobes)), key=lambda i: hash_unit(i * 11 + 5))[:keep]:
                     # What the fire left of a lobe: a small whole clump sitting on the end of the limb that carried it.
@@ -1821,8 +1806,6 @@ class Tree(Structure):
                     small = width * 0.42
                     base = ends[k]
                     self.add_cluster(mb, (base[0], base[1], base[2] + 0.34 * flat * small), small, flat, "leaf" if k % 2 else "leaf-deep")
-                for k in sorted(range(len(tips)), key=lambda i: hash_unit(i * 3 + 8))[:5]:
-                    self.add_cluster(mb, tips[k], 0.075 * h, 0.8, "leaf-deep")
         obj, roles = mb.finish("tree", Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)))
         self.book.bind(obj, [self.look(clip, role) for role in roles])
         self.objs.append(obj)
