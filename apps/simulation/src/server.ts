@@ -25,6 +25,7 @@ import {
   createSessionId,
   type DegradedReason,
   eventSubjects,
+  type LocationTerrain,
   parseEventId,
   parseObservationRecord,
   parseSessionId,
@@ -356,6 +357,7 @@ function buildFrame(
   sessionId: SessionId,
   ref: ServiceStatusRef,
   db: Database,
+  terrain: SimulationServerOptions["terrain"],
 ): SyncFrame {
   return {
     schemaVersion: 1,
@@ -365,6 +367,7 @@ function buildFrame(
     ...displayedStatus(ref),
     ...(ref.catchUpSummary ? { catchUpSummary: ref.catchUpSummary } : {}),
     ...(ref.modelEndpoints ? { modelEndpoints: ref.modelEndpoints } : {}),
+    ...(terrain ? { terrain } : {}),
     recentEvents: readRecentEvents(db, ref.sequence, ref.tick),
     state: ref.encodedState,
   };
@@ -421,6 +424,11 @@ export interface SimulationServerOptions {
   readonly catchUpControl?: CatchUpControl;
   /** The clock `/receipts` rate limiting reads, in milliseconds; defaults to `Date.now`. A seam for tests. */
   readonly receiptClock?: () => number;
+  /**
+   * The authored ground of each place that has one, by place id, from the loaded content pack. Every frame
+   * carries it, so it is never part of the saved world and an edited grid reaches every existing world.
+   */
+  readonly terrain?: Readonly<Record<string, LocationTerrain>>;
 }
 
 export interface SimulationServerHandle {
@@ -500,6 +508,7 @@ export function createSimulationServer(
           ws.data.sessionId,
           statusRef,
           store.db,
+          options.terrain,
         );
         ws.send(JSON.stringify(frame));
       },
@@ -516,7 +525,13 @@ export function createSimulationServer(
   host = `127.0.0.1:${server.port}`;
 
   function publishFrame(): void {
-    const frame = buildFrame(store.worldId, sessionId, statusRef, store.db);
+    const frame = buildFrame(
+      store.worldId,
+      sessionId,
+      statusRef,
+      store.db,
+      options.terrain,
+    );
     const sent = server.publish(FRAME_TOPIC, JSON.stringify(frame));
     if (sent < 0) {
       console.warn("panthea-simulation: frame broadcast backpressured");
@@ -530,7 +545,13 @@ export function createSimulationServer(
 
     if (url.pathname === "/frame" && request.method === "GET") {
       return jsonResponse(
-        buildFrame(store.worldId, sessionId, statusRef, store.db),
+        buildFrame(
+          store.worldId,
+          sessionId,
+          statusRef,
+          store.db,
+          options.terrain,
+        ),
       );
     }
 

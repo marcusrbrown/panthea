@@ -88,6 +88,10 @@ export function tileFixture(
   period = 4,
   tag = 0,
   vocabulary: AssetVocabulary = committedVocabulary(),
+  terrain: { base: string; over: string } = {
+    base: "grass",
+    over: "flagstone",
+  },
 ): TileFixture {
   const width = 16 * 64;
   const height = period * period * 32;
@@ -122,7 +126,7 @@ export function tileFixture(
       paletteId: PALETTE_ID,
       styleTag: "fixture",
       atlas: { blob, width, height },
-      terrain: { base: "grass", over: "flagstone" },
+      terrain,
       period,
       provenance: renderedProvenance(),
     },

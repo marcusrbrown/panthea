@@ -92,6 +92,10 @@ function contentRoot(): string {
     { id: "farmer", sprite: "placeholder-farmer" },
     { id: "zeus", deity: true },
   ]);
+  writeLocations(dir, [
+    { id: "town-square", realm: "mortal" },
+    { id: "great-hall", realm: "olympus" },
+  ]);
   const subjects = join(dir, "assets", "subjects");
   for (const name of readdirSync(subjects)) {
     const { portrait: _mapped, ...subject } = JSON.parse(
@@ -116,6 +120,28 @@ function writeInhabitants(
     `${JSON.stringify({ inhabitants }, null, 2)}\n`,
   );
 }
+
+function writeLocations(
+  root: string,
+  locations: readonly Record<string, unknown>[],
+) {
+  mkdirSync(join(root, "world"), { recursive: true });
+  writeFileSync(
+    join(root, "world", "locations.json"),
+    `${JSON.stringify({ locations }, null, 2)}\n`,
+  );
+}
+
+const GRID = [
+  "gggggggg",
+  "gffffffg",
+  "gffffffg",
+  "gffffffg",
+  "gffffffg",
+  "gffffffg",
+  "gffffffg",
+  "gggggggg",
+];
 
 /** Replaces the root's palette files with the fixture palette's. */
 function writePalette(root: string, files: FixturePalette["files"]) {
@@ -1793,5 +1819,77 @@ describe("tile assets", () => {
     ]);
     const [diagnostic] = diagnosticsOf(root);
     expect(diagnostic?.message).toContain("published as a tile, not a sprite");
+  });
+});
+
+describe("place terrain", () => {
+  const place = (id: string, set = "grass-flagstone") => ({
+    id,
+    realm: "mortal",
+    terrain: { set, rows: GRID },
+  });
+  const check = (root: string) => diagnosticsOf(root);
+
+  it("accepts a place whose terrain names a published grass and flagstone tile, and places with none", () => {
+    const root = contentRoot();
+    publish(root, tileFixture());
+    writeLocations(root, [
+      place("town-square"),
+      place("tavern"),
+      { id: "great-hall", realm: "olympus" },
+    ]);
+    expect(check(root)).toEqual([]);
+  });
+
+  it("refuses a set that is not published, naming the place and the set", () => {
+    const root = contentRoot();
+    writeLocations(root, [place("town-square")]);
+    const [diagnostic, ...rest] = check(root);
+    expect(rest).toEqual([]);
+    expect(diagnostic?.file).toBe("world/locations.json");
+    expect(diagnostic?.message).toContain("town-square");
+    expect(diagnostic?.message).toContain('"grass-flagstone"');
+    expect(diagnostic?.message).toContain("not published");
+  });
+
+  it("refuses a set that is published as another kind, and a set that is not a valid asset id", () => {
+    const root = contentRoot();
+    publish(root, spriteFixture());
+    writeLocations(root, [place("town-square", "placeholder-zeus")]);
+    const [kind] = check(root);
+    expect(kind?.message).toContain("published as a sprite, not a tile");
+    writeLocations(root, [place("town-square", "Grass Flagstone")]);
+    const [id] = check(root);
+    expect(id?.message).toContain("must be a valid asset id");
+  });
+
+  it("refuses a tile whose terrains are not grass (g) and flagstone (f), naming the pair", () => {
+    for (const [base, over] of [
+      ["sand", "flagstone"],
+      ["grass", "water"],
+      ["flagstone", "grass"],
+    ] as const) {
+      const root = contentRoot();
+      publish(
+        root,
+        tileFixture("grass-flagstone", 4, 0, undefined, { base, over }),
+      );
+      writeLocations(root, [place("town-square")]);
+      const [diagnostic, ...rest] = check(root);
+      expect(rest, `${base}/${over}`).toEqual([]);
+      expect(diagnostic?.message, `${base}/${over}`).toContain(
+        `${base} and ${over}`,
+      );
+      expect(diagnostic?.message).toContain("grass (g) and flagstone (f)");
+    }
+  });
+
+  it("names every offending place, in file order", () => {
+    const root = contentRoot();
+    writeLocations(root, [place("tavern"), place("inn")]);
+    expect(check(root).map((d) => d.message.match(/\((\w+)\)/)?.[1])).toEqual([
+      "tavern",
+      "inn",
+    ]);
   });
 });

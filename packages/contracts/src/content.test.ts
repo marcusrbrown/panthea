@@ -1082,3 +1082,101 @@ test("the season, floor, loss, and director tunables are positive whole numbers;
     path: "rules.petitionBalance.directorQuietTicks",
   });
 });
+
+const GRID_ROWS: readonly string[] = [
+  "gggggggg",
+  "gggffggg",
+  "ggfffffg",
+  "ggfffffg",
+  "gggffggg",
+  "ggggfggg",
+  "ggggfggg",
+  "gggggggg",
+];
+
+function packWithTerrain(terrain: unknown): Record<string, unknown> {
+  const pack = validPack();
+  (pack.locations as Record<string, unknown>[])[0].terrain = terrain;
+  return pack;
+}
+
+const refused = (terrain: unknown) => {
+  const result = parseContentPack(packWithTerrain(terrain));
+  if (result.ok) throw new Error("expected a refusal");
+  return result;
+};
+
+test("a place's terrain is a set id and 8 rows of 8 characters over g and f, kept as authored", () => {
+  const result = parseContentPack(
+    packWithTerrain({ set: "grass-flagstone", rows: [...GRID_ROWS] }),
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.locations[0]?.terrain).toEqual({
+    set: "grass-flagstone",
+    rows: [...GRID_ROWS],
+  });
+  // A place with none has none.
+  expect(result.value.locations[1]).not.toHaveProperty("terrain");
+});
+
+test("terrain refuses a row count other than 8, naming the count", () => {
+  for (const rows of [GRID_ROWS.slice(0, 7), [...GRID_ROWS, "gggggggg"], []]) {
+    const result = refused({ set: "grass-flagstone", rows });
+    expect(result.path).toBe("locations[0].terrain.rows");
+    expect(result.message).toContain(`${rows.length} rows`);
+    expect(result.message).toContain("8");
+  }
+});
+
+test("terrain refuses a row length other than 8, naming the row", () => {
+  for (const [row, text] of [
+    [3, "ggggggggg"],
+    [0, "ggggggg"],
+    [7, ""],
+  ] as const) {
+    const rows = [...GRID_ROWS];
+    rows[row] = text;
+    const result = refused({ set: "grass-flagstone", rows });
+    expect(result.path).toBe(`locations[0].terrain.rows[${row}]`);
+    expect(result.message).toContain(`${text.length} characters`);
+  }
+});
+
+test("terrain refuses a character other than g or f, naming it and where it is", () => {
+  const rows = [...GRID_ROWS];
+  rows[2] = "ggfxffgg";
+  const result = refused({ set: "grass-flagstone", rows });
+  expect(result.path).toBe("locations[0].terrain.rows[2]");
+  expect(result.message).toContain('"x"');
+  expect(result.message).toContain("column 4");
+  const upper = [...GRID_ROWS];
+  upper[0] = "Gggggggg";
+  expect(refused({ set: "grass-flagstone", rows: upper }).message).toContain(
+    '"G"',
+  );
+});
+
+test("terrain refuses a missing or empty set, rows that are not strings, and keys it does not know", () => {
+  expect(refused({ rows: [...GRID_ROWS] }).path).toBe(
+    "locations[0].terrain.set",
+  );
+  expect(refused({ set: "", rows: [...GRID_ROWS] }).path).toBe(
+    "locations[0].terrain.set",
+  );
+  expect(refused({ set: 7, rows: [...GRID_ROWS] }).path).toBe(
+    "locations[0].terrain.set",
+  );
+  expect(refused({ set: "grass-flagstone" }).path).toBe(
+    "locations[0].terrain.rows",
+  );
+  const numbers = [...GRID_ROWS] as unknown[];
+  numbers[1] = 12345678;
+  expect(refused({ set: "grass-flagstone", rows: numbers }).path).toBe(
+    "locations[0].terrain.rows[1]",
+  );
+  expect(
+    refused({ set: "grass-flagstone", rows: [...GRID_ROWS], size: 8 }).path,
+  ).toBe("locations[0].terrain.size");
+  expect(refused("grass-flagstone").path).toBe("locations[0].terrain");
+});

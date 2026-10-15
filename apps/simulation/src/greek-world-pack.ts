@@ -21,6 +21,7 @@ import {
 import {
   type ContentPack,
   isRecord,
+  type LocationTerrain,
   type ParseResult,
   parseContentPack,
 } from "@panthea/contracts";
@@ -157,4 +158,22 @@ export function loadEmbeddedGreekGodProfiles(
   files: readonly LabeledProfileInput[] = EMBEDDED_GOD_PROFILE_FILES,
 ): ParseResult<readonly GodProfile[]> {
   return parseGodProfiles(files, pack.inhabitants);
+}
+
+/**
+ * The authored ground of each Greek place that has one, by place id, read from the embedded pack. The sidecar puts
+ * it on every frame it builds: terrain is content, not world state, so an edited grid reaches every existing world.
+ */
+export function loadGreekTerrain(
+  env: NodeJS.ProcessEnv = process.env,
+): Readonly<Record<string, LocationTerrain>> {
+  const pack = loadEmbeddedGreekWorldPack(env);
+  if (!pack.ok)
+    throw new Error(
+      `failed to parse the embedded Greek content pack (${pack.path}): ${pack.message}`,
+    );
+  const terrain: Record<string, LocationTerrain> = {};
+  for (const location of pack.value.locations)
+    if (location.terrain !== undefined) terrain[location.id] = location.terrain;
+  return terrain;
 }

@@ -242,3 +242,64 @@ test("a dead actor stays in the view model, marked not alive", () => {
   );
   expect(square?.actors[0]).toMatchObject({ id: "woodcutter", alive: false });
 });
+
+const SQUARE_ROWS = [
+  "gggggggg",
+  "gfffffgg",
+  "gfffffgg",
+  "gfffffgg",
+  "gfffffgg",
+  "gfffffgg",
+  "gggfgggg",
+  "gggfgggg",
+];
+
+test("a place's ground reaches its view as the frame carried it, rows unchanged; a place without one has none", () => {
+  const terrain = {
+    "town-square": { set: "grass-flagstone", rows: SQUARE_ROWS },
+  };
+  const { frame, state } = connected(baseState(), { terrain });
+  const view = toViewModel(frame, state);
+
+  const square = view.realms.mortal.find((l) => l.id === "town-square");
+  expect(square?.terrain).toEqual({
+    set: "grass-flagstone",
+    rows: SQUARE_ROWS,
+  });
+  // The other mortal place, and every place of the other realms, are drawn with none.
+  const agora = view.realms.mortal.find((l) => l.id === "agora");
+  expect(agora).toBeDefined();
+  expect(agora && "terrain" in agora).toBe(false);
+  for (const place of [...view.realms.olympus, ...view.realms.underworld])
+    expect("terrain" in place).toBe(false);
+});
+
+test("a frame with no ground gives every place none, and the ground follows the frame, not the world state", () => {
+  const { frame, state } = connected(baseState());
+  const without = toViewModel(frame, state);
+  for (const place of Object.values(without.realms).flat())
+    expect("terrain" in place).toBe(false);
+
+  // The same world state under a frame with an edited grid: the view shows the edit.
+  const edited = SQUARE_ROWS.map((row) => row.replace(/f/g, "g"));
+  const next = connected(baseState(), {
+    terrain: { "town-square": { set: "grass-flagstone", rows: edited } },
+  });
+  const view = toViewModel(next.frame, next.state);
+  expect(
+    view.realms.mortal.find((l) => l.id === "town-square")?.terrain?.rows,
+  ).toEqual(edited);
+});
+
+test("the store keeps a place's ground on the view it holds", () => {
+  const store = createWorldStore();
+  const terrain = {
+    "town-square": { set: "grass-flagstone", rows: SQUARE_ROWS },
+  };
+  const { frame, state } = connected(baseState(), { terrain });
+  store.apply(frame, state);
+  expect(
+    store.viewModel()?.realms.mortal.find((l) => l.id === "town-square")
+      ?.terrain?.rows,
+  ).toEqual(SQUARE_ROWS);
+});
