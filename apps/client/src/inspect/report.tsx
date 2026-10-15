@@ -8,7 +8,9 @@ export function describeShown(shown: Shown): string {
   if (resolution.source === "placeholder") {
     return `PLACEHOLDER (${resolution.reason}): ${selectionLabel(selection)} is not published; the shared placeholder is drawn`;
   }
-  return `CANON: ${selectionLabel(selection)}, ${resolution.frames.length} frames, atlas ${resolution.atlas.blob}`;
+  const paged =
+    shown.pages > 1 ? `, page ${shown.page + 1} of ${shown.pages}` : "";
+  return `CANON: ${selectionLabel(selection)}, ${resolution.frames.length} frames${paged}, atlas ${resolution.atlas.blob}`;
 }
 
 /** The checks as text: PASS or FAIL, the label, and what was compared. */

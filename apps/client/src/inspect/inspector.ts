@@ -30,6 +30,7 @@ import {
   evaluate,
   globalChecks,
   type Measurement,
+  type PageRead,
 } from "./check";
 import {
   CHECK_ZOOMS,
@@ -45,6 +46,7 @@ import {
   optionsOf,
   type Selection,
   type SelectionOptions,
+  selectionLabel as selectionLabelOf,
   selectionQuery,
 } from "./selection";
 
@@ -61,10 +63,10 @@ export const INSPECT_SIZE = { width: 576, height: 432 } as const;
 const PAD = 16;
 const GAP = 8;
 
-/** Top-left rects for frames of these sizes, left to right, wrapping, at whole pixels. */
-export function placeFrames(
-  sizes: readonly { readonly w: number; readonly h: number }[],
-): PixelRect[] {
+type FrameSize = { readonly w: number; readonly h: number };
+
+/** Top-left rects for frames of these sizes, left to right, wrapping, at whole pixels; undefined when they do not all fit. */
+function tryPlace(sizes: readonly FrameSize[]): PixelRect[] | undefined {
   const placed: PixelRect[] = [];
   let x = PAD;
   let y = PAD;
@@ -79,15 +81,55 @@ export function placeFrames(
       x + size.w > INSPECT_SIZE.width - PAD ||
       y + size.h > INSPECT_SIZE.height
     ) {
-      throw new Error(
-        `a ${size.w}x${size.h} frame does not fit the ${INSPECT_SIZE.width}x${INSPECT_SIZE.height} target`,
-      );
+      return undefined;
     }
     placed.push({ x, y, w: size.w, h: size.h });
     x += size.w + GAP;
     rowHeight = Math.max(rowHeight, size.h);
   }
   return placed;
+}
+
+const tooBig = (size: FrameSize): Error =>
+  new Error(
+    `a ${size.w}x${size.h} frame does not fit the ${INSPECT_SIZE.width}x${INSPECT_SIZE.height} target`,
+  );
+
+/** Top-left rects for frames of these sizes, left to right, wrapping, at whole pixels. Throws if they do not all fit. */
+export function placeFrames(sizes: readonly FrameSize[]): PixelRect[] {
+  const placed = tryPlace(sizes);
+  if (placed !== undefined) return placed;
+  // Name the first frame that overflows, as the page it would start would not hold it either.
+  for (let count = 1; count <= sizes.length; count += 1) {
+    if (tryPlace(sizes.slice(0, count)) === undefined) {
+      throw tooBig(sizes[count - 1] as FrameSize);
+    }
+  }
+  throw new Error("frames do not fit the target");
+}
+
+/**
+ * Splits frames into pages, in order, each page filled until the next frame would not fit the target and laid
+ * out with `placeFrames`. A selection that fits is one page, so it is placed exactly as `placeFrames` places it.
+ * A frame that cannot fit the target even alone, being wider or taller than the whole of it, is refused.
+ */
+export function pageFrames(sizes: readonly FrameSize[]): PixelRect[][] {
+  const pages: FrameSize[][] = [];
+  let page: FrameSize[] = [];
+  for (const size of sizes) {
+    if (tryPlace([size]) === undefined) {
+      throw new Error(
+        `a ${size.w}x${size.h} frame does not fit the ${INSPECT_SIZE.width}x${INSPECT_SIZE.height} target, even alone on a page`,
+      );
+    }
+    if (tryPlace([...page, size]) === undefined) {
+      pages.push(page);
+      page = [];
+    }
+    page.push(size);
+  }
+  if (page.length > 0) pages.push(page);
+  return pages.map((frames) => placeFrames(frames));
 }
 
 export interface Listing {
@@ -99,7 +141,11 @@ export interface Listing {
 export interface Shown {
   readonly selection: Selection;
   readonly resolution: PixelResolution;
+  /** Where each frame of this page sits in the target. */
   readonly placements: readonly PixelRect[];
+  /** Which page is drawn, from 0, and how many pages the selection takes: frames that do not fit one draw are paged. */
+  readonly page: number;
+  readonly pages: number;
 }
 
 export interface SuiteResult {
@@ -118,9 +164,9 @@ export interface InspectorDeps {
 export interface Inspector {
   start(onDeviceLost: () => void): Promise<void>;
   listing(): Promise<Listing>;
-  /** Draws the selection at the display zoom and resolves once the frame is rendered. */
-  show(selection: Selection): Promise<Shown>;
-  /** Shows the selection, then reads it back from the target and from the canvas at every checked zoom. */
+  /** Draws one page of the selection (the first by default) at the display zoom and resolves once it is rendered. */
+  show(selection: Selection, page?: number): Promise<Shown>;
+  /** Shows every page of the selection in turn, reading each back from the target and from the canvas at every checked zoom. */
   measure(selection: Selection): Promise<Measurement>;
   /** Measures every committed selection and the unpublished controls, and adds the global checks. */
   runAll(): Promise<SuiteResult>;
@@ -161,6 +207,7 @@ export function createInspector(
   const payloads = new Map<string, Payload>();
   const undecodable = new Set<string>();
   let zoom = 2;
+  let lastPage = 0;
   let disposed = false;
   let tail: Promise<unknown> = Promise.resolve();
 
@@ -255,7 +302,7 @@ export function createInspector(
     };
   }
 
-  async function showNow(selection: Selection): Promise<Shown> {
+  async function showNow(selection: Selection, page = 0): Promise<Shown> {
     const { snapshot } = await canon.load();
     const query = selectionQuery(selection);
     let resolution = resolveAssetPixels(snapshot, query);
@@ -272,9 +319,20 @@ export function createInspector(
 
     const instances: Instance[] = [];
     let placements: PixelRect[];
+    let pages = 1;
     if (resolution.source === "canon" && payload !== undefined) {
-      const { frames } = resolution;
-      placements = placeFrames(frames.map((frame) => frame.rect));
+      const paged = pageFrames(resolution.frames.map((frame) => frame.rect));
+      pages = Math.max(paged.length, 1);
+      if (!Number.isInteger(page) || page < 0 || page >= pages) {
+        throw new Error(
+          `page ${page + 1} is out of range: ${selectionLabelOf(selection)} takes ${pages} page${pages === 1 ? "" : "s"}`,
+        );
+      }
+      placements = paged[page] ?? [];
+      const first = paged
+        .slice(0, page)
+        .reduce((count, earlier) => count + earlier.length, 0);
+      const frames = resolution.frames.slice(first, first + placements.length);
       for (const [index, frame] of frames.entries()) {
         const rect = placements[index];
         if (rect === undefined) continue;
@@ -290,6 +348,11 @@ export function createInspector(
         );
       }
     } else if (resolution.source === "placeholder") {
+      if (page !== 0) {
+        throw new Error(
+          `page ${page + 1} is out of range: ${selectionLabelOf(selection)} takes 1 page`,
+        );
+      }
       payload = placeholderPayload(resolution.pixels);
       placements = placeFrames([
         { w: resolution.pixels.width, h: resolution.pixels.height },
@@ -329,11 +392,11 @@ export function createInspector(
     await backend.prepare?.();
     if (disposed) throw new Error("the inspector was disposed");
     backend.render();
-    return { selection, resolution, placements };
+    return { selection, resolution, placements, page, pages };
   }
 
-  async function measureNow(selection: Selection): Promise<Measurement> {
-    const shown = await showNow(selection);
+  /** The page now drawn, read back from the render target and from the canvas at every checked zoom. */
+  async function readPage(shown: Shown): Promise<PageRead> {
     const target = await backend.readRenderTarget();
     const canvases = new Map<number, Rgba>();
     for (const at of CHECK_ZOOMS) {
@@ -343,7 +406,31 @@ export function createInspector(
     }
     applyView(zoom);
     backend.render();
-    return { ...shown, target, canvases };
+    return { placements: shown.placements, target, canvases };
+  }
+
+  /** Every page of the selection, each read back; the last page drawn is the one that was showing before, if there is one. */
+  async function measureNow(
+    selection: Selection,
+    restore: boolean,
+  ): Promise<Measurement> {
+    const shown = await showNow(selection, 0);
+    const first = await readPage(shown);
+    const later: PageRead[] = [];
+    for (let page = 1; page < shown.pages; page += 1) {
+      later.push(await readPage(await showNow(selection, page)));
+    }
+    if (restore && shown.pages > 1) {
+      await showNow(selection, Math.min(lastPage, shown.pages - 1));
+    }
+    return {
+      selection,
+      resolution: shown.resolution,
+      placements: first.placements,
+      target: first.target,
+      canvases: first.canvases,
+      later,
+    };
   }
 
   async function listing(): Promise<Listing> {
@@ -407,13 +494,20 @@ export function createInspector(
       applyView(zoom);
     },
     listing,
-    show: (selection) => serial(() => showNow(selection)),
-    measure: (selection) => serial(() => measureNow(selection)),
+    show: (selection, page = 0) =>
+      serial(async () => {
+        const shown = await showNow(selection, page);
+        lastPage = page;
+        return shown;
+      }),
+    measure: (selection) => serial(() => measureNow(selection, true)),
     runAll() {
       return serial(async () => {
         const results: CheckResult[] = [];
         for (const selection of suiteSelections()) {
-          results.push(...evaluate(await measureNow(selection), reference));
+          results.push(
+            ...evaluate(await measureNow(selection, false), reference),
+          );
         }
         const { rootKind } = await canon.load();
         results.push(

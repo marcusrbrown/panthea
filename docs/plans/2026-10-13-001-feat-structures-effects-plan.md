@@ -127,7 +127,7 @@ These four gaps are the work. Everything else is tuning.
 
 ### U1. Structures: non-character render path, tree and building
 
-- [ ] Goal: publish a tree and a Greek building through the studio's rendered path.
+- [x] Goal: publish a tree and a Greek building through the studio's rendered path.
 - **Approach:**
   - **Content.** Structures live under `content/greek/assets/structures/<id>.json`, loaded into a `structures` field on `StudioContent` (`packages/assets/src/studio/content.ts`, `request.ts`). They stay out of `assets/subjects`, whose parser requires a god. A single `subjectOf(content, id)` in `request.ts` replaces the god lookups in `spriteCellClassOf`, `buildSpec` and `newRequestRecord`. A structure has no abilities.
   - **Profile.** `parseProfile` (`packages/assets/src/render/profile.ts`) dispatches on `kind`. An absent `kind` is a figure, so existing profiles don't change. `kind: "structure"` gets its own parser with these fields:

@@ -53,6 +53,12 @@ export function InspectView({ canon: provided }: InspectViewProps) {
   );
   const [listing, setListing] = useState<Listing>();
   const [selection, setSelection] = useState<Selection>();
+  // The page belongs to the selection it was chosen for: another selection starts on its first.
+  const [pageOf, setPageOf] = useState<{
+    selection: Selection | undefined;
+    page: number;
+  }>({ selection: undefined, page: 0 });
+  const page = pageOf.selection === selection ? pageOf.page : 0;
   const [zoom, setZoom] = useState(2);
   const [shown, setShown] = useState<Shown>();
   const [results, setResults] = useState<readonly CheckResult[]>([]);
@@ -99,14 +105,14 @@ export function InspectView({ canon: provided }: InspectViewProps) {
     if (!inspector || !selection) return;
     let live = true;
     inspector.setZoom(zoom);
-    inspector.show(selection).then(
+    inspector.show(selection, page).then(
       (next) => live && setShown(next),
       (error: unknown) => live && setFailure(messageOf(error)),
     );
     return () => {
       live = false;
     };
-  }, [selection, zoom]);
+  }, [selection, zoom, page]);
 
   async function runSelected() {
     const inspector = inspectorRef.current;
@@ -258,6 +264,25 @@ export function InspectView({ canon: provided }: InspectViewProps) {
             : "Nothing selected."}
         {asset ? ` (revision ${asset.revision.slice(0, 8)})` : ""}
       </p>
+      {shown && shown.pages > 1 && (
+        <p className="inspect-pages">
+          <button
+            type="button"
+            disabled={page === 0}
+            onClick={() => setPageOf({ selection, page: page - 1 })}
+          >
+            Previous page
+          </button>{" "}
+          Page {page + 1} of {shown.pages}{" "}
+          <button
+            type="button"
+            disabled={page + 1 >= shown.pages}
+            onClick={() => setPageOf({ selection, page: page + 1 })}
+          >
+            Next page
+          </button>
+        </p>
+      )}
       <div className="inspect-stage">
         <canvas ref={canvasRef} aria-label="Inspected asset" />
       </div>

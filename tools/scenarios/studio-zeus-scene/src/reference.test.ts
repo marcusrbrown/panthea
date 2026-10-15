@@ -60,6 +60,8 @@ test("the committed digests cover every published asset, state and expression", 
   const byId = new Map(REFERENCE.assets.map((asset) => [asset.assetId, asset]));
 
   expect([...byId.keys()]).toEqual([
+    "greek-house",
+    "oak-tree",
     "zeus-portrait",
     "zeus-retro",
     "zeus-sprite",
@@ -90,6 +92,32 @@ test("the committed digests cover every published asset, state and expression", 
   expect(retro?.atlas.blob).toBe(
     "fe9fdb0846e8e25042f76ca67ba28650a0cf6141a0c6654e0946e4cb4f5c0cc4",
   );
+  // The structures: south only, each state on the 192x192 structure cell. The house is three stills; the oak's
+  // intact and damaged are 12-frame wind loops and its ruin a still.
+  for (const [id, counts, blob] of [
+    [
+      "greek-house",
+      { "damaged/south": 1, "intact/south": 1, "ruin/south": 1 },
+      "97a8f8864d75f71ad95a38e77d15446a1b6c22ebd5945daad353439c730edbd1",
+    ],
+    [
+      "oak-tree",
+      { "damaged/south": 12, "intact/south": 12, "ruin/south": 1 },
+      "db30050550da74d3fc8c19394c5d2aa889cc4686b4bb2470b18cec2e83821020",
+    ],
+  ] as const) {
+    const structure = byId.get(id);
+    expect(structure?.atlas.blob).toBe(blob);
+    expect(
+      Object.fromEntries(
+        structure?.selections.map((s) => [s.key, s.frames.length]) ?? [],
+      ),
+    ).toEqual(counts);
+    for (const frame of structure?.selections.flatMap((s) => s.frames) ?? []) {
+      expect([frame.rect.w, frame.rect.h]).toEqual([192, 192]);
+      expect(Object.keys(frame.digests)).toEqual(["1", "2", "3", "4"]);
+    }
+  }
   const sprite = byId.get("zeus-sprite");
   // selections sort by key, so the act (with its ability) comes first
   expect(sprite?.selections.map((s) => s.key)).toEqual([

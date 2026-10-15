@@ -20,7 +20,12 @@ import {
 } from "../assets/canon";
 import { evaluate, summarize } from "./check";
 import { REFERENCE } from "./expected";
-import { createInspector, INSPECT_SIZE, placeFrames } from "./inspector";
+import {
+  createInspector,
+  INSPECT_SIZE,
+  pageFrames,
+  placeFrames,
+} from "./inspector";
 import type { Reference } from "./reference";
 import type { Selection } from "./selection";
 
@@ -273,8 +278,9 @@ test("with the registry withheld every canon check fails, whatever the placehold
   const suite = await inspector.runAll();
 
   const canon = suite.results.filter((r) => r.id.startsWith("canon:"));
-  // 112 before promotion (zeus-sprite and the portrait); zeus-retro adds 12 selections and 136 frames.
-  expect(canon).toHaveLength(828);
+  // 112 before promotion (zeus-sprite and the portrait); zeus-retro adds 12 selections and 136 frames; greek-house
+  // (3 selections, 3 frames) and oak-tree (3 selections, 25 frames) add 158 more.
+  expect(canon).toHaveLength(986);
   expect(canon.filter((r) => r.ok)).toEqual([]);
   expect(suite.results.find((r) => r.id === "root-kind")?.ok).toBe(false);
   expect(summarize(suite.results).ok).toBe(false);
@@ -378,6 +384,8 @@ test("the listing offers the snapshot's assets, the vocabulary's options and the
   const listing = await inspector.listing();
 
   expect(listing.assets.map((a) => a.assetId)).toEqual([
+    "greek-house",
+    "oak-tree",
     "zeus-portrait",
     "zeus-retro",
     "zeus-sprite",
@@ -463,4 +471,148 @@ test("frames sit at whole pixels in a row, wrap before the edge, and one that ca
   expect(() =>
     placeFrames(Array.from({ length: 17 }, () => ({ w: 112, h: 96 }))),
   ).toThrow(/does not fit/);
+});
+
+test("frames that do not fit one draw are paged, each page laid out by placeFrames, and a selection that fits is one page placed as before", () => {
+  // 192x192 frames: the target is 576 wide with 16 either side and 8 between, so two across (a third would end at
+  // 608 > 560), and two down (the second row ends at 408 <= 432): four to a page.
+  const square = (count: number) =>
+    Array.from({ length: count }, () => ({ w: 192, h: 192 }));
+  const pages = pageFrames(square(13));
+  expect(pages.map((page) => page.length)).toEqual([4, 4, 4, 1]);
+  expect(pages[0]?.map((r) => [r.x, r.y])).toEqual([
+    [16, 16],
+    [216, 16],
+    [16, 216],
+    [216, 216],
+  ]);
+  expect(pages[1]).toEqual(pages[0]);
+  expect(pages[3]).toEqual([{ x: 16, y: 16, w: 192, h: 192 }]);
+  // Frames of mixed sizes keep their order and each page is what placeFrames gives its own frames.
+  const small = { w: 64, h: 80 };
+  const mixed = [...square(6), small, small];
+  expect(pageFrames(mixed)).toEqual([
+    placeFrames(square(4)),
+    placeFrames([...square(2), small, small]),
+  ]);
+  // The existing selections fit one page, placed exactly as placeFrames places them.
+  for (const sizes of [
+    Array.from({ length: 16 }, () => ({ w: 112, h: 96 })),
+    Array.from({ length: 5 }, () => ({ w: 64, h: 80 })),
+    [{ w: 96, h: 96 }],
+  ]) {
+    expect(pageFrames(sizes)).toEqual([placeFrames(sizes)]);
+  }
+  expect(pageFrames([])).toEqual([]);
+});
+
+test("a frame wider or taller than the whole target is refused whatever the paging, and the message says so", () => {
+  for (const size of [
+    { w: 600, h: 10 },
+    { w: 10, h: 433 },
+    { w: INSPECT_SIZE.width - 31, h: 10 },
+  ]) {
+    expect(() => pageFrames([{ w: 64, h: 64 }, size])).toThrow(
+      new RegExp(
+        `a ${size.w}x${size.h} frame does not fit the 576x432 target, even alone on a page`,
+      ),
+    );
+  }
+  // One that fits alone still pages, so only the frame that cannot fit anywhere is the error.
+  expect(
+    pageFrames([
+      { w: 544, h: 416 },
+      { w: 544, h: 416 },
+    ]),
+  ).toHaveLength(2);
+});
+
+const oakIntact: Selection = {
+  assetId: "oak-tree",
+  kind: "sprite",
+  state: "intact",
+  direction: "south",
+};
+
+test("the oak's 12-frame wind loop is shown in three pages of four, and every frame is checked at the target and at every zoom", async () => {
+  const { inspector } = await mount();
+
+  const measurement = await inspector.measure(oakIntact);
+  const results = evaluate(measurement, REFERENCE);
+
+  expect(measurement.resolution.source).toBe("canon");
+  expect(measurement.placements).toHaveLength(4);
+  expect(measurement.later.map((page) => page.placements.length)).toEqual([
+    4, 4,
+  ]);
+  for (const read of [measurement, ...measurement.later]) {
+    expect([...read.canvases.keys()]).toEqual([1, 2, 3, 4]);
+  }
+  expect(results.filter((r) => !r.ok)).toEqual([]);
+  // source, atlas, frames; then per frame: the 1x target and four canvases: all 12 frames, none skipped.
+  expect(results).toHaveLength(3 + 12 * 5);
+  const ids = new Set(results.map((r) => r.id));
+  for (const frame of [0, 3, 4, 7, 8, 11]) {
+    expect(ids.has(`canon:oak-tree:intact/south#${frame}:target`)).toBe(true);
+    for (const zoom of [1, 2, 3, 4]) {
+      expect(
+        ids.has(`canon:oak-tree:intact/south#${frame}:canvas${zoom}`),
+      ).toBe(true);
+    }
+  }
+});
+
+test("a later page's frames are read from that page: a frame checked against another page's pixels would fail", async () => {
+  const { inspector } = await mount();
+  const measurement = await inspector.measure(oakIntact);
+  expect(measurement.later).toHaveLength(2);
+  // Frame 4 is the first of page two. Were the later pages dropped, it would be read from nowhere and fail; with
+  // them, it is read from page two, whose pixels at its place hold it.
+  const id = "canon:oak-tree:intact/south#4:target";
+  const without = evaluate({ ...measurement, later: [] }, REFERENCE).find(
+    (r) => r.id === id,
+  );
+  expect(without?.ok).toBe(false);
+  expect(without?.detail).toBe("the frame was not drawn");
+  expect(evaluate(measurement, REFERENCE).find((r) => r.id === id)?.ok).toBe(
+    true,
+  );
+  // And a later page read in the first page's place gives another frame's pixels, which is not equal to the digest.
+  const swapped = {
+    ...measurement,
+    later: [measurement, ...measurement.later.slice(1)],
+  };
+  expect(evaluate(swapped, REFERENCE).find((r) => r.id === id)?.ok).toBe(false);
+});
+
+test("show draws the page asked for, says how many there are, and refuses one that does not exist", async () => {
+  const { inspector } = await mount();
+
+  const first = await inspector.show(oakIntact);
+  expect([first.page, first.pages, first.placements.length]).toEqual([0, 3, 4]);
+  const third = await inspector.show(oakIntact, 2);
+  expect([third.page, third.pages, third.placements.length]).toEqual([2, 3, 4]);
+  await expect(inspector.show(oakIntact, 3)).rejects.toThrow(
+    "page 4 is out of range: oak-tree intact/south takes 3 pages",
+  );
+  // A selection that fits is one page, so a second one of it does not exist.
+  const one = await inspector.show(idle);
+  expect([one.page, one.pages]).toEqual([0, 1]);
+  await expect(inspector.show(idle, 1)).rejects.toThrow(/out of range/);
+});
+
+test("the oak's damaged loop is three pages and its ruin one, and the house is one", async () => {
+  const { inspector } = await mount();
+  const pages = async (assetId: string, state: string) =>
+    (
+      await inspector.show({
+        assetId,
+        kind: "sprite",
+        state,
+        direction: "south",
+      })
+    ).pages;
+  expect(await pages("oak-tree", "damaged")).toBe(3);
+  expect(await pages("oak-tree", "ruin")).toBe(1);
+  expect(await pages("greek-house", "intact")).toBe(1);
 });

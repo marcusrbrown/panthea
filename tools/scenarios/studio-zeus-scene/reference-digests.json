@@ -14,6 +14,474 @@
   ],
   "assets": [
     {
+      "assetId": "greek-house",
+      "kind": "sprite",
+      "atlas": {
+        "blob": "97a8f8864d75f71ad95a38e77d15446a1b6c22ebd5945daad353439c730edbd1",
+        "width": 576,
+        "height": 192
+      },
+      "selections": [
+        {
+          "key": "damaged/south",
+          "query": {
+            "state": "damaged",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 192,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:216b407f",
+                "2": "fnv1a32:defbb7bd",
+                "3": "fnv1a32:caa794b7",
+                "4": "fnv1a32:03011135"
+              }
+            }
+          ]
+        },
+        {
+          "key": "intact/south",
+          "query": {
+            "state": "intact",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:72750429",
+                "2": "fnv1a32:b8f05e5d",
+                "3": "fnv1a32:2ad95bc9",
+                "4": "fnv1a32:26fae235"
+              }
+            }
+          ]
+        },
+        {
+          "key": "ruin/south",
+          "query": {
+            "state": "ruin",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 384,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:372667cb",
+                "2": "fnv1a32:70d72d75",
+                "3": "fnv1a32:f13fee0f",
+                "4": "fnv1a32:282bb055"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "assetId": "oak-tree",
+      "kind": "sprite",
+      "atlas": {
+        "blob": "db30050550da74d3fc8c19394c5d2aa889cc4686b4bb2470b18cec2e83821020",
+        "width": 4800,
+        "height": 192
+      },
+      "selections": [
+        {
+          "key": "damaged/south",
+          "query": {
+            "state": "damaged",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 2304,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:2e3e63a5",
+                "2": "fnv1a32:911ab3a5",
+                "3": "fnv1a32:09fc275d",
+                "4": "fnv1a32:52c3db95"
+              }
+            },
+            {
+              "rect": {
+                "x": 2496,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:425d762f",
+                "2": "fnv1a32:e8c74bcd",
+                "3": "fnv1a32:55c40f27",
+                "4": "fnv1a32:c6474a35"
+              }
+            },
+            {
+              "rect": {
+                "x": 2688,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:6b692619",
+                "2": "fnv1a32:0a4b5355",
+                "3": "fnv1a32:f2482269",
+                "4": "fnv1a32:c2f8ae55"
+              }
+            },
+            {
+              "rect": {
+                "x": 2880,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:7568962f",
+                "2": "fnv1a32:aba2e8dd",
+                "3": "fnv1a32:7ef51ecf",
+                "4": "fnv1a32:868e59f5"
+              }
+            },
+            {
+              "rect": {
+                "x": 3072,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:ead69a1a",
+                "2": "fnv1a32:0c3e960d",
+                "3": "fnv1a32:868c3876",
+                "4": "fnv1a32:6f497175"
+              }
+            },
+            {
+              "rect": {
+                "x": 3264,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:63157761",
+                "2": "fnv1a32:a95712c5",
+                "3": "fnv1a32:4165f8a9",
+                "4": "fnv1a32:dc9ffa15"
+              }
+            },
+            {
+              "rect": {
+                "x": 3456,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:4d1abd80",
+                "2": "fnv1a32:3ca25925",
+                "3": "fnv1a32:b2bd2ef4",
+                "4": "fnv1a32:8dcd1755"
+              }
+            },
+            {
+              "rect": {
+                "x": 3648,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:e5a0cef0",
+                "2": "fnv1a32:2ff4f275",
+                "3": "fnv1a32:21dab4fc",
+                "4": "fnv1a32:471a8c15"
+              }
+            },
+            {
+              "rect": {
+                "x": 3840,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:ed966cae",
+                "2": "fnv1a32:17adf70d",
+                "3": "fnv1a32:8326fa5a",
+                "4": "fnv1a32:6fb7d5f5"
+              }
+            },
+            {
+              "rect": {
+                "x": 4032,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:56169aee",
+                "2": "fnv1a32:449031ad",
+                "3": "fnv1a32:b261c212",
+                "4": "fnv1a32:46f04675"
+              }
+            },
+            {
+              "rect": {
+                "x": 4224,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:f8ccf787",
+                "2": "fnv1a32:dd5ee81d",
+                "3": "fnv1a32:d47518cf",
+                "4": "fnv1a32:fcaaf1f5"
+              }
+            },
+            {
+              "rect": {
+                "x": 4416,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:a6b1efee",
+                "2": "fnv1a32:299423ed",
+                "3": "fnv1a32:a599b7d2",
+                "4": "fnv1a32:c38eb975"
+              }
+            }
+          ]
+        },
+        {
+          "key": "intact/south",
+          "query": {
+            "state": "intact",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:c6b9c439",
+                "2": "fnv1a32:42435475",
+                "3": "fnv1a32:e339c759",
+                "4": "fnv1a32:59300d15"
+              }
+            },
+            {
+              "rect": {
+                "x": 192,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:e4c13da7",
+                "2": "fnv1a32:0cfec165",
+                "3": "fnv1a32:34da280f",
+                "4": "fnv1a32:a739cfd5"
+              }
+            },
+            {
+              "rect": {
+                "x": 384,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:dbe8b497",
+                "2": "fnv1a32:14852b25",
+                "3": "fnv1a32:611e3a17",
+                "4": "fnv1a32:86f6b155"
+              }
+            },
+            {
+              "rect": {
+                "x": 576,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:d8e9ca34",
+                "2": "fnv1a32:2f2b63b5",
+                "3": "fnv1a32:11cfd844",
+                "4": "fnv1a32:260b2f15"
+              }
+            },
+            {
+              "rect": {
+                "x": 768,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:31933c5a",
+                "2": "fnv1a32:106d8b95",
+                "3": "fnv1a32:73289f42",
+                "4": "fnv1a32:ecfadf95"
+              }
+            },
+            {
+              "rect": {
+                "x": 960,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:fd32cee9",
+                "2": "fnv1a32:e595e435",
+                "3": "fnv1a32:3d14cfc5",
+                "4": "fnv1a32:a6fa9155"
+              }
+            },
+            {
+              "rect": {
+                "x": 1152,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:ae73aefc",
+                "2": "fnv1a32:23f9e3dd",
+                "3": "fnv1a32:85a09394",
+                "4": "fnv1a32:bf3e4bf5"
+              }
+            },
+            {
+              "rect": {
+                "x": 1344,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:478770a4",
+                "2": "fnv1a32:517a933d",
+                "3": "fnv1a32:d34032a8",
+                "4": "fnv1a32:2152c7b5"
+              }
+            },
+            {
+              "rect": {
+                "x": 1536,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:1c027dc0",
+                "2": "fnv1a32:db98c31d",
+                "3": "fnv1a32:f4af8f4c",
+                "4": "fnv1a32:b6a9d8f5"
+              }
+            },
+            {
+              "rect": {
+                "x": 1728,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:c6d04dd8",
+                "2": "fnv1a32:30b52765",
+                "3": "fnv1a32:5fe65b34",
+                "4": "fnv1a32:0c35a755"
+              }
+            },
+            {
+              "rect": {
+                "x": 1920,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:6d5b4e0f",
+                "2": "fnv1a32:448fa47d",
+                "3": "fnv1a32:55cfd6ab",
+                "4": "fnv1a32:4011cc35"
+              }
+            },
+            {
+              "rect": {
+                "x": 2112,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:940ee145",
+                "2": "fnv1a32:c625ac85",
+                "3": "fnv1a32:1fce5f29",
+                "4": "fnv1a32:ad628e95"
+              }
+            }
+          ]
+        },
+        {
+          "key": "ruin/south",
+          "query": {
+            "state": "ruin",
+            "direction": "south"
+          },
+          "frames": [
+            {
+              "rect": {
+                "x": 4608,
+                "y": 0,
+                "w": 192,
+                "h": 192
+              },
+              "digests": {
+                "1": "fnv1a32:d53509c7",
+                "2": "fnv1a32:7c9004ed",
+                "3": "fnv1a32:cbc7b62f",
+                "4": "fnv1a32:b5fe0135"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "assetId": "zeus-portrait",
       "kind": "portrait",
       "atlas": {
