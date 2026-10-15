@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "../../src/hash";
 import { type PaletteSet, paletteDigest } from "../../src/palette";
-import { type Clock, RENDER_ENGINE } from "../../src/render/engine";
+import { type Clock, renderEngineFor } from "../../src/render/engine";
 import { loadStudioContent } from "../../src/studio/content";
 import type { SelectedProfile } from "../../src/studio/provider";
 import { newRequestRecord } from "../../src/studio/request";
@@ -260,13 +260,13 @@ export function submitRender(
   rig: Rig,
   id: string,
   slots: readonly SlotInput[] = [{ state: "idle", direction: "west" }],
-  options: { pivot?: { x: number; y: number } } = {},
+  options: { pivot?: { x: number; y: number }; subject?: string } = {},
 ): string[] {
   const built = newRequestRecord(
     content,
     {
       id,
-      subject: "zeus",
+      subject: options.subject ?? "zeus",
       kind: "sprite",
       slots,
       render: {
@@ -275,7 +275,7 @@ export function submitRender(
       },
     },
     refuseDraw,
-    RENDER_ENGINE,
+    renderEngineFor(RENDER_ROOT),
   );
   if (!built.ok) throw new Error(JSON.stringify(built.error));
   const result = rig.session.submitRequest(built.value.record);
@@ -465,7 +465,7 @@ export async function renderCandidates(
   requestId: string,
   slots: readonly SlotInput[],
   setId?: string,
-  options: { pivot?: { x: number; y: number } } = {},
+  options: { pivot?: { x: number; y: number }; subject?: string } = {},
 ): Promise<string[]> {
   const ids = submitRender(rig, requestId, slots, options);
   const result = await drain(rig);
@@ -498,7 +498,7 @@ export const PACK_INPUT = {
   styleTag: "retro",
   footprint: { w: 1, h: 1 },
   originalWork: { licence: "MIT", attribution: "the owner" },
-} as const;
+};
 
 export function packSet(
   rig: Rig,

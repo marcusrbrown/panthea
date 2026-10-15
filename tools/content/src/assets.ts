@@ -8,6 +8,9 @@
 //                                          matrix is checked against the vocabulary, and a god whose
 //                                          sprite is an asset on the matrix's cell class must hold
 //                                          every slot the matrix requires
+//   <root>/assets/structures/*.json        trees and buildings, subjects of their own with a render
+//                                          matrix; each names a structure profile whose cell and
+//                                          clips the vocabulary must honour
 //   <root>/assets/registry/                index.json, manifests/, blobs/
 //   <root>/palette/                        greek-master: palette.json, master.gpl, master.hex
 //   <root>/palette/<id>/                   any other palette (greek-retro), the same three files
@@ -31,6 +34,7 @@ import {
   checkLicenceBoundary,
   checkStamps,
   loadRenderInputs,
+  type ModelProfile,
   type ProfileKitRefs,
   profileKitRefs,
 } from "@panthea/assets/render";
@@ -39,11 +43,14 @@ import {
   type GodVisualProfile,
   parseGodProfile,
   parseGodVisualProfiles,
+  parseStructureSubjects,
   type RenderMatrix,
   requiredRenderSlotKeys,
+  type StructureSubject,
 } from "@panthea/content";
 import {
   type AssetVocabulary,
+  durationBounds,
   type ParseFailure,
   parseAssetId,
   parseAssetVocabulary,
@@ -217,19 +224,26 @@ export interface AssetValidationOptions {
   readonly kitProfiles?: readonly ProfileKitRefs[];
 }
 
+interface RenderFacts {
+  /** The id of every profile file present; undefined when the caller supplied the profile refs itself. */
+  readonly profileIds: ReadonlySet<string> | undefined;
+  /** The profiles that parsed. */
+  readonly profiles: readonly ModelProfile[];
+}
+
 /**
  * Camera, model profiles, kit library and licence boundary. Diagnostics name paths relative to
- * the repository root. Returns the ids of the profiles that loaded, or undefined when the caller
- * supplied the profile refs itself.
+ * the repository root.
  */
 function validateRender(
   repoRoot: string,
   suppliedProfiles: readonly ProfileKitRefs[] | undefined,
   report: (file: string, message: string) => void,
-): ReadonlySet<string> | undefined {
+): RenderFacts {
   const renderRoot = join(repoRoot, "tools", "render");
   let profiles = suppliedProfiles;
   let profileIds: ReadonlySet<string> | undefined;
+  let parsed: readonly ModelProfile[] = [];
   if (profiles === undefined) {
     const inputs = loadRenderInputs(renderRoot);
     for (const problem of inputs.problems) {
@@ -237,6 +251,7 @@ function validateRender(
     }
     profiles = inputs.profiles.map(profileKitRefs);
     profileIds = new Set(inputs.profileIds);
+    parsed = inputs.profiles;
   }
   for (const problem of checkKits(renderRoot, profiles).problems) {
     report(`tools/render/${problem.file}`, problem.message);
@@ -248,7 +263,60 @@ function validateRender(
   for (const violation of checkLicenceBoundary(repoRoot)) {
     report(violation.file, `line ${violation.line}: ${violation.message}`);
   }
-  return profileIds;
+  return { profileIds, profiles: parsed };
+}
+
+/**
+ * A structure's profile is a structure profile on the cell its matrix names, and it renders each
+ * state the matrix requires within the vocabulary's frame and timing rules for that cell.
+ */
+function validateStructureProfile(
+  subject: StructureSubject,
+  profile: ModelProfile | undefined,
+  vocabulary: AssetVocabulary,
+  report: (file: string, message: string) => void,
+): void {
+  const file = `tools/render/profiles/${subject.render.profile}.json`;
+  const cell = vocabulary.cells.find(
+    (c) => c.id === subject.render.matrix.cellClass,
+  );
+  if (profile === undefined || cell === undefined) return;
+  if (profile.kind !== "structure") {
+    report(
+      file,
+      `profile "${profile.id}" is a figure's, not a structure's, but ${subject.id} names it`,
+    );
+    return;
+  }
+  const drawn = profile.cell;
+  if (drawn.id !== cell.id || drawn.width !== cell.w || drawn.height !== cell.h)
+    report(
+      file,
+      `cell ${drawn.id} ${drawn.width}x${drawn.height} is not the vocabulary's ${cell.id} ${cell.w}x${cell.h}`,
+    );
+  for (const { state } of subject.render.matrix.required) {
+    const clip = profile.clips[state];
+    if (clip === undefined) {
+      report(file, `no clip for ${state}, which ${subject.id} requires`);
+      continue;
+    }
+    const rule = stateRuleFor(vocabulary, state, cell.id);
+    if (rule === undefined) continue;
+    if (clip.frames < rule.frames.min || clip.frames > rule.frames.max)
+      report(
+        file,
+        `${state} renders at ${clip.frames} frames; the ${cell.id} rule allows ${rule.frames.min} to ${rule.frames.max}`,
+      );
+    if (rule.fps !== undefined) {
+      const bounds = durationBounds(rule.fps);
+      const bad = clip.frameMs.find((ms) => ms < bounds.min || ms > bounds.max);
+      if (bad !== undefined)
+        report(
+          file,
+          `${state} shows a frame for ${bad} ms; the ${cell.id} rule allows ${bounds.min} to ${bounds.max} ms`,
+        );
+    }
+  }
 }
 
 export function validateAssets(
@@ -258,10 +326,11 @@ export function validateAssets(
   const diagnostics: AssetDiagnostic[] = [];
   const report = (file: string, message: string) =>
     diagnostics.push({ file, message });
-  const renderProfileIds =
+  const render =
     options.repoRoot === undefined
       ? undefined
       : validateRender(options.repoRoot, options.kitProfiles, report);
+  const renderProfileIds = render?.profileIds;
   const done = (): AssetValidation => ({
     ok: diagnostics.length === 0,
     diagnostics,
@@ -347,6 +416,50 @@ export function validateAssets(
       subjectInputs.find((input) => profiles.path.startsWith(input.label))
         ?.label ?? profiles.path;
     diagnostics.push(located(label, profiles));
+  }
+
+  // Structures: subjects of their own, joined to render profiles and held to the vocabulary.
+  const structureInputs: { label: string; value: unknown }[] = [];
+  for (const name of jsonFiles(join(contentRoot, "assets", "structures"))) {
+    const label = `assets/structures/${name}`;
+    const json = readJson(join(contentRoot, label));
+    if (json.ok) structureInputs.push({ label, value: json.value });
+    else report(label, json.message);
+  }
+  const structures = parseStructureSubjects(
+    structureInputs,
+    gods.map((god) => god.id),
+    vocabulary.paletteFamilies,
+  );
+  if (!structures.ok) {
+    const label =
+      structureInputs.find((input) => structures.path.startsWith(input.label))
+        ?.label ?? structures.path;
+    diagnostics.push(located(label, structures));
+  } else {
+    for (const [index, subject] of structures.value.entries()) {
+      const label = structureInputs[index]?.label ?? "assets/structures";
+      let honoured = true;
+      validateRenderMatrix(subject.render.matrix, vocabulary, (message) => {
+        honoured = false;
+        report(label, message);
+      });
+      if (renderProfileIds === undefined || render === undefined) continue;
+      if (!renderProfileIds.has(subject.render.profile)) {
+        report(
+          label,
+          `render.profile "${subject.render.profile}" names no model profile under tools/render/profiles (${[...renderProfileIds].join(", ") || "none"})`,
+        );
+        continue;
+      }
+      if (honoured)
+        validateStructureProfile(
+          subject,
+          render.profiles.find((p) => p.id === subject.render.profile),
+          vocabulary,
+          report,
+        );
+    }
   }
 
   // Registry: every file check lives in loadRegistry; problems become diagnostics.

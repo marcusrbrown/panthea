@@ -1,0 +1,1266 @@
+{
+  "schemaVersion": 1,
+  "kind": "structure",
+  "id": "greek-house",
+  "kitFiles": [
+    {
+      "kit": "kenney-building-kit",
+      "path": "column-thin.glb",
+      "sha256": "37cfd995746888acfd15d6f226f7ddda83257707b6d21793f38fbe851a958daf"
+    },
+    {
+      "kit": "kenney-building-kit",
+      "path": "floor.glb",
+      "sha256": "fbe8e907e502381db5d9f87676ef9e34522e35fc95a401a754d3e4984819338b"
+    },
+    {
+      "kit": "kenney-building-kit",
+      "path": "wall-doorway-square.glb",
+      "sha256": "5fc3ab4d17545ffcca24d73a77589d6f4816d2bd21b29614be3e0819c97f0410"
+    },
+    {
+      "kit": "kenney-building-kit",
+      "path": "wall-half.glb",
+      "sha256": "bc68a006ee810f57c268aded426ae082689c307c1633bb169c32f7105382671e"
+    },
+    {
+      "kit": "kenney-building-kit",
+      "path": "wall-window-square.glb",
+      "sha256": "099d332de4c632cb03692140f9a4004b5d6508cea6a7e3a80268564976cc8b7e"
+    },
+    {
+      "kit": "kenney-building-kit",
+      "path": "wall.glb",
+      "sha256": "769a02a70327132ba864c04299631c65fb08e96e01e1796ba73ddf7f44679a36"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Brick.glb",
+      "sha256": "765b606af540d03d92ee8425b90cf68d4a89de538b22316bcc0876b76e4919f1"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Bricks.glb",
+      "sha256": "f944e65c469e6fee71c7e0e5438bc59ba185a63f57dee7eb67f322a05212cd0a"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Column_Round.glb",
+      "sha256": "4568b2338c26b838e479f6ffc8feff15a3ee39d9024f13bc549509e45f984dbe"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Wall_Broken.glb",
+      "sha256": "115bcf3fb508571e5c2ab2fc4929ab5864280b6300c29aa99cee651f354268f1"
+    },
+    {
+      "kit": "quaternius-modular-ruins",
+      "path": "Wall_Double_Broken.glb",
+      "sha256": "2d4215d203cb773f22c41dda834e92bf48b6e74bfa4feafa23cd29b607d4fe9f"
+    }
+  ],
+  "build": {
+    "kind": "house",
+    "parts": {
+      "wall": {
+        "kit": "kenney-building-kit",
+        "path": "wall.glb"
+      },
+      "wall-half": {
+        "kit": "kenney-building-kit",
+        "path": "wall-half.glb"
+      },
+      "doorway": {
+        "kit": "kenney-building-kit",
+        "path": "wall-doorway-square.glb"
+      },
+      "window": {
+        "kit": "kenney-building-kit",
+        "path": "wall-window-square.glb"
+      },
+      "pilaster": {
+        "kit": "kenney-building-kit",
+        "path": "column-thin.glb"
+      },
+      "floor": {
+        "kit": "kenney-building-kit",
+        "path": "floor.glb"
+      },
+      "column": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Column_Round.glb"
+      },
+      "rubble": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Bricks.glb"
+      },
+      "brick": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Brick.glb"
+      },
+      "wall-chunk": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Wall_Broken.glb"
+      },
+      "wall-chunk-low": {
+        "kit": "quaternius-modular-ruins",
+        "path": "Wall_Double_Broken.glb"
+      }
+    }
+  },
+  "cell": {
+    "id": "structure",
+    "width": 192,
+    "height": 192,
+    "pivot": [96, 136]
+  },
+  "materials": {
+    "wall": {
+      "ramp": "stone-sky",
+      "bias": 0.12,
+      "bandShades": [2, 3, 4, 5, 5]
+    },
+    "gable": {
+      "ramp": "stone-sky",
+      "bias": 0.12,
+      "bandShades": [2, 3, 4, 5, 5]
+    },
+    "plinth": {
+      "ramp": "stone-sky",
+      "bias": -0.1,
+      "bandShades": [1, 2, 3, 3, 4]
+    },
+    "column": {
+      "ramp": "stone-sky",
+      "bias": 0.14,
+      "bandShades": [2, 3, 4, 5, 5]
+    },
+    "trim": {
+      "ramp": "stone-sky",
+      "bias": 0.06,
+      "bandShades": [2, 3, 4, 4, 5]
+    },
+    "roof": {
+      "ramp": "terracotta",
+      "bias": 0.0,
+      "bandShades": [1, 2, 3, 4, 4]
+    },
+    "ridge": {
+      "ramp": "terracotta",
+      "bias": -0.12,
+      "bandShades": [0, 1, 2, 3, 3]
+    },
+    "door": {
+      "ramp": "soil",
+      "bias": -0.1,
+      "bandShades": [1, 1, 2, 2, 3]
+    },
+    "shutter": {
+      "ramp": "olive",
+      "bias": -0.05,
+      "bandShades": [1, 2, 2, 3, 3]
+    },
+    "window": {
+      "ramp": "soil",
+      "bias": -0.5,
+      "bandShades": [0, 0, 0, 0, 1]
+    },
+    "rubble": {
+      "ramp": "stone-sky",
+      "bias": -0.3,
+      "bandShades": [0, 1, 2, 2, 3]
+    },
+    "timber": {
+      "ramp": "soil",
+      "bias": -0.3,
+      "bandShades": [0, 0, 1, 1, 2]
+    },
+    "wall-ash": {
+      "ramp": "stone-sky",
+      "bias": -0.02,
+      "bandShades": [1, 2, 3, 4, 4]
+    },
+    "soot": {
+      "ramp": "soil",
+      "bias": -0.45,
+      "bandShades": [0, 0, 0, 1, 1]
+    },
+    "scorch": {
+      "ramp": "terracotta",
+      "bias": -0.45,
+      "bandShades": [0, 0, 1, 1, 2]
+    },
+    "rafter": {
+      "ramp": "soil",
+      "bias": -0.05,
+      "bandShades": [0, 1, 1, 2, 2]
+    },
+    "gap": {
+      "ramp": "soil",
+      "bias": -0.6,
+      "bandShades": [0, 0, 0, 0, 0]
+    },
+    "plaster-patch": {
+      "ramp": "stone-sky",
+      "bias": -0.12,
+      "bandShades": [1, 2, 3, 3, 4]
+    },
+    "crack": {
+      "ramp": "stone-sky",
+      "bias": -0.45,
+      "bandShades": [0, 0, 1, 1, 2]
+    },
+    "char": {
+      "ramp": "soil",
+      "bias": -0.55,
+      "bandShades": [0, 0, 0, 0, 1]
+    },
+    "batten": {
+      "ramp": "soil",
+      "bias": 0.1,
+      "bandShades": [2, 3, 3, 3, 4]
+    },
+    "floor": {
+      "ramp": "stone-sky",
+      "bias": -0.2,
+      "bandShades": [0, 1, 1, 2, 2]
+    }
+  },
+  "clips": {
+    "intact": {
+      "loop": false,
+      "frames": 1,
+      "frameMs": [1000]
+    },
+    "damaged": {
+      "loop": false,
+      "frames": 1,
+      "frameMs": [1000],
+      "decals": [
+        {
+          "wall": "front",
+          "at": [0.95, 2.6],
+          "size": [1.7, 0.2],
+          "material": "char"
+        },
+        {
+          "wall": "front",
+          "at": [3.0, 2.6],
+          "size": [1.5, 0.18],
+          "material": "char"
+        },
+        {
+          "wall": "side",
+          "at": [1.5, 2.6],
+          "size": [2.4, 0.2],
+          "material": "char"
+        },
+        {
+          "wall": "front",
+          "at": [0.5, 2.45],
+          "size": [0.8, 0.34],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [0.5, 2.2],
+          "size": [0.58, 0.1],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [0.3, 2.36],
+          "size": [0.1, 0.32],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [0.5, 2.44],
+          "size": [0.14, 0.5],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [0.7, 2.34],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.5, 2.45],
+          "size": [0.8, 0.34],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.5, 2.2],
+          "size": [0.58, 0.1],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.3, 2.36],
+          "size": [0.1, 0.32],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.5, 2.44],
+          "size": [0.14, 0.5],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.7, 2.34],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.5, 2.45],
+          "size": [0.95, 0.34],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.5, 2.2],
+          "size": [0.58, 0.1],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.3, 2.36],
+          "size": [0.1, 0.32],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.5, 2.44],
+          "size": [0.14, 0.5],
+          "material": "soot"
+        },
+        {
+          "wall": "side",
+          "at": [1.7, 2.34],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [2.0, 2.5],
+          "size": [1.1, 0.3],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [2.0, 2.36],
+          "size": [0.66, 0.08],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [1.8, 2.5],
+          "size": [0.1, 0.28],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [2.0, 2.54],
+          "size": [0.14, 0.34],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [2.2, 2.5],
+          "size": [0.09, 0.26],
+          "material": "soot"
+        },
+        {
+          "wall": "front",
+          "at": [3.0, 0.78],
+          "size": [0.62, 0.34],
+          "material": "plaster-patch"
+        },
+        {
+          "wall": "front",
+          "at": [3.0, 0.78],
+          "size": [0.04, 0.42],
+          "material": "crack",
+          "angle": 18
+        },
+        {
+          "wall": "front",
+          "at": [2.9, 0.9],
+          "size": [0.04, 0.28],
+          "material": "crack",
+          "angle": -38
+        },
+        {
+          "wall": "front",
+          "at": [1.05, 0.78],
+          "size": [0.5, 0.34],
+          "material": "plaster-patch"
+        },
+        {
+          "wall": "front",
+          "at": [1.05, 0.78],
+          "size": [0.04, 0.42],
+          "material": "crack",
+          "angle": -22
+        },
+        {
+          "wall": "side",
+          "at": [0.55, 1.1],
+          "size": [0.5, 0.6],
+          "material": "plaster-patch"
+        },
+        {
+          "wall": "side",
+          "at": [0.55, 1.1],
+          "size": [0.04, 0.7],
+          "material": "crack",
+          "angle": 15
+        },
+        {
+          "wall": "side",
+          "at": [2.4, 1.4],
+          "size": [0.04, 0.5],
+          "material": "crack",
+          "angle": -30
+        },
+        {
+          "wall": "roof",
+          "at": [0.506, 0.289],
+          "size": [0.611, 0.173],
+          "material": "char",
+          "angle": 6.9
+        },
+        {
+          "wall": "roof",
+          "at": [0.943, 0.321],
+          "size": [0.647, 0.224],
+          "material": "char",
+          "angle": -7.5
+        },
+        {
+          "wall": "roof",
+          "at": [1.322, 0.315],
+          "size": [0.492, 0.234],
+          "material": "char",
+          "angle": -6.5
+        },
+        {
+          "wall": "roof",
+          "at": [1.704, 0.288],
+          "size": [0.676, 0.207],
+          "material": "char",
+          "angle": 14.3
+        },
+        {
+          "wall": "roof",
+          "at": [2.093, 0.307],
+          "size": [0.491, 0.146],
+          "material": "char",
+          "angle": 7.7
+        },
+        {
+          "wall": "roof",
+          "at": [2.533, 0.31],
+          "size": [0.449, 0.188],
+          "material": "char",
+          "angle": -4.4
+        },
+        {
+          "wall": "roof",
+          "at": [2.918, 0.298],
+          "size": [0.693, 0.258],
+          "material": "char",
+          "angle": 16.6
+        },
+        {
+          "wall": "roof",
+          "at": [3.259, 0.355],
+          "size": [0.454, 0.21],
+          "material": "char",
+          "angle": -18.3
+        },
+        {
+          "wall": "roof",
+          "at": [3.745, 0.342],
+          "size": [0.443, 0.219],
+          "material": "char",
+          "angle": -9.6
+        },
+        {
+          "wall": "roof",
+          "at": [4.143, 0.358],
+          "size": [0.611, 0.241],
+          "material": "char",
+          "angle": -4.1
+        },
+        {
+          "wall": "roof",
+          "at": [2.832, 0.954],
+          "size": [0.389, 0.214],
+          "material": "char",
+          "angle": 16.4
+        },
+        {
+          "wall": "roof",
+          "at": [2.363, 1.272],
+          "size": [0.416, 0.261],
+          "material": "char",
+          "angle": -26.1
+        },
+        {
+          "wall": "roof",
+          "at": [1.932, 1.381],
+          "size": [0.602, 0.343],
+          "material": "char",
+          "angle": -22.8
+        },
+        {
+          "wall": "roof",
+          "at": [1.531, 1.443],
+          "size": [0.513, 0.266],
+          "material": "char",
+          "angle": -5.8
+        },
+        {
+          "wall": "roof",
+          "at": [1.146, 1.212],
+          "size": [0.526, 0.246],
+          "material": "char",
+          "angle": 21.4
+        },
+        {
+          "wall": "roof",
+          "at": [0.567, 1.202],
+          "size": [0.576, 0.202],
+          "material": "char",
+          "angle": -27.7
+        },
+        {
+          "wall": "roof",
+          "at": [0.825, 0.892],
+          "size": [0.44, 0.203],
+          "material": "char",
+          "angle": 24.0
+        },
+        {
+          "wall": "roof",
+          "at": [0.94, 0.695],
+          "size": [0.575, 0.288],
+          "material": "char",
+          "angle": 30.5
+        },
+        {
+          "wall": "roof",
+          "at": [1.435, 0.427],
+          "size": [0.468, 0.283],
+          "material": "char",
+          "angle": -12.8
+        },
+        {
+          "wall": "roof",
+          "at": [1.872, 0.435],
+          "size": [0.415, 0.257],
+          "material": "char",
+          "angle": -1.8
+        },
+        {
+          "wall": "roof",
+          "at": [2.334, 0.597],
+          "size": [0.505, 0.254],
+          "material": "char",
+          "angle": -19.3
+        },
+        {
+          "wall": "roof",
+          "at": [2.45, 0.84],
+          "size": [0.351, 0.21],
+          "material": "char",
+          "angle": -15.0
+        },
+        {
+          "wall": "roof",
+          "at": [2.093, 1.161],
+          "size": [0.632, 0.359],
+          "material": "char",
+          "angle": -19.0
+        },
+        {
+          "wall": "roof",
+          "at": [2.213, 1.07],
+          "size": [0.543, 0.411],
+          "material": "char",
+          "angle": 14.4
+        },
+        {
+          "wall": "roof",
+          "at": [2.18, 1.029],
+          "size": [0.522, 0.38],
+          "material": "char",
+          "angle": -3.4
+        },
+        {
+          "wall": "roof",
+          "at": [1.646, 1.035],
+          "size": [0.586, 0.355],
+          "material": "char",
+          "angle": -25.8
+        },
+        {
+          "wall": "roof",
+          "at": [1.029, 0.874],
+          "size": [0.584, 0.34],
+          "material": "char",
+          "angle": 24.9
+        },
+        {
+          "wall": "roof",
+          "at": [1.176, 0.889],
+          "size": [0.645, 0.397],
+          "material": "char",
+          "angle": 10.5
+        },
+        {
+          "wall": "roof",
+          "at": [1.41, 1.016],
+          "size": [0.735, 0.375],
+          "material": "char",
+          "angle": -31.8
+        },
+        {
+          "wall": "roof",
+          "at": [2.301, 1.004],
+          "size": [0.352, 0.227],
+          "material": "scorch",
+          "angle": 11.6
+        },
+        {
+          "wall": "roof",
+          "at": [1.926, 1.191],
+          "size": [0.412, 0.267],
+          "material": "scorch",
+          "angle": 19.8
+        },
+        {
+          "wall": "roof",
+          "at": [1.719, 1.224],
+          "size": [0.352, 0.209],
+          "material": "scorch",
+          "angle": 24.2
+        },
+        {
+          "wall": "roof",
+          "at": [1.143, 1.165],
+          "size": [0.458, 0.291],
+          "material": "scorch",
+          "angle": 1.4
+        },
+        {
+          "wall": "roof",
+          "at": [1.061, 1.027],
+          "size": [0.329, 0.24],
+          "material": "scorch",
+          "angle": 18.5
+        },
+        {
+          "wall": "roof",
+          "at": [1.176, 0.84],
+          "size": [0.385, 0.3],
+          "material": "scorch",
+          "angle": 13.8
+        },
+        {
+          "wall": "roof",
+          "at": [1.577, 0.638],
+          "size": [0.332, 0.242],
+          "material": "scorch",
+          "angle": -27.1
+        },
+        {
+          "wall": "roof",
+          "at": [1.933, 0.694],
+          "size": [0.398, 0.2],
+          "material": "scorch",
+          "angle": 6.8
+        },
+        {
+          "wall": "roof",
+          "at": [2.198, 0.85],
+          "size": [0.44, 0.213],
+          "material": "scorch",
+          "angle": 27.0
+        },
+        {
+          "wall": "roof",
+          "at": [1.599, 0.985],
+          "size": [0.587, 0.316],
+          "material": "scorch",
+          "angle": 33.6
+        },
+        {
+          "wall": "roof",
+          "at": [1.517, 1.003],
+          "size": [0.555, 0.316],
+          "material": "scorch",
+          "angle": -25.1
+        },
+        {
+          "wall": "roof",
+          "at": [1.774, 0.812],
+          "size": [0.423, 0.268],
+          "material": "scorch",
+          "angle": 4.2
+        },
+        {
+          "wall": "roof",
+          "at": [1.703, 1.087],
+          "size": [0.592, 0.229],
+          "material": "scorch",
+          "angle": -35.5
+        },
+        {
+          "wall": "roof",
+          "at": [1.414, 1.002],
+          "size": [0.407, 0.228],
+          "material": "gap",
+          "angle": -47.6
+        },
+        {
+          "wall": "roof",
+          "at": [1.54, 1.078],
+          "size": [0.474, 0.201],
+          "material": "gap",
+          "angle": -1.2
+        },
+        {
+          "wall": "roof",
+          "at": [1.37, 1.024],
+          "size": [0.451, 0.244],
+          "material": "gap",
+          "angle": -37.2
+        },
+        {
+          "wall": "roof",
+          "at": [1.41, 1.017],
+          "size": [0.323, 0.185],
+          "material": "gap",
+          "angle": -11.1
+        },
+        {
+          "wall": "roof",
+          "at": [1.632, 0.841],
+          "size": [0.313, 0.222],
+          "material": "gap",
+          "angle": -2.2
+        },
+        {
+          "wall": "roof",
+          "at": [1.6, 0.994],
+          "size": [0.485, 0.202],
+          "material": "gap",
+          "angle": 16.3
+        },
+        {
+          "wall": "roof",
+          "at": [1.521, 0.91],
+          "size": [0.387, 0.174],
+          "material": "gap",
+          "angle": -48.9
+        },
+        {
+          "wall": "roof",
+          "at": [1.754, 0.788],
+          "size": [0.418, 0.205],
+          "material": "gap",
+          "angle": -5.7
+        },
+        {
+          "wall": "roof",
+          "at": [1.31, 0.89],
+          "size": [0.085, 0.62],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [1.31, 1.17],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": -3.2
+        },
+        {
+          "wall": "roof",
+          "at": [1.48, 0.89],
+          "size": [0.085, 0.62],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [1.48, 1.17],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": -11.9
+        },
+        {
+          "wall": "roof",
+          "at": [1.65, 0.77],
+          "size": [0.085, 0.34],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [1.65, 0.91],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": 2.2
+        },
+        {
+          "wall": "roof",
+          "at": [1.82, 0.89],
+          "size": [0.085, 0.62],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [1.82, 1.17],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": -8.7
+        },
+        {
+          "wall": "roof",
+          "at": [1.99, 0.85],
+          "size": [0.085, 0.46],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [1.99, 1.05],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": -4.4
+        },
+        {
+          "wall": "roof",
+          "at": [1.65, 0.81],
+          "size": [0.8, 0.06],
+          "material": "batten"
+        },
+        {
+          "wall": "roof",
+          "at": [1.79, 1.05],
+          "size": [0.5, 0.06],
+          "material": "batten"
+        },
+        {
+          "wall": "roof",
+          "at": [0.97, 1.25],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": -14
+        },
+        {
+          "wall": "roof",
+          "at": [2.39, 1.17],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": 18
+        },
+        {
+          "wall": "roof",
+          "at": [2.23, 0.61],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": 8
+        },
+        {
+          "wall": "roof",
+          "at": [1.1, 0.59],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": 22
+        },
+        {
+          "wall": "roof",
+          "at": [1.7, 0.57],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": -6
+        },
+        {
+          "wall": "roof",
+          "at": [1.65, 1.35],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": 12
+        },
+        {
+          "wall": "roof",
+          "at": [1.68, 1.0],
+          "size": [0.075, 0.26],
+          "material": "rafter",
+          "angle": 16
+        },
+        {
+          "wall": "roof",
+          "at": [4.222, 1.338],
+          "size": [0.365, 0.318],
+          "material": "char",
+          "angle": -26.1
+        },
+        {
+          "wall": "roof",
+          "at": [4.149, 1.46],
+          "size": [0.448, 0.22],
+          "material": "char",
+          "angle": -30.2
+        },
+        {
+          "wall": "roof",
+          "at": [4.025, 1.7],
+          "size": [0.589, 0.228],
+          "material": "char",
+          "angle": -31.5
+        },
+        {
+          "wall": "roof",
+          "at": [3.528, 1.663],
+          "size": [0.455, 0.267],
+          "material": "char",
+          "angle": -17.2
+        },
+        {
+          "wall": "roof",
+          "at": [3.226, 1.615],
+          "size": [0.42, 0.329],
+          "material": "char",
+          "angle": 2.9
+        },
+        {
+          "wall": "roof",
+          "at": [2.782, 1.361],
+          "size": [0.343, 0.217],
+          "material": "char",
+          "angle": 3.1
+        },
+        {
+          "wall": "roof",
+          "at": [2.976, 1.217],
+          "size": [0.345, 0.335],
+          "material": "char",
+          "angle": -6.0
+        },
+        {
+          "wall": "roof",
+          "at": [2.93, 0.973],
+          "size": [0.493, 0.35],
+          "material": "char",
+          "angle": -6.3
+        },
+        {
+          "wall": "roof",
+          "at": [3.416, 0.89],
+          "size": [0.485, 0.251],
+          "material": "char",
+          "angle": 30.7
+        },
+        {
+          "wall": "roof",
+          "at": [3.768, 0.92],
+          "size": [0.44, 0.276],
+          "material": "char",
+          "angle": -27.2
+        },
+        {
+          "wall": "roof",
+          "at": [4.144, 0.932],
+          "size": [0.435, 0.236],
+          "material": "char",
+          "angle": 22.5
+        },
+        {
+          "wall": "roof",
+          "at": [4.136, 1.131],
+          "size": [0.358, 0.246],
+          "material": "char",
+          "angle": 18.6
+        },
+        {
+          "wall": "roof",
+          "at": [3.624, 1.435],
+          "size": [0.691, 0.378],
+          "material": "char",
+          "angle": 31.7
+        },
+        {
+          "wall": "roof",
+          "at": [4.106, 1.351],
+          "size": [0.536, 0.395],
+          "material": "char",
+          "angle": 10.6
+        },
+        {
+          "wall": "roof",
+          "at": [3.31, 1.24],
+          "size": [0.558, 0.323],
+          "material": "char",
+          "angle": 2.8
+        },
+        {
+          "wall": "roof",
+          "at": [3.677, 1.316],
+          "size": [0.536, 0.409],
+          "material": "char",
+          "angle": 30.9
+        },
+        {
+          "wall": "roof",
+          "at": [3.275, 1.287],
+          "size": [0.713, 0.322],
+          "material": "char",
+          "angle": 37.6
+        },
+        {
+          "wall": "roof",
+          "at": [3.258, 1.359],
+          "size": [0.773, 0.303],
+          "material": "char",
+          "angle": -11.9
+        },
+        {
+          "wall": "roof",
+          "at": [4.132, 1.253],
+          "size": [0.781, 0.417],
+          "material": "char",
+          "angle": 20.9
+        },
+        {
+          "wall": "roof",
+          "at": [4.061, 1.309],
+          "size": [0.353, 0.267],
+          "material": "scorch",
+          "angle": -10.7
+        },
+        {
+          "wall": "roof",
+          "at": [4.001, 1.438],
+          "size": [0.434, 0.278],
+          "material": "scorch",
+          "angle": -7.7
+        },
+        {
+          "wall": "roof",
+          "at": [3.693, 1.475],
+          "size": [0.317, 0.285],
+          "material": "scorch",
+          "angle": 22.0
+        },
+        {
+          "wall": "roof",
+          "at": [3.264, 1.461],
+          "size": [0.482, 0.252],
+          "material": "scorch",
+          "angle": -19.5
+        },
+        {
+          "wall": "roof",
+          "at": [3.257, 1.283],
+          "size": [0.381, 0.276],
+          "material": "scorch",
+          "angle": 1.9
+        },
+        {
+          "wall": "roof",
+          "at": [3.225, 1.149],
+          "size": [0.5, 0.27],
+          "material": "scorch",
+          "angle": -20.4
+        },
+        {
+          "wall": "roof",
+          "at": [3.51, 1.049],
+          "size": [0.383, 0.211],
+          "material": "scorch",
+          "angle": -34.8
+        },
+        {
+          "wall": "roof",
+          "at": [3.793, 1.005],
+          "size": [0.301, 0.26],
+          "material": "scorch",
+          "angle": 2.6
+        },
+        {
+          "wall": "roof",
+          "at": [4.106, 1.103],
+          "size": [0.326, 0.289],
+          "material": "scorch",
+          "angle": 24.5
+        },
+        {
+          "wall": "roof",
+          "at": [3.794, 1.118],
+          "size": [0.493, 0.285],
+          "material": "scorch",
+          "angle": -36.3
+        },
+        {
+          "wall": "roof",
+          "at": [3.362, 1.273],
+          "size": [0.576, 0.312],
+          "material": "scorch",
+          "angle": -8.8
+        },
+        {
+          "wall": "roof",
+          "at": [3.911, 1.271],
+          "size": [0.52, 0.225],
+          "material": "scorch",
+          "angle": -13.4
+        },
+        {
+          "wall": "roof",
+          "at": [3.643, 1.224],
+          "size": [0.583, 0.243],
+          "material": "scorch",
+          "angle": 19.2
+        },
+        {
+          "wall": "roof",
+          "at": [3.682, 1.159],
+          "size": [0.414, 0.211],
+          "material": "gap",
+          "angle": 36.6
+        },
+        {
+          "wall": "roof",
+          "at": [3.609, 1.339],
+          "size": [0.342, 0.191],
+          "material": "gap",
+          "angle": 13.9
+        },
+        {
+          "wall": "roof",
+          "at": [3.581, 1.292],
+          "size": [0.405, 0.248],
+          "material": "gap",
+          "angle": -33.5
+        },
+        {
+          "wall": "roof",
+          "at": [3.742, 1.298],
+          "size": [0.371, 0.191],
+          "material": "gap",
+          "angle": -31.4
+        },
+        {
+          "wall": "roof",
+          "at": [3.612, 1.331],
+          "size": [0.307, 0.196],
+          "material": "gap",
+          "angle": -7.0
+        },
+        {
+          "wall": "roof",
+          "at": [3.57, 1.117],
+          "size": [0.43, 0.223],
+          "material": "gap",
+          "angle": 43.2
+        },
+        {
+          "wall": "roof",
+          "at": [3.899, 1.192],
+          "size": [0.488, 0.224],
+          "material": "gap",
+          "angle": -9.8
+        },
+        {
+          "wall": "roof",
+          "at": [3.641, 1.127],
+          "size": [0.473, 0.257],
+          "material": "gap",
+          "angle": 1.9
+        },
+        {
+          "wall": "roof",
+          "at": [3.51, 1.25],
+          "size": [0.085, 0.42],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [3.51, 1.43],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": -11.4
+        },
+        {
+          "wall": "roof",
+          "at": [3.65, 1.25],
+          "size": [0.085, 0.42],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [3.65, 1.43],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": -10.1
+        },
+        {
+          "wall": "roof",
+          "at": [3.8, 1.19],
+          "size": [0.085, 0.3],
+          "material": "rafter"
+        },
+        {
+          "wall": "roof",
+          "at": [3.8, 1.31],
+          "size": [0.1, 0.11],
+          "material": "char",
+          "angle": 2.1
+        },
+        {
+          "wall": "roof",
+          "at": [3.65, 1.17],
+          "size": [0.5, 0.06],
+          "material": "batten"
+        },
+        {
+          "wall": "roof",
+          "at": [3.65, 1.33],
+          "size": [0.48, 0.06],
+          "material": "batten"
+        },
+        {
+          "wall": "roof",
+          "at": [3.23, 1.45],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": -16
+        },
+        {
+          "wall": "roof",
+          "at": [4.09, 1.07],
+          "size": [0.34, 0.21],
+          "material": "roof",
+          "angle": 18
+        }
+      ]
+    },
+    "ruin": {
+      "loop": false,
+      "frames": 1,
+      "frameMs": [1000],
+      "ruin": true,
+      "materials": {
+        "wall": "wall-ash",
+        "column": "wall-ash",
+        "trim": "wall-ash"
+      }
+    }
+  }
+}

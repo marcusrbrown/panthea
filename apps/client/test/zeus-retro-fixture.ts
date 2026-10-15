@@ -18,6 +18,13 @@ import {
   ZEUS_MANIFEST_TEXT,
   ZEUS_REVISION,
 } from "./canon-fixture";
+import {
+  HOUSE_MANIFEST_TEXT,
+  HOUSE_REVISION,
+  OAK_MANIFEST_TEXT,
+  OAK_REVISION,
+  STRUCTURE_ATLASES,
+} from "./structure-fixture";
 
 const fixture = (name: string): Buffer =>
   readFileSync(new URL(`../src/assets/fixtures/${name}`, import.meta.url));
@@ -68,17 +75,21 @@ export const RETRO_ATLASES: ReadonlyMap<string, Uint8Array> = new Map([
   [ZEUS_ATLAS_HASH, ZEUS_ATLAS_BYTES],
 ]);
 
-/** Everything the committed canon now publishes: Zeus's portrait, the promoted retro sprite and the legacy sprite. */
+/** Everything the committed canon now publishes: Zeus's portrait, the promoted retro sprite, the legacy sprite and the two structures. */
 export function committedCanonPayload(): RegistryPayload {
   const retro = retroPayload();
   return {
     ...retro,
     index: indexText([
+      { assetId: "greek-house", revision: HOUSE_REVISION },
+      { assetId: "oak-tree", revision: OAK_REVISION },
       { assetId: "zeus-portrait", revision: PORTRAIT_REVISION },
       { assetId: "zeus-retro", revision: RETRO_REVISION },
       { assetId: "zeus-sprite", revision: ZEUS_REVISION },
     ]),
     manifests: [
+      { hash: HOUSE_REVISION, text: HOUSE_MANIFEST_TEXT },
+      { hash: OAK_REVISION, text: OAK_MANIFEST_TEXT },
       { hash: PORTRAIT_REVISION, text: PORTRAIT_MANIFEST_TEXT },
       ...retro.manifests,
     ],
@@ -86,5 +97,9 @@ export function committedCanonPayload(): RegistryPayload {
 }
 
 export const COMMITTED_CANON_ATLASES: ReadonlyMap<string, Uint8Array> = new Map(
-  [...RETRO_ATLASES, [PORTRAIT_ATLAS_HASH, PORTRAIT_ATLAS_BYTES]],
+  [
+    ...RETRO_ATLASES,
+    ...STRUCTURE_ATLASES,
+    [PORTRAIT_ATLAS_HASH, PORTRAIT_ATLAS_BYTES],
+  ],
 );

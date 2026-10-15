@@ -1456,6 +1456,47 @@ describe("what the app needs to conform a job", () => {
     });
   });
 
+  test("status lists the gods and the structures the render engine draws, and no god without a render profile", async () => {
+    const rig = assetRig();
+    rig.session.close();
+    const content = {
+      ...rig.content,
+      structures: [
+        {
+          schemaVersion: 1,
+          id: "greek-house",
+          name: "Greek house",
+          paletteFamily: "town",
+          render: {
+            profile: "greek-house",
+            matrix: {
+              cellClass: "structure",
+              directions: ["south"],
+              required: [{ state: "intact" }],
+              deferred: [],
+            },
+          },
+        },
+      ],
+    };
+    const { outcome } = await run(
+      { studioRoot: rig.root, contentRoot: "unused" },
+      "status",
+      {},
+      { loadContent: () => ({ ok: true as const, content }) },
+    );
+    const subjects = (
+      outcome as unknown as { result: { renderSubjects: string[] } }
+    ).result.renderSubjects;
+    expect(subjects).toContain("greek-house");
+    expect(subjects).toEqual([
+      ...content.visuals
+        .filter((v) => v.render !== undefined)
+        .map((v) => v.godId),
+      "greek-house",
+    ]);
+  });
+
   test("list jobs says which succeeded jobs have a candidate, and list candidates carries the real summary", async () => {
     const rig = assetRig();
     const ids = runSlots(rig, "zeus-idle", "sprite", [

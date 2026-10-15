@@ -2,8 +2,8 @@ export type { RenderedCandidate } from "../render/candidate";
 export {
   BLENDER_PIN,
   type Clock,
-  RENDER_ENGINE,
   type RenderEngineConfig,
+  renderEngineFor,
 } from "../render/engine";
 export {
   type AsepriteConfig,

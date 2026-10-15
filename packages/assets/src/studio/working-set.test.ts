@@ -3,9 +3,9 @@
 
 import { describe, expect, test } from "bun:test";
 import type { ConformanceReport, Sha256 } from "@panthea/contracts";
-import { content } from "../../test/render/rig";
+import { content, RENDER_ROOT } from "../../test/render/rig";
 import type { RenderedCandidate } from "../render/candidate";
-import { RENDER_ENGINE } from "../render/engine";
+import { renderEngineFor } from "../render/engine";
 import { DEFAULT_CONFORM } from "./derivation";
 import { newRequestRecord } from "./request";
 import {
@@ -34,7 +34,7 @@ function request(id: string, slots: { state: string; direction: string }[]) {
       render: { palette: "greek-retro", pivot: { x: 56, y: 78 } },
     },
     () => 0,
-    RENDER_ENGINE,
+    renderEngineFor(RENDER_ROOT),
   );
   if (!built.ok) throw new Error(JSON.stringify(built.error));
   return built.value.record;

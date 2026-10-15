@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "oak-tree",
+  "name": "Oak tree",
+  "paletteFamily": "town",
+  "render": {
+    "profile": "oak-tree",
+    "matrix": {
+      "cellClass": "structure",
+      "directions": ["south"],
+      "required": [
+        { "state": "intact" },
+        { "state": "damaged" },
+        { "state": "ruin" }
+      ],
+      "deferred": []
+    }
+  }
+}

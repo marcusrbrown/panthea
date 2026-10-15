@@ -71,7 +71,7 @@ import { parseEngineFacts } from "../studio/workspace";
 import { cameraHash } from "./camera";
 import { gltfClosureProblems, type Kit, parseKitManifest } from "./kits";
 import { listFiles } from "./list-files";
-import { loadRenderInputs } from "./load";
+import { loadRenderInputs, renderCellsOf } from "./load";
 import {
   cellPixelHash,
   POST_STEP_VERSION,
@@ -82,11 +82,14 @@ import { postPaletteFrom } from "./post-palette";
 import { type ModelProfile, profileHash } from "./profile";
 import {
   type BlenderBinaryPin,
+  effectiveCamera,
   kitHash,
+  NO_STAMPS_HASH,
   postSettingsFor,
   postStepSettings,
   type RevisionRecipe,
   revisionRecipe,
+  shadowRampOf,
   slotRecipeHash,
   stampLocatorsFrom,
   stampSetHash,
@@ -109,12 +112,18 @@ import {
   parseStampManifest,
 } from "./stamps";
 
-/** The render engine's declared cells, for the request builder's size gate. */
-export const RENDER_ENGINE: EngineCells = {
-  provider: RENDER_PROVIDER,
-  measuredCells: [{ w: 112, h: 96 }],
-  generationScale: 1,
-};
+/**
+ * The render engine's declared cells, for the request builder's size gate: the frame of every
+ * profile under `renderRoot`. Blender has no measured memory limit per size, so a frame is accepted
+ * when a committed profile draws on it; the tracer render is the measurement.
+ */
+export function renderEngineFor(renderRoot: string): EngineCells {
+  return {
+    provider: RENDER_PROVIDER,
+    measuredCells: renderCellsOf(loadRenderInputs(renderRoot)),
+    generationScale: 1,
+  };
+}
 
 /** Blender 5.2.2 LTS, build `d13f752e3b9c`, the arm64 macOS executable the probes measured (U1). */
 export const BLENDER_PIN: BlenderBinaryPin = {
@@ -198,7 +207,8 @@ interface Prepared {
   readonly slots: readonly PreparedSlot[];
   readonly settings: ReturnType<typeof postStepSettings>;
   readonly palette: NonNullable<ReturnType<typeof okPalette>>;
-  readonly stamps: LoadedStampSet;
+  /** The face stamps the post step composites; a structure has none. */
+  readonly stamps: LoadedStampSet | undefined;
   readonly licences: readonly LicenceRecord[];
   readonly paletteId: string;
   readonly paletteDigest: Sha256;
@@ -294,7 +304,7 @@ function prepare(
     return problem(
       `profile ${profile.id}: ${profileProblems.map((p) => p.message).join("; ")}`,
     );
-  const camera = inputs.camera;
+  const camera = effectiveCamera(profile, inputs.camera);
 
   let manifestJson: unknown;
   try {
@@ -352,34 +362,45 @@ function prepare(
     );
 
   // The contact shadow is shade 0 of the profile's ramp: refuse before a render if the palette has none.
-  if (postPalette.ramps.get(profile.shadow.ramp)?.[0] === undefined)
+  const shadowRamp = shadowRampOf(profile);
+  if (
+    shadowRamp !== undefined &&
+    postPalette.ramps.get(shadowRamp)?.[0] === undefined
+  )
     return problem(
-      `the profile's shadow ramp "${profile.shadow.ramp}" is not in palette "${palette.id}"`,
+      `the profile's shadow ramp "${shadowRamp}" is not in palette "${palette.id}"`,
     );
 
-  let stampsJson: unknown;
-  try {
-    stampsJson = JSON.parse(
-      readFileSync(join(render.renderRoot, "stamps", "stamps.json"), "utf8"),
+  // A figure's face stamps; a structure has none.
+  let stampsHash: Sha256 = NO_STAMPS_HASH;
+  let stamps: LoadedStampSet | undefined;
+  if (profile.kind !== "structure") {
+    let stampsJson: unknown;
+    try {
+      stampsJson = JSON.parse(
+        readFileSync(join(render.renderRoot, "stamps", "stamps.json"), "utf8"),
+      );
+    } catch (error) {
+      return problem(`stamps.json cannot be read: ${(error as Error).message}`);
+    }
+    const stampManifest = parseStampManifest(stampsJson);
+    if (!stampManifest.ok)
+      return problem(
+        `stamps.json: ${stampManifest.path}: ${stampManifest.message}`,
+      );
+    const stampSet = stampManifest.value.sets.find(
+      (s) => s.id === profile.stampSet,
     );
-  } catch (error) {
-    return problem(`stamps.json cannot be read: ${(error as Error).message}`);
+    if (stampSet === undefined)
+      return problem(`no stamp set "${profile.stampSet}" in stamps.json`);
+    const loadedStamps = loadStampSet(render.renderRoot, profile.stampSet);
+    if (!loadedStamps.ok)
+      return problem(
+        `stamps: ${loadedStamps.problems.map((p) => `${p.file}: ${p.message}`).join("; ")}`,
+      );
+    stampsHash = stampSetHash(stampSet);
+    stamps = loadedStamps.set;
   }
-  const stampManifest = parseStampManifest(stampsJson);
-  if (!stampManifest.ok)
-    return problem(
-      `stamps.json: ${stampManifest.path}: ${stampManifest.message}`,
-    );
-  const stampSet = stampManifest.value.sets.find(
-    (s) => s.id === profile.stampSet,
-  );
-  if (stampSet === undefined)
-    return problem(`no stamp set "${profile.stampSet}" in stamps.json`);
-  const stamps = loadStampSet(render.renderRoot, profile.stampSet);
-  if (!stamps.ok)
-    return problem(
-      `stamps: ${stamps.problems.map((p) => `${p.file}: ${p.message}`).join("; ")}`,
-    );
 
   // Slots: one per job, in order, with the profile's frame count and timing for the state, held
   // to the vocabulary's rule for the state on this cell class.
@@ -459,11 +480,11 @@ function prepare(
     script: RENDER_SCRIPT_SHA256,
     postStep: {
       version: POST_STEP_VERSION,
-      settings: postSettingsFor(profile.shadow.ramp),
+      settings: postSettingsFor(shadowRamp),
     },
     blender: render.pin,
     kit: kitHash(profile.kitFiles),
-    stamps: stampSetHash(stampSet),
+    stamps: stampsHash,
   });
   const earlier = revisions.get(revisionKey);
   if (earlier !== undefined && earlier.hash !== revision.hash)
@@ -481,6 +502,8 @@ function prepare(
   const stagingRoot = join(workDir, "staging");
   const expected: string[] = [];
   try {
+    // The script needs the directory even when a profile stages nothing (a house).
+    mkdirSync(stagingRoot, { recursive: true });
     for (const ref of profile.kitFiles) {
       const bytes = new Uint8Array(
         readFileSync(join(render.renderRoot, "kits", ref.kit, ref.path)),
@@ -552,10 +575,10 @@ function prepare(
       settings: postStepSettings(
         camera,
         recipeRequest.pivot,
-        postSettingsFor(profile.shadow.ramp),
+        postSettingsFor(shadowRamp),
       ),
       palette: postPalette,
-      stamps: stamps.set,
+      stamps,
       paletteId: palette.id,
       paletteDigest: paletteDigest(palette),
       licences: usedKits.map((id) => ({

@@ -24,7 +24,14 @@ import {
   type Sha256,
 } from "@panthea/contracts";
 import { sha256Hex } from "../hash";
-import { parseVec2, parseVec3, type Vec2, type Vec3 } from "./camera";
+import {
+  type CameraCell,
+  parseCell,
+  parseVec2,
+  parseVec3,
+  type Vec2,
+  type Vec3,
+} from "./camera";
 import type { KitManifest, ProfileKitRefs } from "./kits";
 
 const SUPPORTED_SCHEMA_VERSIONS = [1] as const;
@@ -267,8 +274,10 @@ export interface PoseEntry {
   readonly breath?: Readonly<Record<string, Vec3>>;
 }
 
-export interface ModelProfile {
+/** A rigged character. An absent `kind` is a figure, so a figure's JSON and its hash stay as they were. */
+export interface FigureProfile {
   readonly schemaVersion: 1;
+  readonly kind?: undefined;
   readonly id: string;
   /** Every kit file the render reads, `.bin` companions included. */
   readonly kitFiles: readonly KitFileRef[];
@@ -301,6 +310,92 @@ export interface ModelProfile {
   /** Pose policy keyed `state` or `state:facing`. */
   readonly pose: Readonly<Record<string, PoseEntry>>;
 }
+
+/** What a mark on a house is: where it sits and which material draws it. */
+export interface StructureDecal {
+  /** The surface it is laid on: the wall facing the viewer, the wall facing right, or the front roof slope. */
+  readonly wall: "front" | "side" | "roof";
+  /**
+   * Centre of the mark, metres. On a wall: along it from its left edge (the front's left, the side's
+   * nearest the viewer), and up from the ground. On the roof: along the ridge from the roof's left
+   * end, and up the slope from the eave.
+   */
+  readonly at: Vec2;
+  /** Width and height of the mark, metres. */
+  readonly size: Vec2;
+  /** A key of the profile's `materials`. */
+  readonly material: string;
+  /** Degrees the mark is turned in its own plane; absent is square to the surface's axes. */
+  readonly angle?: number;
+}
+
+/** One state of a structure: how many frames, and what it looks like. */
+export interface StructureClip {
+  /** A looping state sways in the wind; a still one is rendered once at rest. */
+  readonly loop: boolean;
+  readonly frames: number;
+  /** Whole milliseconds each frame is shown, `frames` entries: the manifest timing. */
+  readonly frameMs: readonly number[];
+  /** The model's material role to the profile material this state draws it in. A role left out keeps its own. */
+  readonly materials: Readonly<Record<string, string>>;
+  /** Marks laid on a house's walls; they leave its silhouette alone. */
+  readonly decals: readonly StructureDecal[];
+  /** The model with its walls and roof broken (a house) or burnt down to a stump (a tree). */
+  readonly ruin: boolean;
+  /** The fraction of a tree's leaf clusters this state keeps, 0 to 1. */
+  readonly leaves?: number;
+}
+
+export interface Wind {
+  /** Peak sway of the crown, metres. */
+  readonly amplitudeM: number;
+  /** Phase lag up the height, radians per unit of relative height: the crown trails the trunk. */
+  readonly lag: number;
+  /** Whole sways per loop, so the last frame flows into the first. */
+  readonly cycles: number;
+  /** Quadrature share on the second axis: the crown traces a small ellipse rather than a line. */
+  readonly swirl: number;
+}
+
+export type StructureBuild =
+  /**
+   * A Greek town house built from script geometry, with kit models for the parts it names
+   * (a role such as `column` or `rubble` to the model that draws it).
+   */
+  | {
+      readonly kind: "house";
+      readonly parts?: Readonly<Record<string, KitPath>>;
+    }
+  /** A kit model, scaled to a height. */
+  | {
+      readonly kind: "tree";
+      readonly model: KitPath;
+      readonly heightM: number;
+    };
+
+/**
+ * A tree or a building. It owns its frame (the cell class it is drawn on and where the world
+ * origin lands in it), so a structure need not share the one camera's cell with the figures.
+ */
+export interface StructureProfile {
+  readonly schemaVersion: 1;
+  readonly kind: "structure";
+  readonly id: string;
+  /** Every kit file the render reads; none for a house. */
+  readonly kitFiles: readonly KitFileRef[];
+  readonly build: StructureBuild;
+  /** The frame: the cell class, its size, and the pixel the world origin projects to. */
+  readonly cell: CameraCell;
+  readonly materials: Readonly<Record<string, MaterialRole>>;
+  readonly clips: Readonly<Record<string, StructureClip>>;
+  readonly wind?: Wind;
+}
+
+export type ModelProfile = FigureProfile | StructureProfile;
+
+export const isStructureProfile = (
+  profile: ModelProfile,
+): profile is StructureProfile => profile.kind === "structure";
 
 // --- Parsing -------------------------------------------------------------------
 
@@ -1171,10 +1266,10 @@ function parsePose(
   return ok(out);
 }
 
-export function parseProfile(
+function parseFigureProfile(
   value: unknown,
-  path = "profile",
-): ParseResult<ModelProfile> {
+  path: string,
+): ParseResult<FigureProfile> {
   const record = strict(value, path, [
     "schemaVersion",
     "id",
@@ -1354,6 +1449,316 @@ export function parseProfile(
   });
 }
 
+// --- Structures ------------------------------------------------------------------------
+
+function parseUnitFraction(value: unknown, path: string): ParseResult<number> {
+  const number = parseFiniteNumber(value, path);
+  if (!number.ok) return number;
+  if (number.value < 0 || number.value > 1)
+    return fail(path, "expected a number from 0 to 1");
+  return number;
+}
+
+function parseDecal(
+  value: unknown,
+  path: string,
+  materialKeys: ReadonlySet<string>,
+): ParseResult<StructureDecal> {
+  const record = strict(value, path, [
+    "wall",
+    "at",
+    "size",
+    "material",
+    "angle",
+  ]);
+  if (!record.ok) return record;
+  const wall = record.value.wall;
+  if (wall !== "front" && wall !== "side" && wall !== "roof")
+    return fail(`${path}.wall`, 'expected "front", "side" or "roof"');
+  const at = parseVec2(record.value.at, `${path}.at`);
+  if (!at.ok) return at;
+  const size = parseVec2(record.value.size, `${path}.size`);
+  if (!size.ok) return size;
+  if (size.value[0] <= 0 || size.value[1] <= 0)
+    return fail(`${path}.size`, "expected a positive width and height");
+  const material = parseString(record.value.material, `${path}.material`);
+  if (!material.ok) return material;
+  if (!materialKeys.has(material.value))
+    return fail(
+      `${path}.material`,
+      `"${material.value}" is not among the profile's materials`,
+    );
+  let angle: number | undefined;
+  if (record.value.angle !== undefined) {
+    const parsed = parseFiniteNumber(record.value.angle, `${path}.angle`);
+    if (!parsed.ok) return parsed;
+    angle = parsed.value;
+  }
+  return ok({
+    wall,
+    at: at.value,
+    size: size.value,
+    material: material.value,
+    ...(angle === undefined ? {} : { angle }),
+  });
+}
+
+function parseWind(value: unknown, path: string): ParseResult<Wind> {
+  const record = strict(value, path, ["amplitudeM", "lag", "cycles", "swirl"]);
+  if (!record.ok) return record;
+  const amplitudeM = parsePositive(
+    record.value.amplitudeM,
+    `${path}.amplitudeM`,
+  );
+  if (!amplitudeM.ok) return amplitudeM;
+  const lag = parseFiniteNumber(record.value.lag, `${path}.lag`);
+  if (!lag.ok) return lag;
+  const cycles = parseNonNegativeInteger(record.value.cycles, `${path}.cycles`);
+  if (!cycles.ok) return cycles;
+  if (cycles.value < 1)
+    return fail(`${path}.cycles`, "expected at least one whole sway per loop");
+  const swirl = parseFiniteNumber(record.value.swirl, `${path}.swirl`);
+  if (!swirl.ok) return swirl;
+  return ok({
+    amplitudeM: amplitudeM.value,
+    lag: lag.value,
+    cycles: cycles.value,
+    swirl: swirl.value,
+  });
+}
+
+function parseStructureBuild(
+  value: unknown,
+  path: string,
+  listed: ReadonlySet<string>,
+): ParseResult<StructureBuild> {
+  if (!isRecord(value)) return fail(path, "expected an object");
+  if (value.kind === "house") {
+    const record = strict(value, path, ["kind", "parts"]);
+    if (!record.ok) return record;
+    if (record.value.parts === undefined) return ok({ kind: "house" });
+    if (!isRecord(record.value.parts))
+      return fail(`${path}.parts`, "expected an object of role to kit model");
+    const parts: Record<string, KitPath> = {};
+    for (const [role, entry] of Object.entries(record.value.parts)) {
+      const model = parseKitPath(entry, `${path}.parts.${role}`);
+      if (!model.ok) return model;
+      if (!listed.has(`${model.value.kit}/${model.value.path}`))
+        return fail(
+          `${path}.parts.${role}`,
+          `"${model.value.kit}/${model.value.path}" is not among kitFiles`,
+        );
+      parts[role] = model.value;
+    }
+    return ok({ kind: "house", parts });
+  }
+  if (value.kind !== "tree")
+    return fail(`${path}.kind`, 'expected "house" or "tree"');
+  const record = strict(value, path, ["kind", "model", "heightM"]);
+  if (!record.ok) return record;
+  const model = parseKitPath(record.value.model, `${path}.model`);
+  if (!model.ok) return model;
+  if (!listed.has(`${model.value.kit}/${model.value.path}`))
+    return fail(
+      `${path}.model`,
+      `"${model.value.kit}/${model.value.path}" is not among kitFiles`,
+    );
+  const heightM = parsePositive(record.value.heightM, `${path}.heightM`);
+  if (!heightM.ok) return heightM;
+  return ok({ kind: "tree", model: model.value, heightM: heightM.value });
+}
+
+function parseStructureClips(
+  value: unknown,
+  path: string,
+  build: StructureBuild,
+  materialKeys: ReadonlySet<string>,
+  hasWind: boolean,
+): ParseResult<Readonly<Record<string, StructureClip>>> {
+  if (!isRecord(value) || Object.keys(value).length === 0)
+    return fail(path, "expected a clip map from semantic state to clip");
+  const out: Record<string, StructureClip> = {};
+  for (const [state, entry] of Object.entries(value)) {
+    const at = `${path}.${state}`;
+    if (!SEMANTIC_STATE.test(state))
+      return fail(at, "expected a semantic state name");
+    const record = strict(entry, at, [
+      "loop",
+      "frames",
+      "frameMs",
+      "materials",
+      "decals",
+      "ruin",
+      "leaves",
+    ]);
+    if (!record.ok) return record;
+    const loop = parseBoolean(record.value.loop, `${at}.loop`);
+    if (!loop.ok) return loop;
+    const frames = parseNonNegativeInteger(record.value.frames, `${at}.frames`);
+    if (!frames.ok) return frames;
+    if (frames.value < 1)
+      return fail(`${at}.frames`, "expected at least one frame");
+    if (!loop.value && frames.value !== 1)
+      return fail(`${at}.frames`, "a still state is rendered once");
+    if (loop.value && !hasWind)
+      return fail(`${at}.loop`, "a looping state needs the profile's wind");
+    const frameMs = parseFrameMs(
+      record.value.frameMs,
+      frames.value,
+      `${at}.frameMs`,
+    );
+    if (!frameMs.ok) return frameMs;
+
+    const materials: Record<string, string> = {};
+    if (record.value.materials !== undefined) {
+      if (!isRecord(record.value.materials))
+        return fail(`${at}.materials`, "expected an object of material roles");
+      for (const [role, target] of Object.entries(record.value.materials)) {
+        const key = parseString(target, `${at}.materials.${role}`);
+        if (!key.ok) return key;
+        if (!materialKeys.has(key.value))
+          return fail(
+            `${at}.materials.${role}`,
+            `"${key.value}" is not among the profile's materials`,
+          );
+        materials[role] = key.value;
+      }
+    }
+    let decals: readonly StructureDecal[] = [];
+    if (record.value.decals !== undefined) {
+      const parsed = parseArray(
+        record.value.decals,
+        `${at}.decals`,
+        (item, itemPath) => parseDecal(item, itemPath, materialKeys),
+      );
+      if (!parsed.ok) return parsed;
+      // A parsed tree lists no decals, and the recipe parses its profile a second time.
+      if (build.kind !== "house" && parsed.value.length > 0)
+        return fail(`${at}.decals`, "only a house takes decals");
+      decals = parsed.value;
+    }
+    let ruin = false;
+    if (record.value.ruin !== undefined) {
+      const parsed = parseBoolean(record.value.ruin, `${at}.ruin`);
+      if (!parsed.ok) return parsed;
+      ruin = parsed.value;
+    }
+    let leaves: number | undefined;
+    if (record.value.leaves !== undefined) {
+      if (build.kind !== "tree")
+        return fail(`${at}.leaves`, "only a tree has leaves");
+      const parsed = parseUnitFraction(record.value.leaves, `${at}.leaves`);
+      if (!parsed.ok) return parsed;
+      leaves = parsed.value;
+    }
+    out[state] = {
+      loop: loop.value,
+      frames: frames.value,
+      frameMs: frameMs.value,
+      materials,
+      decals,
+      ruin,
+      ...(leaves === undefined ? {} : { leaves }),
+    };
+  }
+  return ok(out);
+}
+
+function parseStructureProfile(
+  value: unknown,
+  path: string,
+): ParseResult<StructureProfile> {
+  const record = strict(value, path, [
+    "schemaVersion",
+    "kind",
+    "id",
+    "kitFiles",
+    "build",
+    "cell",
+    "materials",
+    "clips",
+    "wind",
+  ]);
+  if (!record.ok) return record;
+  const version = parseSchemaVersion(
+    record.value.schemaVersion,
+    SUPPORTED_SCHEMA_VERSIONS,
+    `${path}.schemaVersion`,
+  );
+  if (!version.ok) return version;
+  const id = parseString(record.value.id, `${path}.id`);
+  if (!id.ok) return id;
+  if (!PROFILE_ID.test(id.value))
+    return fail(`${path}.id`, "expected a lowercase, hyphenated profile id");
+  const kitFiles = parseArray(
+    record.value.kitFiles,
+    `${path}.kitFiles`,
+    parseKitFileRef,
+  );
+  if (!kitFiles.ok) return kitFiles;
+  const listed = new Set<string>();
+  for (const [index, ref] of kitFiles.value.entries()) {
+    const name = `${ref.kit}/${ref.path}`;
+    if (listed.has(name))
+      return fail(`${path}.kitFiles[${index}]`, `duplicate kit file "${name}"`);
+    listed.add(name);
+  }
+  const build = parseStructureBuild(
+    record.value.build,
+    `${path}.build`,
+    listed,
+  );
+  if (!build.ok) return build;
+  const cell = parseCell(record.value.cell, `${path}.cell`);
+  if (!cell.ok) return cell;
+  const materials = parseMaterials(record.value.materials, `${path}.materials`);
+  if (!materials.ok) return materials;
+  let wind: Wind | undefined;
+  if (record.value.wind !== undefined) {
+    const parsed = parseWind(record.value.wind, `${path}.wind`);
+    if (!parsed.ok) return parsed;
+    wind = parsed.value;
+  }
+  const clips = parseStructureClips(
+    record.value.clips,
+    `${path}.clips`,
+    build.value,
+    new Set(Object.keys(materials.value)),
+    wind !== undefined,
+  );
+  if (!clips.ok) return clips;
+  return ok({
+    schemaVersion: 1,
+    kind: "structure",
+    id: id.value,
+    kitFiles: kitFiles.value,
+    build: build.value,
+    cell: cell.value,
+    materials: materials.value,
+    clips: clips.value,
+    ...(wind === undefined ? {} : { wind }),
+  });
+}
+
+/**
+ * Parses a model profile. A profile with no `kind` is a figure and parses as it always did;
+ * `kind: "structure"` is a tree or a building.
+ */
+export function parseProfile(
+  value: unknown,
+  path = "profile",
+): ParseResult<ModelProfile> {
+  if (isRecord(value) && value.kind !== undefined) {
+    if (value.kind !== "structure")
+      return fail(
+        `${path}.kind`,
+        'expected "structure", or no kind for a figure',
+      );
+    return parseStructureProfile(value, path);
+  }
+  return parseFigureProfile(value, path);
+}
+
 // --- Kit refs, hash, pose policy, sample times ---------------------------------------
 
 /** The files a profile references, in the shape the kit gate (`checkKits`) takes. */
@@ -1413,7 +1818,7 @@ export interface PoseRequest {
  * `frames` never takes part, so a walk at 8 frames and at 16 frames poses identically.
  */
 export function posePolicy(
-  profile: ModelProfile,
+  profile: FigureProfile,
   request: PoseRequest,
 ): PoseEntry {
   if (profile.clips[request.state] === undefined) {

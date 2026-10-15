@@ -30,15 +30,24 @@ export interface CheckResult {
   readonly detail: string;
 }
 
-export interface Measurement {
-  readonly selection: Selection;
-  readonly resolution: PixelResolution;
-  /** Where each drawn frame sits in the 1x render target. */
+/** What was read back with one page of frames drawn. */
+export interface PageRead {
+  /** Where each frame of the page sits in the 1x render target. */
   readonly placements: readonly PixelRect[];
   /** The 1x render target read back. */
   readonly target: Rgba;
   /** The canvas read back at each integer zoom, keyed by the zoom. */
   readonly canvases: ReadonlyMap<number, Rgba>;
+}
+
+/**
+ * A selection read back. The first page's reads are the measurement's own; a selection whose frames did not fit
+ * one draw has `later` pages, which continue the frame numbering where the page before ended.
+ */
+export interface Measurement extends PageRead {
+  readonly selection: Selection;
+  readonly resolution: PixelResolution;
+  readonly later: readonly PageRead[];
 }
 
 export function summarize(results: readonly CheckResult[]): {
@@ -75,6 +84,21 @@ export function globalChecks(input: {
 const sameRect = (a: PixelRect, b: PixelRect): boolean =>
   a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 
+/** The page a frame (numbered across all pages) was drawn on, and its place in that page; undefined if it was not drawn. */
+function pageOf(
+  measurement: Measurement,
+  index: number,
+): { read: PageRead; local: number } | undefined {
+  let first = 0;
+  for (const read of [measurement, ...measurement.later]) {
+    if (index < first + read.placements.length) {
+      return { read, local: index - first };
+    }
+    first += read.placements.length;
+  }
+  return undefined;
+}
+
 /** The region a frame occupies in the read-back for `zoom`, or why it cannot be read. */
 function regionOf(
   measurement: Measurement,
@@ -82,11 +106,13 @@ function regionOf(
   size: { readonly w: number; readonly h: number },
   zoom: number | "target",
 ): Rgba | string {
-  const placement = measurement.placements[index];
-  if (placement === undefined) return "the frame was not drawn";
+  const page = pageOf(measurement, index);
+  const placement = page?.read.placements[page.local];
+  if (page === undefined || placement === undefined)
+    return "the frame was not drawn";
   const scale = zoom === "target" ? 1 : zoom;
   const image =
-    zoom === "target" ? measurement.target : measurement.canvases.get(zoom);
+    zoom === "target" ? page.read.target : page.read.canvases.get(zoom);
   if (image === undefined) return `the canvas was not read back at ${zoom}x`;
   try {
     return crop(image, {

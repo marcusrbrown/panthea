@@ -55,6 +55,12 @@ import type {
   WorkingSetRecord,
 } from "./working-set";
 
+/** The licence of work made in this repository, as its LICENSE states it. */
+const REPOSITORY_WORK_LICENCE = {
+  licence: "MIT",
+  attribution: "Marcus R. Brown",
+} as const;
+
 export interface PackInput {
   /** The studio's own id for this packed record. */
   readonly id: string;
@@ -1070,6 +1076,18 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       ...(input.originalWork.attribution === undefined
         ? {}
         : { attribution: input.originalWork.attribution }),
+    });
+  } else if (
+    renderedJobs.size > 0 &&
+    licences.length === 0 &&
+    generations.size === 0
+  ) {
+    // Art built from the render script's own geometry reads no licensed input, and a manifest
+    // names at least one licence: the repository's, whose LICENSE this is the work of.
+    licences.push({
+      subject: input.assetId,
+      role: "original-work",
+      ...REPOSITORY_WORK_LICENCE,
     });
   }
   const sourceRequests = new Set([

@@ -54,6 +54,8 @@ export interface KitFile {
 export interface Kit {
   readonly id: string;
   readonly title?: string;
+  /** How the files here differ from the pack as shipped, e.g. a format conversion. */
+  readonly notes?: string;
   readonly sourceUrl: string;
   readonly licence: {
     /** SPDX id; free text is not accepted. */
@@ -221,9 +223,15 @@ function parseKit(value: unknown, path: string): ParseResult<Kit> {
     typeof value.title === "string" && value.title !== ""
       ? { title: value.title }
       : {};
+  if (value.notes !== undefined) {
+    const parsed = parseString(value.notes, `${path}.notes`);
+    if (!parsed.ok) return parsed;
+  }
+  const notes = typeof value.notes === "string" ? { notes: value.notes } : {};
   return ok({
     id: id.value,
     ...title,
+    ...notes,
     sourceUrl: sourceUrl.value,
     licence: {
       spdx: spdx.value,

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { type Camera, parseCamera } from "./camera";
 import { parseKitManifest } from "./kits";
 import { type ModelProfile, parseProfile, profileKitProblems } from "./profile";
+import { frameOf } from "./recipe";
 
 export interface RenderInputProblem {
   /** Path relative to the render root, e.g. `camera.json` or `profiles/zeus.json`. */
@@ -99,4 +100,22 @@ export function loadRenderInputs(renderRoot: string): RenderInputs {
     profileIds: names.map((name) => name.slice(0, -".json".length)),
     problems,
   };
+}
+
+/**
+ * The cell sizes the committed profiles draw on, each once: a figure on the camera's cell, a
+ * structure on its own. None when the camera is unusable.
+ */
+export function renderCellsOf(
+  inputs: RenderInputs,
+): { readonly w: number; readonly h: number }[] {
+  const { camera } = inputs;
+  if (camera === undefined) return [];
+  const cells: { w: number; h: number }[] = [];
+  for (const profile of inputs.profiles) {
+    const { width: w, height: h } = frameOf(profile, camera);
+    if (!cells.some((cell) => cell.w === w && cell.h === h))
+      cells.push({ w, h });
+  }
+  return cells;
 }

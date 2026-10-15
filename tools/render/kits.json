@@ -98,6 +98,128 @@
           "referencedBy": ["zeus"]
         }
       ]
+    },
+    {
+      "id": "kenney-nature-kit",
+      "title": "Nature Kit (Kenney)",
+      "sourceUrl": "https://kenney.nl/assets/nature-kit",
+      "licence": {
+        "spdx": "CC0-1.0"
+      },
+      "licenceFile": {
+        "path": "License.txt",
+        "sha256": "cb96b75e3560ac78d7a53ce6f083f4cdb5c53faea6141b62d63458dcfe1e4b9d"
+      },
+      "status": "used",
+      "textureSkip": [],
+      "files": [
+        {
+          "path": "tree_oak.glb",
+          "sha256": "d7fd8773674928c50c11b66d12c636d49bdcc15a8b1c7fbb98e6f63a3439a3f3",
+          "size": 14644,
+          "referencedBy": ["oak-tree"]
+        }
+      ]
+    },
+    {
+      "id": "quaternius-modular-ruins",
+      "title": "Ultimate Modular Ruins Pack (Quaternius)",
+      "sourceUrl": "https://quaternius.com/packs/ultimatemodularruins.html",
+      "licence": {
+        "spdx": "CC0-1.0"
+      },
+      "licenceFile": {
+        "path": "License.txt",
+        "sha256": "83d8959f9fc56353ed571fbe2dc52e4bcd64508e2399501cd45ac2ce3df0bf8c"
+      },
+      "status": "used",
+      "textureSkip": [],
+      "notes": "The pack ships OBJ, FBX and Blend, no glTF. Each file here is the pack's OBJ of the same name converted to GLB by Blender 5.2.2 (build d13f752e3b9c) headless: wm.obj_import, then export_scene.gltf with export_format GLB, export_yup True, export_apply True, export_image_format NONE. The pack's materials are flat colours and its textures belong to its trees, so none is staged.",
+      "files": [
+        {
+          "path": "Brick.glb",
+          "sha256": "765b606af540d03d92ee8425b90cf68d4a89de538b22316bcc0876b76e4919f1",
+          "size": 5668,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "Bricks.glb",
+          "sha256": "f944e65c469e6fee71c7e0e5438bc59ba185a63f57dee7eb67f322a05212cd0a",
+          "size": 16980,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "Column_Round.glb",
+          "sha256": "4568b2338c26b838e479f6ffc8feff15a3ee39d9024f13bc549509e45f984dbe",
+          "size": 37068,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "Wall_Broken.glb",
+          "sha256": "115bcf3fb508571e5c2ab2fc4929ab5864280b6300c29aa99cee651f354268f1",
+          "size": 49880,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "Wall_Double_Broken.glb",
+          "sha256": "2d4215d203cb773f22c41dda834e92bf48b6e74bfa4feafa23cd29b607d4fe9f",
+          "size": 43656,
+          "referencedBy": ["greek-house"]
+        }
+      ]
+    },
+    {
+      "id": "kenney-building-kit",
+      "title": "Building Kit (Kenney)",
+      "sourceUrl": "https://kenney.nl/assets/building-kit",
+      "licence": {
+        "spdx": "CC0-1.0"
+      },
+      "licenceFile": {
+        "path": "License.txt",
+        "sha256": "60a07f9108f5a3fc5f9429fd1faa5b168c05cc085354f78ed48180ef32ec6209"
+      },
+      "status": "used",
+      "textureSkip": ["Textures/colormap.png"],
+      "notes": "The files are the pack's GLB format files as shipped. Their one texture, Textures/colormap.png, is not vendored: the render draws every surface in its own palette material, so nothing reads it.",
+      "files": [
+        {
+          "path": "wall.glb",
+          "sha256": "769a02a70327132ba864c04299631c65fb08e96e01e1796ba73ddf7f44679a36",
+          "size": 2664,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "wall-half.glb",
+          "sha256": "bc68a006ee810f57c268aded426ae082689c307c1633bb169c32f7105382671e",
+          "size": 2676,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "wall-doorway-square.glb",
+          "sha256": "5fc3ab4d17545ffcca24d73a77589d6f4816d2bd21b29614be3e0819c97f0410",
+          "size": 6308,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "wall-window-square.glb",
+          "sha256": "099d332de4c632cb03692140f9a4004b5d6508cea6a7e3a80268564976cc8b7e",
+          "size": 8964,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "column-thin.glb",
+          "sha256": "37cfd995746888acfd15d6f226f7ddda83257707b6d21793f38fbe851a958daf",
+          "size": 4344,
+          "referencedBy": ["greek-house"]
+        },
+        {
+          "path": "floor.glb",
+          "sha256": "fbe8e907e502381db5d9f87676ef9e34522e35fc95a401a754d3e4984819338b",
+          "size": 2832,
+          "referencedBy": ["greek-house"]
+        }
+      ]
     }
   ]
 }

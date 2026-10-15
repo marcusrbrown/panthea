@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": 2,
+  "version": 3,
   "directions": ["south", "north", "east", "west"],
   "expressions": [
     "neutral",
@@ -17,7 +17,8 @@
     { "id": "god", "w": 64, "h": 80, "kinds": ["sprite"] },
     { "id": "large", "w": 128, "h": 128, "kinds": ["sprite"] },
     { "id": "god-tall", "w": 112, "h": 96, "kinds": ["sprite"] },
-    { "id": "portrait", "w": 96, "h": 96, "kinds": ["portrait"] }
+    { "id": "portrait", "w": 96, "h": 96, "kinds": ["portrait"] },
+    { "id": "structure", "w": 192, "h": 192, "kinds": ["sprite"] }
   ],
   "states": [
     {
@@ -68,6 +69,24 @@
       "frames": { "min": 16, "max": 16 },
       "fps": { "min": 20, "max": 20 },
       "cellClasses": ["god-tall"]
+    },
+    {
+      "id": "intact",
+      "frames": { "min": 1, "max": 16 },
+      "fps": { "min": 1, "max": 20 },
+      "cellClasses": ["structure"]
+    },
+    {
+      "id": "damaged",
+      "frames": { "min": 1, "max": 16 },
+      "fps": { "min": 1, "max": 20 },
+      "cellClasses": ["structure"]
+    },
+    {
+      "id": "ruin",
+      "frames": { "min": 1, "max": 16 },
+      "fps": { "min": 1, "max": 20 },
+      "cellClasses": ["structure"]
     },
     {
       "id": "hurt",

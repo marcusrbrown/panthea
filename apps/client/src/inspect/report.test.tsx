@@ -57,6 +57,8 @@ test("a placeholder selection is labelled as one, with the reason", () => {
         pixels: { width: 16, height: 16, rgba: new Uint8Array(1024) },
       },
       placements: [],
+      page: 0,
+      pages: 1,
     }),
   ).toBe(
     "PLACEHOLDER (missing-state): zeus-sprite seated/south is not published; the shared placeholder is drawn",
@@ -82,9 +84,39 @@ test("a canon selection shows its atlas and frame count", () => {
       frames: [{}, {}, {}, {}] as never,
     },
     placements: [],
+    page: 0,
+    pages: 1,
   });
 
   expect(text).toBe(
     `CANON: zeus-sprite idle/south, 4 frames, atlas ${"b".repeat(64)}`,
+  );
+});
+
+test("a paged canon selection says which page is on show", () => {
+  const text = describeShown({
+    selection: {
+      assetId: "oak-tree",
+      kind: "sprite",
+      state: "intact",
+      direction: "south",
+    },
+    resolution: {
+      source: "canon",
+      kind: "sprite",
+      assetId: "oak-tree" as never,
+      revision: "r".repeat(64) as never,
+      uri: "panthea-asset://asset/oak-tree",
+      atlas: { blob: "b".repeat(64) as never, width: 2304, height: 192 },
+      cell: { w: 192, h: 192 },
+      frames: Array.from({ length: 12 }, () => ({})) as never,
+    },
+    placements: [],
+    page: 1,
+    pages: 3,
+  });
+
+  expect(text).toBe(
+    `CANON: oak-tree intact/south, 12 frames, page 2 of 3, atlas ${"b".repeat(64)}`,
   );
 });

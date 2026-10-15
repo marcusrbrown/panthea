@@ -20,7 +20,6 @@ import {
   newRequestRecord,
   type PackInput,
   parsePreviewResolve,
-  RENDER_ENGINE,
   RENDER_PROVIDER,
   type RequestInput,
   registryFrameReader,
@@ -390,8 +389,8 @@ function buildRequest(
       ...(shape.render === undefined ? {} : { render: shape.render }),
     },
     studio.deps.drawSeed,
-    // The render engine declares its own cell sizes; an image request is gated by the image engine's.
-    shape.render === undefined ? undefined : RENDER_ENGINE,
+    // The render engine accepts the frames its committed profiles draw on; an image request is gated by the image engine's.
+    shape.render === undefined ? undefined : studio.renderCells(),
   );
   return built.ok
     ? built.value
@@ -631,12 +630,16 @@ function isRenderJob(session: StudioSession, jobId: string): boolean {
   );
 }
 
-/** The subjects whose visual profile names a render profile; none when the content cannot be read. */
+/** The subjects the render engine draws: gods whose visual profile names a render profile, then the structures; none when the content cannot be read. */
 function renderSubjectsOf(studio: Studio): string[] {
   const content = studio.loadedContent();
-  return isOutcome(content)
-    ? []
-    : content.visuals.filter((v) => v.render !== undefined).map((v) => v.godId);
+  if (isOutcome(content)) return [];
+  return [
+    ...content.visuals
+      .filter((v) => v.render !== undefined)
+      .map((v) => v.godId),
+    ...content.structures.map((s) => s.id),
+  ];
 }
 
 const LIST_KINDS = [

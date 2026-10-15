@@ -11,3 +11,4 @@ export * from "./god-profile";
 export * from "./god-visual-profile";
 export * from "./load";
 export * from "./motifs";
+export * from "./structure-subject";

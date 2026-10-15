@@ -6,7 +6,11 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { parseGodProfile, parseGodVisualProfiles } from "@panthea/content";
+import {
+  parseGodProfile,
+  parseGodVisualProfiles,
+  parseStructureSubjects,
+} from "@panthea/content";
 import { parseAssetVocabulary } from "@panthea/contracts";
 import { type Palette, type PaletteSet, parsePalette } from "../palette";
 import type { StudioContent } from "./request";
@@ -24,6 +28,7 @@ export type LoadedContent =
 const VOCABULARY = "assets/vocabulary.json";
 const GODS = "gods";
 const SUBJECTS = "assets/subjects";
+const STRUCTURES = "assets/structures";
 const PALETTES = "palette";
 const MAX_MESSAGE = 240;
 
@@ -215,6 +220,17 @@ export function loadStudioContent(contentRoot: string): LoadedContent {
     if (json.ok) subjectInputs.push({ name, value: json.value });
     else diagnostics.push(json.diagnostic);
   }
+  // A content root with no structures directory has no structures; a present one is read whole.
+  const structureNames = existsSync(join(contentRoot, STRUCTURES))
+    ? jsonFiles(contentRoot, STRUCTURES)
+    : { ok: true as const, value: [] as string[] };
+  if (!structureNames.ok) diagnostics.push(structureNames.diagnostic);
+  const structureInputs: { name: string; value: unknown }[] = [];
+  for (const name of structureNames.ok ? structureNames.value : []) {
+    const json = readJson(contentRoot, `${STRUCTURES}/${name}`);
+    if (json.ok) structureInputs.push({ name, value: json.value });
+    else diagnostics.push(json.diagnostic);
+  }
 
   const vocabulary = vocabularyJson.ok
     ? parseAssetVocabulary(vocabularyJson.value)
@@ -257,11 +273,36 @@ export function loadStudioContent(contentRoot: string): LoadedContent {
     }
   }
 
+  let structures: StudioContent["structures"] = [];
+  if (!brokenGods && structureNames.ok) {
+    const parsed = parseStructureSubjects(
+      structureInputs.map(({ name, value }) => ({ label: name, value })),
+      gods.map((god) => god.id),
+      families,
+    );
+    if (parsed.ok) structures = parsed.value;
+    else {
+      const named = structureInputs.find(({ name }) =>
+        parsed.path.includes(name),
+      );
+      problem(
+        named === undefined ? STRUCTURES : `${STRUCTURES}/${named.name}`,
+        `${parsed.path}: ${parsed.message}`,
+      );
+    }
+  }
+
   const palettes = parsePaletteFiles(paletteFiles, families, problem);
 
   if (diagnostics.length > 0) return { ok: false, diagnostics };
   return {
     ok: true,
-    content: { vocabulary: vocabulary.value, gods, visuals, palettes },
+    content: {
+      vocabulary: vocabulary.value,
+      gods,
+      visuals,
+      structures,
+      palettes,
+    },
   };
 }
