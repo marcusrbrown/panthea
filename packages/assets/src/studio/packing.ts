@@ -695,7 +695,13 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     if (pivot === undefined) return refuse("the sprite has no pivot");
     if (input.footprint === undefined)
       return refuse("a sprite needs its footprint");
-    if (prior?.manifest.kind === "sprite") {
+    // A cell or a realm variant carried from the published revision was drawn on its pivot and footprint, so a
+    // revision that carries any keeps them. One that carries nothing (a rendered revision renders every slot it
+    // holds) is all new cells, and may move them.
+    if (
+      prior?.manifest.kind === "sprite" &&
+      (carriedKeys.length > 0 || carriedFamilies.length > 0)
+    ) {
       if (
         prior.manifest.pivot.x !== pivot.x ||
         prior.manifest.pivot.y !== pivot.y

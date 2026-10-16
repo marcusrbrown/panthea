@@ -972,7 +972,32 @@ describe("carrying cells from the published revision", () => {
     expect(result.ok && result.value.report.carried).toBeUndefined();
   });
 
-  test("a published revision of another kind, cell size, pivot or footprint is refused", () => {
+  test("a revision that carries nothing from the published one may move the pivot and the footprint: they are the new cells', not the old ones'", () => {
+    const rig = assetRig();
+    const { prior } = twoStates(rig);
+    const moved = JSON.parse(JSON.stringify(prior.manifest));
+    moved.pivot = { x: 1, y: 1 };
+    moved.footprint = { w: 2, h: 2 };
+
+    const result = packAsset(
+      input(),
+      sources(rig, "w", { ...prior, manifest: moved }),
+    );
+
+    expect(result.ok && result.value.carried).toEqual([]);
+    expect(
+      result.ok &&
+        result.value.manifest.kind === "sprite" &&
+        result.value.manifest.pivot,
+    ).toEqual({ x: 32, y: 80 });
+    expect(
+      result.ok &&
+        result.value.manifest.kind === "sprite" &&
+        result.value.manifest.footprint,
+    ).toEqual({ w: 1, h: 1 });
+  });
+
+  test("a published revision of another kind, cell size, pivot or footprint is refused when its cells are carried", () => {
     const rig = assetRig();
     const { prior } = twoStates(rig);
     const mod = (change: (m: Record<string, unknown>) => void) => {
