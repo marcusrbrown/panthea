@@ -17,7 +17,7 @@ tags: [canvas, integer-zoom, device-pixels, layout, stylesheet, client-view]
 
 ## Context
 
-The client draws the scene into a fixed logical target, `LOGICAL_SIZE` (576×336) in `apps/client/src/renderer/layout.ts`, and `fitView` enlarges it by a whole zoom in device pixels. The canvas lives in the scene area: the window minus the side rails, the topbar and the footer, which is 714×635 at the default 1280×720 window. Layout and camera are in ADR-0011.
+The client draws the scene into a fixed logical target, `LOGICAL_SIZE` (576×384) in `apps/client/src/renderer/layout.ts`, and `fitView` enlarges it by a whole zoom in device pixels. The canvas lives in the scene area: the window minus the side rails, the topbar and the footer, which is 714×635 at the default 1280×720 window. Layout and camera are in ADR-0011.
 
 ## Guidance
 
@@ -37,7 +37,7 @@ The client draws the scene into a fixed logical target, `LOGICAL_SIZE` (576×336
    ```
 
    At DPR 2 the scene area is 1428×1270 device pixels. A target wider than 714 or taller than 635 CSS px gets zoom 1 there and draws at half its intended size. At DPR 1 the same target crops.
-3. **Read the container from the stylesheet in the test.** `layout.test.ts` derives the scene area from `surface.css` (the `.workspace` rail widths, the `.topbar` height and the `.bottomline` minimum height) and asserts zoom 1 uncropped at DPR 1 and zoom 2 at DPR 2. It fails once the rails or bars leave less than 576×336.
+3. **Read the container from the stylesheet in the test.** `layout.test.ts` derives the scene area from `surface.css` (the `.workspace` rail widths, the `.topbar` height and the `.bottomline` minimum height) and asserts zoom 1 uncropped at DPR 1 and zoom 2 at DPR 2. It fails once the rails or bars leave less than `LOGICAL_SIZE`.
 
 ## Why This Matters
 
