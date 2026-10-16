@@ -196,7 +196,7 @@ test("only a burning building has a fire: every other status draws its one struc
   }
 });
 
-test("buildings stand on their slot's cells, by how many the place has, and one past the slots is not drawn", async () => {
+test("buildings stand on their slot's cells, by how many the place has, and the ones past the slots are not drawn", async () => {
   for (const count of [1, 2, 3]) {
     const items = await plan(
       place(
@@ -217,7 +217,11 @@ test("buildings stand on their slot's cells, by how many the place has, and one 
       Array.from({ length: 4 }, (_, i) => building(`b${i}`, "operational")),
     ),
   );
-  expect(four).toEqual([]);
+  // The first three keep the slots of a full place; only the fourth has none and is not drawn.
+  expect(four.map((item) => item.building.id)).toEqual(["b0", "b1", "b2"]);
+  expect(four.map((item) => item.bottom)).toEqual(
+    [0, 1, 2].map((i) => buildingCell(i, 3) as GridCell),
+  );
 });
 
 test("the structures of one place never overlap: the footprints of two or three buildings of any art and status are disjoint, and every one is on the grid", async () => {
@@ -249,6 +253,30 @@ test("the structures of one place never overlap: the footprints of two or three 
         }
     }
   }
+});
+
+test("a fourth building does not blank the others: the first three stand in their slots, with fire and all, and the fourth is not drawn", async () => {
+  const items = await plan(
+    place([
+      building("the-tavern", "burning"),
+      building("old-oak", "operational"),
+      building("the-forge", "operational"),
+      building("the-inn", "operational"),
+    ]),
+  );
+
+  const drawn = items.filter((item) => item.role === "building");
+  expect(drawn.map((item) => item.building.id)).toEqual([
+    "the-tavern",
+    "old-oak",
+    "the-forge",
+  ]);
+  expect(drawn.map((item) => item.bottom)).toEqual(
+    [0, 1, 2].map((index) => buildingCell(index, 3) as GridCell),
+  );
+  // The burning one still has its fire, and nothing of the fourth is planned.
+  expect(items.filter((item) => item.role === "fire")).toHaveLength(1);
+  expect(items.some((item) => item.building.id === "the-inn")).toBe(false);
 });
 
 test("with no place followed there are no structures and no actors to plan", async () => {

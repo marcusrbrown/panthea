@@ -695,24 +695,6 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
     if (pivot === undefined) return refuse("the sprite has no pivot");
     if (input.footprint === undefined)
       return refuse("a sprite needs its footprint");
-    // A cell or a realm variant carried from the published revision was drawn on its pivot and footprint, so a
-    // revision that carries any keeps them. One that carries nothing (a rendered revision renders every slot it
-    // holds) is all new cells, and may move them.
-    if (
-      prior?.manifest.kind === "sprite" &&
-      (carriedKeys.length > 0 || carriedFamilies.length > 0)
-    ) {
-      if (
-        prior.manifest.pivot.x !== pivot.x ||
-        prior.manifest.pivot.y !== pivot.y
-      )
-        return refuse("the published revision has a different pivot");
-      if (
-        prior.manifest.footprint.w !== input.footprint.w ||
-        prior.manifest.footprint.h !== input.footprint.h
-      )
-        return refuse("the published revision has a different footprint");
-    }
   }
 
   // Fresh report-only conformance for the cells this pack takes from the working
@@ -950,6 +932,27 @@ export function packAsset(input: PackInput, sources: PackSources): Packing {
       baseJobs.set(base.job.id, base);
       edit = base.job.request.edit;
     }
+  }
+  // A cell or a realm variant carried from the published revision, and a frame repaired from it, are the published
+  // pixels, drawn on its pivot and footprint, so a revision that reuses any keeps them. One that reuses none (a rendered
+  // revision renders every slot it holds) is all new cells, and may move them.
+  if (
+    kind === "sprite" &&
+    prior?.manifest.kind === "sprite" &&
+    pivot !== undefined &&
+    input.footprint !== undefined &&
+    (carriedKeys.length > 0 || carriedFamilies.length > 0 || editsPublished)
+  ) {
+    if (
+      prior.manifest.pivot.x !== pivot.x ||
+      prior.manifest.pivot.y !== pivot.y
+    )
+      return refuse("the published revision has a different pivot");
+    if (
+      prior.manifest.footprint.w !== input.footprint.w ||
+      prior.manifest.footprint.h !== input.footprint.h
+    )
+      return refuse("the published revision has a different footprint");
   }
   // Rendered lineage: every rendered slot names a succeeded render job whose role manifest blob is
   // there and says what the job rendered, under one revision recipe.

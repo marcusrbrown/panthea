@@ -51,6 +51,7 @@ import {
 import {
   type AssetVocabulary,
   durationBounds,
+  MAX_BUILDINGS_PER_PLACE,
   type ParseFailure,
   parseAssetId,
   parseAssetVocabulary,
@@ -226,6 +227,40 @@ function validatePlaceTerrain(
       );
     }
   }
+}
+
+/**
+ * No place has more buildings than the scene has slots for (`MAX_BUILDINGS_PER_PLACE`): one past it has no cell and is
+ * not drawn, so content that places more would lose a building without saying so. Names the place and its count.
+ */
+function validateBuildingsPerPlace(
+  contentRoot: string,
+  report: (file: string, message: string) => void,
+): void {
+  const file = "world/buildings.json";
+  const path = join(contentRoot, file);
+  if (!existsSync(path)) return;
+  const json = readJson(path);
+  if (!json.ok) {
+    report(file, json.message);
+    return;
+  }
+  const buildings = isRecordWithArray(json.value, "buildings");
+  if (buildings === undefined) {
+    report(file, "expected an object with a buildings array");
+    return;
+  }
+  const counts = new Map<string, number>();
+  for (const entry of buildings) {
+    const at = (entry as { locationId?: unknown } | null)?.locationId;
+    if (typeof at === "string") counts.set(at, (counts.get(at) ?? 0) + 1);
+  }
+  for (const [place, count] of counts)
+    if (count > MAX_BUILDINGS_PER_PLACE)
+      report(
+        file,
+        `place "${place}" has ${count} buildings, and the scene has slots for ${MAX_BUILDINGS_PER_PLACE}: the rest would not be drawn`,
+      );
 }
 
 function isRecordWithArray(
@@ -547,6 +582,7 @@ export function validateAssets(
 
   validateInhabitantSprites(contentRoot, registry.snapshot.entries, report);
   validatePlaceTerrain(contentRoot, registry.snapshot.entries, report);
+  validateBuildingsPerPlace(contentRoot, report);
 
   // Render matrices: honoured by the vocabulary, and filled by the asset a god's profile points at.
   const subjectFiles = new Map(

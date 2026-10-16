@@ -62,6 +62,7 @@
 // to 3 buildings and 14 actors. Authored worlds hold at most 2 buildings and 8 inhabitants in
 // a place; a building or actor beyond the tables has no cell and is not drawn.
 
+import { MAX_BUILDINGS_PER_PLACE } from "@panthea/contracts";
 import {
   bottomVertex,
   type CanvasMetrics,
@@ -128,7 +129,7 @@ export function cellCentre(cell: GridCell): WorldPoint {
   };
 }
 
-export const MAX_BUILDINGS_PER_PLACE = 3;
+export { MAX_BUILDINGS_PER_PLACE };
 export const MAX_ACTORS_PER_PLACE = 14;
 
 /**
@@ -149,12 +150,15 @@ export const BUILDING_SLOTS: readonly (readonly GridCell[])[] = [
   ],
 ];
 
-/** The cell building `index` of `count` stands on; undefined past the table. */
+/**
+ * The cell building `index` of `count` stands on. A place with more buildings than the table has slots for keeps the first
+ * ones where a full place has them: the table of the most, so only the excess has no cell (undefined) and is not drawn.
+ */
 export function buildingCell(
   index: number,
   count: number,
 ): GridCell | undefined {
-  return BUILDING_SLOTS[count - 1]?.[index];
+  return BUILDING_SLOTS[Math.min(count, MAX_BUILDINGS_PER_PLACE) - 1]?.[index];
 }
 
 /**

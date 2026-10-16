@@ -47,6 +47,12 @@ export interface LocationEdge {
   readonly bidirectional: boolean;
 }
 
+/**
+ * The most buildings one place can show: the scene has a slot on its 8x8 grid for each, and a building past them has none
+ * and is not drawn. The content check refuses a place with more, so authored content never loses one.
+ */
+export const MAX_BUILDINGS_PER_PLACE = 3;
+
 /** A mortal place's ground is an 8x8 grid of terrain: one fixed size, so every place draws at one scale. */
 export const TERRAIN_SIZE = 8;
 

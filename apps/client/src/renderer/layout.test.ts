@@ -20,6 +20,7 @@ import {
   OAK_MANIFEST_TEXT,
   STRIKE_MANIFEST_TEXT,
 } from "../../test/structure-fixture";
+import { REPAIR_BAR_BELOW_FOOT, REPAIR_BAR_HEIGHT } from "./decor";
 import {
   ACTOR_CELLS,
   actorCell,
@@ -335,11 +336,26 @@ test("the structures of one place never overlap: for any mix of house and oak in
       }
     }
   }
-  // Past the table there is no slot, and a count past it has none either.
+  // Past the table there is no slot: the building after the last has none, whatever the count.
   expect(
     buildingCell(MAX_BUILDINGS_PER_PLACE, MAX_BUILDINGS_PER_PLACE),
   ).toBeUndefined();
-  expect(buildingCell(0, MAX_BUILDINGS_PER_PLACE + 1)).toBeUndefined();
+  // A place with more buildings than slots keeps the first ones in the slots of a full place: only the excess is
+  // not drawn, so one more building does not blank the rest.
+  for (const count of [
+    MAX_BUILDINGS_PER_PLACE + 1,
+    MAX_BUILDINGS_PER_PLACE + 5,
+  ]) {
+    for (let index = 0; index < MAX_BUILDINGS_PER_PLACE; index += 1)
+      expect(buildingCell(index, count), `${index} of ${count}`).toEqual(
+        buildingCell(index, MAX_BUILDINGS_PER_PLACE),
+      );
+    for (let index = MAX_BUILDINGS_PER_PLACE; index < count; index += 1)
+      expect(
+        buildingCell(index, count),
+        `${index} of ${count}`,
+      ).toBeUndefined();
+  }
 });
 
 /**
@@ -415,6 +431,29 @@ function tightestGap(count: number): number {
         );
   return tightest;
 }
+
+test("the repair bar hangs just under the lowest of any building's art: clear of it by a few pixels, not a tile away, so it is not lost under a sprite nor over an actor's row", () => {
+  // The bar is drawn under every sprite, so it is seen only where no art covers it: below the lowest pixel the art reaches
+  // under its foot, which is the oak's root flare, 21 px, and the house's plinth tip, none.
+  const lowest = Math.max(ART_BOX.building.down, ART_BOX.tree.down);
+  expect(lowest).toBe(21);
+  const barTop = REPAIR_BAR_BELOW_FOOT - REPAIR_BAR_HEIGHT / 2;
+  const clearance = barTop - lowest;
+  expect(clearance).toBeGreaterThanOrEqual(2);
+  expect(clearance).toBeLessThanOrEqual(8);
+  // And it is on the back half still: the bar of the lowest slot is above the first actor row's feet.
+  const frontFoot = Math.max(
+    ...ACTOR_CELLS.filter((c) => depthAt(c) === 10).map((c) => cellFoot(c).y),
+  );
+  for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1)
+    for (let index = 0; index < count; index += 1) {
+      const foot = cellFoot(buildingCell(index, count) as GridCell);
+      expect(
+        foot.y - REPAIR_BAR_BELOW_FOOT,
+        `${index} of ${count}`,
+      ).toBeGreaterThan(frontFoot);
+    }
+});
 
 /** Ground to leave visible between two buildings' art: a house's wall is 8 px of plinth and its steps and a tile is 32 px wide. */
 const VISIBLE_GROUND = 16;

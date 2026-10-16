@@ -103,8 +103,15 @@ function block(
   return mesh;
 }
 
-/** The bar sits this far below a building's foot: under the lowest of its art, which reaches 45 px below the foot. */
-const REPAIR_BAR_BELOW_FOOT = 52;
+/** The repair bar's track is this tall, in pixels. */
+export const REPAIR_BAR_HEIGHT = 6;
+
+/**
+ * The bar's centre sits this far below a building's foot. It is drawn under every sprite, so it must hang below the
+ * lowest of any building's art to be seen: the oak's root flare reaches 21 px under its foot (the house's plinth tip,
+ * none), and the bar's top edge, 3 px above its centre, is 4 px clear of that.
+ */
+export const REPAIR_BAR_BELOW_FOOT = 28;
 
 function repairBar(building: ViewBuilding, foot: WorldPoint): Group {
   const repair = building.repair;
@@ -115,7 +122,7 @@ function repairBar(building: ViewBuilding, foot: WorldPoint): Group {
   const group = new Group();
   group.name = `repair:${building.id}`;
   group.position.set(foot.x, foot.y - REPAIR_BAR_BELOW_FOOT, Z_REPAIR);
-  group.add(pixel("track", 0, 0, PAPER_DEEP, 30, 6, 0));
+  group.add(pixel("track", 0, 0, PAPER_DEEP, 30, REPAIR_BAR_HEIGHT, 0));
   group.add(pixel("fill", -15 + width / 2, 0, REPAIR_COLOR, width, 2, 1));
   return group;
 }

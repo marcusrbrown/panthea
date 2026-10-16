@@ -36,6 +36,7 @@ import {
   type ConformanceReport,
   canonicalJson,
   canonicalManifestText,
+  MAX_BUILDINGS_PER_PLACE,
   newCandidate,
   parseAssetManifest,
   type Sha256,
@@ -129,6 +130,17 @@ function writeLocations(
   writeFileSync(
     join(root, "world", "locations.json"),
     `${JSON.stringify({ locations }, null, 2)}\n`,
+  );
+}
+
+function writeBuildings(
+  root: string,
+  buildings: readonly Record<string, unknown>[],
+) {
+  mkdirSync(join(root, "world"), { recursive: true });
+  writeFileSync(
+    join(root, "world", "buildings.json"),
+    `${JSON.stringify({ buildings }, null, 2)}\n`,
   );
 }
 
@@ -1891,5 +1903,52 @@ describe("place terrain", () => {
       "tavern",
       "inn",
     ]);
+  });
+});
+
+describe("buildings at one place", () => {
+  const at = (locationId: string, count: number, prefix = "b") =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `${prefix}-${locationId}-${i}`,
+      locationId,
+      name: `Building ${i}`,
+      material: "wood",
+      combustible: true,
+      services: [],
+      inventory: [],
+    }));
+
+  it("accepts up to the number the scene has slots for, at every place", () => {
+    const root = contentRoot();
+    writeLocations(root, [
+      { id: "town-square", realm: "mortal" },
+      { id: "tavern", realm: "mortal" },
+    ]);
+    writeBuildings(root, [...at("town-square", 3), ...at("tavern", 1)]);
+    expect(diagnosticsOf(root)).toEqual([]);
+  });
+
+  it("refuses a place with more buildings than the scene has slots for, naming the place and the count", () => {
+    const root = contentRoot();
+    writeLocations(root, [{ id: "town-square", realm: "mortal" }]);
+    writeBuildings(root, at("town-square", MAX_BUILDINGS_PER_PLACE + 1));
+    const [diagnostic, ...rest] = diagnosticsOf(root);
+    expect(rest).toEqual([]);
+    expect(diagnostic?.file).toBe("world/buildings.json");
+    expect(diagnostic?.message).toContain("town-square");
+    expect(diagnostic?.message).toContain(`${MAX_BUILDINGS_PER_PLACE + 1}`);
+    expect(diagnostic?.message).toContain(`${MAX_BUILDINGS_PER_PLACE}`);
+  });
+
+  it("names every place over the limit, in file order", () => {
+    const root = contentRoot();
+    writeLocations(root, [
+      { id: "inn", realm: "mortal" },
+      { id: "tavern", realm: "mortal" },
+    ]);
+    writeBuildings(root, [...at("tavern", 4), ...at("inn", 5, "c")]);
+    expect(
+      diagnosticsOf(root).map((d) => d.message.match(/"(\w+)"/)?.[1]),
+    ).toEqual(["tavern", "inn"]);
   });
 });

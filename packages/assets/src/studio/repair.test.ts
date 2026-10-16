@@ -377,6 +377,30 @@ describe("a repair candidate through pack", () => {
     );
   });
 
+  test("a repair that replaces every published slot still keeps the published pivot and footprint: its pixels are the published ones, cut from the old atlas, so a moved footprint is refused", () => {
+    const rig = assetRig();
+    repaired(rig);
+
+    // The control: the published footprint packs.
+    expect(packRepair(rig).ok).toBe(true);
+
+    for (const footprint of [
+      { w: 2, h: 1 },
+      { w: 1, h: 2 },
+      { w: 2, h: 2 },
+    ]) {
+      const moved = packRepair(rig, {
+        id: `repair-${footprint.w}x${footprint.h}`,
+        footprint,
+      });
+      expect(moved.ok, `${footprint.w}x${footprint.h}`).toBe(false);
+      if (!moved.ok)
+        expect(moved.message).toContain(
+          "the published revision has a different footprint",
+        );
+    }
+  });
+
   test("the repair draft approves and publishes like any other revision", () => {
     const rig = assetRig();
     repaired(rig);
