@@ -188,13 +188,13 @@ function differing(
   return count;
 }
 
-test("the ground diamond lands whole and centred on the canvas: 576 wide from the left edge to the right, its top tile 44 px down", async () => {
+test("the ground diamond lands whole and centred on the canvas: 576 wide from the left edge to the right, its top tile 87 px down", async () => {
   const painted = await paint(
     ground(withTerrain(), "mortal", PLACE.mortal),
     "mortal",
     PLACE.mortal,
   );
-  expect([painted.width, painted.height]).toEqual([576, 336]);
+  expect([painted.width, painted.height]).toEqual([576, 384]);
 
   const box = extent(painted);
   // The 9x9 lattice: 576 across, 288 down; its first tile's top is 144 above the world origin.
@@ -223,13 +223,20 @@ test("a building stands on the back half of the ground: its foot is above the di
     "mortal",
     PLACE.mortal,
   );
+  // One house: the tavern, and no one else at the place.
   const withBuilding = await paint(
     {
       ...view,
       realms: {
         ...view.realms,
         mortal: view.realms.mortal.map((l) =>
-          l.id === PLACE.mortal ? { ...l, actors: [] } : l,
+          l.id === PLACE.mortal
+            ? {
+                ...l,
+                actors: [],
+                buildings: l.buildings.filter((b) => b.id === "the-tavern"),
+              }
+            : l,
         ),
       },
     },
@@ -239,12 +246,14 @@ test("a building stands on the back half of the ground: its foot is above the di
 
   const added = extent(withBuilding, bare);
   expect(added.count).toBeGreaterThan(1000);
-  // The slot of a lone building is the cell (3, 2): the house's 192x192 cell has its foot at (96, 136) on that cell's bottom vertex.
+  // The lone building's slot is the cell (2, 3): the house's 192x192 cell has its foot at (65, 181) on that cell's
+  // bottom vertex, the plinth's lowest point.
   const foot = cellFoot(buildingCell(0, 1) as GridCell);
   const at0 = { x: canvasX(foot.x), y: canvasY(foot.y) };
-  expect(added.left).toBeGreaterThanOrEqual(at0.x - 96);
-  expect(added.right).toBeLessThan(at0.x + 96);
-  expect(added.bottom).toBeLessThan(at0.y + 56);
+  expect(added.left).toBeGreaterThanOrEqual(at0.x - 65);
+  expect(added.right).toBeLessThan(at0.x + 127);
+  // The lowest pixel of the house is the plinth's tip, on the foot: the row above the vertex row.
+  expect(added.bottom).toBe(at0.y - 1);
   // Its foot stands above the middle of the diamond: the back half.
   expect(at0.y).toBeLessThan(canvasY(0));
   // And the whole of it is on the canvas.

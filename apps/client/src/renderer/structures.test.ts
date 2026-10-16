@@ -172,11 +172,11 @@ test("a burning building draws the damaged art with the fire loop over it, at th
   const [house, flame] = placed(items);
   const foot = cellFoot(bottom);
   const anchor = STRUCTURE_ANCHORS.building.fire;
-  // House: 192x192, pivot (96, 136), on the foot.
+  // House: 192x192, pivot (65, 181) at the plinth's lowest point, on the foot.
   expect(house).toMatchObject({
     id: base.id,
-    x: foot.x - 96,
-    y: -foot.y - 136,
+    x: foot.x - 65,
+    y: -foot.y - 181,
     depth: bottom.x + bottom.y,
   });
   // Fire: 64x88, pivot (32, 88), on the foot moved by the anchor; the same depth, drawn over the house.

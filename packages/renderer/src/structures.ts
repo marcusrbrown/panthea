@@ -14,13 +14,26 @@ export const STRUCTURE_ASSETS = {
 export type StructureArt = keyof typeof STRUCTURE_ASSETS;
 
 /**
- * The footprint, in tiles, each piece of structure art declares: the house's 4 along x by 3 along y, the tree's one
- * tile. A canon structure is placed by its manifest's own footprint; this is what a placeholder stands in with and
- * what the layout reserves, so the game and the studio agree.
+ * The footprint, in tiles, each piece of structure art declares: the tiles of its ground contact that hang from its
+ * foot. The house's is 2 along x by 3 along y: the plinth's 4.5 by 3.5 m slab and its porch, measured on the 64x32
+ * grid (one tile is 1.556 m), are 3 tiles deep and 2 wide from the porch's front corner, the plinth's lowest point,
+ * which is where the foot stands; the slab's wings hang over the next column. The tree's is one tile. A canon
+ * structure is placed by its manifest's own footprint; this is what a placeholder stands in with and what the layout
+ * reserves, so the game and the studio agree.
  */
 export const STRUCTURE_FOOTPRINTS: Readonly<Record<StructureArt, Footprint>> = {
-  building: { w: 4, h: 3 },
+  building: { w: 2, h: 3 },
   tree: { w: 1, h: 1 },
+};
+
+/**
+ * Each piece of art's foot, its manifest pivot on a 192x192 cell: the bottom vertex of the footprint's bottom cell.
+ * The house's is the plinth's lowest point, the bottom edge of its lowest pixel row (the porch's front corner); the
+ * tree's is its trunk. The fire and strike anchors below are measured from it.
+ */
+export const STRUCTURE_PIVOTS: Readonly<Record<StructureArt, Point>> = {
+  building: { x: 65, y: 181 },
+  tree: { x: 96, y: 164 },
 };
 
 /** The states a structure publishes, all facing south. */
@@ -53,14 +66,14 @@ export interface StructureAnchors {
 /**
  * Measured on the published cells: the strike lands on the centroid of the
  * roof (the building) or the canopy (the tree), and the fire stands on the
- * lower part of the same band, where the damaged state shows its burn. The
- * building's foot is its manifest pivot (96, 136) on a 192x192 cell, the
- * tree's (96, 164).
+ * lower part of the same band, where the damaged state shows its burn. Each is
+ * an offset from the structure's foot (`STRUCTURE_PIVOTS`): the building's fire
+ * is the roof point (94, 79) on its cell and its strike (90, 61).
  */
 export const STRUCTURE_ANCHORS: Readonly<
   Record<StructureArt, StructureAnchors>
 > = {
-  building: { fire: { x: -2, y: -57 }, strike: { x: -6, y: -75 } },
+  building: { fire: { x: 29, y: -102 }, strike: { x: 25, y: -120 } },
   tree: { fire: { x: -4, y: -79 }, strike: { x: -4, y: -101 } },
 };
 

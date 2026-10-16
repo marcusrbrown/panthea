@@ -179,8 +179,8 @@ describe("harnessItems", () => {
     expect(byId(items, "structure")).toMatchObject({
       kind: "sprite",
       layer: "structure",
-      cell: { x: -3, y: 0, z: 0 },
-      footprint: { w: 4, h: 3 },
+      cell: { x: -1, y: 0, z: 0 },
+      footprint: { w: 2, h: 3 },
       request: {
         source: "canon",
         id: "greek-house",
@@ -226,8 +226,8 @@ describe("harnessItems", () => {
     });
     expect(byId(swapped, "structure")).toMatchObject({
       layer: "actor",
-      cell: { x: -1, y: 0, z: 0 },
-      footprint: { w: 4, h: 3 },
+      cell: { x: 1, y: 0, z: 0 },
+      footprint: { w: 2, h: 3 },
     });
     expect(byId(swapped, "subject")).toMatchObject({
       layer: "structure",
@@ -1226,7 +1226,11 @@ describe("the structures in the scene", () => {
       const top = instance.y - HARNESS_CAMERA.y;
       expect(left, instance.id).toBeGreaterThanOrEqual(0);
       expect(left + instance.w, instance.id).toBeLessThanOrEqual(LOGICAL_WIDTH);
-      expect(top, instance.id).toBeGreaterThanOrEqual(0);
+      // A strike is a tall bolt that comes down from above the view: as in the game, its top may leave by the top
+      // edge, but the half of it that reaches the structure is in.
+      if (instance.id === "strike")
+        expect(top + instance.h / 2, instance.id).toBeGreaterThanOrEqual(0);
+      else expect(top, instance.id).toBeGreaterThanOrEqual(0);
       expect(top + instance.h, instance.id).toBeLessThanOrEqual(LOGICAL_HEIGHT);
     }
   });

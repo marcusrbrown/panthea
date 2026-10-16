@@ -534,30 +534,30 @@ test("the canvas backing store is the logical size times the largest whole zoom 
   });
 
   expect(element.width).toBe(1152);
-  expect(element.height).toBe(672);
+  expect(element.height).toBe(768);
   expect(element.style.width).toBe("1152px");
-  expect(element.style.height).toBe("672px");
+  expect(element.style.height).toBe("768px");
   expect(element.style.left).toBe("174px");
-  expect(element.style.top).toBe("414px");
+  expect(element.style.top).toBe("366px");
   const view = backend.views.at(-1);
   expect(view?.zoom).toBe(2);
   expect(view?.camera).toEqual(CAMERA_ORIGIN);
   expect(view?.metrics).toMatchObject({
     backingWidth: 1152,
-    backingHeight: 672,
+    backingHeight: 768,
   });
 });
 
 test("at a device pixel ratio of 2 the CSS box is half the backing store", async () => {
   const { canon } = setup();
   const { element } = await mount(canon, {
-    available: { width: 576, height: 336 },
+    available: { width: 576, height: 384 },
     devicePixelRatio: 2,
   });
 
   expect(element.width).toBe(1152);
   expect(element.style.width).toBe("576px");
-  expect(element.style.height).toBe("336px");
+  expect(element.style.height).toBe("384px");
 });
 
 test("event rings are meshes in the decor group, redrawn without accumulating; buildings and flames are not meshes", async () => {
@@ -794,7 +794,7 @@ test("a legacy 64x80 actor and a 112x96 god-tall actor draw in one scene, each p
   }
 });
 
-test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 576x336 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
+test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real published atlas inside the 576x384 target, beside an actor created before promotion that keeps zeus-sprite", async () => {
   const { canon, problems } = setup({
     payload: retroPayload(),
     atlases: RETRO_ATLASES,
@@ -822,12 +822,12 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
   const retro = spriteOf(backend, "actor:zeus");
   const elder = spriteOf(backend, "actor:elder");
   expect(problems).toEqual([]);
-  // The default mount's 1200x1300 fits zoom 2, so the canvas is the 576x336 target at twice its size.
+  // The default mount's 1200x1300 fits zoom 2, so the canvas is the 576x384 target at twice its size.
   expect([element.width, element.height]).toEqual([
     LOGICAL_SIZE.width * 2,
     LOGICAL_SIZE.height * 2,
   ]);
-  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 336 });
+  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 384 });
   // The real atlas: 136 cells of 112x96 in one row, idle/south first.
   expect(retro.texture?.image).toMatchObject({ width: 15232, height: 96 });
   expect(retro.frame?.name).toBe("0,0,112,96");
@@ -846,7 +846,7 @@ test("promoted Zeus (zeus-retro, 112x96) draws idle-south from the real publishe
     elderFoot.y + 80 - 80 / 2,
   ]);
 
-  // Both cells lie inside the camera's view of the 576x336 target.
+  // Both cells lie inside the camera's view of the 576x384 target.
   const bounds = {
     left: CAMERA_ORIGIN.x,
     right: CAMERA_ORIGIN.x + LOGICAL_SIZE.width,
@@ -986,7 +986,7 @@ test("in the default window the canvas is shown whole: zoom 1 at a device pixel 
   const { canon } = setup();
 
   const atOne = await mount(canon, { available: DEFAULT_SCENE_AREA });
-  expect([atOne.element.width, atOne.element.height]).toEqual([576, 336]);
+  expect([atOne.element.width, atOne.element.height]).toEqual([576, 384]);
   expect(atOne.backend.views.at(-1)?.zoom).toBe(1);
   expect(atOne.element.style.left).toBe("69px");
 
@@ -994,12 +994,12 @@ test("in the default window the canvas is shown whole: zoom 1 at a device pixel 
     available: DEFAULT_SCENE_AREA,
     devicePixelRatio: 2,
   });
-  expect([atTwo.element.width, atTwo.element.height]).toEqual([1152, 672]);
+  expect([atTwo.element.width, atTwo.element.height]).toEqual([1152, 768]);
   expect(atTwo.backend.views.at(-1)?.zoom).toBe(2);
-  // The CSS box is the same 576x336 on either screen: the extra device pixels are detail, not a bigger canvas.
+  // The CSS box is the same 576x384 on either screen: the extra device pixels are detail, not a bigger canvas.
   expect([atTwo.element.style.width, atTwo.element.style.height]).toEqual([
     "576px",
-    "336px",
+    "384px",
   ]);
 });
 
