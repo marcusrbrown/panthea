@@ -431,7 +431,7 @@ flowchart LR
 
 **Verification:** the owner sees a headless view render.
 
-- [ ] **Unit 7: Isometric placement for structures, actors and effects**
+- [x] **Unit 7: Isometric placement for structures, actors and effects**
 
 **Goal:** buildings, actors, fire and the strike sit on grid cells and use the shared depth key.
 
