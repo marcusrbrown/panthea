@@ -1,26 +1,44 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { canvasMetrics, STRUCTURE_ANCHORS } from "@panthea/renderer";
-
 import {
+  bottomVertex,
+  canvasMetrics,
+  depthOf,
+  latticeOrigin,
+  STRUCTURE_ANCHORS,
+  STRUCTURE_FOOTPRINTS,
+  STRUCTURE_PIVOTS,
+} from "@panthea/renderer";
+
+import { type ArtBox, artBox } from "../../test/art-extents";
+import {
+  FIRE_ATLAS_BYTES,
   FIRE_MANIFEST_TEXT,
+  HOUSE_ATLAS_BYTES,
   HOUSE_MANIFEST_TEXT,
+  OAK_ATLAS_BYTES,
   OAK_MANIFEST_TEXT,
   STRIKE_MANIFEST_TEXT,
 } from "../../test/structure-fixture";
+import { REPAIR_BAR_BELOW_FOOT, REPAIR_BAR_HEIGHT } from "./decor";
 import {
-  ACTOR_FOOT,
-  actorFoot,
-  BUILDING_SLOT,
-  buildingFoot,
+  ACTOR_CELLS,
+  actorCell,
+  BUILDING_SLOTS,
+  buildingCell,
   CAMERA_ORIGIN,
+  cellCentre,
+  cellFoot,
   EVENT_RING,
   fitView,
+  GRID_ORIGIN,
+  GRID_SIZE,
+  GROUND_POINTS,
+  type GridCell,
   LOGICAL_SIZE,
   MAX_ACTOR_CELL,
   MAX_ACTORS_PER_PLACE,
   MAX_BUILDINGS_PER_PLACE,
-  PLACE_ORIGIN,
 } from "./layout";
 
 /** The cells the target must hold: the legacy 64x80 god and the 112x96 `god-tall`, each by its own pivot. */
@@ -46,6 +64,7 @@ interface Cell {
 interface Manifest {
   readonly cell: { readonly w: number; readonly h: number };
   readonly pivot: { readonly x: number; readonly y: number };
+  readonly footprint: { readonly w: number; readonly h: number };
   readonly animations: readonly {
     readonly frames: readonly {
       readonly rect: { readonly w: number; readonly h: number };
@@ -80,12 +99,16 @@ const FIRE_CELL = cellOf(FIRE_MANIFEST_TEXT);
 const STRIKE_CELL = cellOf(STRIKE_MANIFEST_TEXT);
 
 test("the cells the layout is sized for are the published ones", () => {
+  // The house's foot is the plinth's lowest point, (65, 181); the oak's is its trunk.
   expect(BUILDING_CELL).toEqual({
     width: 192,
     height: 192,
-    pivotX: 96,
-    pivotY: 136,
+    pivotX: 65,
+    pivotY: 181,
   });
+  expect({ x: BUILDING_CELL.pivotX, y: BUILDING_CELL.pivotY }).toEqual(
+    STRUCTURE_PIVOTS.building,
+  );
   expect(TREE_CELL).toEqual({
     width: 192,
     height: 192,
@@ -134,56 +157,456 @@ const inside = (extent: Extent) => {
 };
 
 const STRUCTURES = [
-  [BUILDING_CELL, STRUCTURE_ANCHORS.building],
-  [TREE_CELL, STRUCTURE_ANCHORS.tree],
+  ["building", BUILDING_CELL, STRUCTURE_ANCHORS.building],
+  ["tree", TREE_CELL, STRUCTURE_ANCHORS.tree],
 ] as const;
 
-test("a place's buildings stand in a centred row, one cell apart, so no two structures' cells overlap, whichever art each is", () => {
-  expect<number>(BUILDING_SLOT.dx).toBe(BUILDING_CELL.width);
-  expect<number>(BUILDING_SLOT.dx).toBeGreaterThanOrEqual(TREE_CELL.width);
+const FOOTPRINT_OF = {
+  building: cellFootprintOf(HOUSE_MANIFEST_TEXT),
+  tree: cellFootprintOf(OAK_MANIFEST_TEXT),
+};
 
+function cellFootprintOf(text: string) {
+  return (JSON.parse(text) as Manifest).footprint;
+}
+
+test("the footprints the layout reserves are the ones the published art declares", () => {
+  expect(FOOTPRINT_OF).toEqual(STRUCTURE_FOOTPRINTS);
+  expect(FOOTPRINT_OF).toEqual({
+    building: { w: 2, h: 3 },
+    tree: { w: 1, h: 1 },
+  });
+});
+
+// --- the grid ------------------------------------------------------------------------------------------------------
+
+const GRID_CELLS: GridCell[] = Array.from(
+  { length: GRID_SIZE * GRID_SIZE },
+  (_, i) => ({ x: i % GRID_SIZE, y: Math.floor(i / GRID_SIZE) }),
+);
+
+const cellKey = (cell: GridCell) => `${cell.x},${cell.y}`;
+
+/** The cells a footprint with its bottom cell at `bottom` covers: it extends back (towards smaller x and y). */
+function coveredBy(
+  bottom: GridCell,
+  art: keyof typeof FOOTPRINT_OF,
+): GridCell[] {
+  const { w, h } = FOOTPRINT_OF[art];
+  const cells: GridCell[] = [];
+  for (let x = bottom.x - w + 1; x <= bottom.x; x += 1)
+    for (let y = bottom.y - h + 1; y <= bottom.y; y += 1) cells.push({ x, y });
+  return cells;
+}
+
+const depthAt = (cell: GridCell) => cell.x + cell.y;
+
+test("the grid is 8x8 and the world origin is its centre: lattice point (0, 0), its top vertex, is 128 above it", () => {
+  expect(GRID_SIZE).toBe(8);
+  expect(GRID_ORIGIN).toEqual({ x: 0, y: 128 });
+  // The grid's four corners, in world space: the ground diamond is 512 across and 256 down round the origin.
+  expect(cellCentre({ x: 0, y: 0 })).toEqual({ x: 0, y: 112 });
+  expect(cellCentre({ x: 7, y: 7 })).toEqual({ x: 0, y: -112 });
+  expect(cellCentre({ x: 7, y: 0 })).toEqual({ x: 224, y: 0 });
+  expect(cellCentre({ x: 0, y: 7 })).toEqual({ x: -224, y: 0 });
+});
+
+test("a cell's foot is the bottom vertex of its diamond, in world space, by the shared projection", () => {
+  for (const cell of GRID_CELLS) {
+    const vertex = bottomVertex({ ...cell, z: 0 });
+    if (!vertex.ok) throw new Error(vertex.detail);
+    expect(cellFoot(cell)).toEqual({
+      x: vertex.value.x + GRID_ORIGIN.x,
+      y: GRID_ORIGIN.y - vertex.value.y,
+    });
+  }
+  // The diamond's bottom vertex is 15 px below its centre: the 31 px diamond sits in the cell's 32 px row.
+  expect(cellFoot({ x: 4, y: 4 }).y).toBe(cellCentre({ x: 4, y: 4 }).y - 15);
+});
+
+/**
+ * Where a structure touches the ground, as a predicate on a point of the grid (cell units: x down-right, y down-left,
+ * the cell (X, Y) the square [X, X + 1] x [Y, Y + 1]), for a structure whose footprint's bottom cell is (X, Y). The
+ * foot stands on that cell's bottom vertex, (X + 1, Y + 1).
+ *  - The house is the plinth of render.py's `House`: a 4.5 by 3.5 m slab on its centre, the porch's two slabs
+ *    (2.8 m wide, from the slab's front 0.1 m inside it to 2.9 m) and the step (1.5 m wide, 2.95 to 3.35 m), with
+ *    the foot on the porch's front corner (1.4, 2.9) m. A tile is 1.556 m (32 sqrt(2) / 29.0788 pixels per metre).
+ *  - The oak is the root flare round the trunk, which the foot stands on: a disc of 0.9 tile (the roots reach 39 px
+ *    each side, 1.34 m).
+ */
+const TILE_M = (32 * Math.SQRT2) / 29.0788;
+function contactOf(art: "building" | "tree", cell: GridCell) {
+  const [fx, fy] = [cell.x + 1, cell.y + 1];
+  if (art === "tree")
+    return (gx: number, gy: number) =>
+      (gx - fx) ** 2 + (gy - fy) ** 2 <= 0.9 ** 2;
+  return (gx: number, gy: number) => {
+    const x = 1.4 + (gx - fx) * TILE_M;
+    const y = 2.9 + (gy - fy) * TILE_M;
+    return (
+      (Math.abs(x) <= 2.25 && Math.abs(y) <= 1.75) ||
+      (Math.abs(x) <= 1.4 && y >= 1.4 && y <= 2.9) ||
+      (Math.abs(x) <= 0.75 && y >= 2.95 && y <= 3.35)
+    );
+  };
+}
+
+/** The sampled points of a contact region, across the grid and a half tile beyond it. */
+function contactPoints(art: "building" | "tree", cell: GridCell): Set<string> {
+  const inside = contactOf(art, cell);
+  const points = new Set<string>();
+  for (let i = -20; i <= 180; i += 1)
+    for (let j = -20; j <= 180; j += 1)
+      if (inside(i / 20, j / 20)) points.add(`${i},${j}`);
+  return points;
+}
+
+/** The cells of a cell-square a contact region touches, by its sampled points. */
+function touches(points: ReadonlySet<string>, cell: GridCell): boolean {
+  for (let i = cell.x * 20; i <= (cell.x + 1) * 20; i += 1)
+    for (let j = cell.y * 20; j <= (cell.y + 1) * 20; j += 1)
+      if (points.has(`${i},${j}`)) return true;
+  return false;
+}
+
+test("buildings stand in the back rows: every footprint cell is on the back half (depth 7 or less), the feet are on or just below the middle, and one building's is above it", () => {
+  expect(BUILDING_SLOTS).toHaveLength(MAX_BUILDINGS_PER_PLACE);
   for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1) {
-    const feet = Array.from({ length: count }, (_, index) =>
-      buildingFoot(PLACE_ORIGIN, index, count),
-    );
-    // Centred on the place, on whole pixels, all in one row.
-    expect(feet.reduce((sum, foot) => sum + foot.x, 0)).toBe(0);
-    for (const foot of feet) {
-      expect(Number.isInteger(foot.x)).toBe(true);
-      expect(foot.y).toBe(BUILDING_SLOT.y);
+    expect(BUILDING_SLOTS[count - 1]).toHaveLength(count);
+    for (let index = 0; index < count; index += 1) {
+      const bottom = buildingCell(index, count) as GridCell;
+      const foot = cellFoot(bottom);
+      // The house's footprint, the larger, reaches back from the foot's cell; none of it is past the middle rows.
+      for (const cell of coveredBy(bottom, "building"))
+        expect(depthAt(cell), `${index} of ${count}`).toBeLessThanOrEqual(7);
+      // The foot is the cell's bottom vertex, so at depth 7 it is on the row below the middle: 15 px down.
+      expect(foot.y, `${index} of ${count}`).toBeGreaterThanOrEqual(-15);
     }
-    // Every pairing of slots and art: the nearer edges of neighbours do not cross.
-    const placed = feet.flatMap((foot) =>
-      STRUCTURES.map(([cell]) => ({ foot, cell })),
-    );
-    for (const left of placed) {
-      for (const right of placed) {
-        if (right.foot.x <= left.foot.x) continue;
-        // Touching is not overlapping.
-        expect(boxOf(left.cell, left.foot).right).toBeLessThanOrEqual(
-          boxOf(right.cell, right.foot).left,
-        );
+  }
+  expect(cellFoot(buildingCell(0, 1) as GridCell).y).toBeGreaterThan(0);
+});
+
+test("the structures of one place never overlap: for any mix of house and oak in any slots, the footprints are on the grid and disjoint, and so is the ground each touches", () => {
+  for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1) {
+    // Every pairing of art over the slots, so a house in one and an oak in another.
+    const arts: (keyof typeof FOOTPRINT_OF)[][] = [];
+    const walk = (so_far: (keyof typeof FOOTPRINT_OF)[]) => {
+      if (so_far.length === count) {
+        arts.push(so_far);
+        return;
+      }
+      walk([...so_far, "building"]);
+      walk([...so_far, "tree"]);
+    };
+    walk([]);
+    for (const choice of arts) {
+      const taken = new Set<string>();
+      const grounds: Set<string>[] = [];
+      for (const [index, art] of choice.entries()) {
+        const bottom = buildingCell(index, count);
+        if (bottom === undefined)
+          throw new Error(`no slot ${index} of ${count}`);
+        for (const cell of coveredBy(bottom, art)) {
+          expect(cell.x, `${art} ${index}/${count}`).toBeGreaterThanOrEqual(0);
+          expect(cell.y).toBeGreaterThanOrEqual(0);
+          expect(cell.x).toBeLessThan(GRID_SIZE);
+          expect(cell.y).toBeLessThan(GRID_SIZE);
+          expect(
+            taken.has(cellKey(cell)),
+            `${art} ${index}/${count} overlaps at ${cellKey(cell)}`,
+          ).toBe(false);
+          taken.add(cellKey(cell));
+        }
+        const ground = contactPoints(art, bottom);
+        // The ground it touches lies on the ground drawn: the grid and the half tile round it.
+        for (const point of ground) {
+          const [i, j] = point.split(",").map(Number) as [number, number];
+          expect(i, `${art} ${index}/${count}`).toBeGreaterThanOrEqual(-10);
+          expect(j).toBeGreaterThanOrEqual(-10);
+          expect(i).toBeLessThanOrEqual(170);
+          expect(j).toBeLessThanOrEqual(170);
+        }
+        for (const other of grounds)
+          for (const point of ground)
+            expect(
+              other.has(point),
+              `${art} ${index}/${count} touches another's ground`,
+            ).toBe(false);
+        grounds.push(ground);
       }
     }
   }
+  // Past the table there is no slot: the building after the last has none, whatever the count.
+  expect(
+    buildingCell(MAX_BUILDINGS_PER_PLACE, MAX_BUILDINGS_PER_PLACE),
+  ).toBeUndefined();
+  // A place with more buildings than slots keeps the first ones in the slots of a full place: only the excess is
+  // not drawn, so one more building does not blank the rest.
+  for (const count of [
+    MAX_BUILDINGS_PER_PLACE + 1,
+    MAX_BUILDINGS_PER_PLACE + 5,
+  ]) {
+    for (let index = 0; index < MAX_BUILDINGS_PER_PLACE; index += 1)
+      expect(buildingCell(index, count), `${index} of ${count}`).toEqual(
+        buildingCell(index, MAX_BUILDINGS_PER_PLACE),
+      );
+    for (let index = MAX_BUILDINGS_PER_PLACE; index < count; index += 1)
+      expect(
+        buildingCell(index, count),
+        `${index} of ${count}`,
+      ).toBeUndefined();
+  }
 });
 
-test("the view holds every actor slot, every structure at its tallest, its fire, the event rings and the strike from its impact down, for any number of buildings and actors", () => {
+/**
+ * The box each structure's art covers, in pixels from its foot (y up): the opaque extents of every frame of every state,
+ * from the published atlases, not the 192x192 cells. The house's also holds its fire, which stands on the roof.
+ */
+const ART_BOX: Record<keyof typeof FOOTPRINT_OF, ArtBox> = (() => {
+  const house = artBox(HOUSE_MANIFEST_TEXT, HOUSE_ATLAS_BYTES);
+  const fire = artBox(FIRE_MANIFEST_TEXT, FIRE_ATLAS_BYTES);
+  const anchor = STRUCTURE_ANCHORS.building.fire;
+  // The fire's pivot is on the anchor, which is an offset down the screen from the foot.
+  const fireRight = anchor.x + fire.right;
+  const fireLeft = fire.left - anchor.x;
+  const fireTop = -anchor.y + fire.up;
+  return {
+    building: {
+      left: Math.max(house.left, fireLeft),
+      right: Math.max(house.right, fireRight),
+      up: Math.max(house.up, fireTop),
+      down: house.down,
+    },
+    tree: artBox(OAK_MANIFEST_TEXT, OAK_ATLAS_BYTES),
+  };
+})();
+
+/** The box of `art` standing on `cell`, in world space (y up): left, right, top, bottom. */
+function artBoxAt(art: keyof typeof FOOTPRINT_OF, cell: GridCell): Extent {
+  const foot = cellFoot(cell);
+  const box = ART_BOX[art];
+  return {
+    left: foot.x - box.left,
+    right: foot.x + box.right,
+    top: foot.y + box.up,
+    bottom: foot.y - box.down,
+  };
+}
+
+/** The clear space between two boxes, in pixels: positive when apart, the larger of the two axes' gaps. */
+function gapBetween(a: Extent, b: Extent): number {
+  return Math.max(
+    Math.max(a.left - b.right, b.left - a.right),
+    Math.max(a.bottom - b.top, b.bottom - a.top),
+  );
+}
+
+/** Every way the buildings of a place can be house or oak. */
+function mixes(count: number): (keyof typeof FOOTPRINT_OF)[][] {
+  const all: (keyof typeof FOOTPRINT_OF)[][] = [[]];
+  for (let i = 0; i < count; i += 1)
+    for (const so_far of all.splice(0))
+      all.push([...so_far, "building"], [...so_far, "tree"]);
+  return all;
+}
+
+/** The least clear space between any two buildings of a table's slots, over every mix of house and oak. */
+function tightestGap(count: number): number {
+  let tightest = Number.POSITIVE_INFINITY;
+  for (const mix of mixes(count))
+    for (let i = 0; i < count; i += 1)
+      for (let j = i + 1; j < count; j += 1)
+        tightest = Math.min(
+          tightest,
+          gapBetween(
+            artBoxAt(
+              mix[i] as keyof typeof FOOTPRINT_OF,
+              buildingCell(i, count) as GridCell,
+            ),
+            artBoxAt(
+              mix[j] as keyof typeof FOOTPRINT_OF,
+              buildingCell(j, count) as GridCell,
+            ),
+          ),
+        );
+  return tightest;
+}
+
+test("the repair bar hangs just under the lowest of any building's art: clear of it by a few pixels, not a tile away, so it is not lost under a sprite nor over an actor's row", () => {
+  // The bar is drawn under every sprite, so it is seen only where no art covers it: below the lowest pixel the art reaches
+  // under its foot, which is the oak's root flare, 21 px, and the house's plinth tip, none.
+  const lowest = Math.max(ART_BOX.building.down, ART_BOX.tree.down);
+  expect(lowest).toBe(21);
+  const barTop = REPAIR_BAR_BELOW_FOOT - REPAIR_BAR_HEIGHT / 2;
+  const clearance = barTop - lowest;
+  expect(clearance).toBeGreaterThanOrEqual(2);
+  expect(clearance).toBeLessThanOrEqual(8);
+  // And it is on the back half still: the bar of the lowest slot is above the first actor row's feet.
+  const frontFoot = Math.max(
+    ...ACTOR_CELLS.filter((c) => depthAt(c) === 10).map((c) => cellFoot(c).y),
+  );
+  for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1)
+    for (let index = 0; index < count; index += 1) {
+      const foot = cellFoot(buildingCell(index, count) as GridCell);
+      expect(
+        foot.y - REPAIR_BAR_BELOW_FOOT,
+        `${index} of ${count}`,
+      ).toBeGreaterThan(frontFoot);
+    }
+});
+
+/** Ground to leave visible between two buildings' art: a house's wall is 8 px of plinth and its steps and a tile is 32 px wide. */
+const VISIBLE_GROUND = 16;
+
+test("the art of two buildings of one place never touches: every mix of house and oak in the 1- and 2-building tables leaves visible ground between their boxes", () => {
+  // The boxes are the published art's opaque extents: the house reaches 59 left and 119 right of its foot, 164 up and,
+  // with its fire, 186; the oak 86 left, 81 right and 156 up.
+  expect(ART_BOX.building).toEqual({ left: 59, right: 119, up: 186, down: 0 });
+  expect(ART_BOX.tree).toEqual({ left: 86, right: 81, up: 156, down: 21 });
+  expect(tightestGap(1)).toBe(Number.POSITIVE_INFINITY);
+  for (const count of [2]) {
+    for (const mix of mixes(count)) {
+      const a = artBoxAt(
+        mix[0] as keyof typeof FOOTPRINT_OF,
+        buildingCell(0, count) as GridCell,
+      );
+      const b = artBoxAt(
+        mix[1] as keyof typeof FOOTPRINT_OF,
+        buildingCell(1, count) as GridCell,
+      );
+      expect(gapBetween(a, b), mix.join("+")).toBeGreaterThanOrEqual(
+        VISIBLE_GROUND,
+      );
+    }
+  }
+  // The arithmetic: the slots are a house apart along the screen's x, 256 px, and the widest pairing, a house on the left
+  // and an oak on the right, needs 119 + 86 = 205: 51 px of ground.
+  expect(tightestGap(2)).toBe(51);
+});
+
+test("three buildings do not fit apart on an 8x8 grid: of every three house footprints on it, two have art boxes that overlap, so the 3-building table is the best that grid allows", () => {
+  // A house's box is 178 px wide and the feet of any two cells are 32 px per step of x - y apart, over 13 steps at most.
+  const cells: GridCell[] = [];
+  for (let x = 1; x < GRID_SIZE; x += 1)
+    for (let y = 2; y < GRID_SIZE; y += 1) cells.push({ x, y });
+  let apart = 0;
+  for (let i = 0; i < cells.length; i += 1)
+    for (let j = i + 1; j < cells.length; j += 1)
+      for (let k = j + 1; k < cells.length; k += 1) {
+        const boxes = [cells[i], cells[j], cells[k]].map((c) =>
+          artBoxAt("building", c as GridCell),
+        );
+        if (
+          gapBetween(boxes[0] as Extent, boxes[1] as Extent) > 0 &&
+          gapBetween(boxes[0] as Extent, boxes[2] as Extent) > 0 &&
+          gapBetween(boxes[1] as Extent, boxes[2] as Extent) > 0
+        )
+          apart += 1;
+      }
+  expect(apart).toBe(0);
+  // The table's own overlap is bounded, and it is the footprints and the ground each touches, checked above, that stay apart.
+  expect(tightestGap(3)).toBeGreaterThanOrEqual(-120);
+});
+
+test("actors fill the front rows: the 14 cells are the front tip's, depth 10 to 14, one to a cell, none of them on any building's footprint or on the ground it touches", () => {
+  expect(ACTOR_CELLS).toHaveLength(MAX_ACTORS_PER_PLACE);
+  expect(new Set(ACTOR_CELLS.map(cellKey)).size).toBe(MAX_ACTORS_PER_PLACE);
+  // Rows of 4, 4, 3, 2 and 1 from depth 10 to 14: every front cell but the far right of the row of depth 10.
+  const front = GRID_CELLS.filter(
+    (c) => depthAt(c) >= 10 && !(c.x === 7 && c.y === 3),
+  );
+  expect(new Set(ACTOR_CELLS.map(cellKey))).toEqual(
+    new Set(front.map(cellKey)),
+  );
+  expect(
+    [10, 11, 12, 13, 14].map(
+      (d) => ACTOR_CELLS.filter((c) => depthAt(c) === d).length,
+    ),
+  ).toEqual([4, 4, 3, 2, 1]);
+
+  const footprints = new Set<string>();
+  const grounds: Set<string>[] = [];
+  for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1)
+    for (let index = 0; index < count; index += 1) {
+      const bottom = buildingCell(index, count) as GridCell;
+      for (const art of ["building", "tree"] as const) {
+        for (const cell of coveredBy(bottom, art))
+          footprints.add(cellKey(cell));
+        grounds.push(contactPoints(art, bottom));
+      }
+    }
+  for (const [index, cell] of ACTOR_CELLS.entries()) {
+    expect(actorCell(index)).toEqual(cell);
+    expect(cell.x).toBeGreaterThanOrEqual(0);
+    expect(cell.y).toBeGreaterThanOrEqual(0);
+    expect(cell.x).toBeLessThan(GRID_SIZE);
+    expect(cell.y).toBeLessThan(GRID_SIZE);
+    expect(footprints.has(cellKey(cell)), `actor ${index} on a footprint`).toBe(
+      false,
+    );
+    for (const ground of grounds)
+      expect(
+        touches(ground, cell),
+        `actor ${index} on a building's ground`,
+      ).toBe(false);
+    // The front half of the diamond, below its middle row, well clear of it.
+    expect(cellCentre(cell).y, `actor ${index}`).toBeLessThanOrEqual(-48);
+  }
+  expect(actorCell(MAX_ACTORS_PER_PLACE)).toBeUndefined();
+  expect(actorCell(-1)).toBeUndefined();
+});
+
+test("no two actors' 16x16 cells overlap, wherever their cells are", () => {
+  const boxes = ACTOR_CELLS.map((cell) => {
+    const foot = cellFoot(cell);
+    return {
+      left: foot.x - 8,
+      right: foot.x + 8,
+      top: foot.y + 16,
+      bottom: foot.y,
+    };
+  });
+  for (const [a, boxA] of boxes.entries())
+    for (const [b, boxB] of boxes.entries()) {
+      if (b <= a) continue;
+      const apart =
+        boxA.right <= boxB.left ||
+        boxB.right <= boxA.left ||
+        boxA.bottom >= boxB.top ||
+        boxB.bottom >= boxA.top;
+      expect(apart, `actors ${a} and ${b}`).toBe(true);
+    }
+});
+
+test("the first two actor cells stand side by side on one screen row, 64 px apart and centred, so two gods stand beside each other", () => {
+  const [first, second] = [
+    cellFoot(ACTOR_CELLS[0] as GridCell),
+    cellFoot(ACTOR_CELLS[1] as GridCell),
+  ];
+  expect(first.y).toBe(second.y);
+  expect(second.x - first.x).toBe(64);
+  expect(first.x + second.x).toBe(0);
+});
+
+test("the view holds the ground, every actor slot, every structure at its tallest, its fire, the event ring and the strike from its impact down, for any number of buildings and actors", () => {
   let widest = 0;
   let tallest = 0;
   let deepest = 0;
   const extents: Extent[] = [];
 
-  for (const cell of [LEGACY_CELL, GOD_TALL_CELL, MAX_ACTOR_CELL]) {
-    for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
-      extents.push(boxOf(cell, actorFoot(PLACE_ORIGIN, index)));
-    }
+  // The ground: the 9x9 lattice of 64x32 boxes, centred on the lattice points' screen positions.
+  for (const { x, y } of GROUND_POINTS) {
+    const box = latticeOrigin(x, y);
+    if (!box.ok) throw new Error(box.detail);
+    const left = box.value.x + GRID_ORIGIN.x;
+    const top = GRID_ORIGIN.y - box.value.y;
+    extents.push({ left, right: left + 64, top, bottom: top - 32 });
   }
-  // An event ring, at its largest, drawn at its offset from the place.
-  const ring = {
-    x: PLACE_ORIGIN.x + EVENT_RING.dx,
-    y: PLACE_ORIGIN.y + EVENT_RING.dy,
-  };
+  for (const cell of [LEGACY_CELL, GOD_TALL_CELL, MAX_ACTOR_CELL])
+    for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1)
+      extents.push(boxOf(cell, cellFoot(actorCell(index) as GridCell)));
+  // An event ring, at its largest, centred on its cell.
+  const ring = cellCentre(EVENT_RING.cell);
   extents.push({
     left: ring.x - EVENT_RING.radiusMax,
     right: ring.x + EVENT_RING.radiusMax,
@@ -192,8 +615,8 @@ test("the view holds every actor slot, every structure at its tallest, its fire,
   });
   for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1) {
     for (let index = 0; index < count; index += 1) {
-      const foot = buildingFoot(PLACE_ORIGIN, index, count);
-      for (const [cell, anchors] of STRUCTURES) {
+      const foot = cellFoot(buildingCell(index, count) as GridCell);
+      for (const [, cell, anchors] of STRUCTURES) {
         // The cell holds the structure in all three states.
         extents.push(boxOf(cell, foot));
         // The anchors are offsets down the screen from the foot.
@@ -218,63 +641,68 @@ test("the view holds every actor slot, every structure at its tallest, its fire,
     tallest = Math.max(tallest, extent.top);
     deepest = Math.max(deepest, -extent.bottom);
   }
-  // The header's arithmetic: 192 + 96 = 288 across (three buildings, a cell apart); 80 + 79 + 88 = 247 up (the fire
-  // on the oak, above the oak's own 80 + 164 = 244); 286 - 205 = 81 down (the second actor row).
+  // The arithmetic: 288 across, the ground's 9x9 lattice (512 + 64); 223 up, a burning house's fire: the highest
+  // foot is the third building's, 33 above the origin, its fire's pivot is 102 above that, its cell 88 tall;
+  // 145 down, the front tip's actor cell: its foot is 127 below the origin and the tall cell reaches 18 below it (the
+  // ground's last tile ends at -144).
   expect(widest).toBe(288);
-  expect(tallest).toBe(247);
-  expect(deepest).toBe(81);
-  // The size is not slack: the view's edge is within 8 px of the extent on every side.
-  expect(VIEW.right - widest).toBeLessThan(8);
-  expect(-VIEW.left - widest).toBeLessThan(8);
-  expect(VIEW.top - tallest).toBeLessThan(8);
-  expect(VIEW.bottom + deepest).toBeLessThan(8);
+  expect(tallest).toBe(223);
+  expect(deepest).toBe(145);
+  // The size is not slack: the view's edge is within 12 px of the extent on every side.
+  expect(VIEW.right - widest).toBeLessThan(12);
+  expect(-VIEW.left - widest).toBeLessThan(12);
+  expect(VIEW.top - tallest).toBeLessThan(12);
+  expect(-VIEW.bottom - deepest).toBeLessThan(12);
+  expect(VIEW.top - tallest).toBeGreaterThanOrEqual(0);
+  expect(-VIEW.bottom - deepest).toBeGreaterThanOrEqual(0);
 });
 
-test("an event ring stands clear of every actor, whichever cell and slot", () => {
-  const ring = EVENT_RING.dx - EVENT_RING.radiusMax;
-
+test("an event ring stands clear of every actor's cell, whichever cell and slot", () => {
+  const ring = cellCentre(EVENT_RING.cell);
   for (const cell of [LEGACY_CELL, GOD_TALL_CELL, MAX_ACTOR_CELL]) {
     for (let index = 0; index < MAX_ACTORS_PER_PLACE; index += 1) {
-      expect(boxOf(cell, actorFoot(PLACE_ORIGIN, index)).right).toBeLessThan(
-        ring,
-      );
+      const box = boxOf(cell, cellFoot(actorCell(index) as GridCell));
+      const apart =
+        box.right <= ring.x - EVENT_RING.radiusMax ||
+        box.left >= ring.x + EVENT_RING.radiusMax ||
+        box.top <= ring.y - EVENT_RING.radiusMax ||
+        box.bottom >= ring.y + EVENT_RING.radiusMax;
+      expect(apart, `slot ${index}`).toBe(true);
     }
   }
 });
 
 test("the highest strike's top leaves the view, and only its top", () => {
-  const impact = BUILDING_SLOT.y - STRUCTURE_ANCHORS.tree.strike.y;
+  const foot = cellFoot(buildingCell(0, 1) as GridCell);
+  const impact = foot.y - STRUCTURE_ANCHORS.building.strike.y;
   const top = impact + STRIKE_CELL.pivotY;
 
   expect(top).toBeGreaterThan(VIEW.top);
   expect(impact).toBeLessThan(VIEW.top);
 });
 
-test("the camera is off centre to fit the content: 576x336 on the 16 px grid, from 252 above the layout origin to 84 below", () => {
-  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 336 });
+test("the camera is off centre to fit the content: 576x384 on the 16 px grid, from 231 above the world origin to 153 below", () => {
+  expect(LOGICAL_SIZE).toEqual({ width: 576, height: 384 });
   expect(LOGICAL_SIZE.width % 16).toBe(0);
   expect(LOGICAL_SIZE.height % 16).toBe(0);
-  expect(CAMERA_ORIGIN).toEqual({ x: -288, y: -252 });
-  expect(VIEW.top).toBe(252);
-  expect(VIEW.bottom).toBe(-84);
+  expect(CAMERA_ORIGIN).toEqual({ x: -288, y: -231 });
+  expect(VIEW.top).toBe(231);
+  expect(VIEW.bottom).toBe(-153);
 });
 
-test("a building's foot is its slot: centred on the place, a cell apart, in one row above the actors", () => {
-  const origin = { x: 100, y: 40 };
-
-  expect(BUILDING_SLOT).toEqual({ dx: 192, y: 80 });
-  expect(buildingFoot(origin, 0, 1)).toEqual({ x: 100, y: 120 });
-  expect(buildingFoot(origin, 0, 2)).toEqual({ x: 4, y: 120 });
-  expect(buildingFoot(origin, 1, 2)).toEqual({ x: 196, y: 120 });
-  expect(buildingFoot(origin, 2, 3)).toEqual({ x: 292, y: 120 });
-});
-
-test("an actor's foot slot keeps the existing marker arithmetic", () => {
-  const origin = { x: 100, y: 40 };
-  expect(actorFoot(origin, 0)).toEqual({ x: 72, y: -8 });
-  expect(actorFoot(origin, 6)).toEqual({ x: 144, y: -8 });
-  expect(actorFoot(origin, 7)).toEqual({ x: 72, y: -23 });
-  expect(ACTOR_FOOT).toEqual({ x: -28, y: -48, columns: 7, dx: 12, dy: 15 });
+test("a building's depth is the depth of its bottom cell, so an actor in a cell of greater x + y draws in front of it, and one of less behind", () => {
+  for (let count = 1; count <= MAX_BUILDINGS_PER_PLACE; count += 1)
+    for (let index = 0; index < count; index += 1) {
+      const bottom = buildingCell(index, count) as GridCell;
+      const origin = {
+        x: bottom.x - FOOTPRINT_OF.building.w + 1,
+        y: bottom.y - FOOTPRINT_OF.building.h + 1,
+        z: 0,
+      };
+      const depth = depthOf(origin, FOOTPRINT_OF.building);
+      if (!depth.ok) throw new Error(depth.detail);
+      expect(depth.value).toBe(depthAt(bottom));
+    }
 });
 
 // The scene's area in the window, from the stylesheet: the workspace's side rails at their widest and the topbar and
@@ -337,11 +765,12 @@ test("zoom is the largest whole number that fits the canvas, never below 1", () 
   const fit = (width: number, height: number, ratio = 1) =>
     fitView({ width, height }, ratio);
 
-  expect(fit(576, 336).zoom).toBe(1);
-  expect(fit(1151, 671, 1).zoom).toBe(1);
-  expect(fit(1152, 672, 1).zoom).toBe(2);
-  expect(fit(1152, 671, 1).zoom).toBe(1);
-  expect(fit(5000, 1100, 1).zoom).toBe(3);
+  expect(fit(576, 384).zoom).toBe(1);
+  expect(fit(1151, 767, 1).zoom).toBe(1);
+  expect(fit(1152, 768, 1).zoom).toBe(2);
+  expect(fit(1152, 767, 1).zoom).toBe(1);
+  expect(fit(5000, 1151, 1).zoom).toBe(2);
+  expect(fit(5000, 1152, 1).zoom).toBe(3);
   expect(fit(10, 10).zoom).toBe(1);
   expect(fit(0, 0).zoom).toBe(1);
   // The canvas is measured in device pixels: a 1000x1000 CSS box at 2x is 2000x2000.
@@ -353,23 +782,23 @@ test("a box too small for the target crops it rather than scaling it fractionall
 
   expect(fitted.zoom).toBe(1);
   expect(fitted.left).toBe(-38);
-  expect(fitted.top).toBe(-18);
+  expect(fitted.top).toBe(-42);
 });
 
 test("the backing store is exactly logical size x zoom and the CSS box is that over the pixel ratio", () => {
-  const fitted = fitView({ width: 576, height: 336 }, 2);
+  const fitted = fitView({ width: 576, height: 384 }, 2);
 
   expect(fitted.metrics).toEqual(canvasMetrics(LOGICAL_SIZE, 2, 2));
   expect(fitted.metrics.backingWidth).toBe(1152);
-  expect(fitted.metrics.backingHeight).toBe(672);
+  expect(fitted.metrics.backingHeight).toBe(768);
   expect(fitted.metrics.cssWidth).toBe(576);
-  expect(fitted.metrics.cssHeight).toBe(336);
+  expect(fitted.metrics.cssHeight).toBe(384);
 });
 
 test("the canvas is centred on a whole device pixel", () => {
-  const fitted = fitView({ width: 581, height: 341 }, 2);
+  const fitted = fitView({ width: 581, height: 389 }, 2);
 
-  // 1162x682 device pixels hold 1152x672: 10 spare on each axis, 5 on each side.
+  // 1162x778 device pixels hold 1152x768: 10 spare on each axis, 5 on each side.
   expect(fitted.left).toBe(5 / 2);
   expect(fitted.top).toBe(5 / 2);
   expect(Number.isInteger(fitted.left * 2)).toBe(true);

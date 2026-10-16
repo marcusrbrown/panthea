@@ -26,6 +26,7 @@ import { type CatchUpResult, runCatchUp } from "./catchup";
 import {
   loadEmbeddedGreekGodProfiles,
   loadEmbeddedGreekWorldPack,
+  loadGreekTerrain,
 } from "./greek-world-pack";
 import { type LaunchConfig, parseLaunchConfig } from "./launch-config";
 import { acquireLock, openStdinSession, startParentGuard } from "./lifecycle";
@@ -369,6 +370,7 @@ export function startService(options: StartOptions): ServiceHandle {
     slotsDir,
     statusRef,
     catchUpControl,
+    terrain: loadGreekTerrain(),
     ...(options.port !== undefined ? { port: options.port } : {}),
   });
   // Printed for the parent process (the Tauri shell, or a developer) to

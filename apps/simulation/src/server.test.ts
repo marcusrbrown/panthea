@@ -38,12 +38,14 @@ import { toViewModel } from "../../client/src/store";
 import { fakeClock } from "../../client/test/fake-clock";
 import { runCatchUp } from "./catchup";
 import { recordPartialSummary } from "./catchup-summary";
+import { loadGreekTerrain } from "./greek-world-pack";
 import { refreshStatusAfterCatchUp } from "./index";
 import {
   applyLiveTick,
   type CatchUpControl,
   createServiceStatusRef,
   createSimulationServer,
+  type SimulationServerOptions,
 } from "./server";
 import {
   applyOneTick,
@@ -72,6 +74,7 @@ function startHarness(
   options: {
     readonly commitTick?: TickDeps["commitTick"];
     readonly receiptClock?: () => number;
+    readonly terrain?: SimulationServerOptions["terrain"];
   } = {},
 ): Harness {
   const storeDir = tempDir("panthea-sim-server-");
@@ -125,6 +128,7 @@ function startHarness(
     port: 0,
     ...(options.commitTick ? { commitTick: options.commitTick } : {}),
     ...(options.receiptClock ? { receiptClock: options.receiptClock } : {}),
+    ...(options.terrain ? { terrain: options.terrain } : {}),
   });
 
   return {
@@ -285,6 +289,56 @@ test("a frame from the real service decodes in the client store with a sprite id
     const byId = new Map(actors.map((actor) => [actor.id, actor.sprite]));
     expect(byId.get("zeus")).toBe("zeus-retro");
     expect(byId.get("woodcutter")).toBe("placeholder-woodcutter");
+  } finally {
+    harness.stop();
+  }
+});
+
+test("a frame carries the authored ground of the mortal places when the service is given it, and the client view shows it unchanged", async () => {
+  const terrain = loadGreekTerrain();
+  const harness = startHarness({ terrain });
+  try {
+    const response = await authed(harness, "/frame");
+    const parsed = parseSyncFrame(await response.json());
+    if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
+    expect(parsed.value.terrain).toEqual(terrain);
+    const view = toViewModel(
+      parsed.value,
+      decodeWorldState(parsed.value.state),
+    );
+    const mortal = view.realms.mortal;
+    expect(mortal).toHaveLength(11);
+    for (const place of mortal)
+      expect(place.terrain, place.id).toEqual(terrain[place.id]);
+    for (const place of [...view.realms.olympus, ...view.realms.underworld])
+      expect("terrain" in place, place.id).toBe(false);
+
+    // The WebSocket stream sends the same ground on open.
+    const wsUrl = `${harness.baseUrl.replace("http://", "ws://")}/stream`;
+    const ws = new WebSocket(wsUrl, {
+      headers: { Authorization: `Bearer ${harness.token}` },
+    } as never);
+    const message = await new Promise<string>((resolve, reject) => {
+      ws.onmessage = (event) => resolve(String(event.data));
+      ws.onerror = () => reject(new Error("socket error"));
+    });
+    ws.close();
+    const streamed = parseSyncFrame(JSON.parse(message));
+    if (!streamed.ok) throw new Error(`${streamed.path}: ${streamed.message}`);
+    expect(streamed.value.terrain).toEqual(terrain);
+  } finally {
+    harness.stop();
+  }
+});
+
+test("a service given no ground builds frames with none, and every place is drawn with none", async () => {
+  const harness = startHarness();
+  try {
+    const parsed = parseSyncFrame(
+      await (await authed(harness, "/frame")).json(),
+    );
+    if (!parsed.ok) throw new Error(`${parsed.path}: ${parsed.message}`);
+    expect(parsed.value.terrain).toBeUndefined();
   } finally {
     harness.stop();
   }

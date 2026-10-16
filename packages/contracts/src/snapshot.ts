@@ -1,6 +1,7 @@
 // The sidecar's streaming protocol: one committed-state frame. A reconnect
 // requests a fresh frame; there is no incremental delta protocol.
 
+import { type LocationTerrain, parseLocationTerrain } from "./content";
 import { type FireCause, WORLD_EVENT_KINDS, type WorldEvent } from "./event";
 import {
   type EntityId,
@@ -221,6 +222,11 @@ export interface SyncFrame {
   readonly catchUpSummary?: CatchUpSummary;
   /** Each configured model endpoint's last outcome, in config order; absent when no models are configured. */
   readonly modelEndpoints?: readonly ModelEndpointStatus[];
+  /**
+   * The authored ground of each place that has one, by place id. It comes from the loaded content pack when the
+   * frame is built, never from the world store, so an edited grid reaches every existing world. Absent: none.
+   */
+  readonly terrain?: Readonly<Record<string, LocationTerrain>>;
   /** Committed events inside the sidecar's recent window, ascending by sequence. */
   readonly recentEvents: readonly RecentEvent[];
   /** Opaque projection payload; its shape is owned by packages/world. */
@@ -279,6 +285,19 @@ export function parseSyncFrame(input: unknown): ParseResult<SyncFrame> {
     modelEndpoints = endpoints.value;
   }
 
+  let terrain: Readonly<Record<string, LocationTerrain>> | undefined;
+  if (input.terrain !== undefined) {
+    if (!isRecord(input.terrain))
+      return fail("terrain", "expected an object of terrain by place id");
+    const byPlace: Record<string, LocationTerrain> = {};
+    for (const [place, grid] of Object.entries(input.terrain)) {
+      const parsed = parseLocationTerrain(grid, `terrain.${place}`);
+      if (!parsed.ok) return parsed;
+      byPlace[place] = parsed.value;
+    }
+    terrain = byPlace;
+  }
+
   const recentEvents = parseArray(
     input.recentEvents,
     "recentEvents",
@@ -299,6 +318,7 @@ export function parseSyncFrame(input: unknown): ParseResult<SyncFrame> {
     ...(degradedReason === undefined ? {} : { degradedReason }),
     ...(catchUpSummary === undefined ? {} : { catchUpSummary }),
     ...(modelEndpoints === undefined ? {} : { modelEndpoints }),
+    ...(terrain === undefined ? {} : { terrain }),
     recentEvents: recentEvents.value,
     state: input.state,
   });

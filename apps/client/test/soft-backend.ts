@@ -25,6 +25,8 @@ export function softBackend(options: {
   size: { width: number; height: number };
   name?: string;
   offset?: { x: number; y: number };
+  /** The clear colour, as sRGB bytes; the inspection fixture's by default, and the game's for a view of the game. */
+  background?: readonly [number, number, number];
 }): SoftBackend {
   const { width, height } = options.size;
   const scene = new Scene();
@@ -34,6 +36,9 @@ export function softBackend(options: {
   let ids: string[] = [];
   let painted: Rgba | undefined;
   let zoom = 1;
+  // The viewport's top-left in the core's screen space (y down), as the backend's `view` sets it: the target's first
+  // pixel is this point of the world. The inspection fixture draws from the origin; the game's camera is off centre.
+  let camera = { x: 0, y: 0 };
   const log: string[] = [];
   const views: { zoom: number }[] = [];
   const layer: SceneLayer = {
@@ -62,7 +67,10 @@ export function softBackend(options: {
   function composite(): Rgba {
     const data = new Uint8Array(width * height * 4);
     // The clear colour as one 32-bit word (RGBA bytes, in memory order), written to every pixel at once.
-    const clear = new Uint8Array([...INSPECT_BACKGROUND, 255]);
+    const clear = new Uint8Array([
+      ...(options.background ?? INSPECT_BACKGROUND),
+      255,
+    ]);
     new Uint32Array(data.buffer).fill(new Uint32Array(clear.buffer)[0] ?? 0);
     for (const id of ids) {
       const sprite = base.spriteFor(id);
@@ -75,10 +83,13 @@ export function softBackend(options: {
       }
       const w = frame.sourceWidth ?? 0;
       const h = frame.sourceHeight ?? 0;
+      // A sprite sits at its centre in world space (y up); the camera takes the world to the target's pixels.
       const left =
-        Math.round(sprite.position.x - w / 2) + (options.offset?.x ?? 0);
+        Math.round(sprite.position.x - camera.x - w / 2) +
+        (options.offset?.x ?? 0);
       const top =
-        Math.round(-sprite.position.y - h / 2) + (options.offset?.y ?? 0);
+        Math.round(-sprite.position.y - camera.y - h / 2) +
+        (options.offset?.y ?? 0);
       const fromColumn = Math.round(frame.x * atlas.width);
       const fromRowBottom = Math.round(frame.y * atlas.height);
       for (let dy = 0; dy < h; dy += 1) {
@@ -114,6 +125,8 @@ export function softBackend(options: {
     },
     view(next) {
       zoom = next.zoom;
+      camera = { x: next.camera.x, y: next.camera.y };
+      painted = undefined;
       views.push({ zoom: next.zoom });
     },
     prepare() {

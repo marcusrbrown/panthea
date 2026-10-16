@@ -386,7 +386,7 @@ flowchart LR
 
 ### Stage B: terrain in the game (PR 2)
 
-- [ ] **Unit 5: Place terrain grids from content**
+- [x] **Unit 5: Place terrain grids from content**
 
 **Goal:** each mortal place carries an authored 8×8 grid, and the grid reaches the client view.
 
@@ -411,7 +411,7 @@ flowchart LR
 
 **Verification:** the content checks pass on all 16 places, and the owner approves the grid preview.
 
-- [ ] **Unit 6: Draw terrain under the followed place**
+- [x] **Unit 6: Draw terrain under the followed place**
 
 **Goal:** the game draws the followed place's terrain under the current layout.
 
@@ -431,7 +431,7 @@ flowchart LR
 
 **Verification:** the owner sees a headless view render.
 
-- [ ] **Unit 7: Isometric placement for structures, actors and effects**
+- [x] **Unit 7: Isometric placement for structures, actors and effects**
 
 **Goal:** buildings, actors, fire and the strike sit on grid cells and use the shared depth key.
 
@@ -442,11 +442,11 @@ flowchart LR
 **Files:**
 - Modify: `apps/client/src/renderer/layout.ts` (slot tables of grid cells replace `BUILDING_SLOT` and `ACTOR_FOOT`; `LOGICAL_SIZE` and `CAMERA_ORIGIN` are recomputed), `apps/client/src/renderer/scene.ts`, `structures.ts` and `actors.ts` (route through `composeScene`; remove `spriteInstances`, `DEPTH_ROW` and `DEPTH_LIMIT`), `apps/client/src/renderer/decor.ts` (re-anchor the event ring, the repair bar and the fallen mark; the repair bar draws above the ground).
 - Modify: `packages/renderer/src/structures.ts` (house and oak footprints, moved from the harness).
-- Modify: `tools/scenarios/studio-zeus-scene/reference-digests.json` (regenerated, as a reviewed pixel change).
+- Modify: `content/greek/assets/registry/` (republish `greek-house` with a footprint and pivot that match its plinth; same atlas).
 - Test: `apps/client/src/renderer/layout.test.ts`, `scene.test.ts`, `structures.test.ts`, `actors.test.ts`, `strike.test.ts`.
 
 **Approach:**
-- The house footprint is 4×3 and sits in the back rows. Actors take front-row grid cells, assigned deterministically by index.
+- The house footprint is 2×3 with pivot (65,181), matching its plinth, and sits in the back rows. Two buildings stand far enough apart that their art never touches. Actors take front-row grid cells, assigned deterministically by index.
 - Actors and buildings compare by `depthOf` of their bottom cell. The rows are a layout choice and don't override depth.
 - Fire and the strike anchor on the building's bottom cell plus `STRUCTURE_ANCHORS`.
 
@@ -456,7 +456,7 @@ flowchart LR
 - Effects: the fire sits on the roof anchor, and the strike plays once for new events at the followed place only.
 - Decor: the repair bar draws above the ground.
 
-**Verification:** a headless view render shows a mortal place on its terrain, and the owner sees it. The inspection fixture passes with the regenerated digests.
+**Verification:** a headless view render shows a mortal place on its terrain, and the owner sees it. The inspection fixture and reference digests pass unchanged: they render atlas frames, which this unit doesn't change.
 
 ## System-Wide Impact
 

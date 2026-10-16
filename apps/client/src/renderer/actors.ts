@@ -1,13 +1,10 @@
 // Actors as sprites. Each actor resolves, by the sprite id the world set for
-// it, to canon idle-south or to the shared placeholder pixels, and becomes a
-// layer instance positioned by its foot. There is no state selection here:
-// normal play shows idle, whatever happens in the world. Seated, act and
-// portrait expressions belong to the packaged inspection fixture. The same
-// instance builder lays out structures and effects (./structures, ./scene).
-//
-// This stays out of `composeScene`: that places iso tile cells, and the
-// client keeps its own place layout. It builds the same `Instance` shape,
-// with the depth key from the shared core, so the layer draws it unchanged.
+// it, to canon idle-south or to the shared placeholder pixels, and stands on
+// its own grid cell (./layout, ACTOR_CELLS); `composeScene` places it by the
+// shared projection and depth key. There is no state selection here: normal
+// play shows idle, whatever happens in the world. Seated, act and portrait
+// expressions belong to the packaged inspection fixture. Structures and effects
+// are items of the same shape (./structures, ./scene).
 
 import {
   type CanonResolution,
@@ -16,16 +13,10 @@ import {
   type RegistrySnapshot,
   resolveAssetPixels,
 } from "@panthea/assets/browser";
-import {
-  depthZ,
-  ENTITY_SLOTS,
-  type Instance,
-  type InstanceArt,
-  type Layer,
-} from "@panthea/renderer";
+import type { SceneEntity, SceneResolution } from "@panthea/renderer";
 
 import type { ViewActor, ViewLocation } from "../store";
-import { actorFoot, PLACE_ORIGIN, type WorldPoint } from "./layout";
+import { actorCell, type GridCell } from "./layout";
 
 /** Normal play shows idle facing south. */
 export const ACTOR_QUERY = { state: "idle", direction: "south" } as const;
@@ -34,19 +25,31 @@ export type ActorArt =
   | { readonly source: "canon"; readonly resolution: CanonResolution }
   | Extract<PixelResolution, { source: "placeholder" }>;
 
-/** What the layer draws: a foot, the art that stands on it, and the point whose screen row sorts it. */
+/** What the scene draws: an id, and the art that stands on its cell. */
 export interface SpriteItem {
-  /** The layer instance id. */
+  /** The scene entity id. */
   readonly id: string;
-  /** The foot, in world space (y up): where the art's pivot sits. */
-  readonly foot: WorldPoint;
-  /** Where the depth key is read from, when that is not the foot: a fire sorts by the building it burns on. */
-  readonly depthFoot?: WorldPoint;
   readonly art: ActorArt;
 }
 
 export interface ActorItem extends SpriteItem {
   readonly actor: ViewActor;
+  /** The cell the actor stands on. */
+  readonly cell: GridCell;
+}
+
+/** The `uri` the placeholder carries in a scene: it names no published asset. */
+const PLACEHOLDER_URI = "placeholder:default";
+
+/** The art as the shared scene takes it: canon as resolved, the placeholder by its size. */
+export function sceneResolutionOf(art: ActorArt): SceneResolution {
+  if (art.source === "canon") return art.resolution;
+  return {
+    source: "placeholder",
+    reason: art.reason,
+    uri: PLACEHOLDER_URI,
+    placeholder: { width: art.pixels.width, height: art.pixels.height },
+  };
 }
 
 export function resolveActor(
@@ -73,129 +76,32 @@ export function fallbackActor(
   return art;
 }
 
+/** The actors of `place` that have a cell, by index; one past the table is not drawn. */
 export function planActors(
   place: ViewLocation | undefined,
   snapshot: RegistrySnapshot,
 ): ActorItem[] {
-  return (place?.actors ?? []).map((actor, index) => ({
-    id: `actor:${actor.id}`,
-    actor,
-    foot: actorFoot(PLACE_ORIGIN, index),
-    art: resolveActor(snapshot, actor.sprite),
-  }));
-}
-
-/** Screen rows per depth step: coarse enough that the ring's rows stay inside the depth key's range. */
-const DEPTH_ROW = 4;
-const DEPTH_LIMIT = 130;
-
-const byCodePoint = (a: string, b: string): number =>
-  a < b ? -1 : a > b ? 1 : 0;
-
-function artOf(item: SpriteItem): {
-  art: InstanceArt;
-  w: number;
-  h: number;
-  pivot: WorldPoint;
-} {
-  if (item.art.source === "placeholder") {
-    const { width, height } = item.art.pixels;
-    return {
-      art: {
-        source: "placeholder",
-        reason: item.art.reason,
-        placeholder: { width, height },
+  return (place?.actors ?? []).flatMap((actor, index) => {
+    const cell = actorCell(index);
+    if (cell === undefined) return [];
+    return [
+      {
+        id: `actor:${actor.id}`,
+        actor,
+        cell,
+        art: resolveActor(snapshot, actor.sprite),
       },
-      w: width,
-      h: height,
-      pivot: { x: Math.floor(width / 2), y: height },
-    };
-  }
-  const { resolution } = item.art;
+    ];
+  });
+}
+
+/** The actor as a scene entity: a sprite on the actor layer, one cell, standing on its cell's bottom vertex. */
+export function actorEntity(item: ActorItem): SceneEntity {
   return {
-    art: {
-      source: "canon",
-      assetId: resolution.assetId,
-      revision: resolution.revision,
-      uri: resolution.uri,
-      atlas: resolution.atlas,
-      frames: resolution.frames,
-      ...(resolution.loopStart === undefined
-        ? {}
-        : { loopStart: resolution.loopStart }),
-    },
-    w: resolution.cell.w,
-    h: resolution.cell.h,
-    pivot: resolution.pivot ?? {
-      x: Math.floor(resolution.cell.w / 2),
-      y: resolution.cell.h,
-    },
+    kind: "sprite",
+    id: item.id,
+    layer: "actor",
+    cell: { ...item.cell, z: 0 },
+    resolution: sceneResolutionOf(item.art),
   };
-}
-
-export interface ActorInstances {
-  /** Back to front. */
-  readonly instances: readonly Instance[];
-  /** Items with no depth slot left; they are not drawn. */
-  readonly dropped: readonly string[];
-}
-
-/**
- * Layer instances for `items` on `layer`. The depth key is the screen row of
- * the item's foot (or its depth foot), so one lower on the screen draws in
- * front; at one depth the layers order structures behind actors behind
- * effects, and items on one layer at one depth are ordered by id, so the
- * result does not depend on the order they are given in.
- */
-export function spriteInstances(
-  items: readonly SpriteItem[],
-  layer: Layer,
-): ActorInstances {
-  const groups = new Map<number, SpriteItem[]>();
-  for (const item of items) {
-    const row = (item.depthFoot ?? item.foot).y;
-    const depth =
-      Math.max(
-        -DEPTH_LIMIT,
-        Math.min(DEPTH_LIMIT, Math.round(-row / DEPTH_ROW)),
-      ) + 0;
-    const group = groups.get(depth);
-    if (group === undefined) groups.set(depth, [item]);
-    else group.push(item);
-  }
-
-  const instances: Instance[] = [];
-  const dropped: string[] = [];
-  for (const [depth, group] of groups) {
-    group.sort((a, b) => byCodePoint(a.id, b.id));
-    for (const [order, item] of group.entries()) {
-      const z =
-        order < ENTITY_SLOTS ? depthZ({ depth, layer, order }) : undefined;
-      if (z === undefined || !z.ok) {
-        dropped.push(item.id);
-        continue;
-      }
-      const { art, w, h, pivot } = artOf(item);
-      instances.push({
-        id: item.id,
-        layer,
-        cell: { x: 0, y: 0, z: 0 },
-        footprint: { w: 1, h: 1 },
-        x: item.foot.x - pivot.x,
-        y: -item.foot.y - pivot.y,
-        w,
-        h,
-        depth,
-        z: z.value,
-        art,
-      });
-    }
-  }
-  instances.sort((a, b) => a.z - b.z);
-  return { instances, dropped };
-}
-
-/** Layer instances for the actors: `spriteInstances` on the actor layer. */
-export function actorInstances(items: readonly ActorItem[]): ActorInstances {
-  return spriteInstances(items, "actor");
 }

@@ -43,7 +43,7 @@ import { createCanonClient } from "../assets/canon";
 import { createEffectsSetting } from "../effects";
 import { baseState, type FixtureEvent, framePayload } from "../fixtures";
 import { toViewModel, type WorldViewModel } from "../store";
-import { buildingFoot, PLACE_ORIGIN } from "./layout";
+import { buildingCell, cellFoot } from "./layout";
 import { drawableEvents } from "./presentation";
 import { createWorldRenderer, type WorldRenderer } from "./scene";
 
@@ -329,7 +329,9 @@ test("the bolt strikes the building's anchor, in the effect layer in front of th
   );
   const index = square?.buildings.findIndex((b) => b.id === "the-tavern") ?? -1;
   if (square === undefined || index < 0) throw new Error("no tavern");
-  const foot = buildingFoot(PLACE_ORIGIN, index, square.buildings.length);
+  const bottom = buildingCell(index, square.buildings.length);
+  if (bottom === undefined) throw new Error("the tavern has no slot");
+  const foot = cellFoot(bottom);
   const target = STRUCTURE_ANCHORS.building.strike;
   const bolt = backend.layer.spriteFor(boltId("evt-ignite-1"));
   if (bolt === undefined) throw new Error("no bolt");
@@ -342,6 +344,10 @@ test("the bolt strikes the building's anchor, in the effect layer in front of th
   const fire = backend.layer.spriteFor("structure:the-tavern:fire");
   expect(bolt.position.z).toBeGreaterThan(house?.position.z ?? Number.NaN);
   expect(bolt.position.z).toBeGreaterThan(fire?.position.z ?? Number.NaN);
+  // The bolt sorts with the building: the same depth key, the bottom cell's, on the effect layer. So an actor
+  // on a cell in front of the building (a greater x + y) is in front of the bolt, and the layer sets it over the building.
+  const depthZ = (z: number | undefined) => Math.floor((z ?? 0) / 256 / 6);
+  expect(depthZ(bolt.position.z)).toBe(depthZ(house?.position.z));
 });
 
 test("a tick that changes no frame renders nothing, and each bolt frame, and its end, renders once", async () => {

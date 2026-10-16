@@ -14,6 +14,7 @@ import {
 import {
   loadEmbeddedGreekGodProfiles,
   loadEmbeddedGreekWorldPack,
+  loadGreekTerrain,
 } from "./greek-world-pack";
 
 const GREEK_WORLD_DIR = join(
@@ -39,6 +40,24 @@ test("the embedded Greek pack parses to the same content pack as loading content
     return;
   }
   expect(embedded.value).toEqual(fromDisk.value);
+});
+
+test("the Greek terrain the frames carry is the embedded pack's: the eleven mortal places, as authored, and no other place", () => {
+  const pack = loadEmbeddedGreekWorldPack();
+  if (!pack.ok) throw new Error(pack.message);
+  const terrain = loadGreekTerrain();
+
+  const mortal = pack.value.locations.filter((l) => l.realm === "mortal");
+  expect(mortal).toHaveLength(11);
+  expect(Object.keys(terrain).sort()).toEqual(mortal.map((l) => l.id).sort());
+  for (const place of mortal) {
+    expect(place.terrain, place.id).toBeDefined();
+    expect(terrain[place.id], place.id).toEqual(place.terrain as never);
+    expect(terrain[place.id]?.set).toBe("grass-flagstone");
+    expect(terrain[place.id]?.rows).toHaveLength(8);
+  }
+  for (const place of pack.value.locations.filter((l) => l.realm !== "mortal"))
+    expect(terrain[place.id], place.id).toBeUndefined();
 });
 
 test("the embedded pack carries the seven gods' profiles, identical to content/greek/gods on disk", () => {

@@ -17,6 +17,7 @@ import {
   STRIKE_ASSET,
   STRUCTURE_ANCHORS,
   STRUCTURE_ASSETS,
+  STRUCTURE_FOOTPRINTS,
   type StructureArt,
   strikeAnimation,
 } from "@panthea/renderer";
@@ -463,18 +464,32 @@ export function harnessSubject(
   return { source: chosen.source, id: chosen.id, realm: selected.realm };
 }
 
-/** The footprints the published structure art declares, in tiles: what a placeholder stands in with. */
-const STRUCTURE_FOOTPRINTS: Readonly<
-  Record<StructureArt, { readonly w: number; readonly h: number }>
-> = { building: { w: 4, h: 3 }, tree: { w: 1, h: 1 } };
-
 const STRUCTURE_FACING = "south";
 
 interface StructureSpot {
   readonly id: string;
   readonly layer: Layer;
-  /** The footprint's origin cell. */
+  /** The footprint's origin cell: its bottom cell moved back by the footprint. */
   readonly cell: Cell;
+}
+
+/** A spot whose footprint's bottom cell, where the foot stands, is `bottom`. */
+function spotAt(
+  art: StructureArt,
+  id: string,
+  layer: Layer,
+  bottom: { readonly x: number; readonly y: number },
+): StructureSpot {
+  const footprint = STRUCTURE_FOOTPRINTS[art];
+  return {
+    id,
+    layer,
+    cell: {
+      x: bottom.x - footprint.w + 1,
+      y: bottom.y - footprint.h + 1,
+      z: 0,
+    },
+  };
 }
 
 function structureSpots(
@@ -482,14 +497,15 @@ function structureSpots(
 ): Record<StructureArt, StructureSpot> {
   const front = occlusion === "structure-front";
   return {
-    // The house's bottom cell is (x + 3, y + 2): (0, 2) two depth steps behind
-    // the subject, or the subject's own (2, 2) when it is to draw in front.
-    building: {
-      id: "structure",
-      layer: front ? "actor" : "structure",
-      cell: front ? { x: -1, y: 0, z: 0 } : { x: -3, y: 0, z: 0 },
-    },
-    tree: { id: "tree", layer: "structure", cell: { x: 3, y: 0, z: 0 } },
+    // The house's bottom cell is (0, 2), two depth steps behind the subject,
+    // or the subject's own (2, 2) when it is to draw in front.
+    building: spotAt(
+      "building",
+      "structure",
+      front ? "actor" : "structure",
+      front ? { x: 2, y: 2 } : { x: 0, y: 2 },
+    ),
+    tree: spotAt("tree", "tree", "structure", { x: 3, y: 0 }),
   };
 }
 

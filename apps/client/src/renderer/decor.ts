@@ -1,15 +1,16 @@
-// Everything in the scene that is not a sprite: the ground grid, repair bars,
-// event rings and the mark on a fallen actor. They are
+// Everything in the scene that is not a sprite: repair bars, event rings and
+// the mark on a fallen actor. (The ground is tiles, ./ground.) They are
 // square-edged mesh clusters in render-target pixel space (whole pixels, x
 // right, y up), using the same palette and depth ordering as the sprite layer.
-// Rings and the fallen mark sit above the sprites; the rest sit below them.
+// Rings and the fallen mark sit above the sprites; the repair bars sit below them,
+// above the ground.
 // Actors, buildings, fire and the strike are sprites (./actors, ./structures).
 //
 // Colours are authored sRGB bytes and the target does no colour management,
 // so they are set as bytes (see `pixelColor`).
 
 import type { Realm } from "@panthea/contracts";
-import { DEPTH_Z_MAX } from "@panthea/renderer";
+import { DEPTH_Z_MAX, ENTITY_SLOTS } from "@panthea/renderer";
 import {
   BoxGeometry,
   Color,
@@ -22,11 +23,10 @@ import {
 
 import type { ViewBuilding, ViewLocation, WorldViewModel } from "../store";
 import {
-  buildingFoot,
-  CAMERA_ORIGIN,
+  buildingCell,
+  cellCentre,
+  cellFoot,
   EVENT_RING,
-  LOGICAL_SIZE,
-  PLACE_ORIGIN,
   type WorldPoint,
 } from "./layout";
 import { type EffectTone, placeEvents } from "./presentation";
@@ -43,16 +43,15 @@ const EFFECT_COLOR: Record<EffectTone, number> = {
   neutral: MOSS,
 };
 
-const GRID_COLOR = PAPER_DEEP;
 const REPAIR_COLOR = MOSS;
 const FALLEN_COLOR = RUST;
 
 /** The scene's clear colour, as sRGB bytes. */
 export const BACKGROUND: readonly [number, number, number] = [238, 233, 220];
 
-// Depth, below every sprite: the grid and repair bars.
-const Z_GRID = 0;
-const Z_REPAIR = 5;
+// Depth, below every sprite and above the ground: the ground tiles take z 0 to 80 (the 81 of a place, all at the
+// least depth on the ground layer, one slot each), so the repair bars take the first z past the ground layer's slots.
+const Z_REPAIR = ENTITY_SLOTS;
 // Above every sprite.
 const Z_FALLEN = DEPTH_Z_MAX - 1;
 const Z_RING = DEPTH_Z_MAX;
@@ -104,8 +103,15 @@ function block(
   return mesh;
 }
 
-/** The bar sits this far below a building's foot: under the lowest of its art, which reaches 45 px below the foot. */
-const REPAIR_BAR_BELOW_FOOT = 52;
+/** The repair bar's track is this tall, in pixels. */
+export const REPAIR_BAR_HEIGHT = 6;
+
+/**
+ * The bar's centre sits this far below a building's foot. It is drawn under every sprite, so it must hang below the
+ * lowest of any building's art to be seen: the oak's root flare reaches 21 px under its foot (the house's plinth tip,
+ * none), and the bar's top edge, 3 px above its centre, is 4 px clear of that.
+ */
+export const REPAIR_BAR_BELOW_FOOT = 28;
 
 function repairBar(building: ViewBuilding, foot: WorldPoint): Group {
   const repair = building.repair;
@@ -116,7 +122,7 @@ function repairBar(building: ViewBuilding, foot: WorldPoint): Group {
   const group = new Group();
   group.name = `repair:${building.id}`;
   group.position.set(foot.x, foot.y - REPAIR_BAR_BELOW_FOOT, Z_REPAIR);
-  group.add(pixel("track", 0, 0, PAPER_DEEP, 30, 6, 0));
+  group.add(pixel("track", 0, 0, PAPER_DEEP, 30, REPAIR_BAR_HEIGHT, 0));
   group.add(pixel("fill", -15 + width / 2, 0, REPAIR_COLOR, width, 2, 1));
   return group;
 }
@@ -176,29 +182,20 @@ export function buildDecor(
 ): Decor {
   const objects: Object3D[] = [];
 
-  const viewTop = -CAMERA_ORIGIN.y;
-  const viewBottom = viewTop - LOGICAL_SIZE.height;
-  for (let y = viewBottom + 8; y < viewTop; y += 48) {
-    objects.push(
-      block(`grid:${y}`, 0, y, GRID_COLOR, LOGICAL_SIZE.width, 2, Z_GRID),
-    );
-  }
   const drawnEventIds: string[] = [];
   if (place === undefined) return { objects, drawnEventIds };
 
   for (const [index, building] of place.buildings.entries()) {
+    const cell = buildingCell(index, place.buildings.length);
+    if (cell === undefined) continue;
     if (building.status === "repairing" && building.repair) {
-      objects.push(
-        repairBar(
-          building,
-          buildingFoot(PLACE_ORIGIN, index, place.buildings.length),
-        ),
-      );
+      objects.push(repairBar(building, cellFoot(cell)));
     }
   }
   for (const [id, foot] of fallen) objects.push(fallenMark(id, foot));
 
-  // An event ring stands beside the place for each event placed at it; events at other places are not drawn.
+  // An event ring stands on the grid's right corner cell for each event placed at it; events at other places are not drawn.
+  const ringAt = cellCentre(EVENT_RING.cell);
   const here = placeEvents(view, realm).filter(
     (placed) => placed.locationId === place.id,
   );
@@ -206,8 +203,8 @@ export function buildDecor(
     objects.push(
       eventRing(
         `ring:${placed.event.id}`,
-        PLACE_ORIGIN.x + EVENT_RING.dx,
-        PLACE_ORIGIN.y + EVENT_RING.dy,
+        ringAt.x,
+        ringAt.y,
         EFFECT_COLOR[placed.tone],
         EVENT_RING.radius + (index % EVENT_RING.sizes) * EVENT_RING.step,
       ),

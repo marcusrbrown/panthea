@@ -17,13 +17,39 @@
           "transport": "path",
           "bidirectional": true
         }
-      ]
+      ],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "gggggggg",
+          "gggggggg",
+          "gggffggg",
+          "gggffggg",
+          "ggggfggg",
+          "ggggfggg",
+          "ggggfggg"
+        ]
+      }
     },
     {
       "id": "ancient-olive-tree",
       "realm": "mortal",
       "name": "The Ancient Olive Tree",
-      "edges": []
+      "edges": [],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "gggggggg",
+          "ggffffgg",
+          "ggfggfgg",
+          "ggfggfgg",
+          "ggffffgg",
+          "ggggfggg",
+          "ggggfggg"
+        ]
+      }
     },
     {
       "id": "wilderness-path",
@@ -35,7 +61,20 @@
           "transport": "path",
           "bidirectional": true
         }
-      ]
+      ],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggffggg",
+          "gggfgggg",
+          "gggfgggg",
+          "ggffgggg",
+          "ggfggggg",
+          "ggffgggg",
+          "gggffggg",
+          "gggffggg"
+        ]
+      }
     },
     {
       "id": "town-square",
@@ -77,31 +116,96 @@
           "transport": "path",
           "bidirectional": true
         }
-      ]
+      ],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "ggggfggg",
+          "gfffffgg",
+          "gffffffg",
+          "ffffffff",
+          "gffffffg",
+          "gffffffg",
+          "gfffffgg",
+          "ggggfggg"
+        ]
+      }
     },
     {
       "id": "tavern",
       "realm": "mortal",
       "name": "The Tavern",
-      "edges": []
+      "edges": [],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "ggffffgg",
+          "ggffffgg",
+          "ggffffgg",
+          "gggffggg",
+          "ggggfggg",
+          "ggggfggg",
+          "ggggfggg"
+        ]
+      }
     },
     {
       "id": "inn",
       "realm": "mortal",
       "name": "The Traveler's Rest Inn",
-      "edges": []
+      "edges": [],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "gggggggg",
+          "ggfffggg",
+          "ggfffggg",
+          "gggfgggg",
+          "gggffggg",
+          "ggggfggg",
+          "ggggffgg"
+        ]
+      }
     },
     {
       "id": "shop",
       "realm": "mortal",
       "name": "The Agora Shop",
-      "edges": []
+      "edges": [],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "gffffffg",
+          "gfgffgfg",
+          "gffffffg",
+          "gffffffg",
+          "gfgffgfg",
+          "gffffffg",
+          "ggggfggg"
+        ]
+      }
     },
     {
       "id": "altar",
       "realm": "mortal",
       "name": "Altar of Zeus",
-      "edges": []
+      "edges": [],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "gggffggg",
+          "ggffffgg",
+          "gffffffg",
+          "gffffffg",
+          "ggffffgg",
+          "gggffggg",
+          "ggggfggg"
+        ]
+      }
     },
     {
       "id": "ferry-dock",
@@ -113,7 +217,20 @@
           "transport": "divine-transport",
           "bidirectional": true
         }
-      ]
+      ],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "gggggggg",
+          "ggggggff",
+          "ffffffff",
+          "ffffffff",
+          "ggggggff",
+          "gggggggg",
+          "gggggggg"
+        ]
+      }
     },
     {
       "id": "mountain-path",
@@ -125,7 +242,20 @@
           "transport": "divine-transport",
           "bidirectional": true
         }
-      ]
+      ],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "ffgggggg",
+          "gffggggg",
+          "ggfffggg",
+          "gggfgggg",
+          "gggffggg",
+          "ggggffgg",
+          "gggggffg",
+          "ggggggff"
+        ]
+      }
     },
     {
       "id": "underworld-shore",
@@ -181,7 +311,20 @@
       "id": "forge",
       "realm": "mortal",
       "name": "The Forge",
-      "edges": []
+      "edges": [],
+      "terrain": {
+        "set": "grass-flagstone",
+        "rows": [
+          "gggggggg",
+          "gffffffg",
+          "gffffffg",
+          "gffffffg",
+          "gffffffg",
+          "ggfffggg",
+          "gggfgggg",
+          "gggfgggg"
+        ]
+      }
     }
   ]
 }

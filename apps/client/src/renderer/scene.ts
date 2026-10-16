@@ -1,12 +1,14 @@
 // The world renderer on the shared pixel core: a fixed-size target drawn at
 // 1x with nearest filtering and no antialiasing, enlarged by a whole zoom.
-// Actors, buildings and fire are sprites resolved from canon (or the shared
-// placeholder pixels); rings and bars are meshes in the same pixel
-// space (./decor).
+// The ground is tiles, and actors, buildings and fire are sprites resolved
+// from canon (or the shared placeholder pixels): all of them scene entities on
+// the place's 8x8 grid, placed by `composeScene` in the shared isometric
+// projection and sorted by its depth key (./world). Rings and bars are meshes in
+// the same pixel space (./decor).
 //
-// A strike is an effect sprite that plays once over the building the world
-// struck, on the renderer's own animation clock from the draw that first
-// presents its event. Which events play is decided from the committed events
+// A strike is an effect sprite that plays once on the building the world
+// struck, at the structure's strike anchor on its bottom cell, on the renderer's
+// own animation clock from the draw that first presents its event. Which events play is decided from the committed events
 // alone (an ignition by a strike, or any damage); the effects setting only
 // picks which published animation plays.
 //
@@ -32,8 +34,9 @@ import {
   type LayerEntry,
   oneShotFrameAt,
   placeholderImage,
+  type SceneEntity,
   STRIKE_ASSET,
-  STRUCTURE_ANCHORS,
+  type StructureArt,
   strikeAnimation,
 } from "@panthea/renderer";
 
@@ -42,21 +45,28 @@ import { type AtlasDecoder, decodeAtlas, releaseImage } from "../assets/decode";
 import type { WorldViewModel } from "../store";
 import {
   type ActorArt,
-  actorInstances,
+  actorEntity,
   fallbackActor,
   planActors,
   type SpriteItem,
-  spriteInstances,
 } from "./actors";
 import { BACKGROUND, buildDecor, clearDecor } from "./decor";
+import { planGround } from "./ground";
 import {
   CAMERA_ORIGIN,
+  cellFoot,
   fitView,
+  type GridCell,
   LOGICAL_SIZE,
-  type WorldPoint,
 } from "./layout";
 import { placeEvents } from "./presentation";
-import { planStructures, structureArtOf } from "./structures";
+import {
+  planStructures,
+  strikeEntity,
+  structureArtOf,
+  structureEntity,
+} from "./structures";
+import { composeWorld } from "./world";
 
 export interface WorldRenderer {
   start(onDeviceLost: () => void): Promise<void>;
@@ -154,7 +164,7 @@ export function createWorldRenderer(
   let base: LayerEntry[] = [];
   let strikeTargets = new Map<
     string,
-    { readonly foot: WorldPoint; readonly strike: WorldPoint }
+    { readonly bottom: GridCell; readonly art: StructureArt }
   >();
   // The events already presented, so none plays twice: the window of the last
   // draw. The first draw only marks it; a renderer that replaces a lost one
@@ -332,33 +342,29 @@ export function createWorldRenderer(
       const frame = bolt.resolution.frames[boltFrame(bolt) ?? -1];
       const target = strikeTargets.get(bolt.buildingId);
       if (frame === undefined || target === undefined) return [];
+      const id = `effect:bolt:${bolt.eventId}`;
       return [
         {
+          id,
           bolt,
-          item: {
-            id: `effect:bolt:${bolt.eventId}`,
-            foot: target.strike,
-            depthFoot: target.foot,
-            art: {
-              source: "canon" as const,
-              resolution: { ...bolt.resolution, frames: [frame] },
-            },
-          },
+          entity: strikeEntity(id, target.bottom, target.art, {
+            ...bolt.resolution,
+            frames: [frame],
+          }),
         },
       ];
     });
-    const { instances, dropped } = spriteInstances(
-      items.map(({ item }) => item),
-      "effect",
+    const { instances, refused } = composeWorld(
+      items.map(({ entity }) => entity),
     );
-    for (const id of dropped) {
+    for (const refusal of refused) {
       canon.report({
-        scope: id,
-        message: "no depth slot is left for this strike",
+        scope: refusal.id,
+        message: `this strike is not placed: ${refusal.reason}: ${refusal.detail}`,
       });
     }
     const atlasOf = new Map(
-      items.map(({ bolt, item }) => [item.id, bolt.payload] as const),
+      items.map(({ id, bolt }) => [id, bolt.payload] as const),
     );
     const entries = instances.flatMap((instance) => {
       const payload = atlasOf.get(instance.id);
@@ -401,20 +407,31 @@ export function createWorldRenderer(
             !seen.has(placed.event.id),
         )
       : [];
-    const [settled, settledStructures, striking] = await Promise.all([
-      Promise.all(
-        planActors(place, snapshot).map((item) =>
-          settle(item, item.actor.sprite),
+    // The ground: a place with no terrain is bare background. A set that is not a published tile set is bare
+    // background too, reported once; one whose atlas cannot be had was reported by the fetch or the decode.
+    const groundPlan = planGround(place, snapshot);
+    const [settled, settledStructures, striking, groundPayload] =
+      await Promise.all([
+        Promise.all(
+          planActors(place, snapshot).map((item) =>
+            settle(item, item.actor.sprite),
+          ),
         ),
-      ),
-      Promise.all(
-        planStructures(place, snapshot).map((item) =>
-          settle(item, item.assetId),
+        Promise.all(
+          planStructures(place, snapshot).map((item) =>
+            settle(item, item.assetId),
+          ),
         ),
-      ),
-      fresh.length > 0 ? strikeArt(snapshot, effects()) : undefined,
-    ]);
+        fresh.length > 0 ? strikeArt(snapshot, effects()) : undefined,
+        groundPlan?.ok === true ? canonPayload(groundPlan.atlas) : undefined,
+      ]);
     if (stale()) return [];
+    if (groundPlan?.ok === false) {
+      canon.report({
+        scope: `terrain:${place?.id ?? ""}`,
+        message: groundPlan.reason,
+      });
+    }
 
     // This draw presents: every event of the window is now seen, whatever its
     // place or realm, so following another place replays nothing, and the
@@ -446,45 +463,56 @@ export function createWorldRenderer(
         layer.commit(payload.key, payload.spec, payload.image);
       }
     }
-    const actors = actorInstances(settled.map(({ item }) => item));
-    const structures = spriteInstances(
-      settledStructures.map(({ item }) => item),
-      "structure",
-    );
-    const instances = [...structures.instances, ...actors.instances];
-    for (const id of [...actors.dropped, ...structures.dropped]) {
+    // The ground's tiles share the one atlas, and nothing else shares their depth.
+    const ground: SceneEntity[] = [];
+    if (groundPlan?.ok === true && groundPayload !== undefined) {
+      if (layer.plan(groundPayload.key, groundPayload.spec) !== "keep") {
+        layer.commit(
+          groundPayload.key,
+          groundPayload.spec,
+          groundPayload.image,
+        );
+      }
+      for (const entity of groundPlan.entities) {
+        keys.set(entity.id, groundPayload.key);
+        ground.push(entity);
+      }
+    }
+    // One composition for everything on the grid: the ground, then buildings, fire and actors, by depth.
+    const composed = composeWorld([
+      ...ground,
+      ...settledStructures.map(({ item }) => structureEntity(item)),
+      ...settled.map(({ item }) => actorEntity(item)),
+    ]);
+    for (const refusal of composed.refused) {
       canon.report({
-        scope: id,
-        message: "no depth slot is left for this actor",
+        scope: refusal.id,
+        message: `this is not placed: ${refusal.reason}: ${refusal.detail}`,
       });
     }
+    const instances = composed.instances;
     base = instances.flatMap((instance) => {
       const atlasKey = keys.get(instance.id);
       return atlasKey === undefined ? [] : [{ instance, atlasKey }];
     });
     strikeTargets = new Map(
-      settledStructures.flatMap(({ item }) => {
-        if (item.role !== "building") return [];
-        const anchor =
-          STRUCTURE_ANCHORS[structureArtOf(item.building.id)].strike;
-        return [
-          [
-            item.building.id,
-            {
-              foot: item.foot,
-              // The anchor is an offset down the screen; the layout's y points up.
-              strike: { x: item.foot.x + anchor.x, y: item.foot.y - anchor.y },
-            },
-          ] as const,
-        ];
-      }),
+      settledStructures.flatMap(({ item }) =>
+        item.role === "building"
+          ? [
+              [
+                item.building.id,
+                { bottom: item.bottom, art: structureArtOf(item.building.id) },
+              ] as const,
+            ]
+          : [],
+      ),
     );
     applyLayer();
 
     const fallen = new Map(
       settled
         .filter(({ item }) => !item.actor.alive)
-        .map(({ item }) => [item.actor.id, item.foot] as const),
+        .map(({ item }) => [item.actor.id, cellFoot(item.cell)] as const),
     );
     clearDecor(group);
     const decor = buildDecor(view, realm, place, fallen);

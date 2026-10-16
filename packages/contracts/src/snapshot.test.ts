@@ -418,3 +418,50 @@ test("malformed endpoint status is rejected, naming the path", () => {
     if (!result.ok) expect(result.path).toContain("modelEndpoints");
   }
 });
+
+const GRID = [
+  "gggggggg",
+  "gggffggg",
+  "ggfffffg",
+  "ggfffffg",
+  "gggffggg",
+  "ggggfggg",
+  "ggggfggg",
+  "gggggggg",
+];
+
+test("a frame carries the ground of the places that have one, by place id, as authored", () => {
+  const terrain = {
+    "town-square": { set: "grass-flagstone", rows: GRID },
+    tavern: { set: "grass-flagstone", rows: GRID.slice().reverse() },
+  };
+  const result = parseSyncFrame(frame({ terrain }));
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.value.terrain).toEqual(terrain);
+  // A frame with none has none, and one with an empty map has an empty map.
+  const none = parseSyncFrame(frame());
+  expect(none.ok && none.value.terrain).toBeUndefined();
+  const empty = parseSyncFrame(frame({ terrain: {} }));
+  expect(empty.ok && empty.value.terrain).toEqual({});
+});
+
+test("a frame refuses ground that is not a grid, naming the place", () => {
+  for (const bad of [
+    { "town-square": { set: "grass-flagstone", rows: GRID.slice(1) } },
+    {
+      "town-square": {
+        set: "grass-flagstone",
+        rows: GRID.map(() => "ggggxggg"),
+      },
+    },
+    { "town-square": { rows: GRID } },
+    { "town-square": "grass-flagstone" },
+  ]) {
+    const result = parseSyncFrame(frame({ terrain: bad }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.path).toMatch(/^terrain\.town-square/);
+  }
+  const array = parseSyncFrame(frame({ terrain: [] }));
+  expect(array.ok).toBe(false);
+  if (!array.ok) expect(array.path).toBe("terrain");
+});

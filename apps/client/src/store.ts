@@ -6,6 +6,7 @@
 import {
   type CatchUpSummary,
   type DegradedReason,
+  type LocationTerrain,
   REALMS,
   type Realm,
   type RecentEvent,
@@ -68,6 +69,8 @@ export interface ViewLocation {
   readonly edges: readonly ViewEdge[];
   readonly actors: readonly ViewActor[];
   readonly buildings: readonly ViewBuilding[];
+  /** The ground drawn under the place: its tile set and 8 rows of terrain codes, as authored. Absent: the place has none. */
+  readonly terrain?: LocationTerrain;
 }
 
 export interface WorldViewModel {
@@ -143,6 +146,7 @@ function viewLocation(
   location: LocationState,
   actors: readonly ViewActor[],
   buildings: readonly ViewBuilding[],
+  terrain: LocationTerrain | undefined,
 ): ViewLocation {
   return {
     id: location.id,
@@ -157,6 +161,7 @@ function viewLocation(
     buildings: buildings.filter(
       (building) => building.locationId === location.id,
     ),
+    ...(terrain === undefined ? {} : { terrain }),
   };
 }
 
@@ -176,7 +181,15 @@ export function toViewModel(
       realm,
       locations
         .filter((location) => location.realm === realm)
-        .map((location) => viewLocation(location, actors, buildings)),
+        .map((location) =>
+          viewLocation(
+            location,
+            actors,
+            buildings,
+            // The ground is the frame's, read from the content pack by the sidecar; the world state holds none.
+            frame.terrain?.[location.id],
+          ),
+        ),
     ]),
   ) as unknown as Record<Realm, readonly ViewLocation[]>;
 

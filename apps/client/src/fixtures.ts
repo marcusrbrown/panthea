@@ -260,6 +260,10 @@ export interface FrameOptions {
     readonly atSequence: number;
   };
   readonly recentEvents?: readonly FixtureEvent[];
+  /** The ground the frame carries, by place id, as the sidecar reads it from its content pack. */
+  readonly terrain?: Readonly<
+    Record<string, { readonly set: string; readonly rows: readonly string[] }>
+  >;
 }
 
 /** The JSON value the sidecar would send for `state`, exactly as it crosses the Channel. */
@@ -279,6 +283,7 @@ export function framePayload(
     ...(options.catchUpSummary === undefined
       ? {}
       : { catchUpSummary: options.catchUpSummary }),
+    ...(options.terrain === undefined ? {} : { terrain: options.terrain }),
     recentEvents: options.recentEvents ?? [],
     state: encode(state),
   };

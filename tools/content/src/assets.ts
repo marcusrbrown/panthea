@@ -51,6 +51,7 @@ import {
 import {
   type AssetVocabulary,
   durationBounds,
+  MAX_BUILDINGS_PER_PLACE,
   type ParseFailure,
   parseAssetId,
   parseAssetVocabulary,
@@ -161,6 +162,105 @@ function validateInhabitantSprites(
       );
     }
   }
+}
+
+/**
+ * Each place's `terrain.set`, in `world/locations.json`, is a valid asset id of a tile set published in the
+ * registry whose terrains are grass and flagstone: the `g` and `f` of an authored grid are its base and over.
+ * The grid's shape is the content parser's to refuse, so only the set is judged here.
+ */
+function validatePlaceTerrain(
+  contentRoot: string,
+  published: ReadonlyMap<
+    string,
+    {
+      readonly manifest: {
+        readonly kind: string;
+        readonly terrain?: { readonly base: string; readonly over: string };
+      };
+    }
+  >,
+  report: (file: string, message: string) => void,
+): void {
+  const file = "world/locations.json";
+  const json = readJson(join(contentRoot, file));
+  if (!json.ok) {
+    report(file, json.message);
+    return;
+  }
+  const locations = isRecordWithArray(json.value, "locations");
+  if (locations === undefined) {
+    report(file, "expected an object with a locations array");
+    return;
+  }
+  for (const [index, entry] of locations.entries()) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const place = entry as Record<string, unknown>;
+    if (place.terrain === undefined) continue;
+    const who = `locations[${index}]${typeof place.id === "string" ? ` (${place.id})` : ""}`;
+    const set = (place.terrain as { set?: unknown } | null)?.set;
+    if (typeof set !== "string" || !parseAssetId(set, "set").ok) {
+      report(
+        file,
+        `${who}: terrain.set must be a valid asset id (lowercase, hyphenated)`,
+      );
+      continue;
+    }
+    const found = published.get(set);
+    if (found === undefined) {
+      report(
+        file,
+        `${who}: terrain set "${set}" is not published in the registry`,
+      );
+    } else if (found.manifest.kind !== "tile") {
+      report(
+        file,
+        `${who}: terrain set "${set}" is published as a ${found.manifest.kind}, not a tile`,
+      );
+    } else if (
+      found.manifest.terrain?.base !== "grass" ||
+      found.manifest.terrain.over !== "flagstone"
+    ) {
+      report(
+        file,
+        `${who}: terrain set "${set}" is a tile of ${found.manifest.terrain?.base} and ${found.manifest.terrain?.over}; an authored grid is grass (g) and flagstone (f)`,
+      );
+    }
+  }
+}
+
+/**
+ * No place has more buildings than the scene has slots for (`MAX_BUILDINGS_PER_PLACE`): one past it has no cell and is
+ * not drawn, so content that places more would lose a building without saying so. Names the place and its count.
+ */
+function validateBuildingsPerPlace(
+  contentRoot: string,
+  report: (file: string, message: string) => void,
+): void {
+  const file = "world/buildings.json";
+  const path = join(contentRoot, file);
+  if (!existsSync(path)) return;
+  const json = readJson(path);
+  if (!json.ok) {
+    report(file, json.message);
+    return;
+  }
+  const buildings = isRecordWithArray(json.value, "buildings");
+  if (buildings === undefined) {
+    report(file, "expected an object with a buildings array");
+    return;
+  }
+  const counts = new Map<string, number>();
+  for (const entry of buildings) {
+    const at = (entry as { locationId?: unknown } | null)?.locationId;
+    if (typeof at === "string") counts.set(at, (counts.get(at) ?? 0) + 1);
+  }
+  for (const [place, count] of counts)
+    if (count > MAX_BUILDINGS_PER_PLACE)
+      report(
+        file,
+        `place "${place}" has ${count} buildings, and the scene has slots for ${MAX_BUILDINGS_PER_PLACE}: the rest would not be drawn`,
+      );
 }
 
 function isRecordWithArray(
@@ -481,6 +581,8 @@ export function validateAssets(
   }
 
   validateInhabitantSprites(contentRoot, registry.snapshot.entries, report);
+  validatePlaceTerrain(contentRoot, registry.snapshot.entries, report);
+  validateBuildingsPerPlace(contentRoot, report);
 
   // Render matrices: honoured by the vocabulary, and filled by the asset a god's profile points at.
   const subjectFiles = new Map(

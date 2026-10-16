@@ -9,7 +9,9 @@ import {
 } from "../../test/zeus-retro-fixture";
 import { createCanonClient } from "../assets/canon";
 import type { ViewActor } from "../store";
-import { type ActorItem, actorInstances, planActors } from "./actors";
+import { type ActorItem, actorEntity, planActors } from "./actors";
+import { ACTOR_CELLS, cellFoot, type GridCell } from "./layout";
+import { composeWorld } from "./world";
 
 async function snapshot() {
   const canon = createCanonClient({ source: fakeSource(zeusPayload()) });
@@ -71,14 +73,11 @@ function actor(overrides: Partial<ViewActor> = {}): ViewActor {
   };
 }
 
-function placeholderItem(
-  id: string,
-  foot: { x: number; y: number },
-): ActorItem {
+function placeholderItem(id: string, cell: GridCell): ActorItem {
   return {
     id: `actor:${id}`,
     actor: actor({ id }),
-    foot,
+    cell,
     art: {
       source: "placeholder",
       reason: "missing-id",
@@ -87,38 +86,42 @@ function placeholderItem(
   };
 }
 
-test("a placeholder is placed by its foot: the bottom centre of its 16x16 cell", () => {
-  const { instances } = actorInstances([
-    placeholderItem("a", { x: 10, y: -20 }),
-  ]);
+/** The actors placed by the shared scene, in the layout's world. */
+function placed(items: readonly ActorItem[]) {
+  const composed = composeWorld(items.map(actorEntity));
+  expect(composed.refused).toEqual([]);
+  return composed.instances;
+}
 
-  expect(instances).toHaveLength(1);
-  const [instance] = instances;
-  // Screen space is y down: the foot at world y -20 is screen y 20.
+test("a placeholder stands on its cell: the bottom centre of its 16x16 cell on the cell's bottom vertex", () => {
+  const cell = { x: 4, y: 5 };
+  const [instance] = placed([placeholderItem("a", cell)]);
+  const foot = cellFoot(cell);
+
+  // Screen space is y down: the instance's y is the top edge, the foot's world y negated, less the height.
   expect(instance).toMatchObject({
     id: "actor:a",
     layer: "actor",
-    x: 2,
-    y: 4,
+    x: foot.x - 8,
+    y: -foot.y - 16,
     w: 16,
     h: 16,
+    cell: { x: 4, y: 5, z: 0 },
+    depth: 9,
   });
   expect(instance?.art).toMatchObject({
     source: "placeholder",
     placeholder: { width: 16, height: 16 },
   });
-  expect(instance?.art).not.toHaveProperty("uri");
 });
 
-test("a canon actor is placed by the manifest's pivot and drawn at the cell size", async () => {
+test("a canon actor is placed by the manifest's pivot on its cell and drawn at the cell size", async () => {
   const view = viewWithZeus();
   const locations = view.realms.olympus;
   const planned = planActors(locations[0], await snapshot());
 
-  const { instances } = actorInstances(planned);
-
-  const zeus = instances.find((instance) => instance.id === "actor:zeus");
-  const foot = planned[0]?.foot ?? { x: 0, y: 0 };
+  const zeus = placed(planned).find((instance) => instance.id === "actor:zeus");
+  const foot = cellFoot(planned[0]?.cell as GridCell);
   expect(zeus).toMatchObject({
     x: foot.x - 32,
     y: -foot.y - 80,
@@ -128,42 +131,76 @@ test("a canon actor is placed by the manifest's pivot and drawn at the cell size
   expect(zeus?.art.source).toBe("canon");
 });
 
-test("an actor lower on the screen draws in front, and ties go by id", () => {
-  const { instances } = actorInstances([
-    placeholderItem("back", { x: 0, y: 100 }),
-    placeholderItem("front", { x: 0, y: -100 }),
-    placeholderItem("tie-b", { x: 5, y: 0 }),
-    placeholderItem("tie-a", { x: -5, y: 0 }),
+test("actors take the layout's cells by index, one to a cell, and one past the 14 is not drawn", () => {
+  const people = Array.from({ length: 16 }, (_, index) =>
+    actor({
+      id: `p${String(index).padStart(2, "0")}`,
+      sprite: "placeholder-p",
+    }),
+  );
+  const planned = planActors(
+    {
+      id: "p",
+      name: "P",
+      realm: "mortal",
+      edges: [],
+      actors: people,
+      buildings: [],
+    },
+    EMPTY_SNAPSHOT,
+  );
+
+  expect(planned).toHaveLength(14);
+  expect(planned.map((item) => item.cell)).toEqual([...ACTOR_CELLS]);
+  expect(
+    new Set(planned.map((item) => `${item.cell.x},${item.cell.y}`)).size,
+  ).toBe(14);
+  // Every one of them is placed on its own cell by the shared scene, and no two overlap.
+  const instances = placed(planned);
+  expect(instances).toHaveLength(14);
+  const boxes = instances.map((i) => ({
+    left: i.x,
+    right: i.x + i.w,
+    top: i.y,
+    bottom: i.y + i.h,
+  }));
+  for (const [a, boxA] of boxes.entries())
+    for (const [b, boxB] of boxes.entries())
+      if (b > a)
+        expect(
+          boxA.right <= boxB.left ||
+            boxB.right <= boxA.left ||
+            boxA.bottom <= boxB.top ||
+            boxB.bottom <= boxA.top,
+          `actors ${a} and ${b}`,
+        ).toBe(true);
+});
+
+test("an actor on a cell of greater x + y draws in front, and cells of one x + y tie by id", () => {
+  const instances = placed([
+    placeholderItem("back", { x: 2, y: 2 }),
+    placeholderItem("front", { x: 6, y: 6 }),
+    placeholderItem("tie-b", { x: 5, y: 3 }),
+    placeholderItem("tie-a", { x: 3, y: 5 }),
   ]);
 
   const z = (id: string) =>
-    instances.find((i) => i.id === `actor:${id}`)?.z ?? NaN;
+    instances.find((i) => i.id === `actor:${id}`)?.z ?? Number.NaN;
   expect(z("front")).toBeGreaterThan(z("tie-a"));
   expect(z("tie-a")).toBeLessThan(z("tie-b"));
   expect(z("tie-b")).toBeGreaterThan(z("back"));
   expect(new Set(instances.map((i) => i.z)).size).toBe(4);
 });
 
-test("the instances do not depend on the order the actors are given in", () => {
-  const items = ["a", "b", "c", "d"].map((id, index) =>
-    placeholderItem(id, { x: index, y: index % 2 }),
-  );
+test("the placed actors do not depend on the order they are given in", () => {
+  const items = [
+    placeholderItem("a", { x: 4, y: 5 }),
+    placeholderItem("b", { x: 5, y: 4 }),
+    placeholderItem("c", { x: 5, y: 5 }),
+    placeholderItem("d", { x: 3, y: 6 }),
+  ];
 
-  const forward = actorInstances(items).instances;
-  const backward = actorInstances([...items].reverse()).instances;
-
-  expect(backward).toEqual(forward);
-});
-
-test("an actor beyond the slots at one depth is reported, not drawn", () => {
-  const items = Array.from({ length: 300 }, (_, index) =>
-    placeholderItem(`n${String(index).padStart(3, "0")}`, { x: index, y: 0 }),
-  );
-
-  const { instances, dropped } = actorInstances(items);
-
-  expect(instances).toHaveLength(256);
-  expect(dropped).toHaveLength(44);
+  expect(placed([...items].reverse())).toEqual(placed(items));
 });
 
 test("promoted Zeus resolves to zeus-retro idle-south (10 frames of 250 ms, pivot 56,78), and a pre-promotion actor on zeus-sprite still resolves to its own cells", async () => {

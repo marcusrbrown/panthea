@@ -47,6 +47,24 @@ export interface LocationEdge {
   readonly bidirectional: boolean;
 }
 
+/**
+ * The most buildings one place can show: the scene has a slot on its 8x8 grid for each, and a building past them has none
+ * and is not drawn. The content check refuses a place with more, so authored content never loses one.
+ */
+export const MAX_BUILDINGS_PER_PLACE = 3;
+
+/** A mortal place's ground is an 8x8 grid of terrain: one fixed size, so every place draws at one scale. */
+export const TERRAIN_SIZE = 8;
+
+/** One character per grid cell: `g` is the tile set's base terrain (grass), `f` its over terrain (flagstone). */
+export const TERRAIN_CODES = ["g", "f"] as const;
+
+/** The authored ground of a place: the published tile set it is drawn from, and `TERRAIN_SIZE` rows of `TERRAIN_SIZE` terrain codes. */
+export interface LocationTerrain {
+  readonly set: string;
+  readonly rows: readonly string[];
+}
+
 export interface Location {
   readonly id: string;
   readonly realm: Realm;
@@ -60,6 +78,8 @@ export interface Location {
    * distinctly from a plain adjacency failure. Absent means unrestricted.
    */
   readonly requiredCapability?: string;
+  /** The ground the client draws under this place. Presentation only: no world rule reads it. Absent: the place has none. */
+  readonly terrain?: LocationTerrain;
 }
 
 export interface Building {
@@ -206,6 +226,48 @@ function parseLocationEdge(
   });
 }
 
+/** Parses an authored terrain grid: a set id and `TERRAIN_SIZE` rows of `TERRAIN_SIZE` characters, each `g` or `f`. */
+export function parseLocationTerrain(
+  value: unknown,
+  path: string,
+): ParseResult<LocationTerrain> {
+  if (!isRecord(value)) return fail(path, "expected a terrain object");
+  for (const key of Object.keys(value)) {
+    if (key !== "set" && key !== "rows")
+      return fail(`${path}.${key}`, `unknown key "${key}"`);
+  }
+  const set = parseString(value.set, `${path}.set`);
+  if (!set.ok) return set;
+  const { rows } = value;
+  if (!Array.isArray(rows))
+    return fail(`${path}.rows`, "expected an array of terrain rows");
+  if (rows.length !== TERRAIN_SIZE)
+    return fail(
+      `${path}.rows`,
+      `expected ${TERRAIN_SIZE} rows, got ${rows.length} rows`,
+    );
+  const checked: string[] = [];
+  for (const [index, row] of rows.entries()) {
+    const at = `${path}.rows[${index}]`;
+    if (typeof row !== "string")
+      return fail(at, "expected a string of terrain");
+    if (row.length !== TERRAIN_SIZE)
+      return fail(
+        at,
+        `expected ${TERRAIN_SIZE} characters, got ${row.length} characters`,
+      );
+    for (const [column, code] of [...row].entries()) {
+      if (!(TERRAIN_CODES as readonly string[]).includes(code))
+        return fail(
+          at,
+          `expected "g" (grass) or "f" (flagstone), got "${code}" at column ${column + 1}`,
+        );
+    }
+    checked.push(row);
+  }
+  return ok({ set: set.value, rows: checked });
+}
+
 function parseLocation(value: unknown, path: string): ParseResult<Location> {
   if (!isRecord(value)) return fail(path, "expected a location entry");
   const id = parseString(value.id, `${path}.id`);
@@ -221,6 +283,12 @@ function parseLocation(value: unknown, path: string): ParseResult<Location> {
     `${path}.requiredCapability`,
   );
   if (!requiredCapability.ok) return requiredCapability;
+  let terrain: LocationTerrain | undefined;
+  if (value.terrain !== undefined) {
+    const parsed = parseLocationTerrain(value.terrain, `${path}.terrain`);
+    if (!parsed.ok) return parsed;
+    terrain = parsed.value;
+  }
   return ok({
     id: id.value,
     realm: realm.value,
@@ -229,6 +297,7 @@ function parseLocation(value: unknown, path: string): ParseResult<Location> {
     ...(requiredCapability.value === undefined
       ? {}
       : { requiredCapability: requiredCapability.value }),
+    ...(terrain === undefined ? {} : { terrain }),
   });
 }
 
