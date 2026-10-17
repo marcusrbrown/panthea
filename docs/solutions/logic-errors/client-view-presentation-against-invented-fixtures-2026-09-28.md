@@ -107,7 +107,7 @@ Each fix moves the rule onto the real data model. The tone map is keyed by the c
 ## Prevention
 
 - Key selectors by the contract's type. `Partial<Record<RecentEvent["kind"], …>>` makes a misspelled or invented kind a type error at the object literal, which a `string[]` of markers never was.
-- Give every presentation selector at least one test that runs on real data: the authored content pack, or events that went through the contract parser. `parseSyncFrame` rejects a kind outside `WORLD_EVENT_KINDS` (`packages/contracts/src/snapshot.ts:108`), so `viewWith` in `apps/client/src/renderer/presentation.test.ts` cannot carry an invented kind.
+- Give every presentation selector at least one test that runs on real data: the authored content pack, or events that went through the contract parser. `parseSyncFrame` rejects a kind outside `WORLD_EVENT_KINDS` (`packages/contracts/src/snapshot.ts:137`), so `viewWith` in `apps/client/src/renderer/presentation.test.ts` cannot carry an invented kind.
 - Treat a parameter that is accepted and unused as a review flag. `_realm` was the whole bug; a lint rule for unused parameters, or removing the argument, would have surfaced it.
 - Assert what the code must not do with realistic data: a noise kind in the viewed realm is not drawn (`presentation.test.ts`), and an event whose subjects are all in another realm is neither drawn nor receipted (`presentation.test.ts`).
 

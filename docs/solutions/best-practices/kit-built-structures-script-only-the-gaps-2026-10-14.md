@@ -17,7 +17,7 @@ tags: [structures, blender, kit-pieces, silhouette, floating-check, live-test, l
 
 ## Context
 
-Structures (the Greek house and the oak) are rendered from a `structure` profile by the pinned Blender script `tools/render/blender/render.py`. Each is a 192×192 cell with its foot at the profile's pivot: (96, 136) for `greek-house.json`, (96, 164) for `oak-tree.json`.
+Structures (the Greek house and the oak) are rendered from a `structure` profile by the pinned Blender script `tools/render/blender/render.py`. Each is a 192×192 cell. The foot is the manifest pivot, carried by `STRUCTURE_PIVOTS` in `packages/renderer/src/structures.ts`; the profile's `cell.pivot` is the world-origin pixel the post step uses, not the foot (see [the footprint learning](../logic-errors/structure-footprint-must-match-art-2026-10-15.md)).
 
 ## Guidance
 
