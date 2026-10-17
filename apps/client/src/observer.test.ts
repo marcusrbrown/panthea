@@ -283,11 +283,47 @@ test("the observer's only inputs are picks and view models, so selecting a targe
   });
 });
 
+test("an idle observer looks at the town square: the place the game opens on, until a target is picked", () => {
+  const observer = createObserver();
+  const state = baseState();
+  const idle = view(state);
+
+  expect(observer.update(idle).kind).toBe("idle");
+  expect(followedPlace(observer.update(idle), idle)).toEqual({
+    realm: "mortal",
+    locationId: "town-square",
+  });
+  // Picking a target overrides it, and clearing nothing else brings it back: idle is only idle before a pick.
+  observer.pick({ kind: "location", id: "agora" });
+  expect(followedPlace(observer.update(idle), idle)).toEqual({
+    realm: "mortal",
+    locationId: "agora",
+  });
+});
+
+test("when the view has no town square, an idle observer looks at the first mortal place it has; with no mortal place or no view it has none", () => {
+  const state = baseState();
+  const full = view(state);
+  const withoutSquare = viewWithoutLocation(full, "town-square");
+  const idle = createObserver().update(full);
+
+  expect(followedPlace(idle, withoutSquare)).toEqual({
+    realm: "mortal",
+    locationId: "agora",
+  });
+  expect(
+    followedPlace(idle, {
+      ...full,
+      realms: { ...full.realms, mortal: [] },
+    }),
+  ).toBeUndefined();
+  expect(followedPlace(idle, undefined)).toBeUndefined();
+  expect(followedPlace(idle)).toBeUndefined();
+});
+
 test("the followed place is the followed location, or the followed actor's current location", () => {
   const observer = createObserver();
   const state = baseState();
-
-  expect(followedPlace(observer.update(view(state)))).toBeUndefined();
 
   observer.pick({ kind: "location", id: "agora" });
   expect(followedPlace(observer.update(view(state)))).toEqual({
@@ -326,7 +362,9 @@ test("a held observer keeps the last place it knew, and one that never knew one 
     followedPlace(observer.update(view(withoutActor(state, "woodcutter")))),
   ).toEqual({ realm: "mortal", locationId: "town-square" });
 
+  // The default is for an observer that has picked nothing. One that picked an actor it never found has no place, and
+  // keeps none: its target is a choice, and a different place would not be the one it asked for.
   const never = createObserver();
   never.pick({ kind: "actor", id: "nobody" });
-  expect(followedPlace(never.update(view(state)))).toBeUndefined();
+  expect(followedPlace(never.update(view(state)), view(state))).toBeUndefined();
 });

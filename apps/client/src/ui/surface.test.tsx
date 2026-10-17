@@ -290,6 +290,27 @@ test("the latest canon art problem is shown as a note", () => {
   expect(html).not.toContain("blobs/ab.png");
 });
 
+test("an idle observer's scene names the place it shows: the town square, from the view alone, and a picked place replaces it", () => {
+  const idle = renderToStaticMarkup(
+    <ClientSurface view={view()} observation={{ kind: "idle" }} />,
+  );
+  expect(idle).toContain("Current location");
+  expect(idle).toContain("Town Square");
+
+  const picked = renderToStaticMarkup(
+    <ClientSurface
+      view={view()}
+      observation={{
+        kind: "following",
+        target: { kind: "location", id: "agora" },
+        locationId: "agora",
+        realm: "mortal",
+      }}
+    />,
+  );
+  expect(picked).not.toContain("Town Square</strong>");
+});
+
 test("no canon art problem, no note", () => {
   const html = renderToStaticMarkup(
     <ClientSurface view={view()} observation={{ kind: "idle" }} />,

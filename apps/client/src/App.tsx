@@ -238,7 +238,7 @@ export function App({
   );
 
   const dismissedSummary = isSummaryDismissed(view, summaryDismissal);
-  const place = followedPlace(observation);
+  const place = followedPlace(observation, view ?? undefined);
   const realm: Realm = place?.realm ?? "mortal";
 
   const onDrawn = useCallback(

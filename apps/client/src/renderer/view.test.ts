@@ -14,6 +14,7 @@ import {
   committedCanonPayload,
 } from "../../test/zeus-retro-fixture";
 import { type CanonProblem, createCanonClient } from "../assets/canon";
+import { createObserver, followedPlace } from "../observer";
 import type { WorldViewModel } from "../store";
 import { BACKGROUND } from "./decor";
 import {
@@ -374,4 +375,31 @@ test("Olympus shows Zeus and Hera side by side on the bare background, each in i
   // No ground under Olympus, and the corners are the background.
   expect(isBackground(painted, 4, 4)).toBe(true);
   expect(isBackground(painted, canvasX(200), canvasY(0))).toBe(true);
+});
+
+test("a game that starts idle draws the town square's ground: the observer's default place, from the view alone, with no pick", async () => {
+  const view = withTerrain();
+  const idle = createObserver().update(view);
+  expect(idle.kind).toBe("idle");
+
+  // What the shell does: the place to draw is the followed place, whatever the observer is doing.
+  const place = followedPlace(idle, view);
+  if (place === undefined) throw new Error("an idle observer has no place");
+  const painted = await paint(
+    ground(view, place.realm, place.locationId),
+    place.realm,
+    place.locationId,
+  );
+
+  // The same pixels as when the square is picked: a whole, centred diamond, not bare background.
+  const box = extent(painted);
+  expect(box.left).toBeLessThanOrEqual(1);
+  expect(box.right).toBeGreaterThanOrEqual(574);
+  expect(box.left + box.right + 1).toBe(LOGICAL_SIZE.width);
+  expect(box.top).toBe(canvasY(144));
+  expect(isBackground(painted, canvasX(0), canvasY(0))).toBe(false);
+  const picked = createObserver();
+  picked.pick({ kind: "location", id: PLACE.mortal });
+  const target = followedPlace(picked.update(view), view);
+  expect(target).toEqual(place);
 });

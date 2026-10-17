@@ -33,19 +33,37 @@ export type ObserverView =
       readonly lastKnown?: LastKnownLocation;
     };
 
+/** The place an observer that has picked nothing looks at: the town square, where the first inhabitants are. */
+export const DEFAULT_PLACE_ID = "town-square";
+
+/** The place an idle observer looks at in `view`: the town square, else the first mortal place it has, else none. */
+function defaultPlace(
+  view: WorldViewModel | undefined,
+): LastKnownLocation | undefined {
+  const mortal = view?.realms.mortal ?? [];
+  const place =
+    mortal.find((location) => location.id === DEFAULT_PLACE_ID) ?? mortal[0];
+  return place === undefined
+    ? undefined
+    : { locationId: place.id, realm: "mortal" };
+}
+
 /**
  * The place the observer is looking at: the followed location, or the followed
- * actor's current one; a held observer's last known place; none while idle or
- * when no place was ever known. The scene draws this place and the
- * "Current location" label names it.
+ * actor's current one; a held observer's last known place; while idle, the
+ * default place of `view` (the game opens on a place, not on nothing); none
+ * when a held observer never knew one. The scene draws this place and the
+ * "Current location" label names it: this is the one place that decides it.
  */
 export function followedPlace(
   observation: ObserverView,
+  view?: WorldViewModel,
 ): LastKnownLocation | undefined {
   if (observation.kind === "following") {
     return { locationId: observation.locationId, realm: observation.realm };
   }
-  return observation.kind === "held" ? observation.lastKnown : undefined;
+  if (observation.kind === "held") return observation.lastKnown;
+  return defaultPlace(view);
 }
 
 export interface TargetGroup {
