@@ -232,7 +232,7 @@ export function ClientSurface({
   effects,
   onEffectsChange,
 }: ClientSurfaceProps) {
-  const place = followedPlace(observation);
+  const place = followedPlace(observation, view ?? undefined);
   const realm = place?.realm ?? "mortal";
   const location = locationInRealm(view, realm, place?.locationId);
   const recentEvents = view ? eventsInRealm(view, realm) : [];
