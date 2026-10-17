@@ -59,8 +59,8 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
   - **Trigger:** A1 chooses to play.
   - **Actors:** A1, A2, A5.
   - **Steps:**
-    1. A1 names a mortal and picks a look from the existing sprites.
-    2. A1 picks an allowed spawn and a trade, and either a patron or none.
+    1. A1 names a mortal.
+    2. A1 picks a spawn, a trade, and either a patron or none. The trade sets the mortal's look.
     3. The world accepts the mortal, or refuses it with a reason. A1's choices survive a refusal.
     4. A1 takes control.
   - **Outcome:** a new mortal exists with a livelihood, starting goods and a routine.
@@ -104,11 +104,12 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
 *Entry and acts*
 - R1. The player creates a mortal from the following choices. The mortal enters the running world as an ordinary inhabitant (M01).
   - a name;
-  - a look from the existing sprites;
-  - a spawn among those the content allows a mortal;
-  - one of the town's existing trades;
+  - a spawn: a place in the mortal realm;
+  - one of the town's playable trades: fisher, farmer, olive grower, weaver, smith, herdsman or provisioner;
   - a patron, or none.
-- R2. The trade gives the mortal the starting goods, workplace and routine that an authored inhabitant of that trade has.
+
+  The mortal's look comes from its trade. A look picker arrives with the first published mortal sprites (owner, 2026-10-17).
+- R2. The trade gives the mortal the starting goods, workplace, drives and routine that an authored inhabitant of that trade has. The player's mortal is honest whatever that inhabitant's temperament, so it never wrongs anyone on its own (owner, 2026-10-17).
 - R3. Every act by the player's mortal enters as a proposal through the same validation and journal as every other actor's. The client never decides an outcome (W05).
   - Creating a mortal, taking control and giving it up are also recorded inputs. Replays and the away summary therefore depend only on what was recorded.
 - R4. The player moves, and travels between places and realms wherever the content allows a mortal (W02). The player acts in context:
@@ -126,7 +127,7 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
 - R8. The player can type free text to any actor present. Who is present and addressable is shown (M02).
 - R9. Words to a present god open a request that the god owes an answer. The god answers in its own voice or with an act: bless, strike, refuse or offer terms. It answers on its next turn while a small priority budget shared by all gods has room. Otherwise it answers in normal rotation, and the request shows as queued (owner, 2026-10-10).
 - R10. Words to an absent god become a plea with a prayer's answer window and lapse. A god spoken to by name, or prayed to at its altar, may choose to come to the player on its turn.
-- R11. The player sees each request's state with its reason. The states are queued, waiting, answered, refused, lapsed and closed. A request is closed when a new line replaces it or the mortal retires. An answer that arrives while the player is away appears in the return summary.
+- R11. The player sees each request's state with its reason. The states are queued, waiting, answered, refused, lapsed and closed. A request is closed when the mortal retires. Only one request per god is open at a time, and further lines to that god wait until it closes (owner, 2026-10-17). An answer that arrives while the player is away appears in the return summary.
 - R12. A mortal spoken to keeps the words as a memory and answers with a short line drawn from its own state: need, grudge, temperament, trade and patron. No model is involved.
 - R13. Speech is recorded in history. Only actors present perceive it, under the perception rules (W04).
 
@@ -138,7 +139,7 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
   - shortages can leave it hungry or unable to buy (W06, W09).
 
 *Absence*
-- R16. Playing, observing and away are each visibly distinct. Leaving hands the mortal to its routine with full vulnerability, and the world continues (M07, A07).
+- R16. Playing, observing and away are each visibly distinct. Watching another place keeps control. Stepping away, closing the window or a restart hands the mortal to its routine with full vulnerability, and the world continues (M07, A07; owner, 2026-10-17).
 - R17. On return, the player resumes the same identity. A summary shows what happened to the mortal first, with applied and skipped time (A07, A08).
 
 *Phase gates*
@@ -165,7 +166,7 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
 - R26. Death sends the mortal to its default afterlife, which its spawn realm sets. The world records its patron's and its killer's influence on its fate (M06).
 - R27. The player can act and talk in the Underworld, with Hades included.
 - R28. A mortal can reach an authored return condition. The condition is hinted in play. Meeting it returns the mortal with its identity and memory (M06).
-- R29. The player can retire a mortal permanently from the Underworld or the menu, after a confirmation that it cannot be undone. The mortal's history is kept, and a new mortal can then be created (M07).
+- R29. The player can retire a mortal permanently from the Underworld or the menu, after a confirmation that it cannot be undone. The player can never take that mortal back. It lives on under its routine with its history, and a new mortal can then be created (M07).
 - R30. At least one transformation case is reachable in this phase, ahead of phase 5's general rule (W09).
 
 **Phase 5: defeated gods, realm rules and transformation**
@@ -190,7 +191,7 @@ The Underworld is scaffolded (W02). Its judgment hall is gated to divine actors.
 
 ## Acceptance Examples
 
-- AE1. **Covers R1, R2, R3.** Given a running world, when the player creates "Kallias", a fisher who spawns in the town with Poseidon as patron, then Kallias appears with a fisher's goods and routine. The creation is a recorded input.
+- AE1. **Covers R1, R2, R3.** Given a running world, when the player creates "Nikias", a fisher who spawns in the town with Poseidon as patron, then Nikias appears with a fisher's goods and routine. The creation is a recorded input.
 - AE2. **Covers R9, R11, R13.** Given Poseidon is present, when the player says "the nets come up empty", then the request shows as waiting. Poseidon answers on his next turn, in his voice or with an act. Only the actors present perceive the exchange.
 - AE3. **Covers R10, R11.** Given Poseidon is absent, when the player types to him, then a plea opens with an answer window. Poseidon either comes on his turn, or the plea shows as lapsed with its reason.
 - AE4. **Covers R12, R15.** Given a smith with a grudge against the player's mortal, when the player greets her, then she answers from the grudge, keeps the words as a memory, and refuses to sell.
