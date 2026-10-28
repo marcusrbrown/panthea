@@ -18,8 +18,8 @@
     "@panthea/assets": "workspace:*",
     "@panthea/renderer": "workspace:*",
     "@tauri-apps/api": "2.12.3",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "three": "0.185.1",
     "three-flatland": "0.1.0-alpha.10"
   },
