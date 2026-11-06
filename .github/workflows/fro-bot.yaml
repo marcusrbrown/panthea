@@ -313,14 +313,36 @@ env:
     not retry" warnings, and how to verify. Put these under "Needs Human
     Attention" in the report.
 
+    REPORT TITLE RULE
+    A daily report title is a whole-title match for
+    "Daily Fro Bot Report — YYYY-MM-DD (UTC)": the em dash is literal and the
+    date is a real calendar date. Test every candidate title locally against
+    this anchored regex, which must match the entire title:
+    `^Daily Fro Bot Report — [0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01]) \(UTC\)$`
+    Prefix, substring, and fuzzy matching never qualify. A similar title that
+    fails the rule, for example "Daily Fro Bot Report — rotation bug", is never
+    closed and never read as a report. Every selection of a report issue below
+    also requires the author to be exactly `fro-bot`. Find candidates with
+    `gh issue list --state open --search "Daily Fro Bot Report in:title"
+    --json number,title,author`, then apply the title regex and the author
+    check locally; GitHub search is fuzzy and is only a pre-filter.
+
     OUTPUT — ONE PERPETUAL SUMMARY ISSUE
     Creating, updating, and closing the daily report issue is authorized in
     this run. Maintain exactly one daily report. Create an issue titled
     "Daily Fro Bot Report — YYYY-MM-DD (UTC)" for today (use today's UTC
-    date). Before or after creating it, CLOSE every older open issue whose
-    title starts with "Daily Fro Bot Report —", leaving a one-line closing
-    comment that links the newest report. There must be exactly one open
-    daily report when the run finishes.
+    date). Before or after creating it, CLOSE every older open issue authored
+    by exactly `fro-bot` whose title passes the REPORT TITLE RULE, leaving a
+    one-line closing comment that links the newest report. Never close any
+    other issue, including one with a similar title that fails the rule. There
+    must be exactly one open daily report when the run finishes.
+
+    ONE REPORT, ONE BODY
+    The full report lives in the issue body. Never post the report, or a copy
+    of any previous body, as a comment. The only comments on report issues are
+    the one-line closing comments above. Never write canary or placeholder
+    content to the report issue: build the complete body in a local file and
+    write it once with `--body-file`.
 
     The branch-pr delivery mode covers only autohealing code fixes
     (categories 1-4). The daily report is always this issue: never commit
