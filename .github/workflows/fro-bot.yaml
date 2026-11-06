@@ -331,10 +331,12 @@ env:
     Creating, updating, and closing the daily report issue is authorized in
     this run. Maintain exactly one daily report. Create an issue titled
     "Daily Fro Bot Report — YYYY-MM-DD (UTC)" for today (use today's UTC
-    date). Before or after creating it, CLOSE every older open issue authored
-    by exactly `fro-bot` whose title passes the REPORT TITLE RULE, leaving a
+    date). Only after today's issue is created successfully, CLOSE every older
+    open issue authored by exactly `fro-bot` whose title passes the REPORT
+    TITLE RULE, leaving a
     one-line closing comment that links the newest report. Never close any
-    other issue, including one with a similar title that fails the rule. There
+    other issue, including one with a similar title that fails the rule. A
+    failed create never closes the previous report. There
     must be exactly one open daily report when the run finishes.
 
     ONE REPORT, ONE BODY
