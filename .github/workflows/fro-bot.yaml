@@ -460,7 +460,7 @@ jobs:
 
       - name: Run Fro Bot
         id: fro-bot-agent
-        uses: fro-bot/agent@944cf954ac2afa61c4d061a4aad41a6cb80f7129 # v0.133.2
+        uses: fro-bot/agent@3cbb000feac0a06e65872d4440718e687459f49a # v0.136.1
         env:
           OPENCODE_PROMPT_ARTIFACT: 'true'
           TASK_PROMPT: >-
