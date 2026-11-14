@@ -1,6 +1,6 @@
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
-  extends: ['github>marcusrbrown/renovate-config#5.2.13'],
+  extends: ['github>marcusrbrown/renovate-config#5.2.16'],
   packageRules: [
     {
       // bfra-me/renovate-action runs with RENOVATE_BINARY_SOURCE=install, so
