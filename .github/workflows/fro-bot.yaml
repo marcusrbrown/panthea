@@ -472,6 +472,8 @@ jobs:
             }}
         with:
           isolate-agent: true
+          trace-endpoint: https://traces.fro.bot/marcusrbrown/v1/traces
+          trace-headers: 'Authorization: Bearer ${{ secrets.FRO_BOT_TRACE_TOKEN }}'
           github-token: ${{ secrets.FRO_BOT_PAT }}
           trusted-head-sha: ${{ steps.prehead.outputs.sha }}
           # Default brokered-push paths are src/, packages/*/src/ and docs/.
