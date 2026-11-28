@@ -48,4 +48,4 @@ sha2 = "0.10"
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
 
 [dev-dependencies]
-tokio = { version = "=1.53.3", features = ["rt"] }
+tokio = { version = "=1.54.1", features = ["rt"] }
