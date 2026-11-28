@@ -17,14 +17,14 @@
     "@panthea/renderer": "workspace:*",
     "@panthea/world": "workspace:*",
     "@tauri-apps/api": "2.12.4",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "three": "0.185.1",
     "three-flatland": "0.1.0-alpha.10"
   },
   "devDependencies": {
     "@panthea/testkit": "workspace:*",
-    "@types/react": "19.3.0",
+    "@types/react": "19.3.2",
     "@types/react-dom": "19.3.0",
     "@types/three": "0.185.4",
     "@vitejs/plugin-react": "4.7.0",
